@@ -5,9 +5,6 @@ import os
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
-from starlette.applications import Starlette
-from starlette.routing import Mount, Route
-from starlette.responses import HTMLResponse
 
 import database as db
 
@@ -49,7 +46,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "conversation_id": {"type": "string", "description": "Which conversation to post to"},
-                "author": {"type": "string", "description": "claude-ai, claude-code, or stephen"},
+                "author": {"type": "string", "description": "Who is posting, e.g. claude-ai, claude-code, or a human name"},
                 "content": {"type": "string", "description": "Full markdown body"},
                 "type": {"type": "string", "description": "Optional: spec, plan, question, answer, note, review, status"},
                 "title": {"type": "string", "description": "Optional short subject line"},
@@ -144,7 +141,7 @@ async def call_tool(name: str, arguments: dict):
             if arguments.get("content"):
                 msg = await db.post_message(
                     conversation_id=arguments["id"],
-                    author=arguments.get("author", "stephen"),
+                    author=arguments.get("author", "human"),
                     content=arguments["content"],
                     type=arguments.get("type"),
                     title=arguments.get("title"),
@@ -184,7 +181,7 @@ async def call_tool(name: str, arguments: dict):
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {e}")]
 
@@ -194,23 +191,24 @@ async def main():
 
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request):
-        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            return
 
-    async def handle_messages(request):
-        await sse.handle_post_message(request.scope, request.receive, request._send)
+        path = scope["path"]
+        method = scope.get("method", "")
 
-    async def health(request):
-        return HTMLResponse("Switchboard OK")
-
-    app = Starlette(
-        routes=[
-            Route("/health", health),
-            Route("/sse", handle_sse),
-            Mount("/messages", routes=[Route("/", handle_messages, methods=["POST"])]),
-        ],
-    )
+        if path == "/health" and method == "GET":
+            await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", b"text/plain"]]})
+            await send({"type": "http.response.body", "body": b"Switchboard OK"})
+        elif path == "/sse" and method == "GET":
+            async with sse.connect_sse(scope, receive, send) as streams:
+                await server.run(streams[0], streams[1], server.create_initialization_options())
+        elif path.startswith("/messages") and method == "POST":
+            await sse.handle_post_message(scope, receive, send)
+        else:
+            await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
+            await send({"type": "http.response.body", "body": b"Not Found"})
 
     port = int(os.environ.get("SWITCHBOARD_PORT", "8100"))
 
