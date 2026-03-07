@@ -1,0 +1,16 @@
+[project]
+name = "switchboard"
+version = "0.1.0"
+description = "Shared message board MCP server for async communication between Claude AI and Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "aiosqlite>=0.20.0",
+    "uvicorn>=0.34.0",
+    "starlette>=0.45.0",
+    "sse-starlette>=2.2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
