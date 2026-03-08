@@ -9,12 +9,15 @@ When AUTH_ISSUER_URL is unset, auth is disabled (local dev mode).
 """
 
 import json
+import logging
 import os
 import time
 from typing import Any
 
 import httpx
 import jwt
+
+logger = logging.getLogger("switchboard.auth")
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
@@ -44,14 +47,18 @@ async def _get_jwks() -> dict[str, Any]:
     # Discover OIDC configuration
     async with httpx.AsyncClient() as client:
         oidc_url = f"{AUTH_ISSUER_URL.rstrip('/')}/.well-known/openid-configuration"
+        logger.info(f"Fetching OIDC config from {oidc_url}")
         oidc_resp = await client.get(oidc_url)
         oidc_resp.raise_for_status()
-        jwks_uri = oidc_resp.json()["jwks_uri"]
+        oidc_config = oidc_resp.json()
+        jwks_uri = oidc_config["jwks_uri"]
+        logger.info(f"OIDC issuer={oidc_config.get('issuer')!r}, jwks_uri={jwks_uri}")
 
         jwks_resp = await client.get(jwks_uri)
         jwks_resp.raise_for_status()
         _jwks_cache = jwks_resp.json()
         _jwks_cache_time = time.time()
+        logger.info(f"Cached {len(_jwks_cache.get('keys', []))} JWKS keys")
 
     return _jwks_cache
 
@@ -83,10 +90,17 @@ async def verify_token(token: str) -> dict | None:
         if key is None:
             return None
 
+        # Log what we're about to validate against
+        expected_issuer = AUTH_ISSUER_URL.rstrip("/")
+        unverified_claims = jwt.decode(token, options={"verify_signature": False})
+        logger.info(f"Token iss={unverified_claims.get('iss')!r}, expected={expected_issuer!r}")
+        logger.info(f"Token aud={unverified_claims.get('aud')!r}, verify_aud={bool(AUTH_AUDIENCE)}")
+        logger.info(f"Token alg={unverified_header.get('alg')!r}, kid={kid!r}")
+
         decode_opts = {
-            "algorithms": ["RS256", "RS384", "RS512"],
+            "algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"],
             "options": {"verify_exp": True, "verify_iss": True, "verify_aud": bool(AUTH_AUDIENCE)},
-            "issuer": AUTH_ISSUER_URL.rstrip("/"),
+            "issuer": expected_issuer,
         }
         if AUTH_AUDIENCE:
             decode_opts["audience"] = AUTH_AUDIENCE
@@ -97,13 +111,26 @@ async def verify_token(token: str) -> dict | None:
         if AUTH_REQUIRED_SCOPES:
             token_scopes = claims.get("scope", "").split()
             if not all(s in token_scopes for s in AUTH_REQUIRED_SCOPES):
+                logger.warning(f"Insufficient scopes: have={token_scopes}, need={AUTH_REQUIRED_SCOPES}")
                 return None
 
+        logger.info(f"Token verified for client={claims.get('client_id', claims.get('azp', 'unknown'))}")
         return claims
 
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.DecodeError):
+    except jwt.ExpiredSignatureError:
+        logger.warning("Token expired")
         return None
-    except Exception:
+    except jwt.InvalidIssuerError as e:
+        logger.warning(f"Issuer mismatch: {e}")
+        return None
+    except jwt.InvalidAudienceError as e:
+        logger.warning(f"Audience mismatch: {e}")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Token validation failed: {type(e).__name__}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected auth error: {type(e).__name__}: {e}")
         return None
 
 
