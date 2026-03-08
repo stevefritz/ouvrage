@@ -3,7 +3,7 @@ import json
 import os
 
 from mcp.server import Server
-from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
 import database as db
@@ -189,9 +189,27 @@ async def call_tool(name: str, arguments: dict):
 async def main():
     await db.init_db()
 
-    sse = SseServerTransport("/messages/")
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
+        json_response=False,
+        stateless=False,
+    )
 
     async def app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            # Handle ASGI lifespan events for session manager
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                ctx = session_manager.run()
+                await ctx.__aenter__()
+                scope["state"] = {"session_manager_ctx": ctx}
+                await send({"type": "lifespan.startup.complete"})
+                message = await receive()
+                if message["type"] == "lifespan.shutdown":
+                    await ctx.__aexit__(None, None, None)
+                    await send({"type": "lifespan.shutdown.complete"})
+            return
+
         if scope["type"] != "http":
             return
 
@@ -201,11 +219,8 @@ async def main():
         if path == "/health" and method == "GET":
             await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
-        elif path == "/sse" and method == "GET":
-            async with sse.connect_sse(scope, receive, send) as streams:
-                await server.run(streams[0], streams[1], server.create_initialization_options())
-        elif path.startswith("/messages") and method == "POST":
-            await sse.handle_post_message(scope, receive, send)
+        elif path == "/mcp":
+            await session_manager.handle_request(scope, receive, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})

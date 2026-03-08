@@ -7,8 +7,6 @@ dependencies = [
     "mcp[cli]>=1.2.0",
     "aiosqlite>=0.20.0",
     "uvicorn>=0.34.0",
-    "starlette>=0.45.0",
-    "sse-starlette>=2.2.0",
 ]
 
 [build-system]
