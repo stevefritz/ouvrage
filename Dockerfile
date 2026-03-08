@@ -5,9 +5,9 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 COPY pyproject.toml ./
-RUN uv pip install --system --no-cache "mcp[cli]>=1.2.0" "aiosqlite>=0.20.0" "uvicorn>=0.34.0"
+RUN uv pip install --system --no-cache "mcp[cli]>=1.2.0" "aiosqlite>=0.20.0" "uvicorn>=0.34.0" "httpx>=0.28.0" "pyjwt[crypto]>=2.11.0"
 
-COPY database.py server.py ./
+COPY auth.py database.py server.py ./
 
 RUN groupadd -g 1000 switchboard && \
     useradd -r -u 1000 -g switchboard -s /bin/false switchboard && \

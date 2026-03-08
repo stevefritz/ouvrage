@@ -7,6 +7,8 @@ dependencies = [
     "mcp[cli]>=1.2.0",
     "aiosqlite>=0.20.0",
     "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+    "pyjwt[crypto]>=2.11.0",
 ]
 
 [build-system]

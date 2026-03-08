@@ -6,6 +6,7 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
+import auth
 import database as db
 
 server = Server("switchboard")
@@ -225,10 +226,18 @@ async def main():
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})
 
+    # Wrap with OAuth middleware (no-op if AUTH_ISSUER_URL is unset)
+    protected_app = auth.auth_middleware(app)
+
     port = int(os.environ.get("SWITCHBOARD_PORT", "8100"))
 
+    if auth.is_auth_enabled():
+        print(f"OAuth enabled — issuer: {auth.AUTH_ISSUER_URL}")
+    else:
+        print("OAuth disabled — no AUTH_ISSUER_URL set (local dev mode)")
+
     import uvicorn
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+    config = uvicorn.Config(protected_app, host="0.0.0.0", port=port, log_level="info")
     srv = uvicorn.Server(config)
     await srv.serve()
 
