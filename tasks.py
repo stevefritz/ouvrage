@@ -386,15 +386,17 @@ async def _update_usage(task_id: str, result: ResultMessage):
     """Update task token/cost tracking from SDK result."""
     task = await db.get_task(task_id)
 
-    total_tokens = 0
     input_tokens = 0
     output_tokens = 0
 
     if result.usage:
-        # Usage dict may have various token fields
-        input_tokens = result.usage.get("input_tokens", 0)
+        # Claude Max usage format includes cache token breakdowns
+        input_tokens = (
+            result.usage.get("input_tokens", 0)
+            + result.usage.get("cache_creation_input_tokens", 0)
+            + result.usage.get("cache_read_input_tokens", 0)
+        )
         output_tokens = result.usage.get("output_tokens", 0)
-        total_tokens = result.usage.get("total_tokens", input_tokens + output_tokens)
 
     cost = result.total_cost_usd or 0.0
 
