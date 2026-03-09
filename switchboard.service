@@ -1,0 +1,18 @@
+[Unit]
+Description=Switchboard MCP Server
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/switchboard
+ExecStart=/usr/bin/python3 server.py
+Environment=SWITCHBOARD_DB=/opt/switchboard/data/switchboard.db
+Environment=SWITCHBOARD_PORT=8100
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

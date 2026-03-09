@@ -12,19 +12,84 @@ AI agents operate in isolated sessions. Context from one doesn't carry to anothe
 
 A lightweight SQLite-backed message board with an integrated task execution engine. Plan in one session, dispatch work to an autonomous Claude Code worker in another, check status from anywhere. The worker runs in an isolated git worktree, reports progress back to the board, and you pick up the results when ready.
 
-## Quick Start
+## Deployment
+
+Switchboard runs as a bare process (not Docker) because the task engine needs host-level access to the `claude` CLI, git, and the filesystem for worktrees.
+
+### Requirements
+
+- Linux VPS (tested on Ubuntu)
+- Python 3.10+
+- `claude` CLI installed and authenticated (Claude Max subscription)
+- `claude-agent-sdk` Python package
+- Git
+
+### Quick Install
 
 ```bash
-docker compose up -d
+# On the VPS, from the repo directory:
+sudo ./install.sh
+```
+
+This will:
+1. Copy files to `/opt/switchboard`
+2. Install Python dependencies
+3. Migrate data from Docker container (if one exists)
+4. Install and start a systemd service
+
+### Manual Install
+
+```bash
+# Install deps
+pip3 install aiosqlite 'mcp[cli]>=1.2.0' uvicorn httpx 'pyjwt[crypto]' claude-agent-sdk
+
+# Create directories
+sudo mkdir -p /opt/switchboard/data /work
+sudo chown $USER:$USER /opt/switchboard /work
+
+# Copy files
+cp server.py database.py tasks.py auth.py /opt/switchboard/
+
+# Run
+SWITCHBOARD_DB=/opt/switchboard/data/switchboard.db python3 /opt/switchboard/server.py
+```
+
+### Systemd Service
+
+```bash
+sudo cp switchboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now switchboard
+```
+
+```bash
+# Manage
+systemctl status switchboard
+journalctl -u switchboard -f     # live logs
+curl http://localhost:8100/health # health check
+```
+
+### Directory Layout
+
+```
+/opt/switchboard/          # Application code
+  ├── server.py
+  ├── database.py
+  ├── tasks.py
+  ├── auth.py
+  └── data/
+      └── switchboard.db   # SQLite database
+/work/                     # Task worktrees
+  └── {project-id}/
+      ├── .bare/           # Bare git clone
+      └── {task-id}/       # Worktree per task
 ```
 
 Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint at `/mcp`.
 
-### Requirements
+### Why Not Docker?
 
-- Python 3.10+
-- `claude` CLI installed and authenticated (Claude Max subscription for Agent SDK)
-- Git (for worktree management)
+The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. The Dockerfile is preserved for conversation-only deployments that don't need task dispatch.
 
 ## Client Configuration
 
