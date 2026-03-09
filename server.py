@@ -454,26 +454,24 @@ async def _dispatch_tool(name: str, arguments: dict):
 
     elif name == "get_task_status":
         result = await db.get_task_status(arguments["task_id"])
-        # Enrich with PID liveness check
+        # Liveness detection based on status + last_activity
+        result["alive"] = result.get("status") == "working"
+        if result["alive"] and result.get("last_activity"):
+            from datetime import datetime, timezone
+            last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - last).total_seconds()
+            result["stale"] = age > 900  # 15 minutes with no activity
+            result["idle_minutes"] = round(age / 60, 1)
+        else:
+            result["stale"] = False
+
+        # Fallback PID check for legacy/CLI tasks
         if result.get("pid"):
             result["pid_alive"] = tasks._is_pid_alive(result["pid"])
-            # Stale detection: PID alive but no activity for >15 min
-            if result["pid_alive"] and result.get("last_activity"):
-                from datetime import datetime, timezone
-                last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
-                age = (datetime.now(timezone.utc) - last).total_seconds()
-                result["stale"] = age > 900  # 15 minutes
-                result["idle_minutes"] = round(age / 60, 1)
-            else:
-                result["stale"] = False
-        else:
-            result["pid_alive"] = False
-            result["stale"] = False
 
         # Optional log tail
         if arguments.get("include_log_tail") and result.get("worktree_path"):
-            import os
-            log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stdout.log")
+            log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
             result["log_tail"] = tasks._tail_file(log_path, 30)
 
         return result

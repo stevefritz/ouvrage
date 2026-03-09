@@ -1,12 +1,17 @@
-"""Task execution engine — subprocess management, worktree ops, dispatch."""
+"""Task execution engine — Agent SDK dispatch, worktree ops, lifecycle management."""
 
 import asyncio
 import json
 import logging
 import os
 import signal
-import uuid
 from pathlib import Path
+
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ResultMessage,
+    query,
+)
 
 import database as db
 
@@ -21,6 +26,10 @@ def _resolve_limit(task_val, project_val, global_default):
         return project_val
     return global_default
 
+
+# ---------------------------------------------------------------------------
+# Git Worktree Management
+# ---------------------------------------------------------------------------
 
 async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
     """Create git worktree for a task. Returns worktree path."""
@@ -104,8 +113,6 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
         log.warning(f"Setup command failed (exit {proc.returncode}): {stderr.decode()}")
-        # Don't raise — setup failures shouldn't block dispatch entirely
-        # CC can handle missing deps in its session
 
 
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
@@ -150,8 +157,12 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
             log.info(f"Branch delete skipped (not merged or not found): {branch}")
 
 
-def _build_system_prompt(project: dict, task: dict, spec_content: str | None, escalation_criteria: str | None = None) -> str:
-    """Build the system prompt CC receives when dispatched."""
+# ---------------------------------------------------------------------------
+# Prompt Building
+# ---------------------------------------------------------------------------
+
+def _build_task_prompt(project: dict, task: dict, spec_content: str | None, escalation_criteria: str | None = None) -> str:
+    """Build the prompt CC receives when dispatched."""
     parts = []
 
     parts.append(f"# Task: {task['goal']}")
@@ -166,14 +177,13 @@ def _build_system_prompt(project: dict, task: dict, spec_content: str | None, es
 
     parts.append("## Instructions")
     parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
-    parts.append("- Use the switchboard MCP tools on localhost:8100 to report progress:")
-    parts.append(f"  - Update checklist: update_task_checklist(task_id='{task['id']}', ...)")
-    parts.append(f"  - Update phase: update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')")
-    parts.append(f"  - Post progress: post_task_message(task_id='{task['id']}', type='progress', ...)")
-    parts.append(f"  - Post question (blocks until answered): post_task_message(task_id='{task['id']}', type='question', ...)")
-    parts.append("- When you post a message with type='question', your session will be paused until someone answers.")
+    parts.append("- Use the switchboard MCP tools to report progress:")
+    parts.append(f"  - Update checklist: mcp__switchboard__update_task_checklist(item_id=N, done=true)")
+    parts.append(f"  - Update phase: mcp__switchboard__update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')")
+    parts.append(f"  - Post progress: mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')")
+    parts.append(f"  - Post question (will pause session): mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')")
     parts.append("- Update checklist items as you complete them.")
-    parts.append("- When done, commit your work and post a result summary.")
+    parts.append("- When done, commit your work and post a result summary as type='result'.")
     parts.append("")
 
     if project.get("test_command"):
@@ -189,12 +199,216 @@ def _build_system_prompt(project: dict, task: dict, spec_content: str | None, es
     return "\n".join(parts)
 
 
+def _build_resume_prompt(task: dict) -> str:
+    """Build prompt for resuming a paused task."""
+    return (
+        f"Resume task '{task['id']}'. Check the switchboard for any new answers to your questions "
+        f"(mcp__switchboard__read_task_messages(task_id='{task['id']}')), then continue working."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
 def _setup_log_dir(worktree_path: str) -> Path:
     """Create .switchboard log directory in the worktree."""
     log_dir = Path(worktree_path) / ".switchboard"
     log_dir.mkdir(exist_ok=True)
     return log_dir
 
+
+def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
+                        max_turns: int, max_wall_clock: int,
+                        worktree_path: str, is_resume: bool):
+    """Write dispatch metadata to log file."""
+    log_path = log_dir / "dispatch.log"
+    with open(log_path, "a") as f:
+        f.write(f"[{db.now_iso()}] {'Resuming' if is_resume else 'Dispatching'} task {task_id}\n")
+        f.write(f"  session_id: {session_id}\n")
+        f.write(f"  max_turns: {max_turns}\n")
+        f.write(f"  max_wall_clock: {max_wall_clock}m\n")
+        f.write(f"  worktree: {worktree_path}\n")
+
+
+def _tail_file(path: str, n: int = 20) -> str:
+    """Read last N lines from a file."""
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+            return "".join(lines[-n:])
+    except Exception:
+        return "(could not read log)"
+
+
+# ---------------------------------------------------------------------------
+# Agent SDK Dispatch
+# ---------------------------------------------------------------------------
+
+async def _run_sdk_session(
+    task_id: str, prompt: str, worktree_path: str,
+    session_id: str | None, is_resume: bool,
+    max_turns: int, max_wall_clock_minutes: int,
+    log_dir: Path,
+) -> None:
+    """Run a CC session via the Agent SDK. Blocks until complete."""
+    stderr_path = log_dir / "cc-stderr.log"
+    stderr_log = open(stderr_path, "a")
+
+    # Build SDK options
+    options = ClaudeAgentOptions(
+        cwd=str(worktree_path),
+        allowed_tools=[
+            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+            "mcp__switchboard__update_task_checklist",
+            "mcp__switchboard__update_task_phase",
+            "mcp__switchboard__post_task_message",
+            "mcp__switchboard__read_task_messages",
+            "mcp__switchboard__get_task_status",
+        ],
+        permission_mode="bypassPermissions",
+        max_turns=max_turns,
+        setting_sources=["project"],
+        system_prompt={
+            "type": "preset",
+            "preset": "claude_code",
+            "append": prompt if not is_resume else "",
+        },
+        mcp_servers={
+            "switchboard": {
+                "type": "http",
+                "url": "http://localhost:8100/mcp",
+            },
+        },
+        debug_stderr=stderr_log,
+    )
+
+    # If resuming, use the resume option
+    if is_resume and session_id:
+        options.resume = session_id
+
+    try:
+        result_msg = None
+        timeout_seconds = max_wall_clock_minutes * 60
+
+        async def _run():
+            nonlocal result_msg
+            actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
+            async for message in query(prompt=actual_prompt, options=options):
+                if isinstance(message, ResultMessage):
+                    result_msg = message
+                    # Capture session_id from first dispatch
+                    if message.session_id:
+                        await db.update_task(task_id, session_id=message.session_id)
+
+                # Update last_activity on each message
+                await db.update_task(task_id, last_activity=db.now_iso())
+
+        try:
+            await asyncio.wait_for(_run(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            log.warning(f"Task {task_id}: wall clock timeout ({max_wall_clock_minutes}m)")
+            await db.update_task(task_id, status="needs-review", pid=None)
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Wall clock timeout",
+                content=f"Task hit the {max_wall_clock_minutes} minute wall clock limit. "
+                        "Work is preserved in the worktree. Resume or adjust limits.",
+            )
+            with open(log_dir / "dispatch.log", "a") as f:
+                f.write(f"[{db.now_iso()}] Wall clock timeout ({max_wall_clock_minutes}m)\n")
+            return
+
+        # Process result
+        if result_msg:
+            _log_result(log_dir, result_msg)
+            await _update_usage(task_id, result_msg)
+
+            if result_msg.is_error:
+                await db.update_task(task_id, status="failed", pid=None)
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Task failed",
+                    content=f"CC session ended with error.\n\nStop reason: {result_msg.stop_reason}\n"
+                            f"Turns: {result_msg.num_turns}\n\n"
+                            f"Result: {result_msg.result or '(no result)'}",
+                )
+            else:
+                await db.update_task(task_id, status="completed", pid=None)
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Task completed",
+                    content=f"CC session completed successfully.\n\n"
+                            f"Turns: {result_msg.num_turns} | "
+                            f"Duration: {result_msg.duration_ms / 1000:.0f}s | "
+                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                            f"Result: {(result_msg.result or '(no result)')[:500]}",
+                )
+        else:
+            # No result message — shouldn't happen but handle gracefully
+            await db.update_task(task_id, status="needs-review", pid=None)
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Session ended without result",
+                content="CC session ended but no ResultMessage was received. Check logs.",
+            )
+
+    except Exception as e:
+        log.exception(f"SDK session error for task {task_id}: {e}")
+        await db.update_task(task_id, status="failed", pid=None)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Dispatch error",
+            content=f"SDK session raised an exception:\n\n```\n{e}\n```",
+        )
+        with open(log_dir / "dispatch.log", "a") as f:
+            f.write(f"[{db.now_iso()}] SDK error: {e}\n")
+    finally:
+        stderr_log.close()
+
+
+def _log_result(log_dir: Path, result: ResultMessage):
+    """Write result metadata to dispatch log."""
+    with open(log_dir / "dispatch.log", "a") as f:
+        f.write(f"[{db.now_iso()}] Session complete\n")
+        f.write(f"  session_id: {result.session_id}\n")
+        f.write(f"  turns: {result.num_turns}\n")
+        f.write(f"  duration_ms: {result.duration_ms}\n")
+        f.write(f"  duration_api_ms: {result.duration_api_ms}\n")
+        f.write(f"  is_error: {result.is_error}\n")
+        f.write(f"  stop_reason: {result.stop_reason}\n")
+        f.write(f"  cost_usd: {result.total_cost_usd}\n")
+        if result.usage:
+            f.write(f"  usage: {json.dumps(result.usage)}\n")
+
+
+async def _update_usage(task_id: str, result: ResultMessage):
+    """Update task token/cost tracking from SDK result."""
+    task = await db.get_task(task_id)
+
+    total_tokens = 0
+    input_tokens = 0
+    output_tokens = 0
+
+    if result.usage:
+        # Usage dict may have various token fields
+        input_tokens = result.usage.get("input_tokens", 0)
+        output_tokens = result.usage.get("output_tokens", 0)
+        total_tokens = result.usage.get("total_tokens", input_tokens + output_tokens)
+
+    cost = result.total_cost_usd or 0.0
+
+    await db.update_task(
+        task_id,
+        total_input_tokens=(task.get("total_input_tokens") or 0) + input_tokens,
+        total_output_tokens=(task.get("total_output_tokens") or 0) + output_tokens,
+        total_cost_usd=(task.get("total_cost_usd") or 0.0) + cost,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public Task Operations
+# ---------------------------------------------------------------------------
 
 async def dispatch_task(
     project_id: str, task_id: str, goal: str,
@@ -203,7 +417,7 @@ async def dispatch_task(
     max_wall_clock: int | None = None,
     escalation_criteria: str | None = None,
 ) -> dict:
-    """Create task (if needed), setup worktree, fork CC subprocess."""
+    """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
     # Check concurrency limit
     active = await db.count_active_tasks()
@@ -227,22 +441,18 @@ async def dispatch_task(
             id=task_id, project_id=project_id, goal=goal,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
         )
-        # Post spec as pinned message
         if spec:
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", content=spec,
                 type="spec", title="Task Spec", pinned=True,
             )
-        # Create checklist items
         if checklist:
             await db.create_checklist_items(task_id, checklist)
     elif task["status"] == "needs-review":
         is_resume = True
     elif task["status"] == "working":
-        # Check if PID is actually alive
         if task.get("pid") and _is_pid_alive(task["pid"]):
             raise RuntimeError(f"Task '{task_id}' is already running (PID {task['pid']})")
-        # PID dead but status stuck — recover
         is_resume = True
 
     # Setup worktree
@@ -254,11 +464,6 @@ async def dispatch_task(
 
     # Setup logging
     log_dir = _setup_log_dir(worktree_path)
-
-    # Resolve session ID
-    session_id = task.get("session_id")
-    if not session_id or not is_resume:
-        session_id = str(uuid.uuid4())
 
     # Resolve limits
     effective_max_turns = _resolve_limit(
@@ -274,7 +479,10 @@ async def dispatch_task(
     if pinned:
         spec_content = pinned["content"]
 
-    prompt = _build_system_prompt(project, task, spec_content, escalation_criteria)
+    prompt = _build_task_prompt(project, task, spec_content, escalation_criteria)
+
+    # Get session_id for resume
+    session_id = task.get("session_id") if is_resume else None
 
     # Update task record
     dispatch_count = (task.get("dispatch_count") or 0) + 1
@@ -283,23 +491,28 @@ async def dispatch_task(
         status="working",
         phase=phase,
         worktree_path=worktree_path,
-        session_id=session_id,
         dispatch_count=dispatch_count,
         last_activity=db.now_iso(),
     )
 
-    # Fork CC subprocess
-    pid = await _launch_cc_subprocess(
+    # Log dispatch
+    _write_dispatch_log(
+        log_dir, task_id, session_id or "(new)",
+        effective_max_turns, effective_max_wall_clock,
+        worktree_path, is_resume,
+    )
+
+    # Launch SDK session in background — non-blocking
+    asyncio.create_task(_run_sdk_session(
         task_id=task_id,
-        worktree_path=worktree_path,
         prompt=prompt,
+        worktree_path=worktree_path,
         session_id=session_id,
+        is_resume=is_resume,
         max_turns=effective_max_turns,
         max_wall_clock_minutes=effective_max_wall_clock,
         log_dir=log_dir,
-    )
-
-    await db.update_task(task_id, pid=pid)
+    ))
 
     return {
         "task_id": task_id,
@@ -308,7 +521,6 @@ async def dispatch_task(
         "worktree_path": worktree_path,
         "branch": branch,
         "session_id": session_id,
-        "pid": pid,
         "dispatch_count": dispatch_count,
         "max_turns": effective_max_turns,
         "max_wall_clock": effective_max_wall_clock,
@@ -397,6 +609,10 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup}
 
 
+# ---------------------------------------------------------------------------
+# Process Management Helpers
+# ---------------------------------------------------------------------------
+
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process is still running."""
     try:
@@ -413,165 +629,3 @@ def _kill_pid(pid: int):
         log.info(f"Sent SIGTERM to PID {pid}")
     except (OSError, ProcessLookupError):
         log.info(f"PID {pid} already dead")
-
-
-async def _launch_cc_subprocess(
-    task_id: str, worktree_path: str, prompt: str, session_id: str,
-    max_turns: int, max_wall_clock_minutes: int, log_dir: Path,
-) -> int:
-    """Launch CC as a subprocess via claude CLI. Returns PID."""
-    stdout_log = open(log_dir / "cc-stdout.log", "a")
-    stderr_log = open(log_dir / "cc-stderr.log", "a")
-    dispatch_log = open(log_dir / "dispatch.log", "a")
-
-    dispatch_log.write(f"[{db.now_iso()}] Dispatching task {task_id}\n")
-    dispatch_log.write(f"  session_id: {session_id}\n")
-    dispatch_log.write(f"  max_turns: {max_turns}\n")
-    dispatch_log.write(f"  max_wall_clock: {max_wall_clock_minutes}m\n")
-    dispatch_log.write(f"  worktree: {worktree_path}\n")
-    dispatch_log.flush()
-
-    # Write prompt to a temp file to avoid shell escaping hell
-    prompt_file = log_dir / "prompt.md"
-    prompt_file.write_text(prompt)
-
-    # Build claude CLI command
-    # Using claude -p (print/pipe mode) with --max-turns
-    cmd = [
-        "claude",
-        "-p", prompt,
-        "--max-turns", str(max_turns),
-        "--output-format", "json",
-        "--verbose",
-    ]
-
-    # TODO: When Agent SDK is validated, switch to SDK-based launch
-    # with session_id support for pause/resume. For now, CLI mode
-    # doesn't support session persistence — each dispatch is a fresh session.
-    # The worktree preserves code state between dispatches even without
-    # session persistence.
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=worktree_path,
-        stdout=stdout_log,
-        stderr=stderr_log,
-        start_new_session=True,  # Detach from our process group
-    )
-
-    dispatch_log.write(f"  pid: {proc.pid}\n")
-    dispatch_log.flush()
-
-    # Start background monitor for exit handling + wall clock timeout
-    asyncio.create_task(_monitor_subprocess(
-        proc, task_id, max_wall_clock_minutes, dispatch_log, stdout_log, stderr_log,
-    ))
-
-    return proc.pid
-
-
-async def _monitor_subprocess(
-    proc: asyncio.subprocess.Process, task_id: str,
-    max_wall_clock_minutes: int,
-    dispatch_log, stdout_log, stderr_log,
-):
-    """Monitor CC subprocess — handle exit, enforce wall clock timeout."""
-    try:
-        timeout_seconds = max_wall_clock_minutes * 60
-        try:
-            return_code = await asyncio.wait_for(proc.wait(), timeout=timeout_seconds)
-        except asyncio.TimeoutError:
-            # Wall clock timeout
-            dispatch_log.write(f"[{db.now_iso()}] Wall clock timeout ({max_wall_clock_minutes}m). Sending SIGTERM.\n")
-            dispatch_log.flush()
-
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                dispatch_log.write(f"[{db.now_iso()}] SIGTERM timeout. Sending SIGKILL.\n")
-                dispatch_log.flush()
-                proc.kill()
-                await proc.wait()
-
-            await db.update_task(task_id, status="needs-review", pid=None)
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Wall clock timeout",
-                content=f"Task hit the {max_wall_clock_minutes} minute wall clock limit. "
-                        "Work is preserved in the worktree. Resume or adjust limits.",
-            )
-            return
-
-        dispatch_log.write(f"[{db.now_iso()}] CC exited with code {return_code}\n")
-        dispatch_log.flush()
-
-        # Parse output for token usage if available
-        await _capture_usage(task_id, stdout_log.name)
-
-        if return_code == 0:
-            await db.update_task(task_id, status="completed", pid=None)
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Task completed",
-                content="CC session ended successfully.",
-            )
-        else:
-            await db.update_task(task_id, status="failed", pid=None)
-            # Try to capture last few lines of stderr for context
-            error_context = _tail_file(stderr_log.name, 20)
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title=f"Task failed (exit code {return_code})",
-                content=f"CC exited with code {return_code}.\n\n```\n{error_context}\n```",
-            )
-    except Exception as e:
-        log.exception(f"Monitor error for task {task_id}: {e}")
-        await db.update_task(task_id, status="failed", pid=None)
-    finally:
-        for f in (dispatch_log, stdout_log, stderr_log):
-            try:
-                f.close()
-            except Exception:
-                pass
-
-
-async def _capture_usage(task_id: str, stdout_path: str):
-    """Try to parse token usage from CC's JSON output."""
-    try:
-        content = Path(stdout_path).read_text()
-        # CC with --output-format json outputs a JSON object
-        # Look for the last valid JSON block
-        lines = content.strip().split("\n")
-        for line in reversed(lines):
-            line = line.strip()
-            if line.startswith("{"):
-                try:
-                    data = json.loads(line)
-                    input_tokens = data.get("input_tokens", 0)
-                    output_tokens = data.get("output_tokens", 0)
-                    cost = data.get("cost_usd", 0.0)
-
-                    if input_tokens or output_tokens:
-                        task = await db.get_task(task_id)
-                        await db.update_task(
-                            task_id,
-                            total_input_tokens=(task.get("total_input_tokens") or 0) + input_tokens,
-                            total_output_tokens=(task.get("total_output_tokens") or 0) + output_tokens,
-                            total_cost_usd=(task.get("total_cost_usd") or 0.0) + cost,
-                        )
-                    break
-                except json.JSONDecodeError:
-                    continue
-    except Exception as e:
-        log.warning(f"Could not capture usage for task {task_id}: {e}")
-
-
-def _tail_file(path: str, n: int = 20) -> str:
-    """Read last N lines from a file."""
-    try:
-        with open(path) as f:
-            lines = f.readlines()
-            return "".join(lines[-n:])
-    except Exception:
-        return "(could not read log)"
