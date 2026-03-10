@@ -430,6 +430,30 @@ async def get_project(id: str) -> dict | None:
         await db.close()
 
 
+async def update_project(project_id: str, **fields) -> dict:
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
+        if not rows:
+            raise ValueError(f"Project '{project_id}' not found")
+
+        if "env_overrides" in fields and isinstance(fields["env_overrides"], dict):
+            fields["env_overrides"] = json.dumps(fields["env_overrides"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [project_id]
+        await db.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", values)
+        await db.commit()
+
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
+        p = dict(rows[0])
+        if p.get("env_overrides"):
+            p["env_overrides"] = json.loads(p["env_overrides"])
+        return p
+    finally:
+        await db.close()
+
+
 async def list_projects() -> list[dict]:
     db = await get_db()
     try:

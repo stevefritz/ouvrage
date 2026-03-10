@@ -161,6 +161,27 @@ PROJECT_TOOLS = [
         },
     ),
     Tool(
+        name="update_project",
+        description="Update a project's configuration. Only provided fields are changed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Project ID"},
+                "repo": {"type": "string", "description": "Git repo URL"},
+                "default_branch": {"type": "string", "description": "Default branch name"},
+                "working_dir": {"type": "string", "description": "Base path for worktrees"},
+                "setup_command": {"type": ["string", "null"], "description": "Run after worktree creation"},
+                "teardown_command": {"type": ["string", "null"], "description": "Run on cleanup"},
+                "test_command": {"type": ["string", "null"], "description": "Hint for CC"},
+                "env_overrides": {"type": ["object", "null"], "description": "Key-value env vars for .env.testing"},
+                "max_turns": {"type": ["integer", "null"], "description": "Project-level turn limit"},
+                "max_wall_clock": {"type": ["integer", "null"], "description": "Project-level wall clock limit (minutes)"},
+                "claude_md_path": {"type": ["string", "null"], "description": "Path to CLAUDE.md relative to repo root"},
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
         name="list_projects",
         description="List all registered projects.",
         inputSchema={"type": "object", "properties": {}},
@@ -415,6 +436,14 @@ async def _dispatch_tool(name: str, arguments: dict):
     elif name == "get_project":
         result = await db.get_project(arguments["id"])
         return result if result else {"error": f"Project '{arguments['id']}' not found"}
+
+    elif name == "update_project":
+        project_id = arguments.pop("id")
+        # Filter out None values that weren't explicitly provided
+        fields = {k: v for k, v in arguments.items() if k != "id"}
+        if not fields:
+            return {"error": "No fields to update"}
+        return await db.update_project(project_id, **fields)
 
     elif name == "list_projects":
         return await db.list_projects()
