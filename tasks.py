@@ -8,8 +8,11 @@ import signal
 from pathlib import Path
 
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
+    SystemMessage,
+    UserMessage,
     query,
 )
 
@@ -164,7 +167,9 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
 # Prompt Building
 # ---------------------------------------------------------------------------
 
-def _build_task_prompt(project: dict, task: dict, spec_content: str | None, escalation_criteria: str | None = None) -> str:
+def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
+                       checklist: list[dict] | None = None,
+                       escalation_criteria: str | None = None) -> str:
     """Build the prompt CC receives when dispatched."""
     parts = []
 
@@ -178,14 +183,23 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None, esca
         parts.append(spec_content)
         parts.append("")
 
+    if checklist:
+        parts.append("## Checklist")
+        parts.append("Mark items done as you complete them using `mcp__switchboard__update_task_checklist`.")
+        parts.append("")
+        for item in checklist:
+            status = "✅" if item.get("done") else "⬜"
+            parts.append(f"- {status} (item_id={item['id']}) {item['item']}")
+        parts.append("")
+
     parts.append("## Instructions")
     parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
     parts.append("- Use the switchboard MCP tools to report progress:")
-    parts.append(f"  - Update checklist: mcp__switchboard__update_task_checklist(item_id=N, done=true)")
-    parts.append(f"  - Update phase: mcp__switchboard__update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')")
-    parts.append(f"  - Post progress: mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')")
-    parts.append(f"  - Post question (will pause session): mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')")
-    parts.append("- Update checklist items as you complete them.")
+    parts.append(f"  - Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
+    parts.append(f"  - Update phase: `mcp__switchboard__update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')`")
+    parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')`")
+    parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')`")
+    parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
     parts.append("- When done, commit your work and post a result summary as type='result'.")
     parts.append("")
 
@@ -294,11 +308,51 @@ async def _run_sdk_session(
     try:
         result_msg = None
         timeout_seconds = max_wall_clock_minutes * 60
+        session_log_path = log_dir / "session.jsonl"
+
+        def _log_message(msg):
+            """Write a message to the session JSONL log."""
+            entry = {"timestamp": db.now_iso(), "type": type(msg).__name__}
+            try:
+                if isinstance(msg, SystemMessage):
+                    entry["subtype"] = msg.subtype
+                elif isinstance(msg, AssistantMessage):
+                    entry["content"] = []
+                    for block in (msg.content or []):
+                        if isinstance(block, dict):
+                            if block.get("type") == "text":
+                                entry["content"].append({"type": "text", "text": block["text"][:2000]})
+                            elif block.get("type") == "tool_use":
+                                entry["content"].append({
+                                    "type": "tool_use", "name": block.get("name"),
+                                    "input": str(block.get("input", ""))[:1000],
+                                })
+                    entry["stop_reason"] = msg.stop_reason
+                elif isinstance(msg, UserMessage):
+                    entry["content"] = []
+                    for block in (msg.content or []):
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            entry["content"].append({
+                                "type": "tool_result",
+                                "tool_use_id": block.get("tool_use_id"),
+                                "preview": str(block.get("content", ""))[:500],
+                            })
+                elif isinstance(msg, ResultMessage):
+                    entry["subtype"] = msg.subtype
+                    entry["result"] = (msg.result or "")[:1000]
+                    entry["num_turns"] = msg.num_turns
+                    entry["cost_usd"] = msg.total_cost_usd
+                with open(session_log_path, "a") as f:
+                    f.write(json.dumps(entry) + "\n")
+            except Exception as e:
+                log.warning(f"Failed to log message: {e}")
 
         async def _run():
             nonlocal result_msg
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
             async for message in query(prompt=actual_prompt, options=options):
+                _log_message(message)
+
                 if isinstance(message, ResultMessage):
                     result_msg = message
                     # Capture session_id from first dispatch
@@ -485,7 +539,10 @@ async def dispatch_task(
     if pinned:
         spec_content = pinned["content"]
 
-    prompt = _build_task_prompt(project, task, spec_content, escalation_criteria)
+    # Fetch checklist items with IDs so CC knows how to update them
+    checklist_items = await db.get_checklist(task_id)
+
+    prompt = _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria)
 
     # Get session_id for resume
     session_id = task.get("session_id") if is_resume else None

@@ -421,9 +421,13 @@ async def _dispatch_tool(name: str, arguments: dict):
 
     # --- Task tools ---
     elif name == "dispatch_task":
+        # Auto-prefix task ID with project to avoid global collisions
+        project_id = arguments["project_id"]
+        raw_id = arguments["id"]
+        task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
         return await tasks.dispatch_task(
-            project_id=arguments["project_id"],
-            task_id=arguments["id"],
+            project_id=project_id,
+            task_id=task_id,
             goal=arguments["goal"],
             spec=arguments.get("spec"),
             checklist=arguments.get("checklist"),
