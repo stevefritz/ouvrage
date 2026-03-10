@@ -189,6 +189,24 @@ async def task_phase_changed(task_id: str, phase: str):
     await _post(f":gear: {phase}", thread_ts=thread_ts)
 
 
+async def task_heartbeat(task_id: str, turns: int, elapsed_s: float,
+                         last_tool: str | None = None):
+    """Periodic heartbeat so the user knows CC is still alive."""
+    if not is_enabled():
+        return
+
+    thread_ts = _task_threads.get(task_id)
+    if not thread_ts:
+        return
+
+    mins = int(elapsed_s // 60)
+    secs = int(elapsed_s % 60)
+    parts = [f"\U0001f493 Still working \u2014 {turns} turns, {mins}m{secs:02d}s"]
+    if last_tool:
+        parts.append(f"  _Last tool: {last_tool}_")
+    await _post("\n".join(parts), thread_ts=thread_ts)
+
+
 async def checklist_progress(task_id: str, item_text: str, done: int, total: int):
     """Notify on checklist item completion."""
     if not is_enabled():

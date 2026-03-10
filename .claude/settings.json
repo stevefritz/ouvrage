@@ -1,3 +1,7 @@
 {
-  "gitCommitCoAuthor": false
+  "includeCoAuthoredBy": false,
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
 }

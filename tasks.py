@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import signal
+import time
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -377,15 +378,41 @@ async def _run_sdk_session(
 
         async def _run():
             nonlocal result_msg
+            start_time = time.monotonic()
+            last_heartbeat = start_time
+            heartbeat_interval = 90  # seconds
+            turn_count = 0
+            running_cost = 0.0
+            last_tool_name = None
+
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
             async for message in query(prompt=actual_prompt, options=options):
                 _log_message(message)
+
+                if isinstance(message, AssistantMessage):
+                    turn_count += 1
+                    # Track last tool used for heartbeat context
+                    for block in (message.content or []):
+                        if isinstance(block, ToolUseBlock):
+                            last_tool_name = block.name
 
                 if isinstance(message, ResultMessage):
                     result_msg = message
                     # Capture session_id from first dispatch
                     if message.session_id:
                         await db.update_task(task_id, session_id=message.session_id)
+                    running_cost = message.total_cost_usd or 0
+
+                # Heartbeat: post to Slack every N seconds
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_interval:
+                    last_heartbeat = now
+                    await notify.task_heartbeat(
+                        task_id=task_id,
+                        turns=turn_count,
+                        elapsed_s=now - start_time,
+                        last_tool=last_tool_name,
+                    )
 
                 # Update last_activity on each message
                 await db.update_task(task_id, last_activity=db.now_iso())

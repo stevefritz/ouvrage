@@ -7,6 +7,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
 import auth
+import dashboard_api
 import database as db
 import notifications as notify
 import tasks
@@ -226,7 +227,7 @@ TASK_TOOLS = [
     ),
     Tool(
         name="retry_task",
-        description="Start a fresh CC session for a task. Optionally clean the worktree (git checkout .).",
+        description="Start a fresh CC session for a task. If review feedback was posted (via post_task_message) after the last CC result, it is automatically injected as revision instructions. Workflow: post feedback with type='review', then retry. Optionally clean the worktree (git checkout .).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -584,6 +585,53 @@ async def _dispatch_tool(name: str, arguments: dict):
         raise ValueError(f"Unknown tool: {name}")
 
 
+_DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
+_MIME_TYPES = {
+    ".html": "text/html", ".js": "application/javascript",
+    ".css": "text/css", ".json": "application/json",
+    ".svg": "image/svg+xml", ".png": "image/png",
+}
+
+
+async def _serve_dashboard(scope, send):
+    """Serve static files from dashboard/, with SPA fallback to index.html."""
+    path = scope["path"]
+    # Strip /dashboard prefix to get file path
+    file_path = path[len("/dashboard"):].lstrip("/")
+    if not file_path:
+        file_path = "index.html"
+
+    full_path = os.path.join(_DASHBOARD_DIR, file_path)
+
+    # Security: prevent path traversal
+    full_path = os.path.realpath(full_path)
+    if not full_path.startswith(os.path.realpath(_DASHBOARD_DIR)):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+        return
+
+    # SPA fallback: if file doesn't exist, serve index.html
+    if not os.path.isfile(full_path):
+        full_path = os.path.join(_DASHBOARD_DIR, "index.html")
+
+    if not os.path.isfile(full_path):
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b"Dashboard not found"})
+        return
+
+    ext = os.path.splitext(full_path)[1]
+    content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+
+    with open(full_path, "rb") as f:
+        body = f.read()
+
+    await send({
+        "type": "http.response.start", "status": 200,
+        "headers": [[b"content-type", content_type.encode()]],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 async def main():
     await db.init_db()
 
@@ -619,6 +667,10 @@ async def main():
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
             await session_manager.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard/api/"):
+            await dashboard_api.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard"):
+            await _serve_dashboard(scope, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})

@@ -1,0 +1,90 @@
+/* Switchboard Dashboard — Custom styles */
+
+/* Pulsing dot for working status */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.status-dot-working {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* Collapsible message content */
+.msg-collapsed {
+    max-height: 200px;
+    overflow: hidden;
+    position: relative;
+}
+.msg-collapsed::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 60px;
+    background: linear-gradient(transparent, #1e293b);
+    pointer-events: none;
+}
+
+/* Markdown prose in dark theme */
+.prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
+    color: #e2e8f0;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+}
+.prose-dark h1 { font-size: 1.25rem; }
+.prose-dark h2 { font-size: 1.125rem; }
+.prose-dark h3 { font-size: 1rem; }
+.prose-dark p { margin: 0.5em 0; }
+.prose-dark ul, .prose-dark ol { margin: 0.5em 0; padding-left: 1.5em; }
+.prose-dark li { margin: 0.25em 0; }
+.prose-dark code {
+    background: #1e293b;
+    padding: 0.125em 0.375em;
+    border-radius: 4px;
+    font-size: 0.875em;
+    color: #93c5fd;
+}
+.prose-dark pre {
+    background: #0f172a;
+    padding: 0.75em;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+}
+.prose-dark pre code {
+    background: none;
+    padding: 0;
+    color: #cbd5e1;
+}
+.prose-dark a { color: #60a5fa; text-decoration: underline; }
+.prose-dark blockquote {
+    border-left: 3px solid #475569;
+    padding-left: 0.75em;
+    margin: 0.5em 0;
+    color: #94a3b8;
+}
+.prose-dark strong { color: #f1f5f9; }
+.prose-dark table { border-collapse: collapse; width: 100%; margin: 0.5em 0; }
+.prose-dark th, .prose-dark td {
+    border: 1px solid #334155;
+    padding: 0.375em 0.75em;
+    text-align: left;
+}
+.prose-dark th { background: #1e293b; color: #e2e8f0; }
+
+/* Progress bar */
+.progress-bar { letter-spacing: 1px; }
+
+/* Session log entries */
+.log-system { color: #64748b; font-style: italic; }
+.log-text { color: #e2e8f0; }
+.log-tool { color: #67e8f9; }
+.log-result { color: #94a3b8; }
+.log-done { color: #4ade80; }
+.log-error { color: #f87171; }
