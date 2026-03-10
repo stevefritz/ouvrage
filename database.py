@@ -485,7 +485,9 @@ async def create_task(
             raise ValueError(f"Project '{project_id}' not found")
 
         ts = now_iso()
-        branch = branch or id
+        # Use short name (after project prefix) for branch to avoid slash issues
+        short_name = id.split("/")[-1] if "/" in id else id
+        branch = branch or short_name
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock, created_at, updated_at)

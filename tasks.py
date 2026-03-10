@@ -515,9 +515,12 @@ async def dispatch_task(
             raise RuntimeError(f"Task '{task_id}' is already running (PID {task['pid']})")
         is_resume = True
 
-    # Setup worktree
-    branch = task["branch"] or task_id
-    worktree_path = await setup_worktree(project, task_id, branch)
+    # Setup worktree — use short name (after project prefix) for branch and dir
+    short_name = task_id.split("/")[-1] if "/" in task_id else task_id
+    branch = task["branch"] or short_name
+    if task["branch"] != branch:
+        await db.update_task(task_id, branch=branch)
+    worktree_path = await setup_worktree(project, short_name, branch)
 
     # Run setup command
     await run_setup_command(project, worktree_path)
