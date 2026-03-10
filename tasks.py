@@ -255,8 +255,9 @@ async def _run_sdk_session(
     stderr_path = log_dir / "cc-stderr.log"
     stderr_log = open(stderr_path, "a")
 
-    # Build SDK options
+    # Build SDK options — run CC as restricted 'switchboard' user
     options = ClaudeAgentOptions(
+        user="switchboard",
         cwd=str(worktree_path),
         allowed_tools=[
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",

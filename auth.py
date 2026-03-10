@@ -190,6 +190,11 @@ def auth_middleware(inner_app):
         if scope["type"] != "http":
             return await inner_app(scope, receive, send)
 
+        # Bypass auth for localhost connections (CC subprocesses on the same host)
+        client = scope.get("client")
+        if client and client[0] in ("127.0.0.1", "::1"):
+            return await inner_app(scope, receive, send)
+
         path = scope.get("path", "")
 
         # Serve protected resource metadata (unauthenticated)
