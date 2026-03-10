@@ -461,7 +461,9 @@ async def create_task(
             raise ValueError(f"Project '{project_id}' not found")
 
         ts = now_iso()
-        branch = branch or id
+        # If no explicit branch, derive from the short task ID (last segment)
+        if not branch:
+            branch = id.split("/")[-1]
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock, created_at, updated_at)
