@@ -8,6 +8,7 @@ from mcp.types import Tool, TextContent
 
 import auth
 import database as db
+import notifications as notify
 import tasks
 
 server = Server("switchboard")
@@ -516,10 +517,21 @@ async def _dispatch_tool(name: str, arguments: dict):
         )
 
     elif name == "update_task_checklist":
-        return await db.update_checklist_item(
+        result = await db.update_checklist_item(
             item_id=arguments["item_id"],
             done=arguments["done"],
         )
+        # Notify on checklist progress
+        if arguments.get("done") and result.get("task_id"):
+            checklist = await db.get_checklist(result["task_id"])
+            done_count = sum(1 for c in checklist if c.get("done"))
+            await notify.checklist_progress(
+                task_id=result["task_id"],
+                item_text=result.get("item", ""),
+                done=done_count,
+                total=len(checklist),
+            )
+        return result
 
     elif name == "update_task_phase":
         fields = {}
@@ -528,10 +540,15 @@ async def _dispatch_tool(name: str, arguments: dict):
         if "detail" in arguments:
             fields["phase"] = f"{arguments.get('phase', 'working')}: {arguments['detail']}"
         fields["last_activity"] = db.now_iso()
-        return await db.update_task(arguments["task_id"], **fields)
+        result = await db.update_task(arguments["task_id"], **fields)
+        await notify.task_phase_changed(
+            task_id=arguments["task_id"],
+            phase=fields.get("phase", "working"),
+        )
+        return result
 
     elif name == "post_task_message":
-        return await db.post_task_message(
+        result = await db.post_task_message(
             task_id=arguments["task_id"],
             author=arguments["author"],
             content=arguments["content"],
@@ -539,6 +556,21 @@ async def _dispatch_tool(name: str, arguments: dict):
             title=arguments.get("title"),
             pinned=arguments.get("pinned", False),
         )
+        # Notify Slack on progress, result, and question messages
+        msg_type = arguments.get("type", "")
+        if msg_type == "question":
+            await notify.task_question(
+                task_id=arguments["task_id"],
+                question=arguments["content"],
+            )
+        elif msg_type in ("progress", "result"):
+            await notify.task_progress(
+                task_id=arguments["task_id"],
+                title=arguments.get("title"),
+                content=arguments["content"],
+                msg_type=msg_type,
+            )
+        return result
 
     elif name == "read_task_messages":
         return await db.read_task_messages(
