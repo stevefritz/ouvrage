@@ -31,6 +31,20 @@ def _resolve_limit(task_val, project_val, global_default):
 # Git Worktree Management
 # ---------------------------------------------------------------------------
 
+WORKER_USER = "switchboard"
+
+
+async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
+    """Run a command as the worker user. Returns (stdout, stderr, returncode)."""
+    proc = await asyncio.create_subprocess_exec(
+        "su", "-", WORKER_USER, "-c", " ".join(cmd),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        **kwargs,
+    )
+    stdout, stderr = await proc.communicate()
+    return stdout, stderr, proc.returncode
+
+
 async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
     """Create git worktree for a task. Returns worktree path."""
     base = project["working_dir"]
@@ -42,43 +56,36 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
 
     # Ensure base directory exists
     os.makedirs(base, exist_ok=True)
+    # Ensure worker user owns it
+    import shutil
+    shutil.chown(base, user=WORKER_USER, group=WORKER_USER)
 
     # Clone the repo as a bare repo if the base doesn't have .git
     bare_path = os.path.join(base, ".bare")
     if not os.path.exists(bare_path):
         log.info(f"Cloning bare repo: {project['repo']} -> {bare_path}")
-        proc = await asyncio.create_subprocess_exec(
+        stdout, stderr, rc = await _run_as_worker(
             "git", "clone", "--bare", project["repo"], bare_path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
+        if rc != 0:
             raise RuntimeError(f"git clone --bare failed: {stderr.decode()}")
 
     # Fetch latest from remote
-    proc = await asyncio.create_subprocess_exec(
-        "git", "-C", bare_path, "fetch", "origin",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    await proc.communicate()
+    await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
 
     # Create worktree
     default_branch = project["default_branch"]
-    proc = await asyncio.create_subprocess_exec(
+    stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
         "-b", branch, worktree_path, f"origin/{default_branch}",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
+    if rc != 0:
         # Branch might already exist, try without -b
-        proc = await asyncio.create_subprocess_exec(
+        stdout, stderr, rc = await _run_as_worker(
             "git", "-C", bare_path, "worktree", "add",
             worktree_path, branch,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
+        if rc != 0:
             raise RuntimeError(f"git worktree add failed: {stderr.decode()}")
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
@@ -106,13 +113,9 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         log.info(f"Wrote env overrides to {env_path}")
 
     log.info(f"Running setup: {cmd} in {worktree_path}")
-    proc = await asyncio.create_subprocess_shell(
-        cmd, cwd=worktree_path,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        log.warning(f"Setup command failed (exit {proc.returncode}): {stderr.decode()}")
+    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"'cd {worktree_path} && {cmd}'")
+    if rc != 0:
+        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
 
 
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
