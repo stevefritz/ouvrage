@@ -77,7 +77,7 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
     default_branch = project["default_branch"]
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, f"origin/{default_branch}",
+        "-b", branch, worktree_path, default_branch,
     )
     if rc != 0:
         # Branch might already exist, try without -b
