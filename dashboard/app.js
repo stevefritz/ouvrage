@@ -238,12 +238,16 @@ async function showDetail(taskId) {
     const container = document.getElementById('view-detail');
     container.classList.remove('hidden');
 
-    // Reset log state for new task view
+    // Reset log state and clear stale log DOM for new task view
     uiState.sessionLogOpen = false;
     uiState.dispatchLogOpen = false;
     uiState.sessionLogLoaded = false;
     uiState.dispatchLogLoaded = false;
     uiState.expandedMessages.clear();
+    const slp = document.getElementById('session-log-content');
+    const dlp = document.getElementById('dispatch-log-content');
+    if (slp) slp.innerHTML = '';
+    if (dlp) dlp.innerHTML = '';
 
     let initialLoad = true;
     async function render() {
