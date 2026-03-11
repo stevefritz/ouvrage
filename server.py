@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -8,7 +9,10 @@ from mcp.types import Tool, TextContent
 
 import auth
 import database as db
+import dashboard_api
 import tasks
+
+PR_URL_RE = re.compile(r'https://github\.com/[^\s)]+/pull/\d+')
 
 server = Server("switchboard")
 
@@ -498,7 +502,7 @@ async def _dispatch_tool(name: str, arguments: dict):
         return await db.update_task(arguments["task_id"], **fields)
 
     elif name == "post_task_message":
-        return await db.post_task_message(
+        result = await db.post_task_message(
             task_id=arguments["task_id"],
             author=arguments["author"],
             content=arguments["content"],
@@ -506,6 +510,12 @@ async def _dispatch_tool(name: str, arguments: dict):
             title=arguments.get("title"),
             pinned=arguments.get("pinned", False),
         )
+        # Auto-extract PR URLs from result/progress messages
+        if arguments.get("type") in ("result", "progress"):
+            urls = PR_URL_RE.findall(arguments.get("content", ""))
+            for url in urls:
+                await db.add_artifact(arguments["task_id"], type="pr_url", ref=url)
+        return result
 
     elif name == "read_task_messages":
         return await db.read_task_messages(
@@ -517,6 +527,29 @@ async def _dispatch_tool(name: str, arguments: dict):
 
     else:
         raise ValueError(f"Unknown tool: {name}")
+
+
+async def _serve_static(send, file_path, content_type=None):
+    """Serve a static file from the project directory."""
+    import mimetypes
+    full_path = os.path.join(os.path.dirname(__file__) or ".", file_path)
+    # Prevent directory traversal
+    full_path = os.path.realpath(full_path)
+    base_dir = os.path.realpath(os.path.dirname(__file__) or ".")
+    if not full_path.startswith(base_dir):
+        await send({"type": "http.response.start", "status": 403, "headers": [[b"content-type", b"text/plain"]]})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+        return
+    if not os.path.isfile(full_path):
+        await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
+        await send({"type": "http.response.body", "body": b"Not Found"})
+        return
+    if not content_type:
+        content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    with open(full_path, "rb") as f:
+        body = f.read()
+    await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", content_type.encode()]]})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def main():
@@ -554,6 +587,13 @@ async def main():
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
             await session_manager.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard/api/"):
+            await dashboard_api.handle_request(scope, receive, send)
+        elif path == "/dashboard" or path == "/dashboard/":
+            await _serve_static(send, "dashboard/index.html", "text/html")
+        elif path.startswith("/dashboard/"):
+            file_path = path.lstrip("/")
+            await _serve_static(send, file_path)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})
