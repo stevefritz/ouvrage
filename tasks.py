@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -16,6 +15,19 @@ from claude_agent_sdk import (
 import database as db
 
 log = logging.getLogger("switchboard.tasks")
+
+# Track running async tasks to prevent garbage collection and silent failures
+_running_tasks: set[asyncio.Task] = set()
+
+
+def _handle_task_exception(task: asyncio.Task) -> None:
+    """Log unhandled exceptions from background tasks and clean up tracking."""
+    _running_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        log.error(f"Background task {task.get_name()} failed: {exc}", exc_info=exc)
 
 
 def _resolve_limit(task_val, project_val, global_default):
@@ -312,7 +324,7 @@ async def _run_sdk_session(
             await asyncio.wait_for(_run(), timeout=timeout_seconds)
         except asyncio.TimeoutError:
             log.warning(f"Task {task_id}: wall clock timeout ({max_wall_clock_minutes}m)")
-            await db.update_task(task_id, status="needs-review", pid=None)
+            await db.update_task(task_id, status="needs-review")
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Wall clock timeout",
@@ -329,7 +341,7 @@ async def _run_sdk_session(
             await _update_usage(task_id, result_msg)
 
             if result_msg.is_error:
-                await db.update_task(task_id, status="failed", pid=None)
+                await db.update_task(task_id, status="failed")
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Task failed",
@@ -338,7 +350,7 @@ async def _run_sdk_session(
                             f"Result: {result_msg.result or '(no result)'}",
                 )
             else:
-                await db.update_task(task_id, status="completed", pid=None)
+                await db.update_task(task_id, status="completed")
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Task completed",
@@ -350,7 +362,7 @@ async def _run_sdk_session(
                 )
         else:
             # No result message — shouldn't happen but handle gracefully
-            await db.update_task(task_id, status="needs-review", pid=None)
+            await db.update_task(task_id, status="needs-review")
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Session ended without result",
@@ -359,7 +371,7 @@ async def _run_sdk_session(
 
     except Exception as e:
         log.exception(f"SDK session error for task {task_id}: {e}")
-        await db.update_task(task_id, status="failed", pid=None)
+        await db.update_task(task_id, status="failed")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="Dispatch error",
@@ -457,9 +469,7 @@ async def dispatch_task(
     elif task["status"] == "needs-review":
         is_resume = True
     elif task["status"] == "working":
-        if task.get("pid") and _is_pid_alive(task["pid"]):
-            raise RuntimeError(f"Task '{task_id}' is already running (PID {task['pid']})")
-        is_resume = True
+        raise RuntimeError(f"Task '{task_id}' is already running")
 
     # Setup worktree
     branch = task["branch"] or task_id
@@ -509,16 +519,21 @@ async def dispatch_task(
     )
 
     # Launch SDK session in background — non-blocking
-    asyncio.create_task(_run_sdk_session(
-        task_id=task_id,
-        prompt=prompt,
-        worktree_path=worktree_path,
-        session_id=session_id,
-        is_resume=is_resume,
-        max_turns=effective_max_turns,
-        max_wall_clock_minutes=effective_max_wall_clock,
-        log_dir=log_dir,
-    ))
+    task_handle = asyncio.create_task(
+        _run_sdk_session(
+            task_id=task_id,
+            prompt=prompt,
+            worktree_path=worktree_path,
+            session_id=session_id,
+            is_resume=is_resume,
+            max_turns=effective_max_turns,
+            max_wall_clock_minutes=effective_max_wall_clock,
+            log_dir=log_dir,
+        ),
+        name=f"sdk-session-{task_id}",
+    )
+    _running_tasks.add(task_handle)
+    task_handle.add_done_callback(_handle_task_exception)
 
     return {
         "task_id": task_id,
@@ -556,12 +571,8 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Kill if still running
-    if task.get("pid") and _is_pid_alive(task["pid"]):
-        _kill_pid(task["pid"])
-
     # Clear session to force new one
-    await db.update_task(task_id, session_id=None, pid=None)
+    await db.update_task(task_id, session_id=None)
 
     # Optionally clean worktree
     if clean and task.get("worktree_path") and os.path.exists(task["worktree_path"]):
@@ -585,10 +596,7 @@ async def cancel_task(task_id: str) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    if task.get("pid") and _is_pid_alive(task["pid"]):
-        _kill_pid(task["pid"])
-
-    await db.update_task(task_id, status="cancelled", pid=None)
+    await db.update_task(task_id, status="cancelled")
     return {"task_id": task_id, "status": "cancelled"}
 
 
@@ -598,40 +606,14 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Kill if still running
-    if task.get("pid") and _is_pid_alive(task["pid"]):
-        _kill_pid(task["pid"])
-
     project = await db.get_project(task["project_id"])
 
     if cleanup and project:
         await cleanup_worktree(project, task, force_delete_branch)
         await db.update_task(
-            task_id, status="completed", pid=None, worktree_path=None,
+            task_id, status="completed", worktree_path=None,
         )
     else:
-        await db.update_task(task_id, status="completed", pid=None)
+        await db.update_task(task_id, status="completed")
 
     return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup}
-
-
-# ---------------------------------------------------------------------------
-# Process Management Helpers
-# ---------------------------------------------------------------------------
-
-def _is_pid_alive(pid: int) -> bool:
-    """Check if a process is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
-def _kill_pid(pid: int):
-    """Send SIGTERM to a process."""
-    try:
-        os.kill(pid, signal.SIGTERM)
-        log.info(f"Sent SIGTERM to PID {pid}")
-    except (OSError, ProcessLookupError):
-        log.info(f"PID {pid} already dead")

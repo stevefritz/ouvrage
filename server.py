@@ -465,10 +465,6 @@ async def _dispatch_tool(name: str, arguments: dict):
         else:
             result["stale"] = False
 
-        # Fallback PID check for legacy/CLI tasks
-        if result.get("pid"):
-            result["pid_alive"] = tasks._is_pid_alive(result["pid"])
-
         # Optional log tail
         if arguments.get("include_log_tail") and result.get("worktree_path"):
             log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
