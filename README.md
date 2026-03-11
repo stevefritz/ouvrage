@@ -41,7 +41,7 @@ This will:
 
 ```bash
 # Install deps
-pip3 install aiosqlite 'mcp[cli]>=1.2.0' uvicorn httpx 'pyjwt[crypto]' claude-agent-sdk
+pip3 install .
 
 # Create directories
 sudo mkdir -p /opt/switchboard/data /work
@@ -89,7 +89,7 @@ Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint 
 
 ### Why Not Docker?
 
-The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. The Dockerfile is preserved for conversation-only deployments that don't need task dispatch.
+The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. Deployment is via `install.sh` (bare metal with systemd).
 
 ## Client Configuration
 
@@ -318,4 +318,4 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 - **Task Engine**: Claude Agent SDK (`claude_agent_sdk`) for dispatching autonomous CC sessions
 - **Worktrees**: Bare git clone + `git worktree add` per task for full isolation
 - **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)
-- **Deployment**: Docker with volume-mounted SQLite for persistence
+- **Deployment**: Bare metal via `install.sh` + systemd

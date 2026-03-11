@@ -4,6 +4,7 @@ import os
 import re
 from datetime import datetime, timezone
 
+import uvicorn
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
@@ -770,7 +771,6 @@ async def main():
     else:
         print("OAuth disabled — no AUTH_ISSUER_URL set (local dev mode)")
 
-    import uvicorn
     config = uvicorn.Config(protected_app, host="0.0.0.0", port=port, log_level="info")
     srv = uvicorn.Server(config)
     await srv.serve()

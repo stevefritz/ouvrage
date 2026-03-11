@@ -47,12 +47,8 @@ cp server.py database.py tasks.py auth.py pyproject.toml "$APP_DIR/"
 # Install Python dependencies
 echo "Installing Python dependencies..."
 apt-get install -y python3-pip >/dev/null 2>&1 || true
-pip3 install --quiet --break-system-packages \
-    aiosqlite 'mcp[cli]>=1.2.0' 'uvicorn>=0.34.0' 'httpx>=0.28.0' \
-    'pyjwt[crypto]>=2.11.0' 'claude-agent-sdk>=0.1.0' 2>/dev/null || \
-    python3 -m pip install --break-system-packages \
-        aiosqlite 'mcp[cli]>=1.2.0' 'uvicorn>=0.34.0' 'httpx>=0.28.0' \
-        'pyjwt[crypto]>=2.11.0' 'claude-agent-sdk>=0.1.0'
+pip3 install --quiet --break-system-packages "$APP_DIR" 2>/dev/null || \
+    python3 -m pip install --break-system-packages "$APP_DIR"
 
 # Migrate existing data if Docker container was running
 DOCKER_NAME="infrastructure-switchboard-1"

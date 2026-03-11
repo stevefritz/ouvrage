@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import time
 from pathlib import Path
 
@@ -76,7 +77,6 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
     # Ensure base directory exists
     os.makedirs(base, exist_ok=True)
     # Ensure worker user owns it
-    import shutil
     shutil.chown(base, user=WORKER_USER, group=WORKER_USER)
 
     # Clone the repo as a bare repo if the base doesn't have .git
