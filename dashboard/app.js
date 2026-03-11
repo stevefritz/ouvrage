@@ -1,5 +1,10 @@
 import { api } from './api.js';
 
+// ── Sanitization guard ──────────────────────────────────────────────────
+const sanitize = typeof DOMPurify !== 'undefined'
+    ? (html) => DOMPurify.sanitize(html)
+    : (html) => html;
+
 // ── State ────────────────────────────────────────────────────────────────
 let pollTimer = null;
 let currentView = null;
@@ -350,7 +355,7 @@ function renderMessages(task) {
         const pinIcon = m.pinned || m._pinned_marker ? '📌 ' : '';
         const type = (m.type || 'note').toUpperCase();
         const time = m.created_at ? new Date(m.created_at + (m.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
-        const contentHtml = DOMPurify.sanitize(marked.parse(m.content || ''));
+        const contentHtml = sanitize(marked.parse(m.content || ''));
         const isLong = (m.content || '').length > 500;
         const collapseId = `msg-${m.id || i}`;
 
