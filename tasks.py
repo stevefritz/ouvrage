@@ -4,15 +4,22 @@ import asyncio
 import json
 import logging
 import os
+import shlex
+import time
 from pathlib import Path
 
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
+    SystemMessage,
+    UserMessage,
     query,
 )
+from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
 import database as db
+import notifications as notify
 
 log = logging.getLogger("switchboard.tasks")
 
@@ -49,7 +56,7 @@ WORKER_USER = "switchboard"
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     """Run a command as the worker user. Returns (stdout, stderr, returncode)."""
     proc = await asyncio.create_subprocess_exec(
-        "su", "-", WORKER_USER, "-c", " ".join(cmd),
+        "su", "-", WORKER_USER, "-c", shlex.join(cmd),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         **kwargs,
     )
@@ -89,7 +96,7 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
     default_branch = project["default_branch"]
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, f"origin/{default_branch}",
+        "-b", branch, worktree_path, default_branch,
     )
     if rc != 0:
         # Branch might already exist, try without -b
@@ -125,7 +132,7 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         log.info(f"Wrote env overrides to {env_path}")
 
     log.info(f"Running setup: {cmd} in {worktree_path}")
-    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"'cd {worktree_path} && {cmd}'")
+    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
     if rc != 0:
         log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
 
@@ -176,9 +183,29 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
 # Prompt Building
 # ---------------------------------------------------------------------------
 
-def _build_task_prompt(project: dict, task: dict, spec_content: str | None, escalation_criteria: str | None = None) -> str:
+def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
+                       checklist: list[dict] | None = None,
+                       escalation_criteria: str | None = None,
+                       review_feedback: list[dict] | None = None) -> str:
     """Build the prompt CC receives when dispatched."""
     parts = []
+
+    # If this is a retry with review feedback, lead with that
+    if review_feedback:
+        parts.append("# ⚠️ REVISION REQUESTED")
+        parts.append("")
+        parts.append("This task was previously completed but needs revisions based on review feedback.")
+        parts.append("**Your primary job is to address the feedback below.** The original spec is included")
+        parts.append("for context, but focus on the reviewer's requested changes.")
+        parts.append("")
+        parts.append("## Review Feedback")
+        for msg in review_feedback:
+            author = msg.get("author", "reviewer")
+            title = msg.get("title", "")
+            header = f"### {title}" if title else f"### From {author}"
+            parts.append(header)
+            parts.append(msg.get("content", ""))
+            parts.append("")
 
     parts.append(f"# Task: {task['goal']}")
     parts.append(f"Project: {project['id']} | Branch: {task['branch']}")
@@ -186,18 +213,27 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None, esca
     parts.append("")
 
     if spec_content:
-        parts.append("## Spec")
+        parts.append("## Original Spec")
         parts.append(spec_content)
+        parts.append("")
+
+    if checklist:
+        parts.append("## Checklist")
+        parts.append("Mark items done as you complete them using `mcp__switchboard__update_task_checklist`.")
+        parts.append("")
+        for item in checklist:
+            status = "✅" if item.get("done") else "⬜"
+            parts.append(f"- {status} (item_id={item['id']}) {item['item']}")
         parts.append("")
 
     parts.append("## Instructions")
     parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
     parts.append("- Use the switchboard MCP tools to report progress:")
-    parts.append(f"  - Update checklist: mcp__switchboard__update_task_checklist(item_id=N, done=true)")
-    parts.append(f"  - Update phase: mcp__switchboard__update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')")
-    parts.append(f"  - Post progress: mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')")
-    parts.append(f"  - Post question (will pause session): mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')")
-    parts.append("- Update checklist items as you complete them.")
+    parts.append(f"  - Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
+    parts.append(f"  - Update phase: `mcp__switchboard__update_task_phase(task_id='{task['id']}', phase='implementing', detail='...')`")
+    parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')`")
+    parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')`")
+    parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
     parts.append("- When done, commit your work and post a result summary as type='result'.")
     parts.append("")
 
@@ -306,16 +342,90 @@ async def _run_sdk_session(
     try:
         result_msg = None
         timeout_seconds = max_wall_clock_minutes * 60
+        session_log_path = log_dir / "session.jsonl"
+
+        def _log_message(msg):
+            """Write a message to the session JSONL log."""
+            entry = {"timestamp": db.now_iso(), "type": type(msg).__name__}
+            try:
+                if isinstance(msg, SystemMessage):
+                    entry["subtype"] = getattr(msg, "subtype", None)
+                elif isinstance(msg, AssistantMessage):
+                    entry["content"] = []
+                    for block in (msg.content or []):
+                        if isinstance(block, TextBlock):
+                            entry["content"].append({"type": "text", "text": block.text[:2000]})
+                        elif isinstance(block, ToolUseBlock):
+                            entry["content"].append({
+                                "type": "tool_use", "name": block.name,
+                                "input": str(block.input)[:1000],
+                            })
+                    entry["stop_reason"] = getattr(msg, "stop_reason", None)
+                    entry["model"] = getattr(msg, "model", None)
+                elif isinstance(msg, UserMessage):
+                    entry["content"] = []
+                    content = msg.content
+                    if isinstance(content, str):
+                        entry["content"].append({"type": "text", "text": content[:2000]})
+                    else:
+                        for block in (content or []):
+                            if isinstance(block, ToolResultBlock):
+                                entry["content"].append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.tool_use_id,
+                                    "preview": str(block.content or "")[:500],
+                                    "is_error": getattr(block, "is_error", None),
+                                })
+                elif isinstance(msg, ResultMessage):
+                    entry["subtype"] = getattr(msg, "subtype", None)
+                    entry["result"] = (msg.result or "")[:1000]
+                    entry["num_turns"] = msg.num_turns
+                    entry["session_id"] = getattr(msg, "session_id", None)
+                    entry["cost_usd"] = msg.total_cost_usd
+                    entry["duration_ms"] = getattr(msg, "duration_ms", None)
+                    entry["is_error"] = getattr(msg, "is_error", None)
+                with open(session_log_path, "a") as f:
+                    f.write(json.dumps(entry) + "\n")
+            except Exception as e:
+                log.warning(f"Failed to log message: {e}")
 
         async def _run():
             nonlocal result_msg
+            start_time = time.monotonic()
+            last_heartbeat = start_time
+            heartbeat_interval = 90  # seconds
+            turn_count = 0
+            running_cost = 0.0
+            last_tool_name = None
+
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
             async for message in query(prompt=actual_prompt, options=options):
+                _log_message(message)
+
+                if isinstance(message, AssistantMessage):
+                    turn_count += 1
+                    # Track last tool used for heartbeat context
+                    for block in (message.content or []):
+                        if isinstance(block, ToolUseBlock):
+                            last_tool_name = block.name
+
                 if isinstance(message, ResultMessage):
                     result_msg = message
                     # Capture session_id from first dispatch
                     if message.session_id:
                         await db.update_task(task_id, session_id=message.session_id)
+                    running_cost = message.total_cost_usd or 0
+
+                # Heartbeat: post to Slack every N seconds
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_interval:
+                    last_heartbeat = now
+                    await notify.task_heartbeat(
+                        task_id=task_id,
+                        turns=turn_count,
+                        elapsed_s=now - start_time,
+                        last_tool=last_tool_name,
+                    )
 
                 # Update last_activity on each message
                 await db.update_task(task_id, last_activity=db.now_iso())
@@ -330,6 +440,10 @@ async def _run_sdk_session(
                 title="Wall clock timeout",
                 content=f"Task hit the {max_wall_clock_minutes} minute wall clock limit. "
                         "Work is preserved in the worktree. Resume or adjust limits.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Wall clock timeout ({max_wall_clock_minutes}m). Work preserved in worktree.",
             )
             with open(log_dir / "dispatch.log", "a") as f:
                 f.write(f"[{db.now_iso()}] Wall clock timeout ({max_wall_clock_minutes}m)\n")
@@ -349,6 +463,12 @@ async def _run_sdk_session(
                             f"Turns: {result_msg.num_turns}\n\n"
                             f"Result: {result_msg.result or '(no result)'}",
                 )
+                await notify.task_failed(
+                    task_id=task_id,
+                    error=result_msg.result or result_msg.stop_reason or "Unknown error",
+                    turns=result_msg.num_turns,
+                    cost_usd=result_msg.total_cost_usd or 0,
+                )
             else:
                 await db.update_task(task_id, status="completed")
                 await db.post_task_message(
@@ -360,6 +480,17 @@ async def _run_sdk_session(
                             f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
                             f"Result: {(result_msg.result or '(no result)')[:500]}",
                 )
+                checklist = await db.get_checklist(task_id)
+                done = sum(1 for c in checklist if c.get("done"))
+                await notify.task_completed(
+                    task_id=task_id,
+                    turns=result_msg.num_turns,
+                    duration_s=(result_msg.duration_ms or 0) / 1000,
+                    cost_usd=result_msg.total_cost_usd or 0,
+                    checklist_done=done,
+                    checklist_total=len(checklist),
+                    result_preview=result_msg.result,
+                )
         else:
             # No result message — shouldn't happen but handle gracefully
             await db.update_task(task_id, status="needs-review")
@@ -367,6 +498,9 @@ async def _run_sdk_session(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Session ended without result",
                 content="CC session ended but no ResultMessage was received. Check logs.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id, reason="Session ended without a ResultMessage. Check logs.",
             )
 
     except Exception as e:
@@ -377,6 +511,7 @@ async def _run_sdk_session(
             title="Dispatch error",
             content=f"SDK session raised an exception:\n\n```\n{e}\n```",
         )
+        await notify.task_failed(task_id=task_id, error=str(e))
         with open(log_dir / "dispatch.log", "a") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
     finally:
@@ -434,6 +569,7 @@ async def dispatch_task(
     phase: str = "analysis", max_turns: int | None = None,
     max_wall_clock: int | None = None,
     escalation_criteria: str | None = None,
+    review_feedback: list[dict] | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -471,9 +607,12 @@ async def dispatch_task(
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
 
-    # Setup worktree
-    branch = task["branch"] or task_id
-    worktree_path = await setup_worktree(project, task_id, branch)
+    # Setup worktree — use short name (after project prefix) for branch and dir
+    short_name = task_id.split("/")[-1] if "/" in task_id else task_id
+    branch = task["branch"] or short_name
+    if task["branch"] != branch:
+        await db.update_task(task_id, branch=branch)
+    worktree_path = await setup_worktree(project, short_name, branch)
 
     # Run setup command
     await run_setup_command(project, worktree_path)
@@ -495,7 +634,10 @@ async def dispatch_task(
     if pinned:
         spec_content = pinned["content"]
 
-    prompt = _build_task_prompt(project, task, spec_content, escalation_criteria)
+    # Fetch checklist items with IDs so CC knows how to update them
+    checklist_items = await db.get_checklist(task_id)
+
+    prompt = _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
 
     # Get session_id for resume
     session_id = task.get("session_id") if is_resume else None
@@ -535,6 +677,16 @@ async def dispatch_task(
     _running_tasks.add(task_handle)
     task_handle.add_done_callback(_handle_task_exception)
 
+    # Notify Slack
+    checklist_items = checklist_items or []
+    await notify.task_dispatched(
+        task_id=task_id, goal=goal, project_id=project_id,
+        checklist_total=len(checklist_items),
+        checklist=checklist_items,
+        spec=spec_content,
+        resumed=is_resume,
+    )
+
     return {
         "task_id": task_id,
         "status": "working",
@@ -566,7 +718,11 @@ async def resume_task(task_id: str) -> dict:
 
 
 async def retry_task(task_id: str, clean: bool = False) -> dict:
-    """Start a fresh session. Optionally clean worktree."""
+    """Start a fresh session. Optionally clean worktree.
+
+    If review/feedback messages were posted after the last CC result,
+    they are injected into the prompt so CC knows to apply revisions.
+    """
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
@@ -582,11 +738,30 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
         )
         await proc.communicate()
 
+    # Find review feedback posted after the last CC result message.
+    # These are messages the user posted after task completion — CC needs
+    # to treat them as revision instructions, not just context.
+    review_feedback = None
+    thread = await db.read_task_messages(task_id)
+    messages = thread.get("messages", [])
+    last_result_idx = None
+    for i, msg in enumerate(messages):
+        if msg.get("author") == "cc-worker" and msg.get("type") == "result":
+            last_result_idx = i
+    if last_result_idx is not None:
+        feedback = [
+            m for m in messages[last_result_idx + 1:]
+            if m.get("author") != "dispatcher"  # Skip system status messages
+        ]
+        if feedback:
+            review_feedback = feedback
+
     return await dispatch_task(
         project_id=task["project_id"],
         task_id=task_id,
         goal=task["goal"],
-        phase="analysis",
+        phase="revisions" if review_feedback else "analysis",
+        review_feedback=review_feedback,
     )
 
 
