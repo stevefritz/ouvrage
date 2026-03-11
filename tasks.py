@@ -6,7 +6,6 @@ import logging
 import os
 import pwd
 import shlex
-import shutil
 import time
 from pathlib import Path
 
@@ -88,10 +87,8 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
         log.info(f"Worktree already exists: {worktree_path}")
         return worktree_path
 
-    # Ensure base directory exists
+    # Ensure base directory exists (worker user should already own it)
     os.makedirs(base, exist_ok=True)
-    # Ensure worker user owns it
-    shutil.chown(base, user=WORKER_USER, group=WORKER_USER)
 
     # Clone the repo as a bare repo if the base doesn't have .git
     bare_path = os.path.join(base, ".bare")
@@ -289,14 +286,15 @@ def _build_resume_prompt(task: dict) -> str:
 # Logging
 # ---------------------------------------------------------------------------
 
-def _setup_log_dir(worktree_path: str) -> Path:
+async def _setup_log_dir(worktree_path: str) -> Path:
     """Create .switchboard log directory in the worktree.
 
-    Group-writable so both the service user (switchboard-svc) and
-    the CC worker user (switchboard) can write logs here.
+    Created as the worker user (who owns the worktree), with group-write
+    so the service user can also write dispatch/session logs.
     """
     log_dir = Path(worktree_path) / ".switchboard"
-    log_dir.mkdir(exist_ok=True, mode=0o775)
+    await _run_as_worker("mkdir", "-p", str(log_dir))
+    await _run_as_worker("chmod", "775", str(log_dir))
     return log_dir
 
 
@@ -340,9 +338,11 @@ async def _run_sdk_session(
     os.umask(old_umask)
 
     # Build SDK options — run CC as restricted 'switchboard' user
+    worker_home = pwd.getpwnam(WORKER_USER).pw_dir
     options = ClaudeAgentOptions(
         user="switchboard",
         cwd=str(worktree_path),
+        env={"HOME": worker_home},
         allowed_tools=[
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "mcp__switchboard__update_task_checklist",
@@ -651,7 +651,7 @@ async def dispatch_task(
     await run_setup_command(project, worktree_path)
 
     # Setup logging
-    log_dir = _setup_log_dir(worktree_path)
+    log_dir = await _setup_log_dir(worktree_path)
 
     # Resolve limits
     effective_max_turns = _resolve_limit(
