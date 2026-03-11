@@ -428,7 +428,7 @@ async def _handle_update_project(arguments):
     project_id = arguments.pop("id")
     if not arguments:
         return {"error": "No fields to update"}
-    return await db.update_project(project_id, **fields)
+    return await db.update_project(project_id, **arguments)
 
 async def _handle_conversations(arguments):
     return await db.list_conversations(
