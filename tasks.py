@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import pwd
 import shlex
 import shutil
 import time
@@ -54,11 +55,24 @@ def _resolve_limit(task_val, project_val, global_default):
 WORKER_USER = "switchboard"
 
 
+def _get_worker_ids() -> tuple[int, int]:
+    """Get uid/gid for the worker user."""
+    pw = pwd.getpwnam(WORKER_USER)
+    return pw.pw_uid, pw.pw_gid
+
+
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
-    """Run a command as the worker user. Returns (stdout, stderr, returncode)."""
+    """Run a command as the worker user via setuid (requires CAP_SETUID)."""
+    uid, gid = _get_worker_ids()
+
+    def _demote():
+        os.setgid(gid)
+        os.setuid(uid)
+
     proc = await asyncio.create_subprocess_exec(
-        "su", "-", WORKER_USER, "-c", shlex.join(cmd),
+        *cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        preexec_fn=_demote,
         **kwargs,
     )
     stdout, stderr = await proc.communicate()
@@ -108,6 +122,19 @@ async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
             raise RuntimeError(f"git worktree add failed: {stderr.decode()}")
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
+
+    # Ensure the default branch and all remotes are visible from the worktree.
+    # Bare-repo worktrees have a narrow fetch refspec by default, which makes
+    # `git merge main` fail because CC can't resolve the branch.
+    await _run_as_worker(
+        "git", "-C", worktree_path, "config",
+        "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
+    )
+    await _run_as_worker(
+        "git", "-C", worktree_path, "fetch", "origin",
+        default_branch + ":" + default_branch,
+    )
+
     return worktree_path
 
 
@@ -263,9 +290,13 @@ def _build_resume_prompt(task: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _setup_log_dir(worktree_path: str) -> Path:
-    """Create .switchboard log directory in the worktree."""
+    """Create .switchboard log directory in the worktree.
+
+    Group-writable so both the service user (switchboard-svc) and
+    the CC worker user (switchboard) can write logs here.
+    """
     log_dir = Path(worktree_path) / ".switchboard"
-    log_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(exist_ok=True, mode=0o775)
     return log_dir
 
 
@@ -304,7 +335,9 @@ async def _run_sdk_session(
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     stderr_path = log_dir / "cc-stderr.log"
+    old_umask = os.umask(0o002)  # Files group-writable (shared switchboard group)
     stderr_log = open(stderr_path, "a")
+    os.umask(old_umask)
 
     # Build SDK options — run CC as restricted 'switchboard' user
     options = ClaudeAgentOptions(
