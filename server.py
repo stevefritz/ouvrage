@@ -8,7 +8,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
 import auth
+import dashboard_api
 import database as db
+import notifications as notify
 import tasks
 
 server = Server("switchboard")
@@ -162,6 +164,27 @@ PROJECT_TOOLS = [
         },
     ),
     Tool(
+        name="update_project",
+        description="Update a project's configuration. Only provided fields are changed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Project ID"},
+                "repo": {"type": "string", "description": "Git repo URL"},
+                "default_branch": {"type": "string", "description": "Default branch name"},
+                "working_dir": {"type": "string", "description": "Base path for worktrees"},
+                "setup_command": {"type": ["string", "null"], "description": "Run after worktree creation"},
+                "teardown_command": {"type": ["string", "null"], "description": "Run on cleanup"},
+                "test_command": {"type": ["string", "null"], "description": "Hint for CC"},
+                "env_overrides": {"type": ["object", "null"], "description": "Key-value env vars for .env.testing"},
+                "max_turns": {"type": ["integer", "null"], "description": "Project-level turn limit"},
+                "max_wall_clock": {"type": ["integer", "null"], "description": "Project-level wall clock limit (minutes)"},
+                "claude_md_path": {"type": ["string", "null"], "description": "Path to CLAUDE.md relative to repo root"},
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
         name="list_projects",
         description="List all registered projects.",
         inputSchema={"type": "object", "properties": {}},
@@ -205,7 +228,7 @@ TASK_TOOLS = [
     ),
     Tool(
         name="retry_task",
-        description="Start a fresh CC session for a task. Optionally clean the worktree (git checkout .).",
+        description="Start a fresh CC session for a task. If review feedback was posted (via post_task_message) after the last CC result, it is automatically injected as revision instructions. Workflow: post feedback with type='review', then retry. Optionally clean the worktree (git checkout .).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -397,6 +420,14 @@ async def _handle_pin(arguments):
     return await db.pin_message(arguments["message_id"])
 
 
+async def _handle_update_project(arguments):
+    project_id = arguments.pop("id")
+    # Filter out None values that weren't explicitly provided
+    fields = {k: v for k, v in arguments.items() if k != "id"}
+    if not fields:
+        return {"error": "No fields to update"}
+    return await db.update_project(project_id, **fields)
+
 async def _handle_conversations(arguments):
     return await db.list_conversations(
         project=arguments.get("project"),
@@ -434,9 +465,13 @@ async def _handle_list_projects(arguments):
 
 
 async def _handle_dispatch_task(arguments):
+    # Auto-prefix task ID with project to avoid global collisions
+    project_id = arguments["project_id"]
+    raw_id = arguments["id"]
+    task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
     return await tasks.dispatch_task(
-        project_id=arguments["project_id"],
-        task_id=arguments["id"],
+        project_id=project_id,
+        task_id=task_id,
         goal=arguments["goal"],
         spec=arguments.get("spec"),
         checklist=arguments.get("checklist"),
@@ -445,7 +480,6 @@ async def _handle_dispatch_task(arguments):
         max_wall_clock=arguments.get("max_wall_clock"),
         escalation_criteria=arguments.get("escalation_criteria"),
     )
-
 
 async def _handle_resume_task(arguments):
     return await tasks.resume_task(arguments["task_id"])
@@ -502,10 +536,21 @@ async def _handle_list_tasks(arguments):
 
 
 async def _handle_update_task_checklist(arguments):
-    return await db.update_checklist_item(
+    result = await db.update_checklist_item(
         item_id=arguments["item_id"],
         done=arguments["done"],
     )
+    # Notify on checklist progress
+    if arguments.get("done") and result.get("task_id"):
+        checklist = await db.get_checklist(result["task_id"])
+        done_count = sum(1 for c in checklist if c.get("done"))
+        await notify.checklist_progress(
+            task_id=result["task_id"],
+            item_text=result.get("item", ""),
+            done=done_count,
+            total=len(checklist),
+        )
+    return result
 
 
 async def _handle_update_task_phase(arguments):
@@ -515,11 +560,16 @@ async def _handle_update_task_phase(arguments):
     if "detail" in arguments:
         fields["phase"] = f"{arguments.get('phase', 'working')}: {arguments['detail']}"
     fields["last_activity"] = db.now_iso()
-    return await db.update_task(arguments["task_id"], **fields)
+    result = await db.update_task(arguments["task_id"], **fields)
+    await notify.task_phase_changed(
+        task_id=arguments["task_id"],
+        phase=fields.get("phase", "working"),
+    )
+    return result
 
 
 async def _handle_post_task_message(arguments):
-    return await db.post_task_message(
+    result = await db.post_task_message(
         task_id=arguments["task_id"],
         author=arguments["author"],
         content=arguments["content"],
@@ -527,6 +577,21 @@ async def _handle_post_task_message(arguments):
         title=arguments.get("title"),
         pinned=arguments.get("pinned", False),
     )
+    # Notify Slack on progress, result, and question messages
+    msg_type = arguments.get("type", "")
+    if msg_type == "question":
+        await notify.task_question(
+            task_id=arguments["task_id"],
+            question=arguments["content"],
+        )
+    elif msg_type in ("progress", "result"):
+        await notify.task_progress(
+            task_id=arguments["task_id"],
+            title=arguments.get("title"),
+            content=arguments["content"],
+            msg_type=msg_type,
+        )
+    return result
 
 
 async def _handle_read_task_messages(arguments):
@@ -551,6 +616,7 @@ TOOL_HANDLERS = {
     # Project tools
     "create_project": _handle_create_project,
     "get_project": _handle_get_project,
+    "update_project": _handle_update_project,
     "list_projects": _handle_list_projects,
     # Task tools
     "dispatch_task": _handle_dispatch_task,
@@ -572,6 +638,53 @@ async def _dispatch_tool(name: str, arguments: dict):
     if not handler:
         raise ValueError(f"Unknown tool: {name}")
     return await handler(arguments)
+
+
+_DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
+_MIME_TYPES = {
+    ".html": "text/html", ".js": "application/javascript",
+    ".css": "text/css", ".json": "application/json",
+    ".svg": "image/svg+xml", ".png": "image/png",
+}
+
+
+async def _serve_dashboard(scope, send):
+    """Serve static files from dashboard/, with SPA fallback to index.html."""
+    path = scope["path"]
+    # Strip /dashboard prefix to get file path
+    file_path = path[len("/dashboard"):].lstrip("/")
+    if not file_path:
+        file_path = "index.html"
+
+    full_path = os.path.join(_DASHBOARD_DIR, file_path)
+
+    # Security: prevent path traversal
+    full_path = os.path.realpath(full_path)
+    if not full_path.startswith(os.path.realpath(_DASHBOARD_DIR)):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+        return
+
+    # SPA fallback: if file doesn't exist, serve index.html
+    if not os.path.isfile(full_path):
+        full_path = os.path.join(_DASHBOARD_DIR, "index.html")
+
+    if not os.path.isfile(full_path):
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b"Dashboard not found"})
+        return
+
+    ext = os.path.splitext(full_path)[1]
+    content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+
+    with open(full_path, "rb") as f:
+        body = f.read()
+
+    await send({
+        "type": "http.response.start", "status": 200,
+        "headers": [[b"content-type", content_type.encode()]],
+    })
+    await send({"type": "http.response.body", "body": body})
 
 
 async def main():
@@ -609,6 +722,10 @@ async def main():
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
             await session_manager.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard/api/"):
+            await dashboard_api.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard"):
+            await _serve_dashboard(scope, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})
