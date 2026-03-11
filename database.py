@@ -81,7 +81,6 @@ async def init_db():
                 branch TEXT,
                 worktree_path TEXT,
                 session_id TEXT,
-                pid INTEGER,
                 max_turns INTEGER,
                 max_wall_clock INTEGER,
                 total_input_tokens INTEGER DEFAULT 0,
@@ -563,7 +562,8 @@ async def list_tasks(project_id: str | None = None, status: str | None = None) -
         query = f"""
             SELECT t.*,
                 (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id) as checklist_total,
-                (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id AND done = TRUE) as checklist_done
+                (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id AND done = TRUE) as checklist_done,
+                (SELECT ref FROM task_artifacts WHERE task_id = t.id AND type = 'pr_url' LIMIT 1) as pr_url
             FROM tasks t
             {where}
             ORDER BY t.updated_at DESC

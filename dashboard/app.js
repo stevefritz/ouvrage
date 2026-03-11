@@ -43,7 +43,8 @@ function route() {
 // ── Utilities ────────────────────────────────────────────────────────────
 function relativeTime(iso) {
     if (!iso) return '—';
-    const diff = (Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 1000;
+    const diff = Math.max(0, (Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 1000);
+    if (diff < 5) return 'just now';
     if (diff < 60) return `${Math.floor(diff)}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -80,11 +81,24 @@ function actionButtons(task) {
     if (task.status === 'failed' || task.status === 'cancelled') {
         btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
     }
+    if (task.status === 'completed') {
+        btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
+        btns.push(`<button onclick="window._action('close','${task.id}')" class="px-2 py-1 text-xs rounded bg-slate-500/20 text-slate-400 hover:bg-slate-500/30">Close</button>`);
+    }
     if (task.status === 'needs-review') {
         btns.push(`<button onclick="window._action('resume','${task.id}')" class="px-2 py-1 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">Resume</button>`);
+        btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
+        btns.push(`<button onclick="window._action('cancel','${task.id}')" class="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">Cancel</button>`);
     }
     return btns.join(' ');
 }
+
+function prUrlBadge(task) {
+    const prUrl = task.pr_url || (task.artifacts && task.artifacts.find(a => a.type === 'pr_url')?.ref);
+    if (!prUrl) return '';
+    return `<a href="${escapeHtml(prUrl)}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">PR ↗</a>`;
+}
+
 
 function escapeHtml(str) {
     const div = document.createElement('div');
@@ -98,12 +112,16 @@ function stopPolling() {
 
 // ── Actions ──────────────────────────────────────────────────────────────
 window._action = async (action, taskId) => {
-    const labels = { cancel: 'Cancel', retry: 'Retry', resume: 'Resume' };
-    if (!confirm(`${labels[action]} task "${taskId}"?`)) return;
+    const labels = { cancel: 'Cancel', retry: 'Retry', resume: 'Resume', close: 'Close' };
+    const msg = action === 'close'
+        ? `Close task "${taskId}"? This will clean up the worktree and branch.`
+        : `${labels[action]} task "${taskId}"?`;
+    if (!confirm(msg)) return;
     try {
         if (action === 'cancel') await api.cancelTask(taskId);
         else if (action === 'retry') await api.retryTask(taskId);
         else if (action === 'resume') await api.resumeTask(taskId);
+        else if (action === 'close') await api.closeTask(taskId);
         route(); // Refresh current view
     } catch (e) {
         alert(`Error: ${e.message}`);
@@ -134,7 +152,10 @@ async function showBoard(params = {}) {
                     onclick="window._navigate('#/tasks/${t.id}')">
                     <td class="p-3">${statusBadge(t.status)}</td>
                     <td class="p-3">
-                        <div class="font-mono text-sm text-slate-200">${escapeHtml(t.id)}</div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-mono text-sm text-slate-200">${escapeHtml(t.id)}</span>
+                            ${t.pr_url ? `<a href="${escapeHtml(t.pr_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30" title="View PR">PR</a>` : ''}
+                        </div>
                         <div class="text-sm text-slate-400 truncate max-w-md">${escapeHtml(t.goal)}</div>
                         ${t.phase ? `<div class="text-xs text-slate-500 mt-0.5">${escapeHtml(t.phase)}</div>` : ''}
                     </td>
@@ -236,6 +257,7 @@ function renderDetailHeader(task) {
                     <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
                     <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
                     ${task.phase ? `<span>Phase: <span class="text-slate-300">${escapeHtml(task.phase)}</span></span>` : ''}
+                    ${prUrlBadge(task)}
                 </div>
             </div>
             <div class="flex gap-2 ml-4">${actionButtons(task)}</div>
