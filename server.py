@@ -344,6 +344,31 @@ TASK_TOOLS = [
             "required": ["task_id"],
         },
     ),
+    Tool(
+        name="get_session_log",
+        description="Get the session log (JSONL) for a task — shows CC's tool calls, text output, and results.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "tail": {"type": "integer", "description": "Return only the last N entries. Default 50.", "default": 50},
+                "types": {"type": "string", "description": "Comma-separated type filter, e.g. 'text,tool,result'. Omit for all types."},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="get_dispatch_log",
+        description="Get the dispatch log for a task — shows dispatch/completion metadata, cost, tokens, timing.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "tail": {"type": "integer", "description": "Return only the last N lines. Default 20.", "default": 20},
+            },
+            "required": ["task_id"],
+        },
+    ),
 ]
 
 TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS
@@ -611,6 +636,79 @@ async def _handle_read_task_messages(arguments):
     )
 
 
+async def _handle_get_session_log(arguments):
+    task = await db.get_task(arguments["task_id"])
+    if not task:
+        return {"error": f"Task '{arguments['task_id']}' not found"}
+    worktree_path = task.get("worktree_path")
+    if not worktree_path:
+        return {"error": "Task has no worktree path (not dispatched or already cleaned up)"}
+
+    log_path = os.path.join(worktree_path, ".switchboard", "session.jsonl")
+    if not os.path.isfile(log_path):
+        return {"entries": [], "message": "No session log file found"}
+
+    tail = arguments.get("tail", 50)
+    type_filter = None
+    if arguments.get("types"):
+        type_filter = {t.strip() for t in arguments["types"].split(",")}
+
+    entries = []
+    try:
+        with open(log_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if type_filter and entry.get("type") not in type_filter:
+                    continue
+                entries.append(entry)
+    except Exception as e:
+        return {"error": f"Failed to read session log: {e}"}
+
+    # Apply tail
+    entries = entries[-tail:]
+
+    # Truncate large content fields to keep response size reasonable
+    for entry in entries:
+        if isinstance(entry.get("content"), list):
+            for block in entry["content"]:
+                for key in ("text", "preview", "input"):
+                    if isinstance(block.get(key), str) and len(block[key]) > 500:
+                        block[key] = block[key][:500] + "... [truncated]"
+        if isinstance(entry.get("result"), str) and len(entry["result"]) > 500:
+            entry["result"] = entry["result"][:500] + "... [truncated]"
+
+    return {"entries": entries, "count": len(entries)}
+
+
+async def _handle_get_dispatch_log(arguments):
+    task = await db.get_task(arguments["task_id"])
+    if not task:
+        return {"error": f"Task '{arguments['task_id']}' not found"}
+    worktree_path = task.get("worktree_path")
+    if not worktree_path:
+        return {"error": "Task has no worktree path (not dispatched or already cleaned up)"}
+
+    log_path = os.path.join(worktree_path, ".switchboard", "dispatch.log")
+    if not os.path.isfile(log_path):
+        return {"text": "", "message": "No dispatch log file found"}
+
+    tail = arguments.get("tail", 20)
+    try:
+        with open(log_path) as f:
+            lines = f.readlines()
+        text = "".join(lines[-tail:])
+    except Exception as e:
+        return {"error": f"Failed to read dispatch log: {e}"}
+
+    return {"text": text}
+
+
 TOOL_HANDLERS = {
     # Conversation tools
     "board": _handle_board,
@@ -638,6 +736,8 @@ TOOL_HANDLERS = {
     "update_task_phase": _handle_update_task_phase,
     "post_task_message": _handle_post_task_message,
     "read_task_messages": _handle_read_task_messages,
+    "get_session_log": _handle_get_session_log,
+    "get_dispatch_log": _handle_get_dispatch_log,
 }
 
 

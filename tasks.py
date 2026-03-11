@@ -350,6 +350,8 @@ async def _run_sdk_session(
             "mcp__switchboard__post_task_message",
             "mcp__switchboard__read_task_messages",
             "mcp__switchboard__get_task_status",
+            "mcp__switchboard__get_session_log",
+            "mcp__switchboard__get_dispatch_log",
         ],
         permission_mode="bypassPermissions",
         max_turns=max_turns,

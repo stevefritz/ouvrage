@@ -3,6 +3,7 @@ import { api } from './api.js';
 // ── State ────────────────────────────────────────────────────────────────
 let pollTimer = null;
 let currentView = null;
+let currentTaskId = null;
 
 // ── Router ───────────────────────────────────────────────────────────────
 function getRoute() {
@@ -232,6 +233,17 @@ async function showDetail(taskId) {
     const task = await api.getTask(taskId).catch(() => null);
     if (task && task.status === 'working') {
         pollTimer = setInterval(render, 5000);
+    }
+
+    // Reset log panels if task changed
+    if (currentTaskId !== taskId) {
+        currentTaskId = taskId;
+        const sessionPanel = document.getElementById('session-log-content');
+        const dispatchPanel = document.getElementById('dispatch-log-content');
+        sessionPanel.innerHTML = '';
+        sessionPanel.classList.add('hidden');
+        dispatchPanel.innerHTML = '';
+        dispatchPanel.classList.add('hidden');
     }
 
     // Setup session/dispatch log toggles
