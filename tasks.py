@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import signal
 from pathlib import Path
 
@@ -37,7 +38,7 @@ WORKER_USER = "switchboard"
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     """Run a command as the worker user. Returns (stdout, stderr, returncode)."""
     proc = await asyncio.create_subprocess_exec(
-        "su", "-", WORKER_USER, "-c", " ".join(cmd),
+        "su", "-", WORKER_USER, "-c", shlex.join(cmd),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         **kwargs,
     )
@@ -113,7 +114,7 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         log.info(f"Wrote env overrides to {env_path}")
 
     log.info(f"Running setup: {cmd} in {worktree_path}")
-    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"'cd {worktree_path} && {cmd}'")
+    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
     if rc != 0:
         log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
 

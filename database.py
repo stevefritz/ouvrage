@@ -490,6 +490,14 @@ async def get_task(id: str) -> dict | None:
         await db.close()
 
 
+TASK_MUTABLE_FIELDS = {
+    "status", "phase", "branch", "worktree_path", "session_id", "pid",
+    "max_turns", "max_wall_clock",
+    "total_input_tokens", "total_output_tokens", "total_cost_usd",
+    "dispatch_count", "last_activity", "updated_at",
+}
+
+
 async def update_task(id: str, **fields) -> dict:
     db = await get_db()
     try:
@@ -497,6 +505,8 @@ async def update_task(id: str, **fields) -> dict:
         if not rows:
             raise ValueError(f"Task '{id}' not found")
 
+        # Filter to allowed fields to prevent SQL column injection
+        fields = {k: v for k, v in fields.items() if k in TASK_MUTABLE_FIELDS}
         fields["updated_at"] = now_iso()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [id]
