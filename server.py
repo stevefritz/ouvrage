@@ -427,11 +427,9 @@ async def _handle_pin(arguments):
 
 async def _handle_update_project(arguments):
     project_id = arguments.pop("id")
-    # Filter out None values that weren't explicitly provided
-    fields = {k: v for k, v in arguments.items() if k != "id"}
-    if not fields:
+    if not arguments:
         return {"error": "No fields to update"}
-    return await db.update_project(project_id, **fields)
+    return await db.update_project(project_id, **arguments)
 
 async def _handle_conversations(arguments):
     return await db.list_conversations(
@@ -560,10 +558,10 @@ async def _handle_update_task_checklist(arguments):
 
 async def _handle_update_task_phase(arguments):
     fields = {}
-    if "phase" in arguments:
-        fields["phase"] = arguments["phase"]
     if "detail" in arguments:
         fields["phase"] = f"{arguments.get('phase', 'working')}: {arguments['detail']}"
+    elif "phase" in arguments:
+        fields["phase"] = arguments["phase"]
     fields["last_activity"] = db.now_iso()
     result = await db.update_task(arguments["task_id"], **fields)
     await notify.task_phase_changed(
@@ -694,29 +692,6 @@ async def _serve_dashboard(scope, send):
         "type": "http.response.start", "status": 200,
         "headers": [[b"content-type", content_type.encode()]],
     })
-    await send({"type": "http.response.body", "body": body})
-
-
-async def _serve_static(send, file_path, content_type=None):
-    """Serve a static file from the project directory."""
-    import mimetypes
-    full_path = os.path.join(os.path.dirname(__file__) or ".", file_path)
-    # Prevent directory traversal
-    full_path = os.path.realpath(full_path)
-    base_dir = os.path.realpath(os.path.dirname(__file__) or ".")
-    if not full_path.startswith(base_dir):
-        await send({"type": "http.response.start", "status": 403, "headers": [[b"content-type", b"text/plain"]]})
-        await send({"type": "http.response.body", "body": b"Forbidden"})
-        return
-    if not os.path.isfile(full_path):
-        await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
-        await send({"type": "http.response.body", "body": b"Not Found"})
-        return
-    if not content_type:
-        content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
-    with open(full_path, "rb") as f:
-        body = f.read()
-    await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", content_type.encode()]]})
     await send({"type": "http.response.body", "body": body})
 
 

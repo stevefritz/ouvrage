@@ -443,8 +443,7 @@ async def get_project(id: str) -> dict | None:
 
 
 async def update_project(project_id: str, **fields) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
         if not rows:
             raise ValueError(f"Project '{project_id}' not found")
@@ -462,8 +461,6 @@ async def update_project(project_id: str, **fields) -> dict:
         if p.get("env_overrides"):
             p["env_overrides"] = json.loads(p["env_overrides"])
         return p
-    finally:
-        await db.close()
 
 
 async def list_projects() -> list[dict]:
@@ -570,6 +567,27 @@ async def list_tasks(project_id: str | None = None, status: str | None = None) -
         """
         rows = await db.execute_fetchall(query, params)
         return [dict(r) for r in rows]
+
+
+async def get_project_task_counts() -> dict[str, dict]:
+    """Get task counts and total cost per project in a single query."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("""
+            SELECT project_id,
+                   COUNT(*) as total_tasks,
+                   SUM(CASE WHEN status = 'working' THEN 1 ELSE 0 END) as active_task_count,
+                   COALESCE(SUM(total_cost_usd), 0) as total_cost
+            FROM tasks
+            GROUP BY project_id
+        """)
+        return {
+            r["project_id"]: {
+                "total_tasks": r["total_tasks"],
+                "active_task_count": r["active_task_count"],
+                "total_cost": round(r["total_cost"], 2),
+            }
+            for r in rows
+        }
 
 
 async def count_active_tasks() -> int:

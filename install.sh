@@ -42,7 +42,8 @@ chown -R "$WORKER_USER:$WORKER_USER" "/home/$WORKER_USER"
 
 # Copy application files
 echo "Copying application files to ${APP_DIR}..."
-cp server.py database.py tasks.py auth.py pyproject.toml "$APP_DIR/"
+cp *.py pyproject.toml "$APP_DIR/"
+cp -r dashboard/ "$APP_DIR/dashboard/"
 
 # Install Python dependencies
 echo "Installing Python dependencies..."

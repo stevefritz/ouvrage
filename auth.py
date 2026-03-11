@@ -203,8 +203,14 @@ def auth_middleware(inner_app):
             await _send_json(send, 200, _protected_resource_metadata())
             return
 
+        # NOTE: Dashboard paths are NOT exempt from OAuth here. In production,
+        # Caddy terminates basic auth (htpasswd) before requests reach this
+        # middleware, so OAuth is redundant but harmless. If running without
+        # Caddy, dashboard routes will require a Bearer token like everything else.
+        # TODO: evaluate whether dashboard needs its own lighter auth scheme.
+
         # Skip auth for unprotected paths
-        if path in UNPROTECTED_PATHS or path.startswith("/dashboard"):
+        if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
         # HEAD on /mcp returns protocol version (unauthenticated, for discovery)
