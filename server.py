@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 
+import uvicorn
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
@@ -457,7 +459,6 @@ async def _dispatch_tool(name: str, arguments: dict):
         # Liveness detection based on status + last_activity
         result["alive"] = result.get("status") == "working"
         if result["alive"] and result.get("last_activity"):
-            from datetime import datetime, timezone
             last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
             age = (datetime.now(timezone.utc) - last).total_seconds()
             result["stale"] = age > 900  # 15 minutes with no activity
@@ -568,7 +569,6 @@ async def main():
     else:
         print("OAuth disabled — no AUTH_ISSUER_URL set (local dev mode)")
 
-    import uvicorn
     config = uvicorn.Config(protected_app, host="0.0.0.0", port=port, log_level="info")
     srv = uvicorn.Server(config)
     await srv.serve()

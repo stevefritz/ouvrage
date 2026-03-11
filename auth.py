@@ -93,12 +93,13 @@ async def verify_token(token: str) -> dict | None:
         # Log what we're about to validate against
         expected_issuer = AUTH_ISSUER_URL.rstrip("/")
         unverified_claims = jwt.decode(token, options={"verify_signature": False})
-        logger.info(f"Token iss={unverified_claims.get('iss')!r}, expected={expected_issuer!r}")
-        logger.info(f"Token aud={unverified_claims.get('aud')!r}, verify_aud={bool(AUTH_AUDIENCE)}")
-        logger.info(f"Token alg={unverified_header.get('alg')!r}, kid={kid!r}")
+        logger.debug(f"Token iss={unverified_claims.get('iss')!r}, expected={expected_issuer!r}")
+        logger.debug(f"Token aud={unverified_claims.get('aud')!r}, verify_aud={bool(AUTH_AUDIENCE)}")
+        logger.debug(f"Token alg={unverified_header.get('alg')!r}, kid={kid!r}")
 
         decode_opts = {
-            "algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"],
+            # Must match algorithms the OIDC issuer (Authelia) actually uses
+            "algorithms": ["RS256"],
             "options": {"verify_exp": True, "verify_iss": True, "verify_aud": bool(AUTH_AUDIENCE)},
             "issuer": expected_issuer,
         }
@@ -114,7 +115,7 @@ async def verify_token(token: str) -> dict | None:
                 logger.warning(f"Insufficient scopes: have={token_scopes}, need={AUTH_REQUIRED_SCOPES}")
                 return None
 
-        logger.info(f"Token verified for client={claims.get('client_id', claims.get('azp', 'unknown'))}")
+        logger.debug(f"Token verified for client={claims.get('client_id', claims.get('azp', 'unknown'))}")
         return claims
 
     except jwt.ExpiredSignatureError:
