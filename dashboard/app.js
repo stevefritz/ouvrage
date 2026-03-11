@@ -4,6 +4,15 @@ import { api } from './api.js';
 let pollTimer = null;
 let currentView = null;
 
+// Track UI toggle states across poll re-renders
+const uiState = {
+    expandedMessages: new Set(),   // IDs of expanded long messages
+    sessionLogOpen: false,
+    dispatchLogOpen: false,
+    sessionLogLoaded: false,
+    dispatchLogLoaded: false,
+};
+
 // ── Router ───────────────────────────────────────────────────────────────
 function getRoute() {
     const hash = location.hash.slice(1) || '/';
@@ -130,6 +139,18 @@ window._action = async (action, taskId) => {
 
 window._navigate = (hash) => navigate(hash);
 
+window._toggleMsg = (collapseId) => {
+    if (uiState.expandedMessages.has(collapseId)) {
+        uiState.expandedMessages.delete(collapseId);
+    } else {
+        uiState.expandedMessages.add(collapseId);
+    }
+    const el = document.getElementById(collapseId);
+    if (el) el.classList.toggle('msg-collapsed');
+    const btn = el?.parentElement?.querySelector('button');
+    if (btn) btn.textContent = uiState.expandedMessages.has(collapseId) ? 'Collapse ▴' : 'Expand ▾';
+};
+
 // ── Board View ───────────────────────────────────────────────────────────
 async function showBoard(params = {}) {
     const container = document.getElementById('view-board');
@@ -148,6 +169,7 @@ async function showBoard(params = {}) {
             }
 
             tbody.innerHTML = tasks.map(t => `
+
                 <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer"
                     onclick="window._navigate('#/tasks/${t.id}')">
                     <td class="p-3">${statusBadge(t.status)}</td>
@@ -169,7 +191,8 @@ async function showBoard(params = {}) {
                 </tr>
             `).join('');
         } catch (e) {
-            console.error('Board fetch error:', e);
+            // Silently skip poll errors — don't clear the page
+            console.warn('Board poll error (skipping):', e.message);
         }
     }
 
@@ -215,6 +238,14 @@ async function showDetail(taskId) {
     const container = document.getElementById('view-detail');
     container.classList.remove('hidden');
 
+    // Reset log state for new task view
+    uiState.sessionLogOpen = false;
+    uiState.dispatchLogOpen = false;
+    uiState.sessionLogLoaded = false;
+    uiState.dispatchLogLoaded = false;
+    uiState.expandedMessages.clear();
+
+    let initialLoad = true;
     async function render() {
         try {
             const task = await api.getTask(taskId);
@@ -222,22 +253,25 @@ async function showDetail(taskId) {
             renderChecklist(task);
             renderMessages(task);
         } catch (e) {
-            container.innerHTML = `<div class="p-8 text-red-400">Error loading task: ${e.message}</div>`;
+            // On poll errors, silently skip — don't blow up the page
+            if (!initialLoad) { console.warn('Poll error (skipping):', e.message); return; }
+            document.getElementById('detail-header').innerHTML = `<div class="p-8 text-red-400">Error loading task: ${e.message}</div>`;
         }
+        initialLoad = false;
     }
 
     await render();
 
-    // Poll while working
+    // Poll — refresh header/checklist/messages but not log panels or message input
     const task = await api.getTask(taskId).catch(() => null);
-    if (task && task.status === 'working') {
+    if (task && (task.status === 'working' || task.status === 'needs-review')) {
         pollTimer = setInterval(render, 5000);
     }
 
-    // Setup session/dispatch log toggles
+    // Setup session/dispatch log toggles (one-time, not affected by poll)
     setupLogPanels(taskId);
 
-    // Setup message input
+    // Setup message input (one-time)
     setupMessageInput(taskId);
 }
 
@@ -322,10 +356,10 @@ function renderMessages(task) {
                     <span>${time}</span>
                     ${m.title ? `<span class="text-slate-300 ml-1">${escapeHtml(m.title)}</span>` : ''}
                 </div>
-                <div id="${collapseId}" class="px-3 py-2 prose-dark text-sm ${isLong ? 'msg-collapsed' : ''}">
+                <div id="${collapseId}" class="px-3 py-2 prose-dark text-sm ${isLong && !uiState.expandedMessages.has(collapseId) ? 'msg-collapsed' : ''}">
                     ${contentHtml}
                 </div>
-                ${isLong ? `<button onclick="document.getElementById('${collapseId}').classList.toggle('msg-collapsed');this.textContent=this.textContent==='Expand ▾'?'Collapse ▴':'Expand ▾'" class="px-3 py-1 text-xs text-slate-400 hover:text-slate-200">Expand ▾</button>` : ''}
+                ${isLong ? `<button onclick="window._toggleMsg('${collapseId}')" class="px-3 py-1 text-xs text-slate-400 hover:text-slate-200">${uiState.expandedMessages.has(collapseId) ? 'Collapse ▴' : 'Expand ▾'}</button>` : ''}
             </div>
         `;
     }).join('');
@@ -335,12 +369,12 @@ async function setupLogPanels(taskId) {
     // Session log toggle
     const sessionBtn = document.getElementById('session-log-toggle');
     const sessionPanel = document.getElementById('session-log-content');
-    let sessionLoaded = false;
 
     sessionBtn.onclick = async () => {
+        uiState.sessionLogOpen = !uiState.sessionLogOpen;
         sessionPanel.classList.toggle('hidden');
-        if (!sessionLoaded) {
-            sessionLoaded = true;
+        if (!uiState.sessionLogLoaded) {
+            uiState.sessionLogLoaded = true;
             try {
                 const entries = await api.getSessionLog(taskId);
                 if (entries.length === 0) {
@@ -392,12 +426,12 @@ async function setupLogPanels(taskId) {
     // Dispatch log toggle
     const dispatchBtn = document.getElementById('dispatch-log-toggle');
     const dispatchPanel = document.getElementById('dispatch-log-content');
-    let dispatchLoaded = false;
 
     dispatchBtn.onclick = async () => {
+        uiState.dispatchLogOpen = !uiState.dispatchLogOpen;
         dispatchPanel.classList.toggle('hidden');
-        if (!dispatchLoaded) {
-            dispatchLoaded = true;
+        if (!uiState.dispatchLogLoaded) {
+            uiState.dispatchLogLoaded = true;
             try {
                 const text = await api.getDispatchLog(taskId);
                 dispatchPanel.innerHTML = text

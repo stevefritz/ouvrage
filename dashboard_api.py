@@ -2,6 +2,7 @@
 
 import json
 import time
+from urllib.parse import unquote
 
 import database as db
 import tasks
@@ -56,8 +57,8 @@ def _parse_qs(scope) -> dict:
 
 
 def _extract_task_id(path: str, prefix: str) -> str:
-    """Extract task_id from path after prefix. Handles slashes in IDs."""
-    rest = path[len(prefix):]
+    """Extract task_id from path after prefix. Handles URL-encoded slashes."""
+    rest = unquote(path[len(prefix):])
     # Strip trailing action segments like /cancel, /retry, /resume, /messages, /session-log, /dispatch-log
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/messages", "/session-log", "/dispatch-log"):
         if rest.endswith(suffix):

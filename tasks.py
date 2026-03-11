@@ -27,6 +27,105 @@ log = logging.getLogger("switchboard.tasks")
 # Track running async tasks to prevent garbage collection and silent failures
 _running_tasks: set[asyncio.Task] = set()
 
+# Track message injectors for active tasks so we can signal them to stop
+_active_injectors: dict[str, "MessageInjector"] = {}
+
+
+class MessageInjector:
+    """Async iterable that yields user messages for the SDK's stream_input.
+
+    Sends the initial prompt, then polls the DB for new messages posted
+    to the task. When a non-dispatcher message appears, it's injected
+    into the CC session as a user message.
+    """
+    _SENTINEL = object()
+    POLL_INTERVAL = 5  # seconds between DB polls
+
+    def __init__(self, task_id: str, initial_prompt: str):
+        self._task_id = task_id
+        self._initial_prompt = initial_prompt
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._seen_ids: set[int] = set()
+        self._done = False
+        self._poll_task: asyncio.Task | None = None
+
+    def _make_user_msg(self, content: str) -> dict:
+        return {
+            "type": "user",
+            "session_id": "",
+            "message": {"role": "user", "content": content},
+            "parent_tool_use_id": None,
+        }
+
+    async def start(self):
+        """Seed initial prompt and start background polling."""
+        # Snapshot existing message IDs so we only inject NEW ones
+        thread = await db.read_task_messages(self._task_id)
+        for msg in thread.get("messages", []):
+            if msg.get("id"):
+                self._seen_ids.add(msg["id"])
+
+        # Queue the initial prompt
+        await self._queue.put(self._make_user_msg(self._initial_prompt))
+        # Start polling
+        self._poll_task = asyncio.create_task(
+            self._poll_for_messages(), name=f"msg-poll-{self._task_id}"
+        )
+
+    async def _poll_for_messages(self):
+        """Poll DB for new messages and queue them for injection."""
+        while not self._done:
+            await asyncio.sleep(self.POLL_INTERVAL)
+            if self._done:
+                break
+            try:
+                thread = await db.read_task_messages(self._task_id)
+                for msg in thread.get("messages", []):
+                    msg_id = msg.get("id")
+                    if not msg_id or msg_id in self._seen_ids:
+                        continue
+                    self._seen_ids.add(msg_id)
+                    # Only inject human-authored messages, not dispatcher/cc-worker status
+                    if msg.get("author") in ("dispatcher", "cc-worker"):
+                        continue
+                    # Build injection text with context
+                    author = msg.get("author", "user")
+                    msg_type = msg.get("type", "note")
+                    title = msg.get("title") or ""
+                    content = msg.get("content", "")
+                    injection = (
+                        f"--- LIVE MESSAGE FROM {author.upper()} ({msg_type}) ---\n"
+                        f"{(title + chr(10)) if title else ''}"
+                        f"{content}\n"
+                        f"--- END LIVE MESSAGE ---\n\n"
+                        f"The above message was just posted to your task thread. "
+                        f"Read it carefully and adjust your work accordingly."
+                    )
+                    log.info(f"Injecting message {msg_id} into task {self._task_id}")
+                    await self._queue.put(self._make_user_msg(injection))
+                    await notify.task_heartbeat(
+                        task_id=self._task_id, turns=0,
+                        elapsed_s=0, last_tool=f"[injected msg from {author}]",
+                    )
+            except Exception as e:
+                log.warning(f"Message poll error for {self._task_id}: {e}")
+
+    async def stop(self):
+        """Signal the iterable to end."""
+        self._done = True
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        await self._queue.put(self._SENTINEL)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        item = await self._queue.get()
+        if item is self._SENTINEL:
+            raise StopAsyncIteration
+        return item
+
 
 def _handle_task_exception(task: asyncio.Task) -> None:
     """Log unhandled exceptions from background tasks and clean up tracking."""
@@ -432,36 +531,47 @@ async def _run_sdk_session(
             last_tool_name = None
 
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
-            async for message in query(prompt=actual_prompt, options=options):
-                _log_message(message)
 
-                if isinstance(message, AssistantMessage):
-                    turn_count += 1
-                    # Track last tool used for heartbeat context
-                    for block in (message.content or []):
-                        if isinstance(block, ToolUseBlock):
-                            last_tool_name = block.name
+            # Use MessageInjector for live message injection during session
+            injector = MessageInjector(task_id, actual_prompt)
+            _active_injectors[task_id] = injector
+            await injector.start()
 
-                if isinstance(message, ResultMessage):
-                    result_msg = message
-                    # Capture session_id from first dispatch
-                    if message.session_id:
-                        await db.update_task(task_id, session_id=message.session_id)
-                    running_cost = message.total_cost_usd or 0
+            try:
+                async for message in query(prompt=injector, options=options):
+                    _log_message(message)
 
-                # Heartbeat: post to Slack every N seconds
-                now = time.monotonic()
-                if now - last_heartbeat >= heartbeat_interval:
-                    last_heartbeat = now
-                    await notify.task_heartbeat(
-                        task_id=task_id,
-                        turns=turn_count,
-                        elapsed_s=now - start_time,
-                        last_tool=last_tool_name,
-                    )
+                    if isinstance(message, AssistantMessage):
+                        turn_count += 1
+                        # Track last tool used for heartbeat context
+                        for block in (message.content or []):
+                            if isinstance(block, ToolUseBlock):
+                                last_tool_name = block.name
 
-                # Update last_activity on each message
-                await db.update_task(task_id, last_activity=db.now_iso())
+                    if isinstance(message, ResultMessage):
+                        result_msg = message
+                        # Capture session_id from first dispatch
+                        if message.session_id:
+                            await db.update_task(task_id, session_id=message.session_id)
+                        running_cost = message.total_cost_usd or 0
+                        break  # ResultMessage is terminal — exit loop so finally stops the injector
+
+                    # Heartbeat: post to Slack every N seconds
+                    now = time.monotonic()
+                    if now - last_heartbeat >= heartbeat_interval:
+                        last_heartbeat = now
+                        await notify.task_heartbeat(
+                            task_id=task_id,
+                            turns=turn_count,
+                            elapsed_s=now - start_time,
+                            last_tool=last_tool_name,
+                        )
+
+                    # Update last_activity on each message
+                    await db.update_task(task_id, last_activity=db.now_iso())
+            finally:
+                await injector.stop()
+                _active_injectors.pop(task_id, None)
 
         try:
             await asyncio.wait_for(_run(), timeout=timeout_seconds)

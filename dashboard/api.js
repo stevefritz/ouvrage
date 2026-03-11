@@ -16,33 +16,36 @@ async function request(path, options = {}) {
     return resp.text();
 }
 
+// Encode task IDs that contain slashes (e.g. "mcp-switchboard/code-roast")
+const eid = (id) => encodeURIComponent(id);
+
 export const api = {
     // Read
     getTasks: (params = {}) => {
         const qs = new URLSearchParams(params).toString();
         return request('/tasks' + (qs ? '?' + qs : ''));
     },
-    getTask: (id) => request(`/tasks/${id}`),
+    getTask: (id) => request(`/tasks/${eid(id)}`),
     getMessages: (id, params = {}) => {
         const qs = new URLSearchParams(params).toString();
-        return request(`/tasks/${id}/messages` + (qs ? '?' + qs : ''));
+        return request(`/tasks/${eid(id)}/messages` + (qs ? '?' + qs : ''));
     },
-    getSessionLog: (id) => request(`/tasks/${id}/session-log`),
-    getDispatchLog: (id) => request(`/tasks/${id}/dispatch-log`),
+    getSessionLog: (id) => request(`/tasks/${eid(id)}/session-log`),
+    getDispatchLog: (id) => request(`/tasks/${eid(id)}/dispatch-log`),
     getProjects: () => request('/projects'),
-    getProject: (id) => request(`/projects/${id}`),
+    getProject: (id) => request(`/projects/${eid(id)}`),
     getSystem: () => request('/system'),
 
     // Actions
-    cancelTask: (id) => request(`/tasks/${id}/cancel`, { method: 'POST' }),
-    retryTask: (id, clean = false) => request(`/tasks/${id}/retry`, {
+    cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
+    retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {
         method: 'POST', body: JSON.stringify({ clean }),
     }),
-    resumeTask: (id) => request(`/tasks/${id}/resume`, { method: 'POST' }),
-    closeTask: (id) => request(`/tasks/${id}/close`, { method: 'POST' }),
+    resumeTask: (id) => request(`/tasks/${eid(id)}/resume`, { method: 'POST' }),
+    closeTask: (id) => request(`/tasks/${eid(id)}/close`, { method: 'POST' }),
 
     // Messages
-    postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${id}/messages`, {
+    postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${eid(id)}/messages`, {
         method: 'POST',
         body: JSON.stringify({ content, type, title }),
     }),
