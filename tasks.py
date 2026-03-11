@@ -549,6 +549,10 @@ async def _run_sdk_session(
                 async for message in query(prompt=injector, options=options):
                     _log_message(message)
 
+                    # Once we have the result, skip further processing
+                    if result_msg:
+                        continue
+
                     if isinstance(message, AssistantMessage):
                         turn_count += 1
                         # Track last tool used for heartbeat context
@@ -562,7 +566,9 @@ async def _run_sdk_session(
                         if message.session_id:
                             await db.update_task(task_id, session_id=message.session_id)
                         running_cost = message.total_cost_usd or 0
-                        break  # ResultMessage is terminal — exit loop so finally stops the injector
+                        # Stop the injector so the SDK's stdin closes and the loop ends naturally
+                        await injector.stop()
+                        continue
 
                     # Heartbeat: post to Slack every N seconds
                     now = time.monotonic()
