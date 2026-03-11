@@ -203,10 +203,11 @@ def auth_middleware(inner_app):
             await _send_json(send, 200, _protected_resource_metadata())
             return
 
+        # Dashboard paths bypass OAuth — Caddy handles basic auth via htpasswd for /dashboard routes
+        if path.startswith("/dashboard"):
+            return await inner_app(scope, receive, send)
+
         # Skip auth for unprotected paths
-        # NOTE: /dashboard is NOT excluded — it goes through OAuth like everything else.
-        # If Caddy provides basic auth in front, that's an infrastructure-level concern;
-        # this middleware should not have a blanket bypass.
         if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
