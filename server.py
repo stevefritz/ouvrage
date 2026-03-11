@@ -457,7 +457,6 @@ async def _handle_create_project(arguments):
         claude_md_path=arguments.get("claude_md_path"),
     )
 
-
 async def _handle_get_project(arguments):
     result = await db.get_project(arguments["id"])
     return result if result else {"error": f"Project '{arguments['id']}' not found"}

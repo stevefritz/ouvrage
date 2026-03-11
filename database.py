@@ -81,7 +81,6 @@ async def init_db():
                 branch TEXT,
                 worktree_path TEXT,
                 session_id TEXT,
-                pid INTEGER,
                 max_turns INTEGER,
                 max_wall_clock INTEGER,
                 total_input_tokens INTEGER DEFAULT 0,
