@@ -215,6 +215,7 @@ TASK_TOOLS = [
                 "max_turns": {"type": "integer", "description": "Turn limit for this dispatch (overrides project default)"},
                 "max_wall_clock": {"type": "integer", "description": "Wall clock timeout in minutes (overrides project default)"},
                 "escalation_criteria": {"type": "string", "description": "Markdown string appended to CC's system context for when to escalate"},
+                "branch": {"type": "string", "description": "Git branch name (supports slashes like feature/foo). Defaults to the task ID slug."},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -482,6 +483,7 @@ async def _handle_dispatch_task(arguments):
         max_turns=arguments.get("max_turns"),
         max_wall_clock=arguments.get("max_wall_clock"),
         escalation_criteria=arguments.get("escalation_criteria"),
+        branch=arguments.get("branch"),
     )
 
 async def _handle_resume_task(arguments):

@@ -177,10 +177,16 @@ async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     return stdout, stderr, proc.returncode
 
 
-async def setup_worktree(project: dict, task_id: str, branch: str) -> str:
-    """Create git worktree for a task. Returns worktree path."""
+async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
+    """Create git worktree for a task. Returns worktree path.
+
+    Args:
+        project: Project config dict.
+        dir_name: Filesystem-safe directory name (no slashes).
+        branch: Git branch name (may contain slashes like feature/foo).
+    """
     base = project["working_dir"]
-    worktree_path = os.path.join(base, task_id)
+    worktree_path = os.path.join(base, dir_name)
 
     if os.path.exists(worktree_path):
         log.info(f"Worktree already exists: {worktree_path}")
@@ -713,6 +719,7 @@ async def dispatch_task(
     max_wall_clock: int | None = None,
     escalation_criteria: str | None = None,
     review_feedback: list[dict] | None = None,
+    branch: str | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -736,6 +743,7 @@ async def dispatch_task(
     if task is None:
         task = await db.create_task(
             id=task_id, project_id=project_id, goal=goal,
+            branch=branch,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
         )
         if spec:
@@ -750,12 +758,13 @@ async def dispatch_task(
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
 
-    # Setup worktree — use short name (after project prefix) for branch and dir
+    # Setup worktree — dir_name is always filesystem-safe (no slashes)
+    # Branch may contain slashes (e.g. feature/foo)
     short_name = task_id.split("/")[-1] if "/" in task_id else task_id
-    branch = task["branch"] or short_name
-    if task["branch"] != branch:
-        await db.update_task(task_id, branch=branch)
-    worktree_path = await setup_worktree(project, short_name, branch)
+    effective_branch = task["branch"] or short_name
+    if task["branch"] != effective_branch:
+        await db.update_task(task_id, branch=effective_branch)
+    worktree_path = await setup_worktree(project, short_name, effective_branch)
 
     # Run setup command
     await run_setup_command(project, worktree_path)
@@ -835,7 +844,7 @@ async def dispatch_task(
         "status": "working",
         "phase": phase,
         "worktree_path": worktree_path,
-        "branch": branch,
+        "branch": effective_branch,
         "session_id": session_id,
         "dispatch_count": dispatch_count,
         "max_turns": effective_max_turns,
