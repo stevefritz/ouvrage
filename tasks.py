@@ -635,7 +635,7 @@ async def _run_sdk_session(
                             f"Turns: {result_msg.num_turns} | "
                             f"Duration: {result_msg.duration_ms / 1000:.0f}s | "
                             f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
-                            f"Result: {(result_msg.result or '(no result)')[:500]}",
+                            f"Result: {result_msg.result or '(no result)'}",
                 )
                 checklist = await db.get_checklist(task_id)
                 done = sum(1 for c in checklist if c.get("done"))

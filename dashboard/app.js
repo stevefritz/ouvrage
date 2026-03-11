@@ -252,6 +252,10 @@ async function showDetail(taskId) {
             renderDetailHeader(task);
             renderChecklist(task);
             renderMessages(task);
+            // Refresh open log panels during poll
+            if (!initialLoad) {
+                await refreshOpenLogPanels(taskId);
+            }
         } catch (e) {
             // On poll errors, silently skip — don't blow up the page
             if (!initialLoad) { console.warn('Poll error (skipping):', e.message); return; }
@@ -373,6 +377,85 @@ function renderMessages(task) {
     }).join('');
 }
 
+function renderSessionLogHtml(entries) {
+    if (entries.length === 0) {
+        return '<p class="text-slate-500 text-sm p-2">No session log</p>';
+    }
+    return entries.map(e => {
+        const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+        const type = e.type || '';
+
+        if (type === 'SystemMessage') {
+            return `<div class="log-system text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}</div>`;
+        }
+        if (type === 'AssistantMessage') {
+            const blocks = e.content || [];
+            return blocks.map(b => {
+                if (b.type === 'text') {
+                    const preview = (b.text || '').slice(0, 120);
+                    return `<div class="log-text text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TEXT  ${escapeHtml(preview)}</div>`;
+                }
+                if (b.type === 'tool_use') {
+                    return `<div class="log-tool text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TOOL  ${escapeHtml(b.name || '')} → ${escapeHtml((b.input || '').slice(0, 80))}</div>`;
+                }
+                return '';
+            }).join('');
+        }
+        if (type === 'UserMessage') {
+            const blocks = e.content || [];
+            return blocks.map(b => {
+                if (b.type === 'tool_result') {
+                    const status = b.is_error ? '(error)' : `(${(b.preview || '').length}B)`;
+                    return `<div class="log-result text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>RESULT ${status}</div>`;
+                }
+                return '';
+            }).join('');
+        }
+        if (type === 'ResultMessage') {
+            const cls = e.is_error ? 'log-error' : 'log-done';
+            return `<div class="${cls} text-xs py-0.5 font-medium"><span class="text-slate-600 mr-2">${ts}</span>DONE  ${e.num_turns || '?'} turns | $${(e.cost_usd || 0).toFixed(2)}</div>`;
+        }
+        return '';
+    }).join('');
+}
+
+function renderDispatchLogHtml(text) {
+    return text
+        ? `<pre class="text-xs text-slate-400 whitespace-pre-wrap">${escapeHtml(text)}</pre>`
+        : '<p class="text-slate-500 text-sm">No dispatch log</p>';
+}
+
+function updatePanelWithScrollPin(panel, html) {
+    const wasAtBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 30;
+    panel.innerHTML = html;
+    if (wasAtBottom) {
+        panel.scrollTop = panel.scrollHeight;
+    }
+}
+
+async function refreshOpenLogPanels(taskId) {
+    if (uiState.sessionLogOpen) {
+        try {
+            const entries = await api.getSessionLog(taskId);
+            const panel = document.getElementById('session-log-content');
+            updatePanelWithScrollPin(panel, renderSessionLogHtml(entries));
+            uiState.sessionLogLoaded = true;
+        } catch (e) {
+            console.warn('Session log poll error:', e.message);
+        }
+    }
+    if (uiState.dispatchLogOpen) {
+        try {
+            const text = await api.getDispatchLog(taskId);
+            const panel = document.getElementById('dispatch-log-content');
+            updatePanelWithScrollPin(panel, renderDispatchLogHtml(text));
+            uiState.dispatchLogLoaded = true;
+        } catch (e) {
+            console.warn('Dispatch log poll error:', e.message);
+        }
+    }
+}
+
 async function setupLogPanels(taskId) {
     // Session log toggle
     const sessionBtn = document.getElementById('session-log-toggle');
@@ -385,46 +468,7 @@ async function setupLogPanels(taskId) {
             uiState.sessionLogLoaded = true;
             try {
                 const entries = await api.getSessionLog(taskId);
-                if (entries.length === 0) {
-                    sessionPanel.innerHTML = '<p class="text-slate-500 text-sm p-2">No session log</p>';
-                    return;
-                }
-                sessionPanel.innerHTML = entries.map(e => {
-                    const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
-                    const type = e.type || '';
-
-                    if (type === 'SystemMessage') {
-                        return `<div class="log-system text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}</div>`;
-                    }
-                    if (type === 'AssistantMessage') {
-                        const blocks = e.content || [];
-                        return blocks.map(b => {
-                            if (b.type === 'text') {
-                                const preview = (b.text || '').slice(0, 120);
-                                return `<div class="log-text text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TEXT  ${escapeHtml(preview)}</div>`;
-                            }
-                            if (b.type === 'tool_use') {
-                                return `<div class="log-tool text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TOOL  ${escapeHtml(b.name || '')} → ${escapeHtml((b.input || '').slice(0, 80))}</div>`;
-                            }
-                            return '';
-                        }).join('');
-                    }
-                    if (type === 'UserMessage') {
-                        const blocks = e.content || [];
-                        return blocks.map(b => {
-                            if (b.type === 'tool_result') {
-                                const status = b.is_error ? '(error)' : `(${(b.preview || '').length}B)`;
-                                return `<div class="log-result text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>RESULT ${status}</div>`;
-                            }
-                            return '';
-                        }).join('');
-                    }
-                    if (type === 'ResultMessage') {
-                        const cls = e.is_error ? 'log-error' : 'log-done';
-                        return `<div class="${cls} text-xs py-0.5 font-medium"><span class="text-slate-600 mr-2">${ts}</span>DONE  ${e.num_turns || '?'} turns | $${(e.cost_usd || 0).toFixed(2)}</div>`;
-                    }
-                    return '';
-                }).join('');
+                sessionPanel.innerHTML = renderSessionLogHtml(entries);
             } catch (e) {
                 sessionPanel.innerHTML = `<p class="text-red-400 text-sm p-2">Error: ${e.message}</p>`;
             }
@@ -442,9 +486,7 @@ async function setupLogPanels(taskId) {
             uiState.dispatchLogLoaded = true;
             try {
                 const text = await api.getDispatchLog(taskId);
-                dispatchPanel.innerHTML = text
-                    ? `<pre class="text-xs text-slate-400 whitespace-pre-wrap">${escapeHtml(text)}</pre>`
-                    : '<p class="text-slate-500 text-sm">No dispatch log</p>';
+                dispatchPanel.innerHTML = renderDispatchLogHtml(text);
             } catch (e) {
                 dispatchPanel.innerHTML = `<p class="text-red-400 text-sm">Error: ${e.message}</p>`;
             }
