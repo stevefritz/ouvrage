@@ -268,6 +268,14 @@ async function showDetail(taskId) {
         pollTimer = setInterval(render, 5000);
     }
 
+    // Reset log panel DOM on task change (uiState already reset above)
+    const sessionPanel = document.getElementById('session-log-content');
+    const dispatchPanel = document.getElementById('dispatch-log-content');
+    sessionPanel.innerHTML = '';
+    sessionPanel.classList.add('hidden');
+    dispatchPanel.innerHTML = '';
+    dispatchPanel.classList.add('hidden');
+
     // Setup session/dispatch log toggles (one-time, not affected by poll)
     setupLogPanels(taskId);
 
