@@ -59,7 +59,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
     """Extract task_id from path after prefix. Handles slashes in IDs."""
     rest = path[len(prefix):]
     # Strip trailing action segments like /cancel, /retry, /resume, /messages, /session-log, /dispatch-log
-    for suffix in ("/cancel", "/retry", "/resume", "/messages", "/session-log", "/dispatch-log"):
+    for suffix in ("/cancel", "/retry", "/resume", "/close", "/messages", "/session-log", "/dispatch-log"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -105,6 +105,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/resume"):
                     task_id = rest[:-len("/resume")]
                     return await _handle_resume(send, task_id)
+                if rest.endswith("/close"):
+                    task_id = rest[:-len("/close")]
+                    return await _handle_close(receive, send, task_id)
                 if rest.endswith("/messages"):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
@@ -289,6 +292,18 @@ async def _handle_retry(receive, send, task_id):
 async def _handle_resume(send, task_id):
     result = await tasks.resume_task(task_id)
     await _json_response(send, result)
+
+
+async def _handle_close(receive, send, task_id):
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    result = await tasks.close_task(
+        task_id=task_id,
+        cleanup=data.get("cleanup", True),
+        force_delete_branch=data.get("force_delete_branch", False),
+    )
+    await _json_response(send, result)
+
 
 
 async def _handle_post_message(receive, send, task_id):

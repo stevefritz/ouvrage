@@ -39,6 +39,7 @@ export const api = {
         method: 'POST', body: JSON.stringify({ clean }),
     }),
     resumeTask: (id) => request(`/tasks/${id}/resume`, { method: 'POST' }),
+    closeTask: (id) => request(`/tasks/${id}/close`, { method: 'POST' }),
 
     // Messages
     postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${id}/messages`, {

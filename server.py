@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 from mcp.server import Server
@@ -12,6 +13,8 @@ import dashboard_api
 import database as db
 import notifications as notify
 import tasks
+
+PR_URL_RE = re.compile(r'https://github\.com/[^\s)]+/pull/\d+')
 
 server = Server("switchboard")
 
@@ -591,6 +594,11 @@ async def _handle_post_task_message(arguments):
             content=arguments["content"],
             msg_type=msg_type,
         )
+    # Auto-extract PR URLs from result/progress messages
+    if msg_type in ("result", "progress"):
+        urls = PR_URL_RE.findall(arguments.get("content", ""))
+        for url in urls:
+            await db.add_artifact(arguments["task_id"], type="pr_url", ref=url)
     return result
 
 
@@ -684,6 +692,29 @@ async def _serve_dashboard(scope, send):
         "type": "http.response.start", "status": 200,
         "headers": [[b"content-type", content_type.encode()]],
     })
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _serve_static(send, file_path, content_type=None):
+    """Serve a static file from the project directory."""
+    import mimetypes
+    full_path = os.path.join(os.path.dirname(__file__) or ".", file_path)
+    # Prevent directory traversal
+    full_path = os.path.realpath(full_path)
+    base_dir = os.path.realpath(os.path.dirname(__file__) or ".")
+    if not full_path.startswith(base_dir):
+        await send({"type": "http.response.start", "status": 403, "headers": [[b"content-type", b"text/plain"]]})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+        return
+    if not os.path.isfile(full_path):
+        await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
+        await send({"type": "http.response.body", "body": b"Not Found"})
+        return
+    if not content_type:
+        content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    with open(full_path, "rb") as f:
+        body = f.read()
+    await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", content_type.encode()]]})
     await send({"type": "http.response.body", "body": body})
 
 
