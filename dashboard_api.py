@@ -2,6 +2,7 @@
 
 import json
 import time
+import urllib.parse
 
 import database as db
 import tasks
@@ -47,12 +48,9 @@ async def _error(send, message, status=400):
 
 def _parse_qs(scope) -> dict:
     qs = scope.get("query_string", b"").decode()
-    params = {}
-    for part in qs.split("&"):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            params[k] = v
-    return params
+    parsed = urllib.parse.parse_qs(qs, keep_blank_values=False)
+    # Flatten: parse_qs returns lists; we only need the first value per key
+    return {k: v[0] for k, v in parsed.items() if v}
 
 
 def _extract_task_id(path: str, prefix: str) -> str:
@@ -154,12 +152,13 @@ async def _handle_system(send):
 
 async def _handle_list_projects(send):
     projects = await db.list_projects()
-    # Enrich with task counts
+    # Enrich with task counts using a single GROUP BY query instead of N+1
+    counts = await db.get_project_task_counts()
     for p in projects:
-        all_tasks = await db.list_tasks(project_id=p["id"])
-        p["active_task_count"] = sum(1 for t in all_tasks if t["status"] == "working")
-        p["total_tasks"] = len(all_tasks)
-        p["total_cost"] = round(sum(t.get("total_cost_usd", 0) or 0 for t in all_tasks), 2)
+        stats = counts.get(p["id"], {"total_tasks": 0, "active_task_count": 0, "total_cost": 0})
+        p["active_task_count"] = stats["active_task_count"]
+        p["total_tasks"] = stats["total_tasks"]
+        p["total_cost"] = stats["total_cost"]
     await _json_response(send, projects)
 
 

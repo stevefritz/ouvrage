@@ -9,11 +9,10 @@ WorkingDirectory=/opt/switchboard
 ExecStart=/usr/bin/python3 server.py
 Environment=SWITCHBOARD_DB=/opt/switchboard/data/switchboard.db
 Environment=SWITCHBOARD_PORT=8100
-Environment=AUTH_ISSUER_URL=https://auth.stephenfritz.dev
-Environment=RESOURCE_URL=https://switchboard.stephenfritz.dev/mcp
 Environment=CLAUDE_CODE_STREAM_CLOSE_TIMEOUT=120000
-Environment=SLACK_BOT_TOKEN=xoxb-30223900903-8408818373397-Y4yVL6DbwpTZ2ktsHrlBIOcM
-Environment=SLACK_CHANNEL_ID=C0AKMQ2UY9L
+# Secrets and site-specific config loaded from external file (not tracked in git).
+# Create /etc/switchboard/env with: AUTH_ISSUER_URL, RESOURCE_URL, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
+EnvironmentFile=/etc/switchboard/env
 Restart=always
 RestartSec=5
 StandardOutput=journal

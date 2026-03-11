@@ -799,13 +799,26 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
 
 
 async def cancel_task(task_id: str) -> dict:
-    """Kill a running task."""
+    """Kill a running task — cancel the asyncio Task, then update DB status."""
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
+    # Find and cancel the running asyncio task
+    cancelled_async = False
+    task_name = f"sdk-session-{task_id}"
+    for t in list(_running_tasks):
+        if t.get_name() == task_name and not t.done():
+            t.cancel()
+            cancelled_async = True
+            log.info(f"Cancelled asyncio task for {task_id}")
+            break
+
+    if not cancelled_async and task.get("status") == "working":
+        log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
+
     await db.update_task(task_id, status="cancelled")
-    return {"task_id": task_id, "status": "cancelled"}
+    return {"task_id": task_id, "status": "cancelled", "async_task_cancelled": cancelled_async}
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:

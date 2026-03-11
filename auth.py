@@ -204,7 +204,10 @@ def auth_middleware(inner_app):
             return
 
         # Skip auth for unprotected paths
-        if path in UNPROTECTED_PATHS or path.startswith("/dashboard"):
+        # NOTE: /dashboard is NOT excluded — it goes through OAuth like everything else.
+        # If Caddy provides basic auth in front, that's an infrastructure-level concern;
+        # this middleware should not have a blanket bypass.
+        if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
         # HEAD on /mcp returns protocol version (unauthenticated, for discovery)
