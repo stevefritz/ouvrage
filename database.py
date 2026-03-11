@@ -1,6 +1,7 @@
 import aiosqlite
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 DB_PATH = os.environ.get("SWITCHBOARD_DB", "./data/switchboard.db")
@@ -10,18 +11,41 @@ DEFAULT_MAX_TURNS = 200
 DEFAULT_MAX_WALL_CLOCK = 60  # minutes
 DEFAULT_MAX_CONCURRENT = 3
 
+# ---------------------------------------------------------------------------
+# Connection Management — singleton with async context manager
+# ---------------------------------------------------------------------------
 
-async def get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
-    return db
+_connection: aiosqlite.Connection | None = None
+
+
+async def _get_shared_connection() -> aiosqlite.Connection:
+    """Get or create the shared database connection. Sets PRAGMAs once."""
+    global _connection
+    if _connection is None:
+        _connection = await aiosqlite.connect(DB_PATH)
+        _connection.row_factory = aiosqlite.Row
+        await _connection.execute("PRAGMA journal_mode=WAL")
+        await _connection.execute("PRAGMA foreign_keys=ON")
+    return _connection
+
+
+@asynccontextmanager
+async def get_db():
+    """Async context manager that yields the shared connection."""
+    db = await _get_shared_connection()
+    yield db
+
+
+async def close_db():
+    """Close the shared connection. Call on shutdown."""
+    global _connection
+    if _connection is not None:
+        await _connection.close()
+        _connection = None
 
 
 async def init_db():
-    conn = await get_db()
-    try:
+    async with get_db() as conn:
         # Create new tables (won't affect existing ones)
         await conn.executescript("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -150,79 +174,35 @@ async def init_db():
         """)
 
         await conn.commit()
-    finally:
-        await conn.close()
 
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-async def create_conversation(id: str, project: str, goal: str) -> dict:
-    db = await get_db()
-    try:
-        ts = now_iso()
-        await db.execute(
-            "INSERT INTO conversations (id, project, goal, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (id, project, goal, ts, ts),
-        )
-        await db.commit()
-        return {"id": id, "project": project, "goal": goal, "archived": False, "created_at": ts, "updated_at": ts}
-    finally:
-        await db.close()
+# ---------------------------------------------------------------------------
+# Shared helpers — deduplicated read logic
+# ---------------------------------------------------------------------------
 
-
-async def post_message(conversation_id: str, author: str, content: str, type: str | None = None, title: str | None = None, pinned: bool = False) -> dict:
-    db = await get_db()
-    try:
-        # Verify conversation exists
-        row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
-        if not row:
-            raise ValueError(f"Conversation '{conversation_id}' not found")
-
-        # If pinning, unpin previous
-        if pinned:
-            await db.execute(
-                "UPDATE messages SET pinned = FALSE WHERE conversation_id = ? AND pinned = TRUE",
-                (conversation_id,),
-            )
-
-        ts = now_iso()
-        cursor = await db.execute(
-            "INSERT INTO messages (conversation_id, author, type, title, content, pinned, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, author, type, title, content, pinned, ts),
-        )
-        msg_id = cursor.lastrowid
-
-        await db.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (ts, conversation_id),
-        )
-        await db.commit()
-        return {"id": msg_id, "conversation_id": conversation_id, "author": author, "type": type, "title": title, "content": content, "pinned": pinned, "created_at": ts}
-    finally:
-        await db.close()
-
-
-async def read_messages(conversation_id: str, last_n: int | None = None, since: str | None = None, after: int | None = None, author: str | None = None, type: str | None = None) -> dict:
-    db = await get_db()
-    try:
-        # Verify conversation exists
-        row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
-        if not row:
-            raise ValueError(f"Conversation '{conversation_id}' not found")
-
-        # Get pinned message first
+async def _read_messages(
+    filter_column: str, filter_value: str,
+    last_n: int | None = None, since: str | None = None,
+    after: int | None = None, author: str | None = None,
+    type: str | None = None,
+) -> dict:
+    """Shared implementation for read_messages() and read_task_messages()."""
+    async with get_db() as db:
+        # Get pinned messages first
         pinned_rows = await db.execute_fetchall(
-            "SELECT * FROM messages WHERE conversation_id = ? AND pinned = TRUE",
-            (conversation_id,),
+            f"SELECT * FROM messages WHERE {filter_column} = ? AND pinned = TRUE",
+            (filter_value,),
         )
         pinned = [dict(r) for r in pinned_rows]
         pinned_ids = {m["id"] for m in pinned}
 
         # Build query for non-pinned messages
-        conditions = ["conversation_id = ?", "pinned = FALSE"]
-        params: list = [conversation_id]
+        conditions = [f"{filter_column} = ?", "pinned = FALSE"]
+        params: list = [filter_value]
 
         if after is not None:
             conditions.append("id > ?")
@@ -252,29 +232,113 @@ async def read_messages(conversation_id: str, last_n: int | None = None, since: 
             m["_pinned_marker"] = True
 
         all_messages = pinned + messages
-        # Cursor = highest message ID across all returned messages
         cursor = max((m["id"] for m in all_messages), default=after or 0)
 
         return {"messages": all_messages, "cursor": cursor}
-    finally:
-        await db.close()
+
+
+async def _list_with_aggregates(
+    where_clause: str, params: list,
+) -> list[dict]:
+    """Shared implementation for board() and list_conversations().
+
+    Uses a CTE with ROW_NUMBER() to get last message info in one pass
+    instead of three correlated subqueries.
+    """
+    async with get_db() as db:
+        query = f"""
+            WITH latest_msg AS (
+                SELECT conversation_id, author, title, created_at,
+                       ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) as rn
+                FROM messages
+                WHERE conversation_id IS NOT NULL
+            )
+            SELECT
+                c.id, c.project, c.goal, c.archived, c.created_at, c.updated_at,
+                COUNT(m.id) as message_count,
+                lm.author as last_message_author,
+                lm.title as last_message_title,
+                lm.created_at as last_message_at,
+                EXISTS(SELECT 1 FROM messages WHERE conversation_id = c.id AND pinned = TRUE) as has_pinned
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            LEFT JOIN latest_msg lm ON lm.conversation_id = c.id AND lm.rn = 1
+            {where_clause}
+            GROUP BY c.id
+            ORDER BY c.updated_at DESC
+        """
+        rows = await db.execute_fetchall(query, params)
+        return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Conversations
+# ---------------------------------------------------------------------------
+
+async def create_conversation(id: str, project: str, goal: str) -> dict:
+    async with get_db() as db:
+        ts = now_iso()
+        await db.execute(
+            "INSERT INTO conversations (id, project, goal, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (id, project, goal, ts, ts),
+        )
+        await db.commit()
+        return {"id": id, "project": project, "goal": goal, "archived": False, "created_at": ts, "updated_at": ts}
+
+
+async def post_message(conversation_id: str, author: str, content: str, type: str | None = None, title: str | None = None, pinned: bool = False) -> dict:
+    async with get_db() as db:
+        # Verify conversation exists
+        row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
+        if not row:
+            raise ValueError(f"Conversation '{conversation_id}' not found")
+
+        # If pinning, unpin previous
+        if pinned:
+            await db.execute(
+                "UPDATE messages SET pinned = FALSE WHERE conversation_id = ? AND pinned = TRUE",
+                (conversation_id,),
+            )
+
+        ts = now_iso()
+        cursor = await db.execute(
+            "INSERT INTO messages (conversation_id, author, type, title, content, pinned, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, author, type, title, content, pinned, ts),
+        )
+        msg_id = cursor.lastrowid
+
+        await db.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (ts, conversation_id),
+        )
+        await db.commit()
+        return {"id": msg_id, "conversation_id": conversation_id, "author": author, "type": type, "title": title, "content": content, "pinned": pinned, "created_at": ts}
+
+
+async def read_messages(conversation_id: str, last_n: int | None = None, since: str | None = None, after: int | None = None, author: str | None = None, type: str | None = None) -> dict:
+    async with get_db() as db:
+        # Verify conversation exists
+        row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
+        if not row:
+            raise ValueError(f"Conversation '{conversation_id}' not found")
+
+    return await _read_messages(
+        filter_column="conversation_id", filter_value=conversation_id,
+        last_n=last_n, since=since, after=after, author=author, type=type,
+    )
 
 
 async def get_pinned(conversation_id: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM messages WHERE conversation_id = ? AND pinned = TRUE LIMIT 1",
             (conversation_id,),
         )
         return dict(rows[0]) if rows else None
-    finally:
-        await db.close()
 
 
 async def pin_message(message_id: int) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM messages WHERE id = ?", (message_id,))
         if not rows:
             raise ValueError(f"Message {message_id} not found")
@@ -293,82 +357,39 @@ async def pin_message(message_id: int) -> dict:
 
         msg["pinned"] = True
         return msg
-    finally:
-        await db.close()
 
 
 async def board(project: str | None = None, include_archived: bool = False) -> list[dict]:
-    db = await get_db()
-    try:
-        conditions = []
-        params: list = []
+    conditions = []
+    params: list = []
 
-        if not include_archived:
-            conditions.append("c.archived = FALSE")
-        if project:
-            conditions.append("c.project = ?")
-            params.append(project)
+    if not include_archived:
+        conditions.append("c.archived = FALSE")
+    if project:
+        conditions.append("c.project = ?")
+        params.append(project)
 
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-        query = f"""
-            SELECT
-                c.id, c.project, c.goal, c.archived, c.created_at, c.updated_at,
-                COUNT(m.id) as message_count,
-                (SELECT author FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_author,
-                (SELECT title FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_title,
-                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_at,
-                EXISTS(SELECT 1 FROM messages WHERE conversation_id = c.id AND pinned = TRUE) as has_pinned
-            FROM conversations c
-            LEFT JOIN messages m ON m.conversation_id = c.id
-            {where}
-            GROUP BY c.id
-            ORDER BY c.updated_at DESC
-        """
-        rows = await db.execute_fetchall(query, params)
-        return [dict(r) for r in rows]
-    finally:
-        await db.close()
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    return await _list_with_aggregates(where, params)
 
 
 async def list_conversations(project: str | None = None, search: str | None = None) -> list[dict]:
-    db = await get_db()
-    try:
-        conditions = []
-        params: list = []
+    conditions = []
+    params: list = []
 
-        if project:
-            conditions.append("c.project = ?")
-            params.append(project)
-        if search:
-            conditions.append("c.goal LIKE ?")
-            params.append(f"%{search}%")
+    if project:
+        conditions.append("c.project = ?")
+        params.append(project)
+    if search:
+        conditions.append("c.goal LIKE ?")
+        params.append(f"%{search}%")
 
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-        query = f"""
-            SELECT
-                c.id, c.project, c.goal, c.archived, c.created_at, c.updated_at,
-                COUNT(m.id) as message_count,
-                (SELECT author FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_author,
-                (SELECT title FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_title,
-                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_at,
-                EXISTS(SELECT 1 FROM messages WHERE conversation_id = c.id AND pinned = TRUE) as has_pinned
-            FROM conversations c
-            LEFT JOIN messages m ON m.conversation_id = c.id
-            {where}
-            GROUP BY c.id
-            ORDER BY c.updated_at DESC
-        """
-        rows = await db.execute_fetchall(query, params)
-        return [dict(r) for r in rows]
-    finally:
-        await db.close()
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    return await _list_with_aggregates(where, params)
 
 
 async def archive_conversation(conversation_id: str) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
         if not rows:
             raise ValueError(f"Conversation '{conversation_id}' not found")
@@ -376,8 +397,6 @@ async def archive_conversation(conversation_id: str) -> dict:
         await db.execute("UPDATE conversations SET archived = TRUE WHERE id = ?", (conversation_id,))
         await db.commit()
         return {"conversation_id": conversation_id, "archived": True}
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +410,7 @@ async def create_project(
     max_turns: int | None = None, max_wall_clock: int | None = None,
     claude_md_path: str | None = None,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         ts = now_iso()
         env_json = json.dumps(env_overrides) if env_overrides else None
         await db.execute(
@@ -412,16 +430,35 @@ async def create_project(
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
             "created_at": ts,
         }
-    finally:
-        await db.close()
 
 
 async def get_project(id: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (id,))
         if not rows:
             return None
+        p = dict(rows[0])
+        if p.get("env_overrides"):
+            p["env_overrides"] = json.loads(p["env_overrides"])
+        return p
+
+
+async def update_project(project_id: str, **fields) -> dict:
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
+        if not rows:
+            raise ValueError(f"Project '{project_id}' not found")
+
+        if "env_overrides" in fields and isinstance(fields["env_overrides"], dict):
+            fields["env_overrides"] = json.dumps(fields["env_overrides"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [project_id]
+        await db.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", values)
+        await db.commit()
+
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
         p = dict(rows[0])
         if p.get("env_overrides"):
             p["env_overrides"] = json.loads(p["env_overrides"])
@@ -431,8 +468,7 @@ async def get_project(id: str) -> dict | None:
 
 
 async def list_projects() -> list[dict]:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM projects ORDER BY created_at DESC")
         projects = []
         for r in rows:
@@ -441,8 +477,6 @@ async def list_projects() -> list[dict]:
                 p["env_overrides"] = json.loads(p["env_overrides"])
             projects.append(p)
         return projects
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -453,15 +487,16 @@ async def create_task(
     id: str, project_id: str, goal: str, branch: str | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         # Verify project exists
         rows = await db.execute_fetchall("SELECT id FROM projects WHERE id = ?", (project_id,))
         if not rows:
             raise ValueError(f"Project '{project_id}' not found")
 
         ts = now_iso()
-        branch = branch or id
+        # Use short name (after project prefix) for branch to avoid slash issues
+        short_name = id.split("/")[-1] if "/" in id else id
+        branch = branch or short_name
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock, created_at, updated_at)
@@ -475,28 +510,32 @@ async def create_task(
             "max_turns": max_turns, "max_wall_clock": max_wall_clock,
             "created_at": ts, "updated_at": ts,
         }
-    finally:
-        await db.close()
 
 
 async def get_task(id: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
         if not rows:
             return None
         return dict(rows[0])
-    finally:
-        await db.close()
+
+
+TASK_MUTABLE_FIELDS = {
+    "status", "phase", "branch", "worktree_path", "session_id", "pid",
+    "max_turns", "max_wall_clock",
+    "total_input_tokens", "total_output_tokens", "total_cost_usd",
+    "dispatch_count", "last_activity", "updated_at",
+}
 
 
 async def update_task(id: str, **fields) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
         if not rows:
             raise ValueError(f"Task '{id}' not found")
 
+        # Filter to allowed fields to prevent SQL column injection
+        fields = {k: v for k, v in fields.items() if k in TASK_MUTABLE_FIELDS}
         fields["updated_at"] = now_iso()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [id]
@@ -505,13 +544,10 @@ async def update_task(id: str, **fields) -> dict:
 
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
         return dict(rows[0])
-    finally:
-        await db.close()
 
 
 async def list_tasks(project_id: str | None = None, status: str | None = None) -> list[dict]:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         conditions = []
         params: list = []
 
@@ -534,19 +570,14 @@ async def list_tasks(project_id: str | None = None, status: str | None = None) -
         """
         rows = await db.execute_fetchall(query, params)
         return [dict(r) for r in rows]
-    finally:
-        await db.close()
 
 
 async def count_active_tasks() -> int:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall(
             "SELECT COUNT(*) as cnt FROM tasks WHERE status = 'working'"
         )
         return rows[0]["cnt"]
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -557,8 +588,7 @@ async def post_task_message(
     task_id: str, author: str, content: str,
     type: str | None = None, title: str | None = None, pinned: bool = False,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             raise ValueError(f"Task '{task_id}' not found")
@@ -584,67 +614,30 @@ async def post_task_message(
             "type": type, "title": title, "content": content,
             "pinned": pinned, "created_at": ts,
         }
-    finally:
-        await db.close()
 
 
 async def read_task_messages(
     task_id: str, last_n: int | None = None, after: int | None = None,
     type: str | None = None,
 ) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             raise ValueError(f"Task '{task_id}' not found")
 
-        # Get pinned message
-        pinned_rows = await db.execute_fetchall(
-            "SELECT * FROM messages WHERE task_id = ? AND pinned = TRUE", (task_id,),
-        )
-        pinned = [dict(r) for r in pinned_rows]
-        pinned_ids = {m["id"] for m in pinned}
-
-        conditions = ["task_id = ?", "pinned = FALSE"]
-        params: list = [task_id]
-
-        if after is not None:
-            conditions.append("id > ?")
-            params.append(after)
-        if type:
-            conditions.append("type = ?")
-            params.append(type)
-
-        where_clause = " AND ".join(conditions)
-        query = f"SELECT * FROM messages WHERE {where_clause} ORDER BY created_at ASC"
-
-        if last_n:
-            query = f"SELECT * FROM (SELECT * FROM messages WHERE {where_clause} ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
-            params.append(last_n)
-
-        rows = await db.execute_fetchall(query, params)
-        messages = [dict(r) for r in rows if r["id"] not in pinned_ids]
-
-        for m in pinned:
-            m["_pinned_marker"] = True
-
-        all_messages = pinned + messages
-        cursor_val = max((m["id"] for m in all_messages), default=after or 0)
-        return {"messages": all_messages, "cursor": cursor_val}
-    finally:
-        await db.close()
+    return await _read_messages(
+        filter_column="task_id", filter_value=task_id,
+        last_n=last_n, after=after, type=type,
+    )
 
 
 async def get_task_pinned(task_id: str) -> dict | None:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM messages WHERE task_id = ? AND pinned = TRUE LIMIT 1",
             (task_id,),
         )
         return dict(rows[0]) if rows else None
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -652,8 +645,7 @@ async def get_task_pinned(task_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 async def create_checklist_items(task_id: str, items: list[str]) -> list[dict]:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         ts = now_iso()
         result = []
         for item in items:
@@ -664,24 +656,18 @@ async def create_checklist_items(task_id: str, items: list[str]) -> list[dict]:
             result.append({"id": cursor.lastrowid, "task_id": task_id, "item": item, "done": False})
         await db.commit()
         return result
-    finally:
-        await db.close()
 
 
 async def get_checklist(task_id: str) -> list[dict]:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM task_checklist WHERE task_id = ? ORDER BY id", (task_id,),
         )
         return [dict(r) for r in rows]
-    finally:
-        await db.close()
 
 
 async def update_checklist_item(item_id: int, done: bool) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM task_checklist WHERE id = ?", (item_id,))
         if not rows:
             raise ValueError(f"Checklist item {item_id} not found")
@@ -696,8 +682,6 @@ async def update_checklist_item(item_id: int, done: bool) -> dict:
         item["done"] = done
         item["updated_at"] = ts
         return item
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -705,8 +689,7 @@ async def update_checklist_item(item_id: int, done: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 async def add_artifact(task_id: str, type: str, ref: str) -> dict:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         ts = now_iso()
         cursor = await db.execute(
             "INSERT INTO task_artifacts (task_id, type, ref, created_at) VALUES (?, ?, ?, ?)",
@@ -714,19 +697,14 @@ async def add_artifact(task_id: str, type: str, ref: str) -> dict:
         )
         await db.commit()
         return {"id": cursor.lastrowid, "task_id": task_id, "type": type, "ref": ref, "created_at": ts}
-    finally:
-        await db.close()
 
 
 async def get_artifacts(task_id: str) -> list[dict]:
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM task_artifacts WHERE task_id = ? ORDER BY created_at", (task_id,),
         )
         return [dict(r) for r in rows]
-    finally:
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -735,8 +713,7 @@ async def get_artifacts(task_id: str) -> list[dict]:
 
 async def get_task_status(task_id: str) -> dict:
     """Get comprehensive task status including checklist, messages, artifacts."""
-    db = await get_db()
-    try:
+    async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             raise ValueError(f"Task '{task_id}' not found")
@@ -768,5 +745,3 @@ async def get_task_status(task_id: str) -> dict:
         task["artifacts"] = [dict(r) for r in art_rows]
 
         return task
-    finally:
-        await db.close()

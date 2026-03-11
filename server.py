@@ -9,7 +9,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
 import auth
+import dashboard_api
 import database as db
+import notifications as notify
 import tasks
 
 server = Server("switchboard")
@@ -163,6 +165,27 @@ PROJECT_TOOLS = [
         },
     ),
     Tool(
+        name="update_project",
+        description="Update a project's configuration. Only provided fields are changed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Project ID"},
+                "repo": {"type": "string", "description": "Git repo URL"},
+                "default_branch": {"type": "string", "description": "Default branch name"},
+                "working_dir": {"type": "string", "description": "Base path for worktrees"},
+                "setup_command": {"type": ["string", "null"], "description": "Run after worktree creation"},
+                "teardown_command": {"type": ["string", "null"], "description": "Run on cleanup"},
+                "test_command": {"type": ["string", "null"], "description": "Hint for CC"},
+                "env_overrides": {"type": ["object", "null"], "description": "Key-value env vars for .env.testing"},
+                "max_turns": {"type": ["integer", "null"], "description": "Project-level turn limit"},
+                "max_wall_clock": {"type": ["integer", "null"], "description": "Project-level wall clock limit (minutes)"},
+                "claude_md_path": {"type": ["string", "null"], "description": "Path to CLAUDE.md relative to repo root"},
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
         name="list_projects",
         description="List all registered projects.",
         inputSchema={"type": "object", "properties": {}},
@@ -206,7 +229,7 @@ TASK_TOOLS = [
     ),
     Tool(
         name="retry_task",
-        description="Start a fresh CC session for a task. Optionally clean the worktree (git checkout .).",
+        description="Start a fresh CC session for a task. If review feedback was posted (via post_task_message) after the last CC result, it is automatically injected as revision instructions. Workflow: post feedback with type='review', then retry. Optionally clean the worktree (git checkout .).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -337,187 +360,332 @@ async def call_tool(name: str, arguments: dict):
         return [TextContent(type="text", text=f"Error: {e}")]
 
 
-async def _dispatch_tool(name: str, arguments: dict):
-    # --- Conversation tools ---
-    if name == "board":
-        return await db.board(
-            project=arguments.get("project"),
-            include_archived=arguments.get("include_archived", False),
-        )
+# ---------------------------------------------------------------------------
+# Tool Handlers
+# ---------------------------------------------------------------------------
 
-    elif name == "create_conversation":
-        result = await db.create_conversation(
-            id=arguments["id"],
-            project=arguments["project"],
-            goal=arguments["goal"],
-        )
-        if arguments.get("content"):
-            msg = await db.post_message(
-                conversation_id=arguments["id"],
-                author=arguments.get("author", "human"),
-                content=arguments["content"],
-                type=arguments.get("type"),
-                title=arguments.get("title"),
-            )
-            result["initial_message"] = msg
-        return result
 
-    elif name == "post":
-        return await db.post_message(
-            conversation_id=arguments["conversation_id"],
-            author=arguments["author"],
+async def _handle_board(arguments):
+    return await db.board(
+        project=arguments.get("project"),
+        include_archived=arguments.get("include_archived", False),
+    )
+
+
+async def _handle_create_conversation(arguments):
+    result = await db.create_conversation(
+        id=arguments["id"],
+        project=arguments["project"],
+        goal=arguments["goal"],
+    )
+    if arguments.get("content"):
+        msg = await db.post_message(
+            conversation_id=arguments["id"],
+            author=arguments.get("author", "human"),
             content=arguments["content"],
             type=arguments.get("type"),
             title=arguments.get("title"),
-            pinned=arguments.get("pinned", False),
         )
+        result["initial_message"] = msg
+    return result
 
-    elif name == "read":
-        return await db.read_messages(
-            conversation_id=arguments["conversation_id"],
-            after=arguments.get("after"),
-            last_n=arguments.get("last_n"),
-            since=arguments.get("since"),
-            author=arguments.get("author"),
-            type=arguments.get("type"),
-        )
 
-    elif name == "get_pinned":
-        result = await db.get_pinned(arguments["conversation_id"])
-        return result if result else {"message": "No pinned message in this conversation"}
+async def _handle_post(arguments):
+    return await db.post_message(
+        conversation_id=arguments["conversation_id"],
+        author=arguments["author"],
+        content=arguments["content"],
+        type=arguments.get("type"),
+        title=arguments.get("title"),
+        pinned=arguments.get("pinned", False),
+    )
 
-    elif name == "pin":
-        return await db.pin_message(arguments["message_id"])
 
-    elif name == "conversations":
-        return await db.list_conversations(
-            project=arguments.get("project"),
-            search=arguments.get("search"),
-        )
+async def _handle_read(arguments):
+    return await db.read_messages(
+        conversation_id=arguments["conversation_id"],
+        after=arguments.get("after"),
+        last_n=arguments.get("last_n"),
+        since=arguments.get("since"),
+        author=arguments.get("author"),
+        type=arguments.get("type"),
+    )
 
-    elif name == "archive":
-        return await db.archive_conversation(arguments["conversation_id"])
 
-    # --- Project tools ---
-    elif name == "create_project":
-        return await db.create_project(
-            id=arguments["id"],
-            repo=arguments["repo"],
-            working_dir=arguments["working_dir"],
-            default_branch=arguments.get("default_branch", "main"),
-            setup_command=arguments.get("setup_command"),
-            teardown_command=arguments.get("teardown_command"),
-            test_command=arguments.get("test_command"),
-            env_overrides=arguments.get("env_overrides"),
-            max_turns=arguments.get("max_turns"),
-            max_wall_clock=arguments.get("max_wall_clock"),
-            claude_md_path=arguments.get("claude_md_path"),
-        )
+async def _handle_get_pinned(arguments):
+    result = await db.get_pinned(arguments["conversation_id"])
+    return result if result else {"message": "No pinned message in this conversation"}
 
-    elif name == "get_project":
-        result = await db.get_project(arguments["id"])
-        return result if result else {"error": f"Project '{arguments['id']}' not found"}
 
-    elif name == "list_projects":
-        return await db.list_projects()
+async def _handle_pin(arguments):
+    return await db.pin_message(arguments["message_id"])
 
-    # --- Task tools ---
-    elif name == "dispatch_task":
-        return await tasks.dispatch_task(
-            project_id=arguments["project_id"],
-            task_id=arguments["id"],
-            goal=arguments["goal"],
-            spec=arguments.get("spec"),
-            checklist=arguments.get("checklist"),
-            phase=arguments.get("phase", "analysis"),
-            max_turns=arguments.get("max_turns"),
-            max_wall_clock=arguments.get("max_wall_clock"),
-            escalation_criteria=arguments.get("escalation_criteria"),
-        )
 
-    elif name == "resume_task":
-        return await tasks.resume_task(arguments["task_id"])
+async def _handle_update_project(arguments):
+    project_id = arguments.pop("id")
+    # Filter out None values that weren't explicitly provided
+    fields = {k: v for k, v in arguments.items() if k != "id"}
+    if not fields:
+        return {"error": "No fields to update"}
+    return await db.update_project(project_id, **fields)
 
-    elif name == "retry_task":
-        return await tasks.retry_task(
-            task_id=arguments["task_id"],
-            clean=arguments.get("clean", False),
-        )
+async def _handle_conversations(arguments):
+    return await db.list_conversations(
+        project=arguments.get("project"),
+        search=arguments.get("search"),
+    )
 
-    elif name == "cancel_task":
-        return await tasks.cancel_task(arguments["task_id"])
 
-    elif name == "close_task":
-        return await tasks.close_task(
-            task_id=arguments["task_id"],
-            cleanup=arguments.get("cleanup", True),
-            force_delete_branch=arguments.get("force_delete_branch", False),
-        )
+async def _handle_archive(arguments):
+    return await db.archive_conversation(arguments["conversation_id"])
 
-    elif name == "get_task_status":
-        result = await db.get_task_status(arguments["task_id"])
-        # Liveness detection based on status + last_activity
-        result["alive"] = result.get("status") == "working"
-        if result["alive"] and result.get("last_activity"):
-            last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - last).total_seconds()
-            result["stale"] = age > 900  # 15 minutes with no activity
-            result["idle_minutes"] = round(age / 60, 1)
-        else:
-            result["stale"] = False
 
-        # Fallback PID check for legacy/CLI tasks
-        if result.get("pid"):
-            result["pid_alive"] = tasks._is_pid_alive(result["pid"])
+async def _handle_create_project(arguments):
+    return await db.create_project(
+        id=arguments["id"],
+        repo=arguments["repo"],
+        working_dir=arguments["working_dir"],
+        default_branch=arguments.get("default_branch", "main"),
+        setup_command=arguments.get("setup_command"),
+        teardown_command=arguments.get("teardown_command"),
+        test_command=arguments.get("test_command"),
+        env_overrides=arguments.get("env_overrides"),
+        max_turns=arguments.get("max_turns"),
+        max_wall_clock=arguments.get("max_wall_clock"),
+        claude_md_path=arguments.get("claude_md_path"),
+    )
 
-        # Optional log tail
-        if arguments.get("include_log_tail") and result.get("worktree_path"):
-            log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
-            result["log_tail"] = tasks._tail_file(log_path, 30)
 
-        return result
+async def _handle_get_project(arguments):
+    result = await db.get_project(arguments["id"])
+    return result if result else {"error": f"Project '{arguments['id']}' not found"}
 
-    elif name == "list_tasks":
-        return await db.list_tasks(
-            project_id=arguments.get("project_id"),
-            status=arguments.get("status"),
-        )
 
-    elif name == "update_task_checklist":
-        return await db.update_checklist_item(
-            item_id=arguments["item_id"],
-            done=arguments["done"],
-        )
+async def _handle_list_projects(arguments):
+    return await db.list_projects()
 
-    elif name == "update_task_phase":
-        fields = {}
-        if "phase" in arguments:
-            fields["phase"] = arguments["phase"]
-        if "detail" in arguments:
-            fields["phase"] = f"{arguments.get('phase', 'working')}: {arguments['detail']}"
-        fields["last_activity"] = db.now_iso()
-        return await db.update_task(arguments["task_id"], **fields)
 
-    elif name == "post_task_message":
-        return await db.post_task_message(
-            task_id=arguments["task_id"],
-            author=arguments["author"],
-            content=arguments["content"],
-            type=arguments.get("type"),
-            title=arguments.get("title"),
-            pinned=arguments.get("pinned", False),
-        )
+async def _handle_dispatch_task(arguments):
+    # Auto-prefix task ID with project to avoid global collisions
+    project_id = arguments["project_id"]
+    raw_id = arguments["id"]
+    task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
+    return await tasks.dispatch_task(
+        project_id=project_id,
+        task_id=task_id,
+        goal=arguments["goal"],
+        spec=arguments.get("spec"),
+        checklist=arguments.get("checklist"),
+        phase=arguments.get("phase", "analysis"),
+        max_turns=arguments.get("max_turns"),
+        max_wall_clock=arguments.get("max_wall_clock"),
+        escalation_criteria=arguments.get("escalation_criteria"),
+    )
 
-    elif name == "read_task_messages":
-        return await db.read_task_messages(
-            task_id=arguments["task_id"],
-            after=arguments.get("after"),
-            last_n=arguments.get("last_n"),
-            type=arguments.get("type"),
-        )
+async def _handle_resume_task(arguments):
+    return await tasks.resume_task(arguments["task_id"])
 
+
+async def _handle_retry_task(arguments):
+    return await tasks.retry_task(
+        task_id=arguments["task_id"],
+        clean=arguments.get("clean", False),
+    )
+
+
+async def _handle_cancel_task(arguments):
+    return await tasks.cancel_task(arguments["task_id"])
+
+
+async def _handle_close_task(arguments):
+    return await tasks.close_task(
+        task_id=arguments["task_id"],
+        cleanup=arguments.get("cleanup", True),
+        force_delete_branch=arguments.get("force_delete_branch", False),
+    )
+
+
+async def _handle_get_task_status(arguments):
+    result = await db.get_task_status(arguments["task_id"])
+    # Liveness detection based on status + last_activity
+    result["alive"] = result.get("status") == "working"
+    if result["alive"] and result.get("last_activity"):
+        last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+        result["stale"] = age > 900  # 15 minutes with no activity
+        result["idle_minutes"] = round(age / 60, 1)
     else:
+        result["stale"] = False
+
+    # Fallback PID check for legacy/CLI tasks
+    if result.get("pid"):
+        result["pid_alive"] = tasks._is_pid_alive(result["pid"])
+
+    # Optional log tail
+    if arguments.get("include_log_tail") and result.get("worktree_path"):
+        log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
+        result["log_tail"] = tasks._tail_file(log_path, 30)
+
+    return result
+
+
+async def _handle_list_tasks(arguments):
+    return await db.list_tasks(
+        project_id=arguments.get("project_id"),
+        status=arguments.get("status"),
+    )
+
+
+async def _handle_update_task_checklist(arguments):
+    result = await db.update_checklist_item(
+        item_id=arguments["item_id"],
+        done=arguments["done"],
+    )
+    # Notify on checklist progress
+    if arguments.get("done") and result.get("task_id"):
+        checklist = await db.get_checklist(result["task_id"])
+        done_count = sum(1 for c in checklist if c.get("done"))
+        await notify.checklist_progress(
+            task_id=result["task_id"],
+            item_text=result.get("item", ""),
+            done=done_count,
+            total=len(checklist),
+        )
+    return result
+
+
+async def _handle_update_task_phase(arguments):
+    fields = {}
+    if "phase" in arguments:
+        fields["phase"] = arguments["phase"]
+    if "detail" in arguments:
+        fields["phase"] = f"{arguments.get('phase', 'working')}: {arguments['detail']}"
+    fields["last_activity"] = db.now_iso()
+    result = await db.update_task(arguments["task_id"], **fields)
+    await notify.task_phase_changed(
+        task_id=arguments["task_id"],
+        phase=fields.get("phase", "working"),
+    )
+    return result
+
+
+async def _handle_post_task_message(arguments):
+    result = await db.post_task_message(
+        task_id=arguments["task_id"],
+        author=arguments["author"],
+        content=arguments["content"],
+        type=arguments.get("type"),
+        title=arguments.get("title"),
+        pinned=arguments.get("pinned", False),
+    )
+    # Notify Slack on progress, result, and question messages
+    msg_type = arguments.get("type", "")
+    if msg_type == "question":
+        await notify.task_question(
+            task_id=arguments["task_id"],
+            question=arguments["content"],
+        )
+    elif msg_type in ("progress", "result"):
+        await notify.task_progress(
+            task_id=arguments["task_id"],
+            title=arguments.get("title"),
+            content=arguments["content"],
+            msg_type=msg_type,
+        )
+    return result
+
+
+async def _handle_read_task_messages(arguments):
+    return await db.read_task_messages(
+        task_id=arguments["task_id"],
+        after=arguments.get("after"),
+        last_n=arguments.get("last_n"),
+        type=arguments.get("type"),
+    )
+
+
+TOOL_HANDLERS = {
+    # Conversation tools
+    "board": _handle_board,
+    "create_conversation": _handle_create_conversation,
+    "post": _handle_post,
+    "read": _handle_read,
+    "get_pinned": _handle_get_pinned,
+    "pin": _handle_pin,
+    "conversations": _handle_conversations,
+    "archive": _handle_archive,
+    # Project tools
+    "create_project": _handle_create_project,
+    "get_project": _handle_get_project,
+    "update_project": _handle_update_project,
+    "list_projects": _handle_list_projects,
+    # Task tools
+    "dispatch_task": _handle_dispatch_task,
+    "resume_task": _handle_resume_task,
+    "retry_task": _handle_retry_task,
+    "cancel_task": _handle_cancel_task,
+    "close_task": _handle_close_task,
+    "get_task_status": _handle_get_task_status,
+    "list_tasks": _handle_list_tasks,
+    "update_task_checklist": _handle_update_task_checklist,
+    "update_task_phase": _handle_update_task_phase,
+    "post_task_message": _handle_post_task_message,
+    "read_task_messages": _handle_read_task_messages,
+}
+
+
+async def _dispatch_tool(name: str, arguments: dict):
+    handler = TOOL_HANDLERS.get(name)
+    if not handler:
         raise ValueError(f"Unknown tool: {name}")
+    return await handler(arguments)
+
+
+_DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
+_MIME_TYPES = {
+    ".html": "text/html", ".js": "application/javascript",
+    ".css": "text/css", ".json": "application/json",
+    ".svg": "image/svg+xml", ".png": "image/png",
+}
+
+
+async def _serve_dashboard(scope, send):
+    """Serve static files from dashboard/, with SPA fallback to index.html."""
+    path = scope["path"]
+    # Strip /dashboard prefix to get file path
+    file_path = path[len("/dashboard"):].lstrip("/")
+    if not file_path:
+        file_path = "index.html"
+
+    full_path = os.path.join(_DASHBOARD_DIR, file_path)
+
+    # Security: prevent path traversal
+    full_path = os.path.realpath(full_path)
+    if not full_path.startswith(os.path.realpath(_DASHBOARD_DIR)):
+        await send({"type": "http.response.start", "status": 403, "headers": []})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+        return
+
+    # SPA fallback: if file doesn't exist, serve index.html
+    if not os.path.isfile(full_path):
+        full_path = os.path.join(_DASHBOARD_DIR, "index.html")
+
+    if not os.path.isfile(full_path):
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b"Dashboard not found"})
+        return
+
+    ext = os.path.splitext(full_path)[1]
+    content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+
+    with open(full_path, "rb") as f:
+        body = f.read()
+
+    await send({
+        "type": "http.response.start", "status": 200,
+        "headers": [[b"content-type", content_type.encode()]],
+    })
+    await send({"type": "http.response.body", "body": body})
 
 
 async def main():
@@ -555,6 +723,10 @@ async def main():
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
             await session_manager.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard/api/"):
+            await dashboard_api.handle_request(scope, receive, send)
+        elif path.startswith("/dashboard"):
+            await _serve_dashboard(scope, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})

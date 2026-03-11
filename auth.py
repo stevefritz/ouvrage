@@ -204,7 +204,7 @@ def auth_middleware(inner_app):
             return
 
         # Skip auth for unprotected paths
-        if path in UNPROTECTED_PATHS:
+        if path in UNPROTECTED_PATHS or path.startswith("/dashboard"):
             return await inner_app(scope, receive, send)
 
         # HEAD on /mcp returns protocol version (unauthenticated, for discovery)
