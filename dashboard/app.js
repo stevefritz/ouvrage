@@ -99,6 +99,7 @@ function prUrlBadge(task) {
     return `<a href="${escapeHtml(prUrl)}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">PR ↗</a>`;
 }
 
+
 function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
