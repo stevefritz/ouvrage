@@ -447,6 +447,15 @@ function renderMessages(task) {
     }).join('');
 }
 
+function _logExpandable(ts, label, labelCls, preview, full) {
+    // If full content is same as preview or empty, no expand needed
+    if (!full || full === preview) {
+        return `<div class="${labelCls} text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)}</div>`;
+    }
+    const id = `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    return `<div class="${labelCls} text-xs py-0.5 cursor-pointer" onclick="document.getElementById('${id}').classList.toggle('hidden')"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)} <span class="text-slate-600">▸</span></div><div id="${id}" class="hidden text-xs ml-8 py-1 px-2 mb-1 bg-slate-800/50 rounded whitespace-pre-wrap text-slate-300 max-h-96 overflow-y-auto">${escapeHtml(full)}</div>`;
+}
+
 function renderSessionLogHtml(entries) {
     if (entries.length === 0) {
         return '<p class="text-slate-500 text-sm p-2">No session log</p>';
@@ -462,11 +471,14 @@ function renderSessionLogHtml(entries) {
             const blocks = e.content || [];
             return blocks.map(b => {
                 if (b.type === 'text') {
-                    const preview = (b.text || '').slice(0, 120);
-                    return `<div class="log-text text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TEXT  ${escapeHtml(preview)}</div>`;
+                    const full = b.text || '';
+                    const preview = full.slice(0, 150);
+                    return _logExpandable(ts, 'TEXT ', 'log-text', preview + (full.length > 150 ? '…' : ''), full.length > 150 ? full : null);
                 }
                 if (b.type === 'tool_use') {
-                    return `<div class="log-tool text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>TOOL  ${escapeHtml(b.name || '')} → ${escapeHtml((b.input || '').slice(0, 80))}</div>`;
+                    const input = b.input || '';
+                    const preview = `${b.name || ''} → ${input.slice(0, 100)}`;
+                    return _logExpandable(ts, 'TOOL ', 'log-tool', preview + (input.length > 100 ? '…' : ''), input.length > 100 ? input : null);
                 }
                 return '';
             }).join('');
@@ -475,15 +487,21 @@ function renderSessionLogHtml(entries) {
             const blocks = e.content || [];
             return blocks.map(b => {
                 if (b.type === 'tool_result') {
-                    const status = b.is_error ? '(error)' : `(${(b.preview || '').length}B)`;
-                    return `<div class="log-result text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>RESULT ${status}</div>`;
+                    const content = b.preview || '';
+                    if (b.is_error) {
+                        return _logExpandable(ts, 'RESULT', 'log-result text-red-400', '(error)', content || null);
+                    }
+                    const preview = content.slice(0, 120);
+                    return _logExpandable(ts, 'RESULT', 'log-result', preview ? preview + (content.length > 120 ? '…' : '') : `(${content.length}B)`, content.length > 120 ? content : null);
                 }
                 return '';
             }).join('');
         }
         if (type === 'ResultMessage') {
             const cls = e.is_error ? 'log-error' : 'log-done';
-            return `<div class="${cls} text-xs py-0.5 font-medium"><span class="text-slate-600 mr-2">${ts}</span>DONE  ${e.num_turns || '?'} turns | $${(e.cost_usd || 0).toFixed(2)}</div>`;
+            const result = e.result || '';
+            const summary = `${e.num_turns || '?'} turns | $${(e.cost_usd || 0).toFixed(2)}`;
+            return _logExpandable(ts, 'DONE ', cls + ' font-medium', summary, result || null);
         }
         return '';
     }).join('');

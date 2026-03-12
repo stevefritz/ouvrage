@@ -423,11 +423,11 @@ async def _run_sdk_session(
                     entry["content"] = []
                     for block in (msg.content or []):
                         if isinstance(block, TextBlock):
-                            entry["content"].append({"type": "text", "text": block.text[:2000]})
+                            entry["content"].append({"type": "text", "text": block.text})
                         elif isinstance(block, ToolUseBlock):
                             entry["content"].append({
                                 "type": "tool_use", "name": block.name,
-                                "input": str(block.input)[:1000],
+                                "input": str(block.input)[:5000],
                             })
                     entry["stop_reason"] = getattr(msg, "stop_reason", None)
                     entry["model"] = getattr(msg, "model", None)
@@ -435,19 +435,19 @@ async def _run_sdk_session(
                     entry["content"] = []
                     content = msg.content
                     if isinstance(content, str):
-                        entry["content"].append({"type": "text", "text": content[:2000]})
+                        entry["content"].append({"type": "text", "text": content})
                     else:
                         for block in (content or []):
                             if isinstance(block, ToolResultBlock):
                                 entry["content"].append({
                                     "type": "tool_result",
                                     "tool_use_id": block.tool_use_id,
-                                    "preview": str(block.content or "")[:500],
+                                    "preview": str(block.content or "")[:5000],
                                     "is_error": getattr(block, "is_error", None),
                                 })
                 elif isinstance(msg, ResultMessage):
                     entry["subtype"] = getattr(msg, "subtype", None)
-                    entry["result"] = (msg.result or "")[:1000]
+                    entry["result"] = msg.result or ""
                     entry["num_turns"] = msg.num_turns
                     entry["session_id"] = getattr(msg, "session_id", None)
                     entry["cost_usd"] = msg.total_cost_usd
