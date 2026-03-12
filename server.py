@@ -216,6 +216,9 @@ TASK_TOOLS = [
                 "max_wall_clock": {"type": "integer", "description": "Wall clock timeout in minutes (overrides project default)"},
                 "escalation_criteria": {"type": "string", "description": "Markdown string appended to CC's system context for when to escalate"},
                 "branch": {"type": "string", "description": "Git branch name (supports slashes like feature/foo). Defaults to the task ID slug."},
+                "jira_ticket": {"type": "string", "description": "Optional Jira ticket ID or URL, e.g. 'SUZY-1324' or full URL"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags for filtering, e.g. ['bugfix', 'review']"},
+                "conversation_id": {"type": "string", "description": "Optional conversation ID to link this task to a design conversation"},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -281,12 +284,13 @@ TASK_TOOLS = [
     ),
     Tool(
         name="list_tasks",
-        description="List tasks, optionally filtered by project and/or status.",
+        description="List tasks, optionally filtered by project, status, and/or tag.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "Filter to one project"},
                 "status": {"type": "string", "description": "Filter by status: ready, working, needs-review, completed, failed, cancelled"},
+                "tag": {"type": "string", "description": "Filter by tag"},
             },
         },
     ),
@@ -368,6 +372,56 @@ TASK_TOOLS = [
                 "tail": {"type": "integer", "description": "Return only the last N lines. Default 20.", "default": 20},
             },
             "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="add_checklist_item",
+        description="Add a new deliverable to a task's checklist. Used by CC to add missing items discovered during grounding.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "item": {"type": "string", "description": "Checklist item text"},
+            },
+            "required": ["task_id", "item"],
+        },
+    ),
+    Tool(
+        name="remove_checklist_item",
+        description="Remove an irrelevant checklist item. Used by CC when a deliverable doesn't apply after reading the code.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID (for context, item_id is sufficient for deletion)"},
+                "item_id": {"type": "integer", "description": "Checklist item ID to remove"},
+            },
+            "required": ["item_id"],
+        },
+    ),
+    Tool(
+        name="update_checklist_item",
+        description="Update the text of a checklist item. Used by CC to correct inaccurate deliverables.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID (for context)"},
+                "item_id": {"type": "integer", "description": "Checklist item ID to update"},
+                "text": {"type": "string", "description": "New text for the checklist item"},
+            },
+            "required": ["item_id", "text"],
+        },
+    ),
+    Tool(
+        name="search_task_messages",
+        description="Full-text search across all task message content. Returns matching messages with task_id, author, type, content snippet.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query string"},
+                "project_id": {"type": "string", "description": "Optional: filter to one project"},
+                "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
+            },
+            "required": ["query"],
         },
     ),
 ]
@@ -496,7 +550,7 @@ async def _handle_dispatch_task(arguments):
     project_id = arguments["project_id"]
     raw_id = arguments["id"]
     task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
-    return await tasks.dispatch_task(
+    result = await tasks.dispatch_task(
         project_id=project_id,
         task_id=task_id,
         goal=arguments["goal"],
@@ -507,7 +561,15 @@ async def _handle_dispatch_task(arguments):
         max_wall_clock=arguments.get("max_wall_clock"),
         escalation_criteria=arguments.get("escalation_criteria"),
         branch=arguments.get("branch"),
+        jira_ticket=arguments.get("jira_ticket"),
+        conversation_id=arguments.get("conversation_id"),
     )
+    # Set tags if provided
+    tags = arguments.get("tags")
+    if tags:
+        await db.set_task_tags(task_id, tags)
+        result["tags"] = tags
+    return result
 
 async def _handle_resume_task(arguments):
     return await tasks.resume_task(arguments["task_id"])
@@ -560,6 +622,7 @@ async def _handle_list_tasks(arguments):
     return await db.list_tasks(
         project_id=arguments.get("project_id"),
         status=arguments.get("status"),
+        tag=arguments.get("tag"),
     )
 
 
@@ -709,6 +772,32 @@ async def _handle_get_dispatch_log(arguments):
     return {"text": text}
 
 
+async def _handle_add_checklist_item(arguments):
+    return await db.add_checklist_item(
+        task_id=arguments["task_id"],
+        item=arguments["item"],
+    )
+
+
+async def _handle_remove_checklist_item(arguments):
+    return await db.remove_checklist_item(item_id=arguments["item_id"])
+
+
+async def _handle_update_checklist_item_text(arguments):
+    return await db.update_checklist_item_text(
+        item_id=arguments["item_id"],
+        text=arguments["text"],
+    )
+
+
+async def _handle_search_task_messages(arguments):
+    return await db.search_task_messages(
+        query=arguments["query"],
+        project_id=arguments.get("project_id"),
+        limit=arguments.get("limit", 20),
+    )
+
+
 TOOL_HANDLERS = {
     # Conversation tools
     "board": _handle_board,
@@ -738,6 +827,10 @@ TOOL_HANDLERS = {
     "read_task_messages": _handle_read_task_messages,
     "get_session_log": _handle_get_session_log,
     "get_dispatch_log": _handle_get_dispatch_log,
+    "add_checklist_item": _handle_add_checklist_item,
+    "remove_checklist_item": _handle_remove_checklist_item,
+    "update_checklist_item": _handle_update_checklist_item_text,
+    "search_task_messages": _handle_search_task_messages,
 }
 
 

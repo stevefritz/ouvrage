@@ -35,6 +35,14 @@ export const api = {
     getProjects: () => request('/projects'),
     getProject: (id) => request(`/projects/${eid(id)}`),
     getSystem: () => request('/system'),
+    getConversations: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request('/conversations' + (qs ? '?' + qs : ''));
+    },
+    getConversation: (id, params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request(`/conversations/${eid(id)}` + (qs ? '?' + qs : ''));
+    },
 
     // Actions
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),

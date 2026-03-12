@@ -110,6 +110,14 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 FOREIGN KEY (task_id) REFERENCES tasks(id)
             );
+
+            CREATE TABLE IF NOT EXISTS task_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id),
+                UNIQUE(task_id, tag)
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
@@ -159,6 +167,14 @@ async def init_db():
                 );
             """)
 
+        # Migrate tasks table: add jira_ticket, conversation_id columns if missing
+        task_columns = await conn.execute_fetchall("PRAGMA table_info(tasks)")
+        task_col_names = [c["name"] for c in task_columns]
+        if "jira_ticket" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN jira_ticket TEXT")
+        if "conversation_id" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN conversation_id TEXT")
+
         # Create/recreate indexes
         await conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project);
@@ -170,6 +186,9 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_task_status ON tasks(status);
             CREATE INDEX IF NOT EXISTS idx_checklist_task ON task_checklist(task_id);
             CREATE INDEX IF NOT EXISTS idx_artifact_task ON task_artifacts(task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_tags ON task_tags(task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
+            CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
         """)
 
         await conn.commit()
@@ -482,6 +501,7 @@ async def list_projects() -> list[dict]:
 async def create_task(
     id: str, project_id: str, goal: str, branch: str | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
+    jira_ticket: str | None = None, conversation_id: str | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -495,15 +515,18 @@ async def create_task(
         branch = branch or short_name
         await db.execute(
             """INSERT INTO tasks
-               (id, project_id, goal, status, branch, max_turns, max_wall_clock, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?)""",
-            (id, project_id, goal, branch, max_turns, max_wall_clock, ts, ts),
+               (id, project_id, goal, status, branch, max_turns, max_wall_clock,
+                jira_ticket, conversation_id, created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)""",
+            (id, project_id, goal, branch, max_turns, max_wall_clock,
+             jira_ticket, conversation_id, ts, ts),
         )
         await db.commit()
         return {
             "id": id, "project_id": project_id, "goal": goal, "status": "ready",
             "phase": None, "branch": branch, "worktree_path": None,
             "max_turns": max_turns, "max_wall_clock": max_wall_clock,
+            "jira_ticket": jira_ticket, "conversation_id": conversation_id,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -521,6 +544,7 @@ TASK_MUTABLE_FIELDS = {
     "max_turns", "max_wall_clock",
     "total_input_tokens", "total_output_tokens", "total_cost_usd",
     "dispatch_count", "last_activity", "updated_at",
+    "jira_ticket", "conversation_id",
 }
 
 
@@ -542,7 +566,7 @@ async def update_task(id: str, **fields) -> dict:
         return dict(rows[0])
 
 
-async def list_tasks(project_id: str | None = None, status: str | None = None) -> list[dict]:
+async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None) -> list[dict]:
     async with get_db() as db:
         conditions = []
         params: list = []
@@ -553,6 +577,9 @@ async def list_tasks(project_id: str | None = None, status: str | None = None) -
         if status:
             conditions.append("t.status = ?")
             params.append(status)
+        if tag:
+            conditions.append("EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag = ?)")
+            params.append(tag.strip().lower())
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -566,7 +593,16 @@ async def list_tasks(project_id: str | None = None, status: str | None = None) -
             ORDER BY t.updated_at DESC
         """
         rows = await db.execute_fetchall(query, params)
-        return [dict(r) for r in rows]
+        tasks = []
+        for r in rows:
+            task = dict(r)
+            # Fetch tags for each task
+            tag_rows = await db.execute_fetchall(
+                "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task["id"],),
+            )
+            task["tags"] = [tr["tag"] for tr in tag_rows]
+            tasks.append(task)
+        return tasks
 
 
 async def get_project_task_counts() -> dict[str, dict]:
@@ -702,6 +738,55 @@ async def update_checklist_item(item_id: int, done: bool) -> dict:
         return item
 
 
+async def add_checklist_item(task_id: str, item: str) -> dict:
+    """Add a new checklist item to a task."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
+        if not rows:
+            raise ValueError(f"Task '{task_id}' not found")
+
+        ts = now_iso()
+        cursor = await db.execute(
+            "INSERT INTO task_checklist (task_id, item, done, updated_at) VALUES (?, ?, FALSE, ?)",
+            (task_id, item, ts),
+        )
+        await db.commit()
+        return {"id": cursor.lastrowid, "task_id": task_id, "item": item, "done": False, "updated_at": ts}
+
+
+async def remove_checklist_item(item_id: int) -> dict:
+    """Remove a checklist item by ID."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM task_checklist WHERE id = ?", (item_id,))
+        if not rows:
+            raise ValueError(f"Checklist item {item_id} not found")
+
+        await db.execute("DELETE FROM task_checklist WHERE id = ?", (item_id,))
+        await db.commit()
+        item = dict(rows[0])
+        item["removed"] = True
+        return item
+
+
+async def update_checklist_item_text(item_id: int, text: str) -> dict:
+    """Update the text of a checklist item."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM task_checklist WHERE id = ?", (item_id,))
+        if not rows:
+            raise ValueError(f"Checklist item {item_id} not found")
+
+        ts = now_iso()
+        await db.execute(
+            "UPDATE task_checklist SET item = ?, updated_at = ? WHERE id = ?",
+            (text, ts, item_id),
+        )
+        await db.commit()
+        item = dict(rows[0])
+        item["item"] = text
+        item["updated_at"] = ts
+        return item
+
+
 # ---------------------------------------------------------------------------
 # Task Artifacts
 # ---------------------------------------------------------------------------
@@ -730,7 +815,7 @@ async def get_artifacts(task_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 async def get_task_status(task_id: str) -> dict:
-    """Get comprehensive task status including checklist, messages, artifacts."""
+    """Get comprehensive task status including checklist, messages, artifacts, tags."""
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not rows:
@@ -762,4 +847,87 @@ async def get_task_status(task_id: str) -> dict:
         )
         task["artifacts"] = [dict(r) for r in art_rows]
 
+        # Tags
+        tag_rows = await db.execute_fetchall(
+            "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task_id,),
+        )
+        task["tags"] = [r["tag"] for r in tag_rows]
+
         return task
+
+
+# ---------------------------------------------------------------------------
+# Task Tags
+# ---------------------------------------------------------------------------
+
+async def set_task_tags(task_id: str, tags: list[str]) -> list[str]:
+    """Set tags for a task (replaces existing tags)."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
+        if not rows:
+            raise ValueError(f"Task '{task_id}' not found")
+
+        await db.execute("DELETE FROM task_tags WHERE task_id = ?", (task_id,))
+        for tag in tags:
+            await db.execute(
+                "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
+                (task_id, tag.strip().lower()),
+            )
+        await db.commit()
+        return [t.strip().lower() for t in tags]
+
+
+async def get_task_tags(task_id: str) -> list[str]:
+    """Get tags for a task."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task_id,),
+        )
+        return [r["tag"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Search Task Messages
+# ---------------------------------------------------------------------------
+
+async def search_task_messages(query: str, project_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Search across all task message content using LIKE."""
+    async with get_db() as db:
+        conditions = ["m.task_id IS NOT NULL", "m.content LIKE ?"]
+        params: list = [f"%{query}%"]
+
+        if project_id:
+            conditions.append("t.project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        sql = f"""
+            SELECT m.id, m.task_id, m.author, m.type, m.content, m.created_at,
+                   t.project_id
+            FROM messages m
+            JOIN tasks t ON t.id = m.task_id
+            WHERE {where}
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        rows = await db.execute_fetchall(sql, params)
+
+        results = []
+        for r in rows:
+            row = dict(r)
+            # Create a content snippet around the match
+            content = row["content"] or ""
+            lower_content = content.lower()
+            idx = lower_content.find(query.lower())
+            if idx >= 0:
+                start = max(0, idx - 50)
+                end = min(len(content), idx + len(query) + 50)
+                snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+            else:
+                snippet = content[:120] + ("..." if len(content) > 120 else "")
+            row["snippet"] = snippet
+            del row["content"]
+            results.append(row)
+
+        return results

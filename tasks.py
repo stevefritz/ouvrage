@@ -137,6 +137,15 @@ def _handle_task_exception(task: asyncio.Task) -> None:
         log.error(f"Background task {task.get_name()} failed: {exc}", exc_info=exc)
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process is running by PID."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 def _resolve_limit(task_val, project_val, global_default):
     """Resolve a limit: task override > project default > global default."""
     if task_val is not None:
@@ -366,6 +375,19 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
     parts.append("- When done, commit your work and post a result summary as type='result'.")
     parts.append("")
 
+    # Grounding phase instructions (skip for revision retries — they already know the code)
+    if not review_feedback:
+        parts.append("## Grounding Phase")
+        parts.append("GROUNDING PHASE (do this BEFORE coding):")
+        parts.append("1. Read the relevant source files for this task")
+        parts.append("2. Review the spec — understand WHY this is being requested, not just WHAT")
+        parts.append("3. Review each deliverable in the checklist against the actual code")
+        parts.append("4. Adjust deliverables using the checklist tools: fix inaccuracies, add missing items, remove irrelevant ones. Small adjustments are fine to make silently.")
+        parts.append("5. If the approach fundamentally won't work, scope is significantly larger than expected, or you see a better way to achieve the goal → set status to needs-review and explain")
+        parts.append(f"6. Post your implementation plan as a type='plan' message with file-level detail: `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='plan', content='...')`")
+        parts.append("7. Then begin coding")
+        parts.append("")
+
     if project.get("test_command"):
         parts.append(f"## Test Command")
         parts.append(f"Run tests with: `{project['test_command']}`")
@@ -457,6 +479,10 @@ async def _run_sdk_session(
             "mcp__switchboard__get_task_status",
             "mcp__switchboard__get_session_log",
             "mcp__switchboard__get_dispatch_log",
+            "mcp__switchboard__add_checklist_item",
+            "mcp__switchboard__remove_checklist_item",
+            "mcp__switchboard__update_checklist_item",
+            "mcp__switchboard__search_task_messages",
         ],
         permission_mode="bypassPermissions",
         max_turns=max_turns,
@@ -728,6 +754,8 @@ async def dispatch_task(
     escalation_criteria: str | None = None,
     review_feedback: list[dict] | None = None,
     branch: str | None = None,
+    jira_ticket: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -753,6 +781,7 @@ async def dispatch_task(
             id=task_id, project_id=project_id, goal=goal,
             branch=branch,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
+            jira_ticket=jira_ticket, conversation_id=conversation_id,
         )
         if spec:
             await db.post_task_message(

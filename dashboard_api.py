@@ -84,6 +84,15 @@ async def handle_request(scope, receive, send):
             project_id = path[len("/dashboard/api/projects/"):]
             return await _handle_get_project(send, project_id)
 
+        # GET /dashboard/api/conversations
+        if path == "/dashboard/api/conversations" and method == "GET":
+            return await _handle_list_conversations(scope, send)
+
+        # GET /dashboard/api/conversations/{id}
+        if path.startswith("/dashboard/api/conversations/") and method == "GET":
+            conv_id = unquote(path[len("/dashboard/api/conversations/"):])
+            return await _handle_get_conversation(scope, send, conv_id)
+
         # GET /dashboard/api/tasks
         if path == "/dashboard/api/tasks" and method == "GET":
             return await _handle_list_tasks(scope, send)
@@ -176,6 +185,7 @@ async def _handle_list_tasks(scope, send):
     task_list = await db.list_tasks(
         project_id=params.get("project_id"),
         status=params.get("status"),
+        tag=params.get("tag"),
     )
     # Sort: working first, then by last_activity desc
     def sort_key(t):
@@ -207,6 +217,7 @@ async def _handle_get_task(send, task_id):
     task["messages"] = thread.get("messages", [])
 
     task["artifacts"] = await db.get_artifacts(task_id)
+    task["tags"] = await db.get_task_tags(task_id)
 
     # Check if PID is alive
     pid = task.get("pid")
@@ -322,3 +333,27 @@ async def _handle_post_message(receive, send, task_id):
         title=data.get("title"),
     )
     await _json_response(send, result, 201)
+
+
+# ── Conversations ────────────────────────────────────────────────────────
+
+async def _handle_list_conversations(scope, send):
+    params = _parse_qs(scope)
+    conversations = await db.list_conversations(
+        project=params.get("project"),
+        search=params.get("search"),
+    )
+    await _json_response(send, conversations)
+
+
+async def _handle_get_conversation(scope, send, conv_id):
+    params = _parse_qs(scope)
+    # Read conversation messages
+    try:
+        last_n = int(params["limit"]) if "limit" in params else None
+        after = int(params["after"]) if "after" in params else None
+        thread = await db.read_messages(conv_id, last_n=last_n, after=after)
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+
+    await _json_response(send, thread)

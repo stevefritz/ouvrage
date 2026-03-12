@@ -22,6 +22,8 @@ const uiState = {
 function getRoute() {
     const hash = location.hash.slice(1) || '/';
     if (hash.startsWith('/tasks/')) return { view: 'detail', taskId: hash.slice(7) };
+    if (hash.startsWith('/conversations/')) return { view: 'conversation-detail', convId: decodeURIComponent(hash.slice(15)) };
+    if (hash === '/conversations') return { view: 'conversations' };
     if (hash === '/projects') return { view: 'projects' };
     return { view: 'board', params: Object.fromEntries(new URLSearchParams(hash.slice(2))) };
 }
@@ -42,15 +44,21 @@ function route() {
     document.getElementById('view-board').classList.add('hidden');
     document.getElementById('view-detail').classList.add('hidden');
     document.getElementById('view-projects').classList.add('hidden');
+    document.getElementById('view-conversations').classList.add('hidden');
+    document.getElementById('view-conversation-detail').classList.add('hidden');
 
     if (r.view === 'board') showBoard(r.params);
     else if (r.view === 'detail') showDetail(r.taskId);
     else if (r.view === 'projects') showProjects();
+    else if (r.view === 'conversations') showConversations();
+    else if (r.view === 'conversation-detail') showConversationDetail(r.convId);
 
     // Update nav active state
     document.querySelectorAll('[data-nav]').forEach(el => {
-        el.classList.toggle('text-slate-100', el.dataset.nav === r.view);
-        el.classList.toggle('text-slate-400', el.dataset.nav !== r.view);
+        const navView = el.dataset.nav;
+        const isActive = navView === r.view || (navView === 'conversations' && r.view === 'conversation-detail');
+        el.classList.toggle('text-slate-100', isActive);
+        el.classList.toggle('text-slate-400', !isActive);
     });
 }
 
@@ -120,6 +128,24 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+function jiraUrl(ticket) {
+    if (!ticket) return '#';
+    // If it's already a URL, use it directly
+    if (ticket.startsWith('http')) return escapeHtml(ticket);
+    // Otherwise build a generic Jira URL — just link to the ticket ID display
+    return '#';
+}
+
+function jiraLabel(ticket) {
+    if (!ticket) return '';
+    // If full URL, extract ticket ID from path
+    if (ticket.startsWith('http')) {
+        const parts = ticket.split('/');
+        return parts[parts.length - 1] || ticket;
+    }
+    return ticket;
+}
+
 function stopPolling() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
@@ -182,9 +208,13 @@ async function showBoard(params = {}) {
                         <div class="flex items-center gap-2">
                             <span class="font-mono text-sm text-slate-200">${escapeHtml(t.id)}</span>
                             ${t.pr_url ? `<a href="${escapeHtml(t.pr_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30" title="View PR">PR</a>` : ''}
+                            ${t.jira_ticket ? `<a href="${jiraUrl(t.jira_ticket)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30" title="Jira">${escapeHtml(jiraLabel(t.jira_ticket))}</a>` : ''}
                         </div>
                         <div class="text-sm text-slate-400 truncate max-w-md">${escapeHtml(t.goal)}</div>
-                        ${t.phase ? `<div class="text-xs text-slate-500 mt-0.5">${escapeHtml(t.phase)}</div>` : ''}
+                        <div class="flex items-center gap-1 mt-0.5">
+                            ${t.phase ? `<span class="text-xs text-slate-500">${escapeHtml(t.phase)}</span>` : ''}
+                            ${(t.tags || []).map(tag => `<span class="px-1.5 py-0 rounded text-xs bg-slate-700 text-slate-300">${escapeHtml(tag)}</span>`).join('')}
+                        </div>
                     </td>
                     <td class="p-3">
                         <span class="font-mono text-xs text-slate-400 progress-bar">${progressBar(t.checklist_done, t.checklist_total)}</span>
@@ -260,6 +290,7 @@ async function showDetail(taskId) {
             const task = await api.getTask(taskId);
             renderDetailHeader(task);
             renderChecklist(task);
+            renderPlan(task);
             renderMessages(task);
             // Refresh open log panels during poll
             if (!initialLoad) {
@@ -313,7 +344,10 @@ function renderDetailHeader(task) {
                     <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
                     ${task.phase ? `<span>Phase: <span class="text-slate-300">${escapeHtml(task.phase)}</span></span>` : ''}
                     ${prUrlBadge(task)}
+                    ${task.jira_ticket ? `<a href="${jiraUrl(task.jira_ticket)}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${escapeHtml(jiraLabel(task.jira_ticket))}</a>` : ''}
+                    ${task.conversation_id ? `<a href="#/conversations/${encodeURIComponent(task.conversation_id)}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${escapeHtml(task.conversation_id)}</a>` : ''}
                 </div>
+                ${(task.tags || []).length > 0 ? `<div class="flex gap-1 mt-2">${task.tags.map(t => `<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             </div>
             <div class="flex gap-2 ml-4">${actionButtons(task)}</div>
         </div>
@@ -340,9 +374,33 @@ function renderChecklist(task) {
     `;
 }
 
+function renderPlan(task) {
+    const el = document.getElementById('detail-plan');
+    if (!el) return;
+    const msgs = task.messages || [];
+    // Find most recent plan message
+    const planMsg = [...msgs].reverse().find(m => m.type === 'plan');
+    if (!planMsg) {
+        el.innerHTML = '';
+        return;
+    }
+    const contentHtml = DOMPurify.sanitize(marked.parse(planMsg.content || ''));
+    const time = planMsg.created_at ? new Date(planMsg.created_at + (planMsg.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
+    el.innerHTML = `
+        <details class="bg-slate-900 border border-slate-800 rounded-lg mb-4" open>
+            <summary class="px-4 py-3 text-sm font-medium text-slate-300 cursor-pointer hover:text-slate-100">
+                Implementation Plan <span class="text-xs text-slate-500 ml-2">${time}</span>
+            </summary>
+            <div class="px-4 pb-3 prose-dark text-sm border-t border-slate-700/50">
+                ${contentHtml}
+            </div>
+        </details>
+    `;
+}
+
 function renderMessages(task) {
     const el = document.getElementById('detail-messages');
-    const msgs = task.messages || [];
+    const msgs = (task.messages || []).filter(m => m.type !== 'plan');
     if (msgs.length === 0) {
         el.innerHTML = '<p class="text-slate-500 text-sm">No messages yet</p>';
         return;
@@ -556,6 +614,115 @@ async function showProjects() {
         `).join('');
     } catch (e) {
         document.getElementById('projects-list').innerHTML = `<p class="text-red-400 p-4">Error: ${e.message}</p>`;
+    }
+}
+
+// ── Conversations View ───────────────────────────────────────────────────
+async function showConversations() {
+    const container = document.getElementById('view-conversations');
+    container.classList.remove('hidden');
+
+    try {
+        const conversations = await api.getConversations();
+        const el = document.getElementById('conversations-list');
+        if (conversations.length === 0) {
+            el.innerHTML = '<p class="text-slate-500 text-center p-8">No conversations</p>';
+            return;
+        }
+
+        el.innerHTML = `
+            <div class="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-slate-800 text-xs text-slate-500 uppercase">
+                            <th class="p-3 text-left">Conversation</th>
+                            <th class="p-3 text-left w-32">Project</th>
+                            <th class="p-3 text-left w-20">Messages</th>
+                            <th class="p-3 text-left w-24">Activity</th>
+                            <th class="p-3 text-left w-16">Pinned</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${conversations.map(c => `
+                            <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer"
+                                onclick="window._navigate('#/conversations/${encodeURIComponent(c.id)}')">
+                                <td class="p-3">
+                                    <div class="font-mono text-sm text-slate-200">${escapeHtml(c.id)}</div>
+                                    <div class="text-sm text-slate-400 truncate max-w-md">${escapeHtml(c.goal || '')}</div>
+                                </td>
+                                <td class="p-3 text-sm text-slate-400">${escapeHtml(c.project || '')}</td>
+                                <td class="p-3 text-sm text-slate-400">${c.message_count || 0}</td>
+                                <td class="p-3 text-xs text-slate-500">${relativeTime(c.last_message_at || c.updated_at)}</td>
+                                <td class="p-3 text-sm">${c.has_pinned ? '📌' : ''}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        document.getElementById('conversations-list').innerHTML = `<p class="text-red-400 p-4">Error: ${e.message}</p>`;
+    }
+}
+
+// ── Conversation Detail View ─────────────────────────────────────────────
+async function showConversationDetail(convId) {
+    const container = document.getElementById('view-conversation-detail');
+    container.classList.remove('hidden');
+
+    try {
+        const thread = await api.getConversation(convId);
+        const msgs = thread.messages || [];
+
+        document.getElementById('conversation-header').innerHTML = `
+            <div class="flex items-center gap-3 mb-1">
+                <span class="font-mono text-lg text-slate-200">${escapeHtml(convId)}</span>
+            </div>
+            <div class="text-sm text-slate-400">${msgs.length} messages</div>
+        `;
+
+        const borderColors = {
+            spec: 'border-l-blue-500',
+            plan: 'border-l-teal-500',
+            question: 'border-l-amber-500',
+            status: 'border-l-slate-500',
+            note: 'border-l-slate-600',
+        };
+
+        const el = document.getElementById('conversation-messages');
+        if (msgs.length === 0) {
+            el.innerHTML = '<p class="text-slate-500 text-sm">No messages</p>';
+            return;
+        }
+
+        el.innerHTML = msgs.map((m, i) => {
+            const border = borderColors[m.type] || 'border-l-slate-600';
+            const pinIcon = m.pinned || m._pinned_marker ? '📌 ' : '';
+            const type = (m.type || 'note').toUpperCase();
+            const time = m.created_at ? new Date(m.created_at + (m.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
+            const contentHtml = DOMPurify.sanitize(marked.parse(m.content || ''));
+            const isLong = (m.content || '').length > 500;
+            const collapseId = `conv-msg-${m.id || i}`;
+
+            return `
+                <div class="border-l-2 ${border} bg-slate-800/50 rounded-r mb-3">
+                    <div class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 border-b border-slate-700/50">
+                        <span>${pinIcon}${type}</span>
+                        <span>—</span>
+                        <span>${escapeHtml(m.author || '')}</span>
+                        <span>—</span>
+                        <span>${time}</span>
+                        ${m.title ? `<span class="text-slate-300 ml-1">${escapeHtml(m.title)}</span>` : ''}
+                    </div>
+                    <div id="${collapseId}" class="px-3 py-2 prose-dark text-sm ${isLong && !uiState.expandedMessages.has(collapseId) ? 'msg-collapsed' : ''}">
+                        ${contentHtml}
+                    </div>
+                    ${isLong ? `<button onclick="window._toggleMsg('${collapseId}')" class="px-3 py-1 text-xs text-slate-400 hover:text-slate-200">${uiState.expandedMessages.has(collapseId) ? 'Collapse ▴' : 'Expand ▾'}</button>` : ''}
+                </div>
+            `;
+        }).join('');
+    } catch (e) {
+        document.getElementById('conversation-header').innerHTML = `<p class="text-red-400 p-4">Error: ${e.message}</p>`;
     }
 }
 
