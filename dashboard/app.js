@@ -384,7 +384,7 @@ function renderPlan(task) {
         el.innerHTML = '';
         return;
     }
-    const contentHtml = DOMPurify.sanitize(marked.parse(planMsg.content || ''));
+    const contentHtml = sanitize(marked.parse(planMsg.content || ''));
     const time = planMsg.created_at ? new Date(planMsg.created_at + (planMsg.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
     el.innerHTML = `
         <details class="bg-slate-900 border border-slate-800 rounded-lg mb-4" open>
@@ -700,7 +700,7 @@ async function showConversationDetail(convId) {
             const pinIcon = m.pinned || m._pinned_marker ? '📌 ' : '';
             const type = (m.type || 'note').toUpperCase();
             const time = m.created_at ? new Date(m.created_at + (m.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
-            const contentHtml = DOMPurify.sanitize(marked.parse(m.content || ''));
+            const contentHtml = sanitize(marked.parse(m.content || ''));
             const isLong = (m.content || '').length > 500;
             const collapseId = `conv-msg-${m.id || i}`;
 
