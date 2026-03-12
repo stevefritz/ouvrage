@@ -385,7 +385,7 @@ async def _run_sdk_session(
             for name, cfg in json.load(f).get("mcpServers", {}).items():
                 if name not in mcp_servers:
                     mcp_servers[name] = cfg
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
         pass
 
     options = ClaudeAgentOptions(
