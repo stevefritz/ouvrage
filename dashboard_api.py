@@ -1,6 +1,7 @@
 """Dashboard REST API — JSON endpoints for the Switchboard SPA."""
 
 import json
+import os
 import time
 from urllib.parse import parse_qs, unquote
 
@@ -8,6 +9,7 @@ import database as db
 import tasks
 
 _start_time = time.monotonic()
+JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -156,6 +158,7 @@ async def _handle_system(send):
         "max_concurrent": db.DEFAULT_MAX_CONCURRENT,
         "total_cost_usd": round(total_cost, 2),
         "uptime_seconds": round(time.monotonic() - _start_time),
+        "jira_base_url": JIRA_BASE_URL or None,
     })
 
 

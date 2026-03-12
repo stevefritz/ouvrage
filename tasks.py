@@ -12,10 +12,10 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
     ResultMessage,
     SystemMessage,
     UserMessage,
-    query,
 )
 from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
@@ -27,104 +27,10 @@ log = logging.getLogger("switchboard.tasks")
 # Track running async tasks to prevent garbage collection and silent failures
 _running_tasks: set[asyncio.Task] = set()
 
-# Track message injectors for active tasks so we can signal them to stop
-_active_injectors: dict[str, "MessageInjector"] = {}
+# Track active SDK clients for tasks (used by cancel to interrupt)
+_active_clients: dict[str, ClaudeSDKClient] = {}
 
-
-class MessageInjector:
-    """Async iterable that yields user messages for the SDK's stream_input.
-
-    Sends the initial prompt, then polls the DB for new messages posted
-    to the task. When a non-dispatcher message appears, it's injected
-    into the CC session as a user message.
-    """
-    _SENTINEL = object()
-    POLL_INTERVAL = 5  # seconds between DB polls
-
-    def __init__(self, task_id: str, initial_prompt: str):
-        self._task_id = task_id
-        self._initial_prompt = initial_prompt
-        self._queue: asyncio.Queue = asyncio.Queue()
-        self._seen_ids: set[int] = set()
-        self._done = False
-        self._poll_task: asyncio.Task | None = None
-
-    def _make_user_msg(self, content: str) -> dict:
-        return {
-            "type": "user",
-            "session_id": "",
-            "message": {"role": "user", "content": content},
-            "parent_tool_use_id": None,
-        }
-
-    async def start(self):
-        """Seed initial prompt and start background polling."""
-        # Snapshot existing message IDs so we only inject NEW ones
-        thread = await db.read_task_messages(self._task_id)
-        for msg in thread.get("messages", []):
-            if msg.get("id"):
-                self._seen_ids.add(msg["id"])
-
-        # Queue the initial prompt
-        await self._queue.put(self._make_user_msg(self._initial_prompt))
-        # Start polling
-        self._poll_task = asyncio.create_task(
-            self._poll_for_messages(), name=f"msg-poll-{self._task_id}"
-        )
-
-    async def _poll_for_messages(self):
-        """Poll DB for new messages and queue them for injection."""
-        while not self._done:
-            await asyncio.sleep(self.POLL_INTERVAL)
-            if self._done:
-                break
-            try:
-                thread = await db.read_task_messages(self._task_id)
-                for msg in thread.get("messages", []):
-                    msg_id = msg.get("id")
-                    if not msg_id or msg_id in self._seen_ids:
-                        continue
-                    self._seen_ids.add(msg_id)
-                    # Only inject human-authored messages, not dispatcher/cc-worker status
-                    if msg.get("author") in ("dispatcher", "cc-worker"):
-                        continue
-                    # Build injection text with context
-                    author = msg.get("author", "user")
-                    msg_type = msg.get("type", "note")
-                    title = msg.get("title") or ""
-                    content = msg.get("content", "")
-                    injection = (
-                        f"--- LIVE MESSAGE FROM {author.upper()} ({msg_type}) ---\n"
-                        f"{(title + chr(10)) if title else ''}"
-                        f"{content}\n"
-                        f"--- END LIVE MESSAGE ---\n\n"
-                        f"The above message was just posted to your task thread. "
-                        f"Read it carefully and adjust your work accordingly."
-                    )
-                    log.info(f"Injecting message {msg_id} into task {self._task_id}")
-                    await self._queue.put(self._make_user_msg(injection))
-                    await notify.task_heartbeat(
-                        task_id=self._task_id, turns=0,
-                        elapsed_s=0, last_tool=f"[injected msg from {author}]",
-                    )
-            except Exception as e:
-                log.warning(f"Message poll error for {self._task_id}: {e}")
-
-    async def stop(self):
-        """Signal the iterable to end."""
-        self._done = True
-        if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
-        await self._queue.put(self._SENTINEL)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        item = await self._queue.get()
-        if item is self._SENTINEL:
-            raise StopAsyncIteration
-        return item
+MESSAGE_POLL_INTERVAL = 5  # seconds between DB polls for injected messages
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:
@@ -466,24 +372,26 @@ async def _run_sdk_session(
 
     # Build SDK options — run CC as restricted 'switchboard' user
     worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+
+    # Merge user-level MCP servers from ~/.claude.json (e.g. shopify-ai)
+    mcp_servers = {
+        "switchboard": {
+            "type": "http",
+            "url": "http://localhost:8100/mcp",
+        },
+    }
+    try:
+        with open(os.path.join(worker_home, ".claude.json")) as f:
+            for name, cfg in json.load(f).get("mcpServers", {}).items():
+                if name not in mcp_servers:
+                    mcp_servers[name] = cfg
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
     options = ClaudeAgentOptions(
         user="switchboard",
         cwd=str(worktree_path),
         env={"HOME": worker_home},
-        allowed_tools=[
-            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-            "mcp__switchboard__update_task_checklist",
-            "mcp__switchboard__update_task_phase",
-            "mcp__switchboard__post_task_message",
-            "mcp__switchboard__read_task_messages",
-            "mcp__switchboard__get_task_status",
-            "mcp__switchboard__get_session_log",
-            "mcp__switchboard__get_dispatch_log",
-            "mcp__switchboard__add_checklist_item",
-            "mcp__switchboard__remove_checklist_item",
-            "mcp__switchboard__update_checklist_item",
-            "mcp__switchboard__search_task_messages",
-        ],
         permission_mode="bypassPermissions",
         max_turns=max_turns,
         setting_sources=["project"],
@@ -492,12 +400,7 @@ async def _run_sdk_session(
             "preset": "claude_code",
             "append": prompt if not is_resume else "",
         },
-        mcp_servers={
-            "switchboard": {
-                "type": "http",
-                "url": "http://localhost:8100/mcp",
-            },
-        },
+        mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
     )
 
@@ -555,6 +458,49 @@ async def _run_sdk_session(
             except Exception as e:
                 log.warning(f"Failed to log message: {e}")
 
+        async def _check_for_injections(client: ClaudeSDKClient, seen_ids: set[int]) -> None:
+            """Poll DB for new messages and inject them via client.query()."""
+            try:
+                thread = await db.read_task_messages(task_id)
+                for msg in thread.get("messages", []):
+                    msg_id = msg.get("id")
+                    if not msg_id or msg_id in seen_ids:
+                        continue
+                    seen_ids.add(msg_id)
+                    # Only inject human-authored messages, not dispatcher/cc-worker status
+                    if msg.get("author") in ("dispatcher", "cc-worker"):
+                        continue
+                    author = msg.get("author", "user")
+                    msg_type = msg.get("type", "note")
+                    title = msg.get("title") or ""
+                    content = msg.get("content", "")
+                    injection = (
+                        f"--- LIVE MESSAGE FROM {author.upper()} ({msg_type}) ---\n"
+                        f"{(title + chr(10)) if title else ''}"
+                        f"{content}\n"
+                        f"--- END LIVE MESSAGE ---\n\n"
+                        f"The above message was just posted to your task thread. "
+                        f"Read it carefully and adjust your work accordingly."
+                    )
+                    log.info(f"Injecting message {msg_id} into task {task_id}")
+                    await client.query(injection)
+                    await notify.task_heartbeat(
+                        task_id=task_id, turns=0,
+                        elapsed_s=0, last_tool=f"[injected msg from {author}]",
+                    )
+            except Exception as e:
+                log.warning(f"Message poll error for {task_id}: {e}")
+
+        async def _poll_and_inject(client: ClaudeSDKClient, seen_ids: set[int], done: asyncio.Event):
+            """Background task: poll DB for new messages, inject via client.query()."""
+            while not done.is_set():
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=MESSAGE_POLL_INTERVAL)
+                    break  # done was set
+                except asyncio.TimeoutError:
+                    pass  # poll interval elapsed
+                await _check_for_injections(client, seen_ids)
+
         async def _run():
             nonlocal result_msg
             start_time = time.monotonic()
@@ -566,52 +512,66 @@ async def _run_sdk_session(
 
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
 
-            # Use MessageInjector for live message injection during session
-            injector = MessageInjector(task_id, actual_prompt)
-            _active_injectors[task_id] = injector
-            await injector.start()
+            # Snapshot existing message IDs so we only inject NEW ones
+            seen_ids: set[int] = set()
+            thread = await db.read_task_messages(task_id)
+            for msg in thread.get("messages", []):
+                if msg.get("id"):
+                    seen_ids.add(msg["id"])
 
-            try:
-                async for message in query(prompt=injector, options=options):
-                    _log_message(message)
+            done_event = asyncio.Event()
 
-                    # Once we have the result, skip further processing
-                    if result_msg:
-                        continue
+            async with ClaudeSDKClient(options=options) as client:
+                _active_clients[task_id] = client
 
-                    if isinstance(message, AssistantMessage):
-                        turn_count += 1
-                        # Track last tool used for heartbeat context
-                        for block in (message.content or []):
-                            if isinstance(block, ToolUseBlock):
-                                last_tool_name = block.name
+                # Start background message injection poller
+                poll_task = asyncio.create_task(
+                    _poll_and_inject(client, seen_ids, done_event),
+                    name=f"msg-poll-{task_id}",
+                )
 
-                    if isinstance(message, ResultMessage):
-                        result_msg = message
-                        # Capture session_id from first dispatch
-                        if message.session_id:
-                            await db.update_task(task_id, session_id=message.session_id)
-                        running_cost = message.total_cost_usd or 0
-                        # Stop the injector so the SDK's stdin closes and the loop ends naturally
-                        await injector.stop()
-                        continue
+                try:
+                    # Send initial prompt
+                    await client.query(actual_prompt)
 
-                    # Heartbeat: post to Slack every N seconds
-                    now = time.monotonic()
-                    if now - last_heartbeat >= heartbeat_interval:
-                        last_heartbeat = now
-                        await notify.task_heartbeat(
-                            task_id=task_id,
-                            turns=turn_count,
-                            elapsed_s=now - start_time,
-                            last_tool=last_tool_name,
-                        )
+                    # Process all messages until ResultMessage
+                    async for message in client.receive_response():
+                        _log_message(message)
 
-                    # Update last_activity on each message
-                    await db.update_task(task_id, last_activity=db.now_iso())
-            finally:
-                await injector.stop()
-                _active_injectors.pop(task_id, None)
+                        if isinstance(message, AssistantMessage):
+                            turn_count += 1
+                            for block in (message.content or []):
+                                if isinstance(block, ToolUseBlock):
+                                    last_tool_name = block.name
+
+                        if isinstance(message, ResultMessage):
+                            result_msg = message
+                            if message.session_id:
+                                await db.update_task(task_id, session_id=message.session_id)
+                            running_cost = message.total_cost_usd or 0
+
+                        # Heartbeat
+                        now = time.monotonic()
+                        if now - last_heartbeat >= heartbeat_interval:
+                            last_heartbeat = now
+                            await notify.task_heartbeat(
+                                task_id=task_id,
+                                turns=turn_count,
+                                elapsed_s=now - start_time,
+                                last_tool=last_tool_name,
+                            )
+
+                        # Update last_activity on each message
+                        await db.update_task(task_id, last_activity=db.now_iso())
+
+                finally:
+                    done_event.set()
+                    poll_task.cancel()
+                    try:
+                        await poll_task
+                    except asyncio.CancelledError:
+                        pass
+                    _active_clients.pop(task_id, None)
 
         try:
             await asyncio.wait_for(_run(), timeout=timeout_seconds)

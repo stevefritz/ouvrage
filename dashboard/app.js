@@ -8,6 +8,7 @@ const sanitize = typeof DOMPurify !== 'undefined'
 // ── State ────────────────────────────────────────────────────────────────
 let pollTimer = null;
 let currentView = null;
+let jiraBaseUrl = null;  // Set from /api/system response
 
 // Track UI toggle states across poll re-renders
 const uiState = {
@@ -132,7 +133,8 @@ function jiraUrl(ticket) {
     if (!ticket) return '#';
     // If it's already a URL, use it directly
     if (ticket.startsWith('http')) return escapeHtml(ticket);
-    // Otherwise build a generic Jira URL — just link to the ticket ID display
+    // Build URL from configured base (e.g. https://redrhino.atlassian.net)
+    if (jiraBaseUrl) return escapeHtml(`${jiraBaseUrl}/browse/${ticket}`);
     return '#';
 }
 
@@ -190,6 +192,7 @@ async function showBoard(params = {}) {
     async function render() {
         try {
             const [tasks, sys] = await Promise.all([api.getTasks(params), api.getSystem()]);
+            if (sys.jira_base_url) jiraBaseUrl = sys.jira_base_url;
             document.getElementById('header-active').textContent = `${sys.active_tasks} active`;
             document.getElementById('header-cost').textContent = `$${sys.total_cost_usd.toFixed(2)} total`;
 
