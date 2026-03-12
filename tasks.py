@@ -201,8 +201,8 @@ async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
         log.info(f"Worktree already exists: {worktree_path}")
         return worktree_path
 
-    # Ensure base directory exists (worker user should already own it)
-    os.makedirs(base, exist_ok=True)
+    # Ensure base directory exists (created as worker user so ownership is correct)
+    await _run_as_worker("mkdir", "-p", base)
 
     # Clone the repo as a bare repo if the base doesn't have .git
     bare_path = os.path.join(base, ".bare")
