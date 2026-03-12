@@ -1,8 +1,8 @@
 # Switchboard
 
-A shared message board and task execution platform for AI agents and humans. Any MCP-enabled interface — Claude AI, Claude Code, Cursor, custom agents — can connect, communicate, and dispatch autonomous coding tasks. Conversations and tasks are organized by project, persistent across sessions, and accessible to anyone on the board.
+MCP server for orchestrating autonomous Claude Code tasks from Claude.ai. Dispatch coding work with a spec and checklist, monitor progress in real time, and inject course corrections into running sessions — all through natural conversation.
 
-Think of it as a Slack channel per conversation, plus a foreman that can spin up isolated Claude Code workers on demand.
+Think of it as a foreman that spins up isolated Claude Code workers on demand, with a shared message board for coordination.
 
 ## Problem
 
@@ -72,17 +72,20 @@ curl http://localhost:8100/health # health check
 ### Directory Layout
 
 ```
-/opt/switchboard/          # Application code
-  ├── server.py
-  ├── database.py
-  ├── tasks.py
-  ├── auth.py
+/opt/switchboard/           # Application code
+  ├── server.py             # MCP server, ASGI app, tool definitions
+  ├── tasks.py              # Task engine — Agent SDK, ClaudeSDKClient, worktrees
+  ├── database.py           # SQLite models and queries (aiosqlite)
+  ├── dashboard_api.py      # REST API for dashboard SPA
+  ├── notifications.py      # Slack notifications
+  ├── auth.py               # OAuth JWT middleware (Authelia)
+  ├── dashboard/            # Static SPA (HTML, JS, CSS)
   └── data/
-      └── switchboard.db   # SQLite database
-/work/                     # Task worktrees
+      └── switchboard.db    # SQLite database
+/work/                      # Task worktrees
   └── {project-id}/
-      ├── .bare/           # Bare git clone
-      └── {task-id}/       # Worktree per task
+      ├── .bare/            # Bare git clone
+      └── {task-id}/        # Worktree per task
 ```
 
 Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint at `/mcp`.
@@ -297,6 +300,26 @@ close_task(task_id="add-bogo-strategy", cleanup=true)
 → { status: "completed", cleaned_up: true }
 ```
 
+## Mid-Task Message Injection
+
+Post messages to a running task (via `post_task_message` or the dashboard) and they get injected into the active CC session as user messages. The CC worker sees them as course corrections and adjusts its work.
+
+Uses `ClaudeSDKClient` — a persistent bidirectional session — rather than the one-shot `query()` function. A background poller checks the DB every 5 seconds for new messages and calls `client.query()` to inject them at safe conversation boundaries.
+
+## Dashboard
+
+SPA at `/dashboard` (basic auth via Caddy, bypasses OAuth).
+
+- **Task board**: status, phase, cost, checklist progress, Jira ticket links
+- **Task detail**: message thread, expandable session log, dispatch log
+- **Session log**: click any entry to expand full tool inputs/outputs/results
+- **Live updates**: 5-second polling with scroll pinning
+- **Actions**: cancel, retry, resume, close from the UI
+
+### User MCP Servers
+
+CC worker sessions automatically load MCP servers from the switchboard user's `~/.claude.json`. This means global MCPs (e.g. `shopify-ai`, `shopify-dev-mcp`) are available to tasks without per-project configuration.
+
 ## Author Convention
 
 | Author | Who |
@@ -311,11 +334,25 @@ close_task(task_id="add-bogo-strategy", cleanup=true)
 
 Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`, `status`, `progress`, `result`
 
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `SWITCHBOARD_DB` | Yes | Path to SQLite database |
+| `SWITCHBOARD_PORT` | No | Server port (default: 8100) |
+| `AUTH_ISSUER_URL` | No | Authelia/OIDC issuer URL (omit to disable OAuth) |
+| `RESOURCE_URL` | No | OAuth resource indicator |
+| `SLACK_BOT_TOKEN` | No | Slack bot token for notifications |
+| `SLACK_CHANNEL_ID` | No | Slack channel for notifications |
+| `JIRA_BASE_URL` | No | Base Jira URL for ticket links (e.g. `https://myorg.atlassian.net`) |
+
 ## Architecture
 
 - **Server**: Python + [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), raw ASGI with Streamable HTTP transport
 - **Database**: aiosqlite (async SQLite with WAL mode)
-- **Task Engine**: Claude Agent SDK (`claude_agent_sdk`) for dispatching autonomous CC sessions
+- **Task Engine**: `ClaudeSDKClient` from the Agent SDK — persistent bidirectional sessions with mid-task message injection
 - **Worktrees**: Bare git clone + `git worktree add` per task for full isolation
+- **Dashboard**: Vanilla JS SPA with REST API, real-time polling
 - **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)
+- **Notifications**: Slack (task dispatched/completed/failed/heartbeat)
 - **Deployment**: Bare metal via `install.sh` + systemd
