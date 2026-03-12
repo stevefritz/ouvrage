@@ -1,16 +1,14 @@
 # Switchboard
 
-MCP server for orchestrating autonomous Claude Code tasks from Claude.ai. Dispatch coding work with a spec and checklist, monitor progress in real time, and inject course corrections into running sessions — all through natural conversation.
+An MCP server that turns Claude.ai into a dispatch center for autonomous Claude Code agents. Describe work in conversation, dispatch it as a task, and a CC instance on your VPS picks it up — working in its own git branch, reading code, making changes, committing, and reporting back through the same MCP protocol.
 
-Think of it as a foreman that spins up isolated Claude Code workers on demand, with a shared message board for coordination.
+Three ways to interact with running work:
 
-## Problem
+- **Claude.ai** — dispatch tasks, check status, post course corrections, retry — all through natural conversation via MCP tools
+- **Dashboard** — web UI with live session logs (every tool call, file read, API response), message threads, checklist progress, and direct task actions
+- **Any MCP client** — Claude Code, Cursor, custom agents — anything that speaks MCP can connect and participate. CC workers talk back to Switchboard through the same MCP endpoint that dispatches them
 
-AI agents operate in isolated sessions. Context from one doesn't carry to another — planning in Claude AI means manually copy-pasting to Claude Code, and vice versa. There's no way to dispatch a coding task to an autonomous agent and check on it later.
-
-## Solution
-
-A lightweight SQLite-backed message board with an integrated task execution engine. Plan in one session, dispatch work to an autonomous Claude Code worker in another, check status from anywhere. The worker runs in an isolated git worktree, reports progress back to the board, and you pick up the results when ready.
+Workers can have their own MCP servers (loaded from user config), so a task can use tools like Shopify AI or Jira alongside standard code tools. The conversation layer (project threads, task messages, pinned specs) means context from planning carries through to execution and back.
 
 ## Deployment
 
@@ -77,7 +75,7 @@ curl http://localhost:8100/health # health check
   ├── tasks.py              # Task engine — Agent SDK, ClaudeSDKClient, worktrees
   ├── database.py           # SQLite models and queries (aiosqlite)
   ├── dashboard_api.py      # REST API for dashboard SPA
-  ├── notifications.py      # Slack notifications
+  ├── notifications.py      # Slack notifications (outbound only)
   ├── auth.py               # OAuth JWT middleware (Authelia)
   ├── dashboard/            # Static SPA (HTML, JS, CSS)
   └── data/
@@ -342,8 +340,8 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 | `SWITCHBOARD_PORT` | No | Server port (default: 8100) |
 | `AUTH_ISSUER_URL` | No | Authelia/OIDC issuer URL (omit to disable OAuth) |
 | `RESOURCE_URL` | No | OAuth resource indicator |
-| `SLACK_BOT_TOKEN` | No | Slack bot token for notifications |
-| `SLACK_CHANNEL_ID` | No | Slack channel for notifications |
+| `SLACK_BOT_TOKEN` | No | Slack bot token for outbound notifications |
+| `SLACK_CHANNEL_ID` | No | Slack channel for outbound notifications |
 | `JIRA_BASE_URL` | No | Base Jira URL for ticket links (e.g. `https://myorg.atlassian.net`) |
 
 ## Architecture
@@ -354,5 +352,5 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 - **Worktrees**: Bare git clone + `git worktree add` per task for full isolation
 - **Dashboard**: Vanilla JS SPA with REST API, real-time polling
 - **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)
-- **Notifications**: Slack (task dispatched/completed/failed/heartbeat)
+- **Notifications**: Slack outbound only (task dispatched/completed/failed/heartbeat)
 - **Deployment**: Bare metal via `install.sh` + systemd
