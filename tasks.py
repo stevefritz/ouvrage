@@ -62,6 +62,18 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+def _tail_lines(text: str, max_chars: int) -> str:
+    """Truncate text to last ~max_chars, breaking at line boundaries."""
+    if len(text) <= max_chars:
+        return text
+    # Find the first newline after the cut point
+    cut = len(text) - max_chars
+    idx = text.find("\n", cut)
+    if idx == -1:
+        return text[cut:]
+    return text[idx + 1:]
+
+
 # ---------------------------------------------------------------------------
 # Git Worktree Management
 # ---------------------------------------------------------------------------
@@ -78,15 +90,21 @@ def _get_worker_ids() -> tuple[int, int]:
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     """Run a command as the worker user via setuid (requires CAP_SETUID)."""
     uid, gid = _get_worker_ids()
+    pw = pwd.getpwnam(WORKER_USER)
 
     def _demote():
         os.setgid(gid)
         os.setuid(uid)
 
+    # Ensure HOME is set to the worker user's home dir, not the service user's
+    env = kwargs.pop("env", None) or os.environ.copy()
+    env["HOME"] = pw.pw_dir
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         preexec_fn=_demote,
+        env=env,
         **kwargs,
     )
     stdout, stderr = await proc.communicate()
@@ -193,7 +211,13 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
     if not cmd:
         return
 
-    # Write env overrides to .env.testing if provided
+    log.info(f"Running setup: {cmd} in {worktree_path}")
+    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
+    if rc != 0:
+        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
+
+    # Append env overrides AFTER setup (setup may create .env.testing from template)
+    # Uses >> to append so we don't clobber APP_KEY etc. set by key:generate
     overrides = env_overrides
     if not overrides and project.get("env_overrides"):
         overrides = project["env_overrides"]
@@ -202,15 +226,12 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
 
     if overrides:
         env_path = os.path.join(worktree_path, ".env.testing")
-        with open(env_path, "w") as f:
-            for k, v in overrides.items():
-                f.write(f"{k}={v}\n")
-        log.info(f"Wrote env overrides to {env_path}")
-
-    log.info(f"Running setup: {cmd} in {worktree_path}")
-    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
-    if rc != 0:
-        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
+        env_content = "\n" + "\n".join(f"{k}={v}" for k, v in overrides.items()) + "\n"
+        # Append as worker user — later values override earlier ones in dotenv
+        await _run_as_worker(
+            "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
+        )
+        log.info(f"Appended env overrides to {env_path}")
 
 
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
@@ -348,8 +369,13 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("")
 
     if project.get("test_command"):
-        parts.append(f"## Test Command")
-        parts.append(f"Run tests with: `{project['test_command']}`")
+        parts.append(f"## Testing")
+        if task.get("auto_test"):
+            parts.append(f"**Tests will be run automatically** after you complete your work (`{project['test_command']}`).")
+            parts.append("Do NOT run the full test suite yourself — the gate handles this. If tests fail, you will be retried with the failure output.")
+            parts.append("Only run targeted tests if you need to debug a specific piece of logic during development.")
+        else:
+            parts.append(f"Run tests with: `{project['test_command']}`")
         parts.append("")
 
     if escalation_criteria:
@@ -745,6 +771,13 @@ async def _run_sdk_session(
             title="Dispatch error",
             content=f"SDK session raised an exception:\n\n```\n{e}\n```",
         )
+        # If this was a review task, still try to process any review it posted
+        task = await db.get_task(task_id)
+        if task and task.get("parent_task_id"):
+            try:
+                await _process_review_result(task_id, task["parent_task_id"])
+            except Exception:
+                log.exception(f"Failed to process review result for crashed review task {task_id}")
         await notify.task_failed(task_id=task_id, error=str(e))
         with open(log_dir / "dispatch.log", "a") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
@@ -794,7 +827,7 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title="Tests passed",
-            content=f"```\n{test_output[-3000:]}\n```",
+            content=f"```\n{_tail_lines(test_output, 3000)}\n```",
         )
         log.info(f"Task {task_id}: test gate passed")
 
@@ -816,7 +849,7 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title=f"Tests failed (attempt {retries}/{max_retries})",
-            content=f"```\n{test_output[-3000:]}\n```",
+            content=f"```\n{_tail_lines(test_output, 3000)}\n```",
         )
         log.warning(f"Task {task_id}: test gate failed (attempt {retries}/{max_retries})")
 
@@ -840,11 +873,11 @@ async def _get_branch_diff(task: dict) -> str:
     project = await db.get_project(task["project_id"])
     default_branch = project["default_branch"] if project else "main"
     stdout, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "diff", f"{default_branch}...HEAD", "--stat",
+        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD", "--stat",
     )
     stat = stdout.decode(errors="replace")
     stdout2, _, _ = await _run_as_worker(
-        "git", "-C", worktree, "diff", f"{default_branch}...HEAD",
+        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD",
     )
     full_diff = stdout2.decode(errors="replace")
     return f"{stat}\n\n{full_diff}"
