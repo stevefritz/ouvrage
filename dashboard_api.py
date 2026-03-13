@@ -238,6 +238,7 @@ async def _handle_get_task(send, task_id):
 
     task["artifacts"] = await db.get_artifacts(task_id)
     task["tags"] = await db.get_task_tags(task_id)
+    task["subtasks"] = await db.get_subtasks(task_id)
 
     # Check if PID is alive
     pid = task.get("pid")

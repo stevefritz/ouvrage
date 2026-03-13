@@ -62,6 +62,42 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
+    """Force-push task branch if there are unpushed commits."""
+    worktree = task.get("worktree_path")
+    branch = task.get("branch")
+    if not worktree or not branch or not os.path.exists(worktree):
+        return
+
+    # Check if remote branch exists
+    stdout, _, rc = await _run_as_worker(
+        "git", "-C", worktree, "ls-remote", "--heads", "origin", branch,
+    )
+    remote_exists = rc == 0 and stdout.strip()
+
+    if remote_exists:
+        # Check for unpushed commits
+        stdout, _, rc = await _run_as_worker(
+            "git", "-C", worktree, "log", f"origin/{branch}..HEAD", "--oneline",
+        )
+        if rc != 0 or not stdout.strip():
+            return  # nothing to push
+    # else: remote doesn't exist yet, push to create it
+
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "push", "--force-with-lease", "origin", branch,
+    )
+    if rc != 0:
+        log.warning(f"Auto-push failed for {task_id}: {stderr.decode()}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-push failed",
+            content=f"```\n{stderr.decode()[:1000]}\n```",
+        )
+    else:
+        log.info(f"Auto-pushed branch {branch} for {task_id}")
+
+
 def _tail_lines(text: str, max_chars: int) -> str:
     """Truncate text to last ~max_chars, breaking at line boundaries."""
     if len(text) <= max_chars:
@@ -350,7 +386,8 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')`")
     parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')`")
     parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
-    parts.append("- When done, commit your work and post a result summary as type='result'.")
+    parts.append("- When done, commit your work, **push your branch** (`git push origin {branch}`), and post a result summary as type='result'.")
+    parts.append("- **Always push your branch before finishing.** Your work is headless — unpushed code has no value.")
     parts.append("- Before finishing, post a handoff message with key decisions, gotchas, and notes for the next task:")
     parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='handoff', content='...')`")
     parts.append("")
@@ -733,8 +770,11 @@ async def _run_sdk_session(
                     result_preview=result_msg.result,
                 )
 
-                # Check if this is a review task — process result on parent
+                # Auto-push branch before gate pipeline
                 task = await db.get_task(task_id)
+                await _ensure_branch_pushed(task_id, task)
+
+                # Check if this is a review task — process result on parent
                 if task.get("parent_task_id"):
                     await _process_review_result(task_id, task["parent_task_id"])
                 elif task.get("gate_passed_at"):
@@ -798,6 +838,115 @@ def _log_result(log_dir: Path, result: ResultMessage):
         f.write(f"  cost_usd: {result.total_cost_usd}\n")
         if result.usage:
             f.write(f"  usage: {json.dumps(result.usage)}\n")
+
+
+async def _run_subtask(
+    task_id: str,
+    subtask_type: str,
+    prompt: str,
+    model: str = "opus",
+    max_turns: int = 30,
+) -> dict:
+    """Run a lightweight CC session in the parent's worktree.
+
+    No separate worktree, no setup_command, no gate pipeline.
+    Returns the subtask record.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Parent task '{task_id}' not found")
+
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        raise ValueError(f"No worktree for task '{task_id}'")
+
+    # Generate subtask ID
+    existing = await db.get_subtasks(task_id)
+    count = sum(1 for s in existing if s["type"] == subtask_type) + 1
+    subtask_id = f"{task_id}/{subtask_type}-{count}"
+
+    await db.create_subtask(
+        id=subtask_id, task_id=task_id, type=subtask_type,
+        prompt=prompt, model=model,
+    )
+
+    # Build SDK options — same as _run_sdk_session but simpler
+    worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+    mcp_servers = {"switchboard": {"type": "http", "url": "http://localhost:8100/mcp"}}
+    try:
+        with open(os.path.join(worker_home, ".claude.json")) as f:
+            for name, cfg in json.load(f).get("mcpServers", {}).items():
+                if name not in mcp_servers:
+                    mcp_servers[name] = cfg
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+        pass
+
+    log_dir = Path(worktree) / ".switchboard"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = log_dir / f"{subtask_type}-{count}-stderr.log"
+    old_umask = os.umask(0o002)
+    stderr_log = open(stderr_path, "a")
+    os.umask(old_umask)
+
+    options = ClaudeAgentOptions(
+        user="switchboard",
+        cwd=str(worktree),
+        env={"HOME": worker_home},
+        permission_mode="bypassPermissions",
+        model=model,
+        max_turns=max_turns,
+        setting_sources=["user", "project"],
+        system_prompt={"type": "preset", "preset": "claude_code", "append": prompt},
+        mcp_servers=mcp_servers,
+        debug_stderr=stderr_log,
+    )
+
+    result_msg = None
+    log.info(f"Running subtask {subtask_id} (type={subtask_type}, model={model})")
+
+    try:
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt)
+            async for message in client.receive_response():
+                if isinstance(message, ResultMessage):
+                    result_msg = message
+    except Exception as e:
+        log.exception(f"Subtask {subtask_id} error: {e}")
+        await db.update_subtask(subtask_id, status="failed",
+                                result=str(e), completed_at=db.now_iso())
+        return await db.get_subtask(subtask_id)
+    finally:
+        stderr_log.close()
+
+    if result_msg:
+        input_tokens = 0
+        output_tokens = 0
+        if result_msg.usage:
+            input_tokens = (result_msg.usage.get("input_tokens", 0)
+                            + result_msg.usage.get("cache_creation_input_tokens", 0)
+                            + result_msg.usage.get("cache_read_input_tokens", 0))
+            output_tokens = result_msg.usage.get("output_tokens", 0)
+
+        await db.update_subtask(
+            subtask_id,
+            status="completed" if not result_msg.is_error else "failed",
+            result=result_msg.result or "",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=result_msg.total_cost_usd or 0.0,
+            duration_ms=result_msg.duration_ms or 0,
+            completed_at=db.now_iso(),
+        )
+
+        # Roll up cost to parent task
+        await _update_usage(task_id, result_msg)
+        log.info(f"Subtask {subtask_id} completed (cost=${result_msg.total_cost_usd or 0:.4f})")
+    else:
+        await db.update_subtask(subtask_id, status="failed",
+                                result="No result received", completed_at=db.now_iso())
+        log.warning(f"Subtask {subtask_id} ended without ResultMessage")
+
+    return await db.get_subtask(subtask_id)
 
 
 async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
@@ -884,10 +1033,9 @@ async def _get_branch_diff(task: dict) -> str:
 
 
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
-    """Dispatch a self-review task for the completed task."""
+    """Run a lightweight review subtask in the parent's worktree."""
     await db.update_task(task_id, gate_status="reviewing")
 
-    review_id = f"{task_id}/review"
     diff_output = await _get_branch_diff(task)
 
     # Get spec content
@@ -910,30 +1058,59 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
 - Any obvious bugs, edge cases, or security issues?
 - Code quality: naming, structure, unnecessary complexity?
 
-Post your review on the PARENT task:
+Post your review on the task:
 mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', ...)
 
 If clean: title="APPROVED"
 If changes needed: title="CHANGES REQUESTED" and list specific issues
 """
 
-    log.info(f"Dispatching self-review for {task_id} as {review_id}")
+    log.info(f"Running subtask review for {task_id}")
     try:
-        await dispatch_task(
-            project_id=task["project_id"],
-            task_id=review_id,
-            goal=f"Review: {task['goal']}",
-            spec=review_prompt,
+        subtask = await _run_subtask(
+            task_id=task_id,
+            subtask_type="review",
+            prompt=review_prompt,
             model=task.get("review_model") or "opus",
-            auto_test=False,
-            auto_review=False,
-            parent_task_id=task_id,
         )
+
+        if subtask.get("status") == "completed":
+            await _process_review_result_inline(task_id)
+        else:
+            log.warning(f"Review subtask failed for {task_id}, falling back to gate pass")
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+            await _check_and_dispatch_dependents(task_id)
     except Exception as e:
-        log.error(f"Failed to dispatch review for {task_id}: {e}")
-        # Fall back to passing the gate
+        log.error(f"Failed to run review subtask for {task_id}: {e}")
         await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
         await _check_and_dispatch_dependents(task_id)
+
+
+async def _process_review_result_inline(task_id: str) -> None:
+    """Check review messages on task and process approval/rejection."""
+    msgs = await db.read_task_messages(task_id)
+    review_msg = next(
+        (m for m in reversed(msgs.get("messages", []))
+         if m.get("type") == "review"),
+        None,
+    )
+
+    if review_msg and "APPROVED" in (review_msg.get("title") or "").upper():
+        log.info(f"Review approved for {task_id}")
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await _check_and_dispatch_dependents(task_id)
+    else:
+        task = await db.get_task(task_id)
+        retries = (task.get("gate_retries") or 0) + 1
+        max_retries = task.get("max_gate_retries") or 3
+        await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
+        log.warning(f"Review failed for {task_id} (attempt {retries}/{max_retries})")
+
+        if retries < max_retries:
+            await retry_task(task_id)
+        else:
+            await db.update_task(task_id, status="needs-review")
+            await notify.task_needs_review(task_id, reason="Review failed after max retries.")
 
 
 async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
@@ -1044,10 +1221,105 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
                 dispatched_any = True
             except Exception as e:
                 log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
+        elif dep.get("gate_status") == "stale" and dep["status"] in ("completed", "cancelled"):
+            # Re-dispatch stale downstream task with rebase
+            log.info(f"Re-dispatching stale dependent {dep['id']} (parent {task_id} gate passed)")
+            try:
+                await _rebase_and_redispatch(dep, task)
+                dispatched_any = True
+            except Exception as e:
+                log.error(f"Failed to re-dispatch stale dependent {dep['id']}: {e}")
 
     # If no dependents to dispatch, this might be the chain tail — try auto-PR
     if not dispatched_any:
         await _maybe_create_pr(task_id)
+
+
+async def _invalidate_chain(task_id: str) -> None:
+    """Mark all downstream tasks as stale when a parent is re-dispatched."""
+    dependents = await db.get_dependents(task_id)
+    for dep in dependents:
+        if dep["status"] == "working":
+            try:
+                await cancel_task(dep["id"])
+            except Exception as e:
+                log.error(f"Failed to cancel working dependent {dep['id']}: {e}")
+
+        current_gate = dep.get("gate_status")
+        if dep["status"] in ("completed", "ready") or current_gate in ("passed", "testing", "reviewing"):
+            await db.update_task(
+                dep["id"],
+                gate_status="stale",
+                gate_passed_at=None,
+            )
+            log.info(f"Marked {dep['id']} as stale (parent {task_id} re-dispatched)")
+
+        # Recurse down the chain
+        await _invalidate_chain(dep["id"])
+
+
+async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
+    """Rebase a stale task's branch onto parent's updated branch, then re-dispatch."""
+    worktree = dep.get("worktree_path")
+    dep_branch = dep.get("branch")
+    parent_branch = parent.get("branch")
+
+    if not worktree or not dep_branch or not parent_branch:
+        log.warning(f"Cannot rebase {dep['id']}: missing worktree or branch info")
+        return
+
+    # Fetch latest
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    # Attempt rebase
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "rebase", f"origin/{parent_branch}",
+    )
+
+    if rc != 0:
+        # Rebase failed — abort and let CC handle it
+        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+        log.warning(f"Rebase failed for {dep['id']}, CC will handle manually")
+        rebase_context = (
+            f"WARNING: Automatic rebase onto the updated parent branch `{parent_branch}` failed "
+            f"due to conflicts. Run `git rebase origin/{parent_branch}` and resolve conflicts, "
+            "or cherry-pick your changes onto the updated parent."
+        )
+    else:
+        rebase_context = (
+            f"Your branch has been automatically rebased onto the updated parent branch "
+            f"`{parent_branch}`. Review the parent's changes and evaluate if your work "
+            "needs adjustment. If no rework is needed, just commit and finish."
+        )
+
+    # Reset gate state — fresh run
+    await db.update_task(
+        dep["id"],
+        gate_status=None,
+        gate_retries=0,
+        gate_passed_at=None,
+        session_id=None,
+    )
+
+    # Post context message
+    await db.post_task_message(
+        task_id=dep["id"], author="dispatcher", type="status",
+        title="Re-dispatched (parent changed)",
+        content=rebase_context,
+    )
+
+    # Re-dispatch with rebase context as review feedback
+    await dispatch_task(
+        project_id=dep["project_id"],
+        task_id=dep["id"],
+        goal=dep["goal"],
+        phase="revisions",
+        review_feedback=[{
+            "author": "dispatcher",
+            "title": "Parent Updated",
+            "content": rebase_context,
+        }],
+    )
 
 
 async def _update_usage(task_id: str, result: ResultMessage):
@@ -1279,6 +1551,11 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
 
     # Clear session to force new one
     await db.update_task(task_id, session_id=None)
+
+    # Invalidate downstream chain if this task has dependents
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
 
     # Optionally clean worktree
     if clean and task.get("worktree_path") and os.path.exists(task["worktree_path"]):

@@ -118,6 +118,25 @@ async def init_db():
                 FOREIGN KEY (task_id) REFERENCES tasks(id),
                 UNIQUE(task_id, tag)
             );
+
+            CREATE TABLE IF NOT EXISTS subtasks (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'working',
+                model TEXT DEFAULT 'opus',
+                prompt TEXT,
+                result TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                duration_ms INTEGER,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                completed_at TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_subtask_task ON subtasks(task_id);
         """)
 
         # Migrate messages table: add task_id column if missing
@@ -966,6 +985,57 @@ async def get_task_tags(task_id: str) -> list[str]:
             "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task_id,),
         )
         return [r["tag"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Subtasks
+# ---------------------------------------------------------------------------
+
+async def create_subtask(id: str, task_id: str, type: str, prompt: str, model: str = "opus") -> dict:
+    """Create a subtask record."""
+    async with get_db() as conn:
+        ts = now_iso()
+        await conn.execute(
+            """INSERT INTO subtasks (id, task_id, type, status, model, prompt, created_at)
+               VALUES (?, ?, ?, 'working', ?, ?, ?)""",
+            (id, task_id, type, model, prompt, ts),
+        )
+        await conn.commit()
+        return {"id": id, "task_id": task_id, "type": type, "status": "working",
+                "model": model, "prompt": prompt, "created_at": ts}
+
+
+async def update_subtask(id: str, **fields) -> dict:
+    """Update a subtask. Only allowed fields are updated."""
+    async with get_db() as conn:
+        allowed = {"status", "result", "input_tokens", "output_tokens",
+                    "cost_usd", "duration_ms", "completed_at"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+            return dict(rows[0]) if rows else {}
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [id]
+        await conn.execute(f"UPDATE subtasks SET {set_clause} WHERE id = ?", values)
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else {}
+
+
+async def get_subtasks(task_id: str) -> list[dict]:
+    """Get all subtasks for a task, ordered by creation time."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at", (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_subtask(id: str) -> dict | None:
+    """Get a single subtask by ID."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else None
 
 
 # ---------------------------------------------------------------------------
