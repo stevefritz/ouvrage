@@ -17,6 +17,7 @@ const uiState = {
     dispatchLogOpen: false,
     sessionLogLoaded: false,
     dispatchLogLoaded: false,
+    sessionLogFilters: new Set(['text', 'tool', 'error']),  // all on by default
 };
 
 // ── Router ───────────────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ function statusBadge(status) {
         completed:    { bg: 'bg-blue-500/20', text: 'text-blue-400', icon: '✓' },
         failed:       { bg: 'bg-red-500/20', text: 'text-red-400', icon: '✕' },
         'needs-review': { bg: 'bg-amber-500/20', text: 'text-amber-400', icon: '⚠' },
+        'turns-exhausted': { bg: 'bg-orange-500/20', text: 'text-orange-400', icon: '⏳' },
         cancelled:    { bg: 'bg-slate-500/20', text: 'text-slate-400', icon: '—' },
         ready:        { bg: 'bg-slate-500/20', text: 'text-slate-300', icon: '○' },
     };
@@ -105,10 +107,11 @@ function actionButtons(task) {
         btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
     }
     if (task.status === 'completed') {
+        btns.push(`<button onclick="window._action('resume','${task.id}')" class="px-2 py-1 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">Resume</button>`);
         btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
         btns.push(`<button onclick="window._action('close','${task.id}')" class="px-2 py-1 text-xs rounded bg-slate-500/20 text-slate-400 hover:bg-slate-500/30">Close</button>`);
     }
-    if (task.status === 'needs-review') {
+    if (task.status === 'needs-review' || task.status === 'turns-exhausted') {
         btns.push(`<button onclick="window._action('resume','${task.id}')" class="px-2 py-1 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">Resume</button>`);
         btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
         btns.push(`<button onclick="window._action('cancel','${task.id}')" class="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">Cancel</button>`);
@@ -295,6 +298,13 @@ async function showDetail(taskId) {
             renderChecklist(task);
             renderPlan(task);
             renderMessages(task);
+            // Show resume button by message area for resumable tasks
+            window._currentTaskId = taskId;
+            const resumeBtn = document.getElementById('message-resume');
+            if (resumeBtn) {
+                const resumable = ['completed', 'needs-review', 'turns-exhausted'].includes(task.status);
+                resumeBtn.classList.toggle('hidden', !resumable);
+            }
             // Refresh open log panels during poll
             if (!initialLoad) {
                 await refreshOpenLogPanels(taskId);
@@ -311,7 +321,7 @@ async function showDetail(taskId) {
 
     // Poll — refresh header/checklist/messages but not log panels or message input
     const task = await api.getTask(taskId).catch(() => null);
-    if (task && (task.status === 'working' || task.status === 'needs-review')) {
+    if (task && (task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted')) {
         pollTimer = setInterval(render, 5000);
     }
 
@@ -345,6 +355,7 @@ function renderDetailHeader(task) {
                     <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
                     <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
                     <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                    ${task.model ? `<span>Model: <span class="text-slate-300">${escapeHtml(task.model)}</span></span>` : ''}
                     ${task.phase ? `<span>Phase: <span class="text-slate-300">${escapeHtml(task.phase)}</span></span>` : ''}
                     ${prUrlBadge(task)}
                     ${task.jira_ticket ? `<a href="${jiraUrl(task.jira_ticket)}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${escapeHtml(jiraLabel(task.jira_ticket))}</a>` : ''}
@@ -447,25 +458,69 @@ function renderMessages(task) {
     }).join('');
 }
 
-function _logExpandable(ts, label, labelCls, preview, full) {
+function _logExpandable(ts, label, labelCls, preview, full, logType) {
+    const dt = logType ? ` data-log-type="${logType}"` : '';
     // If full content is same as preview or empty, no expand needed
     if (!full || full === preview) {
-        return `<div class="${labelCls} text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)}</div>`;
+        return `<div${dt} class="${labelCls} text-xs py-0.5 log-entry"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)}</div>`;
     }
     const id = `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    return `<div class="${labelCls} text-xs py-0.5 cursor-pointer" onclick="document.getElementById('${id}').classList.toggle('hidden')"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)} <span class="text-slate-600">▸</span></div><div id="${id}" class="hidden text-xs ml-8 py-1 px-2 mb-1 bg-slate-800/50 rounded whitespace-pre-wrap text-slate-300 max-h-96 overflow-y-auto">${escapeHtml(full)}</div>`;
+    return `<div${dt} class="${labelCls} text-xs py-0.5 cursor-pointer log-entry" onclick="document.getElementById('${id}').classList.toggle('hidden')"><span class="text-slate-600 mr-2">${ts}</span>${label} ${escapeHtml(preview)} <span class="text-slate-600">▸</span></div><div${dt} id="${id}" class="hidden text-xs ml-8 py-1 px-2 mb-1 bg-slate-800/50 rounded whitespace-pre-wrap text-slate-300 max-h-96 overflow-y-auto log-entry">${escapeHtml(full)}</div>`;
+}
+
+function _sessionLogFilterBar() {
+    const f = uiState.sessionLogFilters;
+    const btn = (key, label) => {
+        const on = f.has(key);
+        const cls = on ? 'bg-slate-600 text-slate-200' : 'bg-slate-800 text-slate-400 hover:bg-slate-700';
+        return `<button data-filter="${key}" class="px-2 py-0.5 text-xs rounded ${cls}" onclick="window._toggleSessionLogFilter('${key}')">${label}</button>`;
+    };
+    return `<div class="flex gap-1 mb-2 pb-2 border-b border-slate-700/50 sticky top-0 bg-slate-900 z-10 pt-1" id="session-log-filters">
+        ${btn('text', 'Text')}${btn('tool', 'Tools')}${btn('error', 'Errors')}
+    </div>`;
+}
+
+window._toggleSessionLogFilter = function(key) {
+    const f = uiState.sessionLogFilters;
+    if (f.has(key)) {
+        f.delete(key);
+    } else {
+        f.add(key);
+    }
+    // If none selected, turn all back on
+    if (f.size === 0) {
+        f.add('text'); f.add('tool'); f.add('error');
+    }
+    _applySessionLogFilters();
+};
+
+function _applySessionLogFilters() {
+    const panel = document.getElementById('session-log-content');
+    if (!panel) return;
+    const f = uiState.sessionLogFilters;
+    // Update button styles
+    panel.querySelectorAll('#session-log-filters button').forEach(btn => {
+        const on = f.has(btn.dataset.filter);
+        btn.className = `px-2 py-0.5 text-xs rounded ${on ? 'bg-slate-600 text-slate-200' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`;
+    });
+    // Toggle entry visibility
+    panel.querySelectorAll('.log-entry').forEach(el => {
+        const type = el.dataset.logType || '';
+        el.style.display = (f.has(type) || !type) ? '' : 'none';
+    });
 }
 
 function renderSessionLogHtml(entries) {
     if (entries.length === 0) {
         return '<p class="text-slate-500 text-sm p-2">No session log</p>';
     }
-    return entries.map(e => {
+    const filter = uiState.sessionLogFilter || 'all';
+    const lines = entries.map(e => {
         const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
         const type = e.type || '';
 
         if (type === 'SystemMessage') {
-            return `<div class="log-system text-xs py-0.5"><span class="text-slate-600 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}</div>`;
+            return `<div data-log-type="system" class="log-system text-xs py-0.5 log-entry"><span class="text-slate-600 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}</div>`;
         }
         if (type === 'AssistantMessage') {
             const blocks = e.content || [];
@@ -473,12 +528,12 @@ function renderSessionLogHtml(entries) {
                 if (b.type === 'text') {
                     const full = b.text || '';
                     const preview = full.slice(0, 150);
-                    return _logExpandable(ts, 'TEXT ', 'log-text', preview + (full.length > 150 ? '…' : ''), full.length > 150 ? full : null);
+                    return _logExpandable(ts, 'TEXT ', 'log-text', preview + (full.length > 150 ? '…' : ''), full.length > 150 ? full : null, 'text');
                 }
                 if (b.type === 'tool_use') {
                     const input = b.input || '';
                     const preview = `${b.name || ''} → ${input.slice(0, 100)}`;
-                    return _logExpandable(ts, 'TOOL ', 'log-tool', preview + (input.length > 100 ? '…' : ''), input.length > 100 ? input : null);
+                    return _logExpandable(ts, 'TOOL ', 'log-tool', preview + (input.length > 100 ? '…' : ''), input.length > 100 ? input : null, 'tool');
                 }
                 return '';
             }).join('');
@@ -489,10 +544,10 @@ function renderSessionLogHtml(entries) {
                 if (b.type === 'tool_result') {
                     const content = b.preview || '';
                     if (b.is_error) {
-                        return _logExpandable(ts, 'RESULT', 'log-result text-red-400', '(error)', content || null);
+                        return _logExpandable(ts, 'RESULT', 'log-result text-red-400', '(error)', content || null, 'error');
                     }
                     const preview = content.slice(0, 120);
-                    return _logExpandable(ts, 'RESULT', 'log-result', preview ? preview + (content.length > 120 ? '…' : '') : `(${content.length}B)`, content.length > 120 ? content : null);
+                    return _logExpandable(ts, 'RESULT', 'log-result', preview ? preview + (content.length > 120 ? '…' : '') : `(${content.length}B)`, content.length > 120 ? content : null, 'tool');
                 }
                 return '';
             }).join('');
@@ -501,10 +556,12 @@ function renderSessionLogHtml(entries) {
             const cls = e.is_error ? 'log-error' : 'log-done';
             const result = e.result || '';
             const summary = `${e.num_turns || '?'} turns | $${(e.cost_usd || 0).toFixed(2)}`;
-            return _logExpandable(ts, 'DONE ', cls + ' font-medium', summary, result || null);
+            return _logExpandable(ts, 'DONE ', cls + ' font-medium', summary, result || null, 'text');
         }
         return '';
     }).join('');
+    const html = _sessionLogFilterBar() + `<div id="session-log-entries">${lines}</div>`;
+    return html;
 }
 
 function renderDispatchLogHtml(text) {
@@ -527,6 +584,10 @@ async function refreshOpenLogPanels(taskId) {
             const entries = await api.getSessionLog(taskId);
             const panel = document.getElementById('session-log-content');
             updatePanelWithScrollPin(panel, renderSessionLogHtml(entries));
+            // Re-apply active filter after re-render
+            if (uiState.sessionLogFilters.size < 3) {
+                _applySessionLogFilters();
+            }
             uiState.sessionLogLoaded = true;
         } catch (e) {
             console.warn('Session log poll error:', e.message);
@@ -557,6 +618,9 @@ async function setupLogPanels(taskId) {
             try {
                 const entries = await api.getSessionLog(taskId);
                 sessionPanel.innerHTML = renderSessionLogHtml(entries);
+                if (uiState.sessionLogFilter && uiState.sessionLogFilter !== 'all') {
+                    window._filterSessionLog(uiState.sessionLogFilter);
+                }
             } catch (e) {
                 sessionPanel.innerHTML = `<p class="text-red-400 text-sm p-2">Error: ${e.message}</p>`;
             }

@@ -174,6 +174,14 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN jira_ticket TEXT")
         if "conversation_id" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN conversation_id TEXT")
+        if "model" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN model TEXT")
+
+        # Migrate projects table: add model column if missing
+        project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
+        project_col_names = [c["name"] for c in project_columns]
+        if "model" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN model TEXT")
 
         # Create/recreate indexes
         await conn.executescript("""
@@ -426,7 +434,7 @@ async def create_project(
     setup_command: str | None = None, teardown_command: str | None = None,
     test_command: str | None = None, env_overrides: dict | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
-    claude_md_path: str | None = None,
+    claude_md_path: str | None = None, model: str | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
@@ -434,10 +442,10 @@ async def create_project(
         await db.execute(
             """INSERT INTO projects
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
-                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
-             test_command, env_json, max_turns, max_wall_clock, claude_md_path, ts),
+             test_command, env_json, max_turns, max_wall_clock, claude_md_path, model, ts),
         )
         await db.commit()
         return {
@@ -446,7 +454,7 @@ async def create_project(
             "teardown_command": teardown_command, "test_command": test_command,
             "env_overrides": env_overrides, "max_turns": max_turns,
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
-            "created_at": ts,
+            "model": model, "created_at": ts,
         }
 
 
@@ -502,6 +510,7 @@ async def create_task(
     id: str, project_id: str, goal: str, branch: str | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
     jira_ticket: str | None = None, conversation_id: str | None = None,
+    model: str | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -516,10 +525,10 @@ async def create_task(
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
-                jira_ticket, conversation_id, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)""",
+                jira_ticket, conversation_id, model, created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
-             jira_ticket, conversation_id, ts, ts),
+             jira_ticket, conversation_id, model, ts, ts),
         )
         await db.commit()
         return {
@@ -527,7 +536,7 @@ async def create_task(
             "phase": None, "branch": branch, "worktree_path": None,
             "max_turns": max_turns, "max_wall_clock": max_wall_clock,
             "jira_ticket": jira_ticket, "conversation_id": conversation_id,
-            "created_at": ts, "updated_at": ts,
+            "model": model, "created_at": ts, "updated_at": ts,
         }
 
 

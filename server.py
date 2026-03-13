@@ -152,6 +152,7 @@ PROJECT_TOOLS = [
                 "max_turns": {"type": "integer", "description": "Default max turns per dispatch for this project"},
                 "max_wall_clock": {"type": "integer", "description": "Default max wall clock minutes per dispatch"},
                 "claude_md_path": {"type": "string", "description": "Path to CLAUDE.md relative to repo root"},
+                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Default Claude model for tasks in this project. Default: sonnet"},
             },
             "required": ["id", "repo", "working_dir"],
         },
@@ -219,13 +220,14 @@ TASK_TOOLS = [
                 "jira_ticket": {"type": "string", "description": "Optional Jira ticket ID or URL, e.g. 'SUZY-1324' or full URL"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags for filtering, e.g. ['bugfix', 'review']"},
                 "conversation_id": {"type": "string", "description": "Optional conversation ID to link this task to a design conversation"},
+                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Claude model for this task (overrides project default). Default: sonnet"},
             },
             "required": ["project_id", "id", "goal"],
         },
     ),
     Tool(
         name="resume_task",
-        description="Resume a paused (needs-review) task. Reuses the same session for context preservation.",
+        description="Resume a paused or completed task. Reuses the same session for context preservation. Works for needs-review, turns-exhausted, or completed tasks.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -534,6 +536,7 @@ async def _handle_create_project(arguments):
         max_turns=arguments.get("max_turns"),
         max_wall_clock=arguments.get("max_wall_clock"),
         claude_md_path=arguments.get("claude_md_path"),
+        model=arguments.get("model"),
     )
 
 async def _handle_get_project(arguments):
@@ -563,6 +566,7 @@ async def _handle_dispatch_task(arguments):
         branch=arguments.get("branch"),
         jira_ticket=arguments.get("jira_ticket"),
         conversation_id=arguments.get("conversation_id"),
+        model=arguments.get("model"),
     )
     # Set tags if provided
     tags = arguments.get("tags")

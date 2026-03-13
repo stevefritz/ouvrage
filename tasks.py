@@ -31,6 +31,7 @@ _running_tasks: set[asyncio.Task] = set()
 _active_clients: dict[str, ClaudeSDKClient] = {}
 
 MESSAGE_POLL_INTERVAL = 5  # seconds between DB polls for injected messages
+DEFAULT_MODEL = "sonnet"
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:
@@ -104,7 +105,16 @@ async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
     worktree_path = os.path.join(base, dir_name)
 
     if os.path.exists(worktree_path):
-        log.info(f"Worktree already exists: {worktree_path}")
+        log.info(f"Worktree already exists: {worktree_path}, pulling latest")
+        # Fetch + pull so resumed tasks pick up upstream changes
+        await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
+        stdout, stderr, rc = await _run_as_worker(
+            "git", "-C", worktree_path, "merge", "--ff-only",
+            f"origin/{branch}",
+        )
+        if rc != 0:
+            # Non-fatal — branch may not exist on remote yet, or diverged
+            log.info(f"Auto-pull skipped (ff-only failed): {stderr.decode().strip()}")
         return worktree_path
 
     # Ensure base directory exists (created as worker user so ownership is correct)
@@ -123,8 +133,20 @@ async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
     # Fetch latest from remote
     await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
 
-    # Create worktree
+    # Auto-detect default branch from bare clone HEAD if project config is wrong
     default_branch = project["default_branch"]
+    stdout, _, _ = await _run_as_worker("git", "-C", bare_path, "symbolic-ref", "HEAD")
+    detected = stdout.decode().strip().removeprefix("refs/heads/")
+    if detected and detected != default_branch:
+        log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
+        default_branch = detected
+
+    # Update local default branch ref to match origin BEFORE branching
+    await _run_as_worker(
+        "git", "-C", bare_path, "fetch", "origin",
+        f"{default_branch}:{default_branch}",
+    )
+
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
         "-b", branch, worktree_path, default_branch,
@@ -333,12 +355,14 @@ async def _setup_log_dir(worktree_path: str) -> Path:
 
 def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
                         max_turns: int, max_wall_clock: int,
-                        worktree_path: str, is_resume: bool):
+                        worktree_path: str, is_resume: bool,
+                        model: str = "sonnet"):
     """Write dispatch metadata to log file."""
     log_path = log_dir / "dispatch.log"
     with open(log_path, "a") as f:
         f.write(f"[{db.now_iso()}] {'Resuming' if is_resume else 'Dispatching'} task {task_id}\n")
         f.write(f"  session_id: {session_id}\n")
+        f.write(f"  model: {model}\n")
         f.write(f"  max_turns: {max_turns}\n")
         f.write(f"  max_wall_clock: {max_wall_clock}m\n")
         f.write(f"  worktree: {worktree_path}\n")
@@ -362,7 +386,7 @@ async def _run_sdk_session(
     task_id: str, prompt: str, worktree_path: str,
     session_id: str | None, is_resume: bool,
     max_turns: int, max_wall_clock_minutes: int,
-    log_dir: Path,
+    log_dir: Path, model: str = "sonnet",
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     stderr_path = log_dir / "cc-stderr.log"
@@ -393,6 +417,7 @@ async def _run_sdk_session(
         cwd=str(worktree_path),
         env={"HOME": worker_home},
         permission_mode="bypassPermissions",
+        model=model,
         max_turns=max_turns,
         setting_sources=["project"],
         system_prompt={
@@ -597,7 +622,23 @@ async def _run_sdk_session(
             _log_result(log_dir, result_msg)
             await _update_usage(task_id, result_msg)
 
-            if result_msg.is_error:
+            if result_msg.stop_reason == "max_turns" or (
+                result_msg.num_turns and result_msg.num_turns >= max_turns
+            ):
+                await db.update_task(task_id, status="turns-exhausted")
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Turns exhausted",
+                    content=f"CC session hit the {max_turns}-turn limit.\n\n"
+                            f"Turns: {result_msg.num_turns} | "
+                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                            f"Work is preserved in the worktree. Resume to continue with the same session.",
+                )
+                await notify.task_needs_review(
+                    task_id=task_id,
+                    reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
+                )
+            elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
@@ -716,6 +757,7 @@ async def dispatch_task(
     branch: str | None = None,
     jira_ticket: str | None = None,
     conversation_id: str | None = None,
+    model: str | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -742,6 +784,7 @@ async def dispatch_task(
             branch=branch,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
             jira_ticket=jira_ticket, conversation_id=conversation_id,
+            model=model,
         )
         if spec:
             await db.post_task_message(
@@ -750,7 +793,7 @@ async def dispatch_task(
             )
         if checklist:
             await db.create_checklist_items(task_id, checklist)
-    elif task["status"] == "needs-review":
+    elif task["status"] in ("needs-review", "turns-exhausted", "completed"):
         is_resume = True
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
@@ -769,12 +812,15 @@ async def dispatch_task(
     # Setup logging
     log_dir = await _setup_log_dir(worktree_path)
 
-    # Resolve limits
+    # Resolve limits and model
     effective_max_turns = _resolve_limit(
         task.get("max_turns"), project.get("max_turns"), db.DEFAULT_MAX_TURNS
     )
     effective_max_wall_clock = _resolve_limit(
         task.get("max_wall_clock"), project.get("max_wall_clock"), db.DEFAULT_MAX_WALL_CLOCK
+    )
+    effective_model = _resolve_limit(
+        task.get("model"), project.get("model"), DEFAULT_MODEL
     )
 
     # Build prompt
@@ -806,7 +852,7 @@ async def dispatch_task(
     _write_dispatch_log(
         log_dir, task_id, session_id or "(new)",
         effective_max_turns, effective_max_wall_clock,
-        worktree_path, is_resume,
+        worktree_path, is_resume, effective_model,
     )
 
     # Launch SDK session in background — non-blocking
@@ -820,6 +866,7 @@ async def dispatch_task(
             max_turns=effective_max_turns,
             max_wall_clock_minutes=effective_max_wall_clock,
             log_dir=log_dir,
+            model=effective_model,
         ),
         name=f"sdk-session-{task_id}",
     )
@@ -846,6 +893,7 @@ async def dispatch_task(
         "dispatch_count": dispatch_count,
         "max_turns": effective_max_turns,
         "max_wall_clock": effective_max_wall_clock,
+        "model": effective_model,
         "resumed": is_resume,
     }
 
@@ -855,8 +903,8 @@ async def resume_task(task_id: str) -> dict:
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    if task["status"] != "needs-review":
-        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected 'needs-review'")
+    if task["status"] not in ("needs-review", "turns-exhausted", "completed"):
+        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected 'needs-review', 'turns-exhausted', or 'completed'")
 
     return await dispatch_task(
         project_id=task["project_id"],
