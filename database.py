@@ -140,35 +140,11 @@ async def init_db():
         """)
 
         # Migrate messages table: add task_id column if missing
-        columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
-        col_names = [c["name"] for c in columns]
-
-        if "task_id" not in col_names:
-            # Need to rebuild messages table to make conversation_id nullable + add task_id
-            await conn.executescript("""
-                CREATE TABLE IF NOT EXISTS messages_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT,
-                    task_id TEXT,
-                    author TEXT NOT NULL,
-                    type TEXT,
-                    title TEXT,
-                    content TEXT NOT NULL,
-                    pinned BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                    FOREIGN KEY (conversation_id) REFERENCES conversations(id),
-                    FOREIGN KEY (task_id) REFERENCES tasks(id)
-                );
-
-                INSERT INTO messages_new (id, conversation_id, author, type, title, content, pinned, created_at)
-                    SELECT id, conversation_id, author, type, title, content, pinned, created_at FROM messages;
-
-                DROP TABLE messages;
-                ALTER TABLE messages_new RENAME TO messages;
-            """)
-        elif "messages" not in [t["name"] for t in await conn.execute_fetchall(
+        table_exists = await conn.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
-        )]:
+        )
+
+        if not table_exists:
             # Fresh install — create messages table
             await conn.executescript("""
                 CREATE TABLE messages (
@@ -185,6 +161,32 @@ async def init_db():
                     FOREIGN KEY (task_id) REFERENCES tasks(id)
                 );
             """)
+        else:
+            columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
+            col_names = [c["name"] for c in columns]
+            if "task_id" not in col_names:
+                # Old schema — rebuild to add task_id and make conversation_id nullable
+                await conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS messages_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id TEXT,
+                        task_id TEXT,
+                        author TEXT NOT NULL,
+                        type TEXT,
+                        title TEXT,
+                        content TEXT NOT NULL,
+                        pinned BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                        FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+                        FOREIGN KEY (task_id) REFERENCES tasks(id)
+                    );
+
+                    INSERT INTO messages_new (id, conversation_id, author, type, title, content, pinned, created_at)
+                        SELECT id, conversation_id, author, type, title, content, pinned, created_at FROM messages;
+
+                    DROP TABLE messages;
+                    ALTER TABLE messages_new RENAME TO messages;
+                """)
 
         # Migrate tasks table: add jira_ticket, conversation_id columns if missing
         task_columns = await conn.execute_fetchall("PRAGMA table_info(tasks)")

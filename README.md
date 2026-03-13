@@ -72,7 +72,7 @@ curl http://localhost:8100/health # health check
 ```
 /opt/switchboard/           # Application code
   ├── server.py             # MCP server, ASGI app, tool definitions
-  ├── tasks.py              # Task engine — Agent SDK, ClaudeSDKClient, worktrees
+  ├── tasks.py              # Task engine — Agent SDK, gate pipeline, subtasks
   ├── database.py           # SQLite models and queries (aiosqlite)
   ├── dashboard_api.py      # REST API for dashboard SPA
   ├── notifications.py      # Slack notifications (outbound only)
@@ -149,6 +149,7 @@ Before dispatching tasks, register a project. Projects define the repo, environm
 |---|---|
 | `create_project` | Register a project for task dispatch. |
 | `get_project` | Get a project's configuration. |
+| `update_project` | Update project settings. |
 | `list_projects` | List all registered projects. |
 
 ### `create_project` Fields
@@ -159,13 +160,17 @@ Before dispatching tasks, register a project. Projects define the repo, environm
 | `repo` | Yes | Git repo URL, e.g. `git@github.com:org/repo.git` |
 | `working_dir` | Yes | Base path for worktrees, e.g. `/work/ym-discount-engine` |
 | `default_branch` | No | Main branch name (default: `main`) |
-| `setup_command` | No | Run after worktree creation, e.g. `composer install && php artisan migrate` |
+| `setup_command` | No | Run after worktree creation, e.g. `composer install` |
 | `teardown_command` | No | Run on task cleanup |
-| `test_command` | No | Hint for CC, e.g. `php artisan test` |
-| `env_overrides` | No | Key-value env vars written to `.env.testing`, e.g. `{"DB_CONNECTION": "sqlite"}` |
-| `max_turns` | No | Default max turns per dispatch for this project |
+| `test_command` | No | Command for auto-test gate, e.g. `php artisan test` |
+| `env_overrides` | No | Key-value env vars written to `.env.testing` |
+| `max_turns` | No | Default max turns per dispatch |
 | `max_wall_clock` | No | Default max wall clock minutes per dispatch |
 | `claude_md_path` | No | Path to CLAUDE.md relative to repo root |
+| `auto_test` | No | Enable automatic test gate after CC completes (default: false) |
+| `auto_review` | No | Enable automatic self-review gate (default: false) |
+| `auto_pr` | No | Auto-create PR when gate passes (default: false) |
+| `review_model` | No | Model for review subtask (default: `opus`) |
 
 ## Task Execution System
 
@@ -177,24 +182,70 @@ The task system dispatches autonomous Claude Code sessions that work in isolated
 2. A Claude Code session is launched via the Agent SDK in the background — the call returns immediately with the task ID.
 3. CC works autonomously: reading code, editing files, running tests, committing to its branch.
 4. CC reports progress via switchboard MCP tools (checklist updates, phase changes, messages).
-5. When CC finishes (or hits a limit), the task transitions to `completed`, `failed`, or `needs-review`.
-6. You check status, read messages, resume if needed, and close when done.
+5. When CC finishes, the branch is auto-pushed to origin.
+6. The gate pipeline runs (test → review → pass), then dependents are dispatched or a PR is created.
 
 ### Task Lifecycle
 
 ```
-ready → working → completed
-                 → failed
-                 → needs-review → working (resume) → completed
-                 → cancelled
+ready → working → completed → [gate: testing → reviewing → passed] → dependents dispatched / PR created
+                → failed
+                → needs-review → working (resume) → completed
+                → cancelled
 ```
 
-- **ready** — Task created, not yet dispatched.
+- **ready** — Task created, waiting for dependencies or dispatch.
 - **working** — CC session is active.
-- **needs-review** — CC hit a wall clock timeout, ran out of turns, or posted a question. Waiting for human input.
-- **completed** — CC finished successfully or task was closed.
+- **completed** — CC finished. Gate pipeline runs next.
+- **needs-review** — CC hit a timeout, ran out of turns, or posted a question.
 - **failed** — CC session errored out.
 - **cancelled** — Manually killed via `cancel_task`.
+
+### Gate Pipeline
+
+After CC completes and its branch is pushed, a configurable gate pipeline runs before downstream tasks dispatch or a PR is created:
+
+```
+CC completes → auto-push → [auto-test] → [auto-review] → gate passed → dispatch dependents / auto-PR
+                                ↓               ↓
+                           test failed     changes requested
+                                ↓               ↓
+                           auto-retry      auto-retry (up to 2x)
+```
+
+**Auto-test**: Runs the project's `test_command` in the task's worktree. If tests fail, CC is re-dispatched with the failure output to fix the issues. Configurable retry limit (`gate_max_retries`, default 2).
+
+**Auto-review**: A subtask runs in the parent's worktree — a fresh CC session that reviews the diff against the original spec. Posts an APPROVED or CHANGES REQUESTED verdict. On rejection, the main task re-dispatches with the review feedback.
+
+**Auto-PR**: When the gate passes (or if no gate is configured), automatically creates a GitHub PR from the task branch.
+
+Gate status values: `testing`, `reviewing`, `passed`, `stale` (chain propagation).
+
+### Task Dependencies & Chains
+
+Tasks can declare dependencies on other tasks. A dependent task stays in `ready` status until its dependency's gate passes, then auto-dispatches — branching from the dependency's branch.
+
+```
+dispatch_task(id="add-models", ...)
+dispatch_task(id="add-api", depends_on="add-models", ...)
+dispatch_task(id="add-frontend", depends_on="add-api", ...)
+```
+
+This creates a chain: `add-models → add-api → add-frontend`. Each task branches from its parent's branch, so code flows forward through the chain.
+
+**Chain propagation**: If a task in the chain is retried (e.g., `add-models` needs a fix), all downstream tasks are automatically marked `stale`. When the retried task passes its gate, stale dependents auto-rebase onto the updated parent branch and re-dispatch with context about what changed.
+
+### Subtasks
+
+Subtasks are lightweight CC executions that run inside a parent task's worktree. They don't get their own worktree, don't appear as top-level tasks, and don't trigger the gate pipeline. Currently used for:
+
+- **Review** — a fresh CC session reviews the parent's diff and posts a verdict
+
+Subtasks show in the parent task's detail view via the API (`task.subtasks` array). They track their own token usage and cost, which rolls up to the parent task.
+
+### Push Enforcement
+
+After CC completes, Switchboard automatically pushes the task branch to origin (with `--force-with-lease`) before the gate pipeline runs. This ensures work is never stranded in an unpushed worktree. The CC prompt also instructs the agent to push, as belt-and-suspenders.
 
 ### Dispatch & Lifecycle Tools
 
@@ -218,9 +269,15 @@ ready → working → completed
 | `spec` | No | Full markdown spec (becomes the pinned message) |
 | `checklist` | No | Array of checklist item strings |
 | `phase` | No | Starting phase: `analysis` or `implementing` (default: `analysis`) |
-| `max_turns` | No | Turn limit for this dispatch (overrides project default) |
-| `max_wall_clock` | No | Wall clock timeout in minutes (overrides project default) |
-| `escalation_criteria` | No | Markdown appended to CC's system context — tells it when to escalate |
+| `depends_on` | No | Task ID this depends on (chains tasks) |
+| `tags` | No | Array of string tags for filtering |
+| `max_turns` | No | Turn limit for this dispatch |
+| `max_wall_clock` | No | Wall clock timeout in minutes |
+| `model` | No | Model override (`opus`, `sonnet`) |
+| `auto_test` | No | Override project's auto-test setting |
+| `auto_review` | No | Override project's auto-review setting |
+| `auto_pr` | No | Override project's auto-PR setting |
+| `escalation_criteria` | No | Tells CC when to escalate to human |
 
 ### CC-Side Tools
 
@@ -229,7 +286,7 @@ These tools are available to the CC worker session via the switchboard MCP conne
 | Tool | Purpose |
 |---|---|
 | `update_task_checklist` | Mark a checklist item as done/not done by `item_id`. |
-| `update_task_phase` | Update the task's phase label and optional detail text (e.g. `implementing: Writing BuyXGetYStrategy class`). |
+| `update_task_phase` | Update the task's phase label and optional detail text. |
 | `post_task_message` | Post progress updates, questions, or results to the task thread. |
 | `read_task_messages` | Read messages from the task thread (cursor-based polling). |
 | `get_task_status` | Read own task status (checklist, artifacts, etc.). |
@@ -252,14 +309,17 @@ Limits resolve in order: task override > project default > global default.
 
 Each task's worktree contains a `.switchboard/` directory with:
 
+- `session.jsonl` — Structured session log. Every tool call, result, and message as JSONL entries.
 - `dispatch.log` — Dispatch metadata, session IDs, limits, timestamps, result summaries.
 - `cc-stderr.log` — Raw stderr from the CC process. Use `get_task_status(include_log_tail=true)` to read the last 30 lines without leaving the board.
 
 ### Token & Cost Tracking
 
-Each task tracks cumulative `total_input_tokens`, `total_output_tokens`, and `total_cost_usd` across all dispatches (including resumes). Visible in `get_task_status` output.
+Each task tracks cumulative `total_input_tokens`, `total_output_tokens`, and `total_cost_usd` across all dispatches (including resumes and subtasks). Visible in `get_task_status` output.
 
 ## Example Workflow
+
+### Simple Task
 
 ```
 # 1. Register a project
@@ -268,7 +328,9 @@ create_project(
   repo="git@github.com:org/ym-discount-engine.git",
   working_dir="/work/ym-discount-engine",
   setup_command="composer install",
-  test_command="php artisan test"
+  test_command="php artisan test",
+  auto_test=true,
+  auto_review=true
 )
 
 # 2. Dispatch a task
@@ -279,23 +341,33 @@ dispatch_task(
   spec="## Requirements\n\n- Create BuyXGetYStrategy class...",
   checklist=["Create strategy class", "Write unit tests", "Add to strategy registry"]
 )
-→ { task_id: "add-bogo-strategy", status: "working", worktree_path: "/work/ym-discount-engine/add-bogo-strategy" }
+→ { task_id: "add-bogo-strategy", status: "working" }
 
-# 3. Check on it later
+# 3. CC works → completes → branch pushed → tests pass → review approves → gate passed
+
+# 4. Check status
 get_task_status(task_id="add-bogo-strategy")
-→ { status: "working", phase: "implementing: Writing unit tests", checklist_done: 2, checklist_total: 3, ... }
+→ { status: "completed", gate_status: "passed", ... }
 
-# 4. CC posts a question — task pauses at needs-review
-read_task_messages(task_id="add-bogo-strategy", last_n=3)
-→ { messages: [{ type: "question", content: "Should BOGO apply to already-discounted items?" }] }
-
-# 5. Answer and resume
-post_task_message(task_id="add-bogo-strategy", author="stephen", type="answer", content="No, exclude already-discounted items.")
-resume_task(task_id="add-bogo-strategy")
-
-# 6. Task completes — close and clean up
+# 5. Close and clean up
 close_task(task_id="add-bogo-strategy", cleanup=true)
-→ { status: "completed", cleaned_up: true }
+```
+
+### Chained Tasks
+
+```
+# Task A — add models
+dispatch_task(project_id="myapp", id="add-models", goal="Add User and Team models")
+
+# Task B — depends on A, branches from A's branch
+dispatch_task(project_id="myapp", id="add-api", goal="Add REST API endpoints", depends_on="add-models")
+
+# Task C — depends on B
+dispatch_task(project_id="myapp", id="add-frontend", goal="Add React components", depends_on="add-api")
+
+# A completes + gate passes → B auto-dispatches
+# B completes + gate passes → C auto-dispatches
+# If A is retried → B and C marked stale → auto-rebase and re-dispatch when A passes again
 ```
 
 ## Mid-Task Message Injection
@@ -308,11 +380,11 @@ Uses `ClaudeSDKClient` — a persistent bidirectional session — rather than th
 
 SPA at `/dashboard` (basic auth via Caddy, bypasses OAuth).
 
-- **Task board**: status, phase, cost, checklist progress, Jira ticket links
-- **Task detail**: message thread, expandable session log, dispatch log
+- **Task board**: status, phase, cost, checklist progress, gate status, chain visualization
+- **Task detail**: message thread, expandable session log, dispatch log, subtasks
 - **Session log**: click any entry to expand full tool inputs/outputs/results
 - **Live updates**: 5-second polling with scroll pinning
-- **Actions**: cancel, retry, resume, close from the UI
+- **Actions**: cancel, retry, resume, close, advance/cancel chain from the UI
 
 ### User MCP Servers
 
@@ -326,11 +398,12 @@ CC worker sessions automatically load MCP servers from the switchboard user's `~
 | `claude-ai` | Claude AI (web/desktop) |
 | `cc-worker` | Autonomous CC task worker |
 | `dispatcher` | Switchboard task engine |
+| `dashboard` | Dashboard web UI |
 | `human` / name | Human operator (freeform) |
 
 ## Message Types
 
-Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`, `status`, `progress`, `result`
+Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`, `status`, `progress`, `result`, `test-result`
 
 ## Environment Variables
 
@@ -340,15 +413,19 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 | `SWITCHBOARD_PORT` | No | Server port (default: 8100) |
 | `AUTH_ISSUER_URL` | No | Authelia/OIDC issuer URL (omit to disable OAuth) |
 | `RESOURCE_URL` | No | OAuth resource indicator |
+| `PUBLIC_HOST` | No | Public hostname for DNS rebinding protection |
 | `SLACK_BOT_TOKEN` | No | Slack bot token for outbound notifications |
 | `SLACK_CHANNEL_ID` | No | Slack channel for outbound notifications |
-| `JIRA_BASE_URL` | No | Base Jira URL for ticket links (e.g. `https://myorg.atlassian.net`) |
+| `JIRA_BASE_URL` | No | Base Jira URL for ticket links |
 
 ## Architecture
 
 - **Server**: Python + [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), raw ASGI with Streamable HTTP transport
 - **Database**: aiosqlite (async SQLite with WAL mode)
 - **Task Engine**: `ClaudeSDKClient` from the Agent SDK — persistent bidirectional sessions with mid-task message injection
+- **Gate Pipeline**: Auto-test → auto-review (subtask) → auto-PR, with configurable retry
+- **Subtasks**: Lightweight CC executions in parent worktree (no separate task/worktree)
+- **Chain Propagation**: Automatic invalidation, rebase, and re-dispatch when upstream tasks retry
 - **Worktrees**: Bare git clone + `git worktree add` per task for full isolation
 - **Dashboard**: Vanilla JS SPA with REST API, real-time polling
 - **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)

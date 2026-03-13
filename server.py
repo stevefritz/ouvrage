@@ -587,7 +587,9 @@ async def _handle_dispatch_task(arguments):
         auto_review=arguments.get("auto_review", True),
         review_model=arguments.get("review_model"),
         auto_pr=arguments.get("auto_pr", False),
-        depends_on=arguments.get("depends_on"),
+        depends_on=(f"{project_id}/{arguments['depends_on']}"
+                    if arguments.get("depends_on") and "/" not in arguments["depends_on"]
+                    else arguments.get("depends_on")),
     )
     # Set tags if provided
     tags = arguments.get("tags")
