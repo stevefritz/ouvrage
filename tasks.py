@@ -777,7 +777,7 @@ async def _run_sdk_session(
 
                 # Only notify for manual review if gate didn't auto-handle it
                 task = await db.get_task(task_id)
-                if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing"):
+                if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing", "test-passed"):
                     await notify.task_needs_review(
                         task_id=task_id,
                         reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
@@ -1021,8 +1021,12 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
     test_output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
 
     if rc == 0:
-        # Tests passed
-        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        # Tests passed — but don't set gate_passed_at if review still pending
+        task = await db.get_task(task_id)
+        if task.get("auto_review"):
+            await db.update_task(task_id, gate_status="test-passed")
+        else:
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title="Tests passed",
@@ -1031,7 +1035,6 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         log.info(f"Task {task_id}: test gate passed")
 
         # If auto_review is enabled, dispatch a review instead of passing immediately
-        task = await db.get_task(task_id)
         if task.get("auto_review"):
             await _dispatch_review(task_id, project, task)
         else:
@@ -1603,8 +1606,8 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Clear session to force new one
-    await db.update_task(task_id, session_id=None)
+    # Clear session and gate state to force fresh run through the pipeline
+    await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None)
 
     # Invalidate downstream chain if this task has dependents
     dependents = await db.get_dependents(task_id)

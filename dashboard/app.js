@@ -102,6 +102,7 @@ function gateBadge(task) {
     if (!task.gate_status || task.gate_status === 'passed') return '';
     const map = {
         testing:        { bg: 'bg-violet-500/20', text: 'text-violet-400', icon: '⚙', pulse: true },
+        'test-passed':  { bg: 'bg-emerald-500/20', text: 'text-emerald-400', icon: '✓' },
         reviewing:      { bg: 'bg-pink-500/20', text: 'text-pink-400', icon: '👁', pulse: true },
         'test-failed':  { bg: 'bg-red-500/20', text: 'text-red-400', icon: '✕' },
         'review-failed': { bg: 'bg-red-500/20', text: 'text-red-400', icon: '✕' },
@@ -134,7 +135,7 @@ function actionButtons(task) {
         btns.push(`<button onclick="window._action('cancel','${task.id}')" class="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">Cancel</button>`);
     }
     // Gate actions
-    if (task.gate_status && ['testing', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
+    if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         btns.push(`<button onclick="window._action('skip-gate','${task.id}')" class="px-2 py-1 text-xs rounded bg-violet-500/20 text-violet-400 hover:bg-violet-500/30">Skip Gate</button>`);
     }
     // Chain actions
@@ -333,6 +334,7 @@ async function showDetail(taskId) {
             const task = await api.getTask(taskId);
             renderDetailHeader(task);
             renderGateSection(task);
+            renderSubtasks(task);
             renderChecklist(task);
             renderPlan(task);
             renderMessages(task);
@@ -357,12 +359,12 @@ async function showDetail(taskId) {
 
     await render();
 
-    // Render chain and review sub-task (less frequent, not on every poll)
-    await Promise.all([renderChainSection(taskId), renderReviewSubTask(taskId)]);
+    // Render chain (less frequent, not on every poll)
+    await renderChainSection(taskId);
 
     // Poll — refresh header/checklist/messages but not log panels or message input
     const task = await api.getTask(taskId).catch(() => null);
-    const gateActive = task && ['testing', 'reviewing'].includes(task.gate_status);
+    const gateActive = task && ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
     if (task && (task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive)) {
         pollTimer = setInterval(render, 5000);
     }
@@ -875,7 +877,7 @@ function renderGateSection(task) {
         let s = 'pending';
         if (gs === 'testing') s = 'active';
         else if (gs === 'test-failed') s = 'failed';
-        else if (['reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
+        else if (['test-passed', 'reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
         else if (task.status === 'completed') s = 'done';
         stages.push({ label: 'Tests', status: s });
     }
@@ -965,39 +967,89 @@ async function renderChainSection(taskId) {
     }
 }
 
-// ── Review Sub-task ──────────────────────────────────────────────────────
-async function renderReviewSubTask(taskId) {
+// ── Subtasks Panel ──────────────────────────────────────────────────────
+function renderSubtasks(task) {
     const el = document.getElementById('detail-review-task');
     if (!el) return;
 
-    try {
-        const review = await api.getReviewTask(taskId);
-        if (!review) {
-            el.innerHTML = '';
-            return;
+    const subtasks = task.subtasks || [];
+    if (subtasks.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+
+    const typeColors = {
+        review:  { bg: 'bg-pink-500/20', text: 'text-pink-400', icon: '👁' },
+        test:    { bg: 'bg-violet-500/20', text: 'text-violet-400', icon: '⚙' },
+        fix:     { bg: 'bg-amber-500/20', text: 'text-amber-400', icon: '🔧' },
+        default: { bg: 'bg-slate-500/20', text: 'text-slate-400', icon: '●' },
+    };
+
+    const subtaskHtml = subtasks.map(sub => {
+        const tc = typeColors[sub.type] || typeColors.default;
+        const isWorking = sub.status === 'working';
+        const isFailed = sub.status === 'failed';
+        const isDone = sub.status === 'completed';
+
+        // Status indicator
+        let statusIcon;
+        if (isWorking) statusIcon = '<span class="status-dot-working text-blue-400">●</span>';
+        else if (isDone) statusIcon = '<span class="text-emerald-400">✓</span>';
+        else if (isFailed) statusIcon = '<span class="text-red-400">✕</span>';
+        else statusIcon = '<span class="text-slate-500">○</span>';
+
+        // Duration — live counter for working, final for completed
+        let duration = '';
+        if (sub.duration_ms) {
+            const secs = Math.round(sub.duration_ms / 1000);
+            duration = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+        } else if (isWorking && sub.created_at) {
+            const elapsed = Math.floor((Date.now() - new Date(sub.created_at + (sub.created_at.endsWith('Z') ? '' : 'Z')).getTime()) / 1000);
+            duration = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
         }
 
-        const reviewContent = review.review_message
-            ? sanitize(marked.parse(review.review_message.content || ''))
-            : '<p class="text-slate-500 text-sm">Review in progress...</p>';
+        // Cost
+        const cost = sub.cost_usd ? `$${sub.cost_usd.toFixed(4)}` : '';
 
-        el.innerHTML = `
-            <details class="bg-slate-900 border border-slate-800 rounded-lg mb-4">
-                <summary class="px-4 py-3 text-sm cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
-                    <span class="px-2 py-0.5 rounded text-xs font-medium bg-pink-500/20 text-pink-400">REVIEW</span>
-                    ${statusBadge(review.status)}
-                    <span class="text-slate-400 text-xs">${escapeHtml(review.model || 'opus')}</span>
-                    <span class="text-slate-500 text-xs">${relativeTime(review.updated_at)}</span>
-                    <a href="#/tasks/${review.id}" onclick="event.stopPropagation()" class="text-xs text-blue-400 hover:text-blue-300 ml-auto">View full →</a>
+        // Result content
+        let resultContent = '';
+        if (sub.result && sub.result.trim()) {
+            resultContent = `
+                <div class="px-4 pb-3 border-t border-slate-700/50 mt-2">
+                    <div class="prose-dark text-sm max-h-64 overflow-y-auto">
+                        ${sanitize(marked.parse(sub.result))}
+                    </div>
+                </div>`;
+        }
+
+        const shortId = sub.id.split('/').pop();
+
+        return `
+            <details ${isWorking ? 'open' : ''} class="border border-slate-700/50 rounded-lg overflow-hidden ${isWorking ? 'ring-1 ring-blue-500/30' : ''}">
+                <summary class="px-4 py-2.5 text-sm cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                    ${statusIcon}
+                    <span class="px-2 py-0.5 rounded text-xs font-medium ${tc.bg} ${tc.text}">${tc.icon} ${sub.type.toUpperCase()}</span>
+                    <span class="text-slate-400 text-xs font-mono">${escapeHtml(shortId)}</span>
+                    <span class="text-slate-500 text-xs">${escapeHtml(sub.model || '')}</span>
+                    ${isWorking ? '<span class="text-blue-400 text-xs status-dot-working">running...</span>' : ''}
+                    <span class="ml-auto flex items-center gap-3 text-xs text-slate-500">
+                        ${duration ? `<span>${duration}</span>` : ''}
+                        ${cost ? `<span>${cost}</span>` : ''}
+                        ${sub.completed_at ? `<span>${relativeTime(sub.completed_at)}</span>` : ''}
+                    </span>
                 </summary>
-                <div class="px-4 pb-3 prose-dark text-sm border-t border-slate-700/50">
-                    ${reviewContent}
-                </div>
-            </details>
-        `;
-    } catch (e) {
-        el.innerHTML = '';
-    }
+                ${resultContent}
+            </details>`;
+    }).join('');
+
+    el.innerHTML = `
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <h3 class="text-sm font-medium text-slate-300 mb-3">Subtasks</h3>
+            <div class="flex flex-col gap-2">
+                ${subtaskHtml}
+            </div>
+        </div>
+    `;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────
