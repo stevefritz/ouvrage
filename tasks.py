@@ -62,6 +62,42 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+async def recover_orphaned_tasks():
+    """Recover tasks left in broken states after a service restart.
+
+    Scans for:
+    - 'working' tasks with no live PID → mark as needs-review
+    - 'test-failed' or 'review-failed' gate status → re-trigger gate pipeline
+    """
+    tasks = await db.list_tasks(status="working")
+    for task in tasks:
+        pid = task.get("pid")
+        if pid and _is_pid_alive(pid):
+            continue  # still running, leave it alone
+        log.warning(f"Startup recovery: task {task['id']} stuck in 'working' with no live process")
+        await db.update_task(task["id"], status="needs-review")
+        await db.post_task_message(
+            task_id=task["id"], author="dispatcher", type="status",
+            title="Recovered after restart",
+            content="Service restarted while this task was running. Marked as needs-review. "
+                    "Resume or retry to continue.",
+        )
+
+    # Re-trigger gate for tasks stuck in test-failed/review-failed
+    all_tasks = await db.list_tasks(status="completed")
+    for task in all_tasks:
+        gate = task.get("gate_status")
+        if gate in ("test-failed", "review-failed"):
+            log.warning(f"Startup recovery: task {task['id']} has gate_status={gate}, re-triggering gate")
+            project = await db.get_project(task["project_id"])
+            if not project:
+                continue
+            if gate == "test-failed" and task.get("auto_test") and project.get("test_command"):
+                asyncio.create_task(_run_test_gate(task["id"], project, task))
+            elif gate == "review-failed" and task.get("auto_review"):
+                asyncio.create_task(_dispatch_review(task["id"], project, task))
+
+
 async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
     """Force-push task branch if there are unpushed commits."""
     worktree = task.get("worktree_path")
@@ -728,10 +764,24 @@ async def _run_sdk_session(
                             f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
                             f"Work is preserved in the worktree. Resume to continue with the same session.",
                 )
-                await notify.task_needs_review(
-                    task_id=task_id,
-                    reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
-                )
+
+                # Still push and try the gate — CC may have finished the work
+                task = await db.get_task(task_id)
+                await _ensure_branch_pushed(task_id, task)
+                if not task.get("gate_passed_at"):
+                    project = await db.get_project(task["project_id"])
+                    if task.get("auto_test") and project and project.get("test_command"):
+                        await _run_test_gate(task_id, project, task)
+                    elif task.get("auto_review"):
+                        await _dispatch_review(task_id, project, task)
+
+                # Only notify for manual review if gate didn't auto-handle it
+                task = await db.get_task(task_id)
+                if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing"):
+                    await notify.task_needs_review(
+                        task_id=task_id,
+                        reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
+                    )
             elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
                 await db.post_task_message(
@@ -1419,6 +1469,10 @@ async def dispatch_task(
                 }
     elif task["status"] in ("needs-review", "turns-exhausted", "completed"):
         is_resume = True
+        # Update depends_on if caller provided a new value (fixes stale prefix issue)
+        if depends_on and task.get("depends_on") != depends_on:
+            await db.update_task(task_id, depends_on=depends_on)
+            task["depends_on"] = depends_on
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
 

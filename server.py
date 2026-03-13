@@ -940,6 +940,8 @@ async def main():
                 await ctx.__aenter__()
                 scope["state"] = {"session_manager_ctx": ctx}
                 await send({"type": "lifespan.startup.complete"})
+                # Recover tasks orphaned by previous shutdown
+                asyncio.create_task(tasks.recover_orphaned_tasks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     await ctx.__aexit__(None, None, None)
