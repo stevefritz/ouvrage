@@ -1126,18 +1126,40 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     pinned = await db.get_task_pinned(task_id)
     spec_content = pinned["content"] if pinned else "(no spec)"
 
+    # Include message thread so reviewer sees course corrections
+    thread = await db.read_task_messages(task_id)
+    thread_msgs = thread.get("messages", [])
+    # Filter to human-authored messages (notes, review feedback, answers) — skip dispatcher status
+    human_msgs = [m for m in thread_msgs if m.get("author") not in ("dispatcher", "cc-worker")]
+    thread_context = ""
+    if human_msgs:
+        thread_lines = []
+        for m in human_msgs:
+            author = m.get("author", "user")
+            title = m.get("title", "")
+            content = m.get("content", "")
+            thread_lines.append(f"**[{author}]** {(title + ': ') if title else ''}{content}")
+        thread_context = f"""
+
+## Course Corrections / Notes from User
+The following messages were posted during development. These override or refine
+the original spec — treat them as authoritative when they conflict with the spec.
+
+{chr(10).join(thread_lines)}
+"""
+
     review_prompt = f"""# Code Review: {task['goal']}
 
 ## Original Spec
 {spec_content}
-
+{thread_context}
 ## Changes to Review
 ```
 {diff_output[:10000]}
 ```
 
 ## Review Criteria
-- Do changes match the spec? Every requirement addressed?
+- Do changes match the spec AND any course corrections above? Every requirement addressed?
 - Are tests testing the RIGHT things? (assertions match spec, not code output)
 - Any obvious bugs, edge cases, or security issues?
 - Code quality: naming, structure, unnecessary complexity?
