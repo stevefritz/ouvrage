@@ -557,6 +557,7 @@ async def _run_sdk_session(
         },
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
+        extra_args={"replay-user-messages": None},
     )
 
     # If resuming, use the resume option
@@ -949,15 +950,44 @@ async def _run_subtask(
         system_prompt={"type": "preset", "preset": "claude_code", "append": prompt},
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
+        extra_args={"replay-user-messages": None},
     )
 
     result_msg = None
     log.info(f"Running subtask {subtask_id} (type={subtask_type}, model={model})")
 
+    # Subtask session log — write to .switchboard/{type}-{count}-session.jsonl
+    subtask_log_path = log_dir / f"{subtask_type}-{count}-session.jsonl"
+    old_umask2 = os.umask(0o002)
+    subtask_log_file = open(subtask_log_path, "a")
+    os.umask(old_umask2)
+
+    def _log_subtask_msg(msg):
+        entry = {"timestamp": db.now_iso(), "type": type(msg).__name__}
+        try:
+            if isinstance(msg, AssistantMessage):
+                entry["content"] = []
+                for block in (msg.content or []):
+                    if isinstance(block, TextBlock):
+                        entry["content"].append({"type": "text", "text": block.text})
+                    elif isinstance(block, ToolUseBlock):
+                        entry["content"].append({"type": "tool_use", "name": block.name, "input": str(block.input)[:5000]})
+            elif isinstance(msg, UserMessage):
+                content = msg.content
+                if isinstance(content, str):
+                    entry["content"] = [{"type": "text", "text": content}]
+                else:
+                    entry["content"] = [{"type": "tool_result"} for _ in (content or [])]
+            subtask_log_file.write(json.dumps(entry) + "\n")
+            subtask_log_file.flush()
+        except Exception:
+            pass
+
     try:
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
             async for message in client.receive_response():
+                _log_subtask_msg(message)
                 if isinstance(message, ResultMessage):
                     result_msg = message
     except Exception as e:
@@ -967,6 +997,7 @@ async def _run_subtask(
         return await db.get_subtask(subtask_id)
     finally:
         stderr_log.close()
+        subtask_log_file.close()
 
     if result_msg:
         input_tokens = 0
