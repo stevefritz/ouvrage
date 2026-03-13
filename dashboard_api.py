@@ -59,7 +59,9 @@ def _extract_task_id(path: str, prefix: str) -> str:
     """Extract task_id from path after prefix. Handles URL-encoded slashes."""
     rest = unquote(path[len(prefix):])
     # Strip trailing action segments like /cancel, /retry, /resume, /messages, /session-log, /dispatch-log
-    for suffix in ("/cancel", "/retry", "/resume", "/close", "/messages", "/session-log", "/dispatch-log"):
+    for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
+                    "/advance-chain", "/cancel-chain", "/chain", "/review-task",
+                    "/messages", "/session-log", "/dispatch-log"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -117,6 +119,15 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/close"):
                     task_id = rest[:-len("/close")]
                     return await _handle_close(receive, send, task_id)
+                if rest.endswith("/skip-gate"):
+                    task_id = rest[:-len("/skip-gate")]
+                    return await _handle_skip_gate(send, task_id)
+                if rest.endswith("/advance-chain"):
+                    task_id = rest[:-len("/advance-chain")]
+                    return await _handle_advance_chain(send, task_id)
+                if rest.endswith("/cancel-chain"):
+                    task_id = rest[:-len("/cancel-chain")]
+                    return await _handle_cancel_chain(send, task_id)
                 if rest.endswith("/messages"):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
@@ -132,6 +143,12 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/dispatch-log"):
                     task_id = rest[:-len("/dispatch-log")]
                     return await _handle_dispatch_log(send, task_id)
+                if rest.endswith("/chain"):
+                    task_id = rest[:-len("/chain")]
+                    return await _handle_get_chain(send, task_id)
+                if rest.endswith("/review-task"):
+                    task_id = rest[:-len("/review-task")]
+                    return await _handle_get_review_task(send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -317,6 +334,46 @@ async def _handle_close(receive, send, task_id):
     )
     await _json_response(send, result)
 
+
+
+async def _handle_skip_gate(send, task_id):
+    result = await tasks.skip_gate(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_advance_chain(send, task_id):
+    result = await tasks.advance_chain(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_cancel_chain(send, task_id):
+    result = await tasks.cancel_chain(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_get_chain(send, task_id):
+    chain = await db.get_chain(task_id)
+    current_index = next((i for i, t in enumerate(chain) if t["id"] == task_id), -1)
+    await _json_response(send, {"chain": chain, "current_index": current_index})
+
+
+async def _handle_get_review_task(send, task_id):
+    """Find the review sub-task for a given task."""
+    # Review tasks have parent_task_id pointing to this task
+    async with db.get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT 1",
+            (task_id,),
+        )
+    if not rows:
+        await _json_response(send, None)
+        return
+    review_task = dict(rows[0])
+    # Get the review message posted on the parent
+    msgs = await db.read_task_messages(task_id, type="review")
+    review_msgs = [m for m in msgs.get("messages", []) if m.get("type") == "review"]
+    review_task["review_message"] = review_msgs[-1] if review_msgs else None
+    await _json_response(send, review_task)
 
 
 async def _handle_post_message(receive, send, task_id):

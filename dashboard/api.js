@@ -51,6 +51,11 @@ export const api = {
     }),
     resumeTask: (id) => request(`/tasks/${eid(id)}/resume`, { method: 'POST' }),
     closeTask: (id) => request(`/tasks/${eid(id)}/close`, { method: 'POST' }),
+    skipGate: (id) => request(`/tasks/${eid(id)}/skip-gate`, { method: 'POST' }),
+    advanceChain: (id) => request(`/tasks/${eid(id)}/advance-chain`, { method: 'POST' }),
+    cancelChain: (id) => request(`/tasks/${eid(id)}/cancel-chain`, { method: 'POST' }),
+    getChain: (id) => request(`/tasks/${eid(id)}/chain`),
+    getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
 
     // Messages
     postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${eid(id)}/messages`, {

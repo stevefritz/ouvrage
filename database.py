@@ -176,6 +176,26 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN conversation_id TEXT")
         if "model" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN model TEXT")
+        if "auto_test" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_test BOOLEAN DEFAULT TRUE")
+        if "gate_status" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_status TEXT")
+        if "gate_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_retries INTEGER DEFAULT 0")
+        if "max_gate_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_gate_retries INTEGER DEFAULT 3")
+        if "gate_passed_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_passed_at TIMESTAMP")
+        if "depends_on" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN depends_on TEXT")
+        if "auto_review" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_review BOOLEAN DEFAULT TRUE")
+        if "review_model" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN review_model TEXT DEFAULT 'opus'")
+        if "parent_task_id" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
+        if "auto_pr" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
 
         # Migrate projects table: add model column if missing
         project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
@@ -510,7 +530,10 @@ async def create_task(
     id: str, project_id: str, goal: str, branch: str | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
     jira_ticket: str | None = None, conversation_id: str | None = None,
-    model: str | None = None,
+    model: str | None = None, auto_test: bool = True,
+    depends_on: str | None = None,
+    auto_review: bool = True, review_model: str | None = None,
+    parent_task_id: str | None = None, auto_pr: bool = False,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -525,10 +548,12 @@ async def create_task(
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
-                jira_ticket, conversation_id, model, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                jira_ticket, conversation_id, model, auto_test, depends_on,
+                auto_review, review_model, parent_task_id, auto_pr, created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
-             jira_ticket, conversation_id, model, ts, ts),
+             jira_ticket, conversation_id, model, auto_test, depends_on,
+             auto_review, review_model, parent_task_id, auto_pr, ts, ts),
         )
         await db.commit()
         return {
@@ -536,7 +561,10 @@ async def create_task(
             "phase": None, "branch": branch, "worktree_path": None,
             "max_turns": max_turns, "max_wall_clock": max_wall_clock,
             "jira_ticket": jira_ticket, "conversation_id": conversation_id,
-            "model": model, "created_at": ts, "updated_at": ts,
+            "model": model, "auto_test": auto_test, "depends_on": depends_on,
+            "auto_review": auto_review, "review_model": review_model,
+            "parent_task_id": parent_task_id, "auto_pr": auto_pr,
+            "created_at": ts, "updated_at": ts,
         }
 
 
@@ -554,6 +582,8 @@ TASK_MUTABLE_FIELDS = {
     "total_input_tokens", "total_output_tokens", "total_cost_usd",
     "dispatch_count", "last_activity", "updated_at",
     "jira_ticket", "conversation_id",
+    "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
+    "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
 }
 
 
@@ -633,6 +663,49 @@ async def get_project_task_counts() -> dict[str, dict]:
             }
             for r in rows
         }
+
+
+async def get_dependents(task_id: str) -> list[dict]:
+    """Get tasks that depend on the given task."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at", (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_chain(task_id: str) -> list[dict]:
+    """Walk the dependency chain from root to tail, given any member."""
+    async with get_db() as db:
+        # Walk up to find root
+        current_id = task_id
+        visited = set()
+        while True:
+            if current_id in visited:
+                break
+            visited.add(current_id)
+            rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
+            if not rows:
+                break
+            task = dict(rows[0])
+            if not task.get("depends_on"):
+                break
+            current_id = task["depends_on"]
+
+        # Walk down from root
+        chain = []
+        rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
+        if rows:
+            chain.append(dict(rows[0]))
+            while True:
+                deps = await db.execute_fetchall(
+                    "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at LIMIT 1",
+                    (chain[-1]["id"],),
+                )
+                if not deps:
+                    break
+                chain.append(dict(deps[0]))
+        return chain
 
 
 async def count_active_tasks() -> int:

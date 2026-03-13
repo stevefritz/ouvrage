@@ -98,6 +98,23 @@ function statusBadge(status) {
     </span>`;
 }
 
+function gateBadge(task) {
+    if (!task.gate_status || task.gate_status === 'passed') return '';
+    const map = {
+        testing:        { bg: 'bg-violet-500/20', text: 'text-violet-400', icon: '⚙', pulse: true },
+        reviewing:      { bg: 'bg-pink-500/20', text: 'text-pink-400', icon: '👁', pulse: true },
+        'test-failed':  { bg: 'bg-red-500/20', text: 'text-red-400', icon: '✕' },
+        'review-failed': { bg: 'bg-red-500/20', text: 'text-red-400', icon: '✕' },
+    };
+    const s = map[task.gate_status];
+    if (!s) return '';
+    const retries = task.gate_retries > 0 ? ` (${task.gate_retries}/${task.max_gate_retries || 3})` : '';
+    const pulseClass = s.pulse ? 'status-dot-working' : '';
+    return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${s.bg} ${s.text}">
+        <span class="${pulseClass}">${s.icon}</span> GATE: ${task.gate_status.toUpperCase()}${retries}
+    </span>`;
+}
+
 function actionButtons(task) {
     const btns = [];
     if (task.status === 'working') {
@@ -115,6 +132,17 @@ function actionButtons(task) {
         btns.push(`<button onclick="window._action('resume','${task.id}')" class="px-2 py-1 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">Resume</button>`);
         btns.push(`<button onclick="window._action('retry','${task.id}')" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Retry</button>`);
         btns.push(`<button onclick="window._action('cancel','${task.id}')" class="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">Cancel</button>`);
+    }
+    // Gate actions
+    if (task.gate_status && ['testing', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
+        btns.push(`<button onclick="window._action('skip-gate','${task.id}')" class="px-2 py-1 text-xs rounded bg-violet-500/20 text-violet-400 hover:bg-violet-500/30">Skip Gate</button>`);
+    }
+    // Chain actions
+    if (task.status === 'completed' && task.gate_status === 'passed') {
+        btns.push(`<button onclick="window._action('advance-chain','${task.id}')" class="px-2 py-1 text-xs rounded bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Advance Chain</button>`);
+    }
+    if (task.depends_on || task.gate_status) {
+        btns.push(`<button onclick="window._action('cancel-chain','${task.id}')" class="px-2 py-1 text-xs rounded bg-red-500/10 text-red-400/70 hover:bg-red-500/20">Cancel Chain</button>`);
     }
     return btns.join(' ');
 }
@@ -157,9 +185,15 @@ function stopPolling() {
 
 // ── Actions ──────────────────────────────────────────────────────────────
 window._action = async (action, taskId) => {
-    const labels = { cancel: 'Cancel', retry: 'Retry', resume: 'Resume', close: 'Close' };
+    const labels = { cancel: 'Cancel', retry: 'Retry', resume: 'Resume', close: 'Close', 'skip-gate': 'Skip Gate', 'advance-chain': 'Advance Chain', 'cancel-chain': 'Cancel Chain' };
     const msg = action === 'close'
         ? `Close task "${taskId}"? This will clean up the worktree and branch.`
+        : action === 'skip-gate'
+        ? `Skip gate for "${taskId}"? This bypasses automated checks.`
+        : action === 'advance-chain'
+        ? `Dispatch next dependent task in the chain?`
+        : action === 'cancel-chain'
+        ? `Cancel "${taskId}" and ALL dependent tasks?`
         : `${labels[action]} task "${taskId}"?`;
     if (!confirm(msg)) return;
     try {
@@ -167,6 +201,9 @@ window._action = async (action, taskId) => {
         else if (action === 'retry') await api.retryTask(taskId);
         else if (action === 'resume') await api.resumeTask(taskId);
         else if (action === 'close') await api.closeTask(taskId);
+        else if (action === 'skip-gate') await api.skipGate(taskId);
+        else if (action === 'advance-chain') await api.advanceChain(taskId);
+        else if (action === 'cancel-chain') await api.cancelChain(taskId);
         route(); // Refresh current view
     } catch (e) {
         alert(`Error: ${e.message}`);
@@ -209,7 +246,7 @@ async function showBoard(params = {}) {
 
                 <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer"
                     onclick="window._navigate('#/tasks/${t.id}')">
-                    <td class="p-3">${statusBadge(t.status)}</td>
+                    <td class="p-3">${statusBadge(t.status)} ${gateBadge(t)}</td>
                     <td class="p-3">
                         <div class="flex items-center gap-2">
                             <span class="font-mono text-sm text-slate-200">${escapeHtml(t.id)}</span>
@@ -295,6 +332,7 @@ async function showDetail(taskId) {
         try {
             const task = await api.getTask(taskId);
             renderDetailHeader(task);
+            renderGateSection(task);
             renderChecklist(task);
             renderPlan(task);
             renderMessages(task);
@@ -319,9 +357,13 @@ async function showDetail(taskId) {
 
     await render();
 
+    // Render chain and review sub-task (less frequent, not on every poll)
+    await Promise.all([renderChainSection(taskId), renderReviewSubTask(taskId)]);
+
     // Poll — refresh header/checklist/messages but not log panels or message input
     const task = await api.getTask(taskId).catch(() => null);
-    if (task && (task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted')) {
+    const gateActive = task && ['testing', 'reviewing'].includes(task.gate_status);
+    if (task && (task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive)) {
         pollTimer = setInterval(render, 5000);
     }
 
@@ -347,6 +389,7 @@ function renderDetailHeader(task) {
             <div class="flex-1">
                 <div class="flex items-center gap-3 mb-2">
                     ${statusBadge(task.status)}
+                    ${gateBadge(task)}
                     <span class="font-mono text-lg text-slate-200">${escapeHtml(task.id)}</span>
                 </div>
                 <p class="text-slate-300 mb-3">${escapeHtml(task.goal)}</p>
@@ -428,6 +471,8 @@ function renderMessages(task) {
         result: 'border-l-purple-500',
         review: 'border-l-pink-500',
         answer: 'border-l-cyan-500',
+        'test-result': 'border-l-violet-500',
+        handoff: 'border-l-teal-500',
     };
 
     el.innerHTML = msgs.map((m, i) => {
@@ -808,6 +853,150 @@ async function showConversationDetail(convId) {
         }).join('');
     } catch (e) {
         document.getElementById('conversation-header').innerHTML = `<p class="text-red-400 p-4">Error: ${e.message}</p>`;
+    }
+}
+
+// ── Gate Pipeline Visualization ──────────────────────────────────────────
+function renderGateSection(task) {
+    const el = document.getElementById('detail-gates');
+    if (!el) return;
+
+    // Only show if task has gate info
+    if (!task.auto_test && !task.auto_review) {
+        el.innerHTML = '';
+        return;
+    }
+
+    const stages = [];
+    stages.push({ label: 'Task', status: task.status === 'completed' ? 'done' : task.status === 'working' ? 'active' : 'pending' });
+
+    if (task.auto_test) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'testing') s = 'active';
+        else if (gs === 'test-failed') s = 'failed';
+        else if (['reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
+        else if (task.status === 'completed') s = 'done';
+        stages.push({ label: 'Tests', status: s });
+    }
+
+    if (task.auto_review) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'reviewing') s = 'active';
+        else if (gs === 'review-failed') s = 'failed';
+        else if (gs === 'passed') s = 'done';
+        stages.push({ label: 'Review', status: s });
+    }
+
+    stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending' });
+
+    const stageColors = {
+        done: 'bg-emerald-500 text-white',
+        active: 'bg-blue-500 text-white gate-pulse',
+        failed: 'bg-red-500 text-white',
+        pending: 'bg-slate-700 text-slate-400',
+    };
+    const stageIcons = { done: '✓', active: '●', failed: '✕', pending: '○' };
+
+    const retries = task.gate_retries > 0 ? `<span class="text-xs text-slate-400 mt-1">Retries: ${task.gate_retries}/${task.max_gate_retries || 3}</span>` : '';
+
+    el.innerHTML = `
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <div class="flex items-center gap-2 overflow-x-auto">
+                ${stages.map((st, i) => `
+                    <div class="flex items-center gap-2 shrink-0">
+                        <div class="flex flex-col items-center">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm ${stageColors[st.status]}">
+                                ${stageIcons[st.status]}
+                            </div>
+                            <span class="text-xs text-slate-400 mt-1">${st.label}</span>
+                        </div>
+                        ${i < stages.length - 1 ? '<div class="w-8 h-px bg-slate-600"></div>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+            ${retries}
+        </div>
+    `;
+}
+
+// ── Chain Visualization ──────────────────────────────────────────────────
+async function renderChainSection(taskId) {
+    const el = document.getElementById('detail-chain');
+    if (!el) return;
+
+    try {
+        const data = await api.getChain(taskId);
+        if (!data || !data.chain || data.chain.length <= 1) {
+            el.innerHTML = '';
+            return;
+        }
+
+        const chain = data.chain;
+        const currentIdx = data.current_index;
+
+        el.innerHTML = `
+            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+                <h3 class="text-sm font-medium text-slate-300 mb-3">⛓ Task Chain</h3>
+                <div class="flex items-center gap-2 overflow-x-auto pb-2">
+                    ${chain.map((t, i) => {
+                        if (t.parent_task_id) return '';  // Skip review sub-tasks in chain viz
+                        const isCurrent = i === currentIdx;
+                        const border = isCurrent ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-slate-700';
+                        const shortId = t.id.split('/').pop();
+                        return `
+                            <a href="#/tasks/${t.id}" class="shrink-0 block p-2 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[120px] max-w-[180px]">
+                                <div class="flex items-center gap-1 mb-1">
+                                    ${statusBadge(t.status)}
+                                    ${gateBadge(t)}
+                                </div>
+                                <div class="text-xs font-mono text-slate-300 truncate">${escapeHtml(shortId)}</div>
+                                <div class="text-xs text-slate-500 truncate">${escapeHtml(t.goal || '').slice(0, 40)}</div>
+                            </a>
+                            ${i < chain.length - 1 && !chain[i+1]?.parent_task_id ? '<span class="text-slate-600 shrink-0">→</span>' : ''}
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        el.innerHTML = '';
+    }
+}
+
+// ── Review Sub-task ──────────────────────────────────────────────────────
+async function renderReviewSubTask(taskId) {
+    const el = document.getElementById('detail-review-task');
+    if (!el) return;
+
+    try {
+        const review = await api.getReviewTask(taskId);
+        if (!review) {
+            el.innerHTML = '';
+            return;
+        }
+
+        const reviewContent = review.review_message
+            ? sanitize(marked.parse(review.review_message.content || ''))
+            : '<p class="text-slate-500 text-sm">Review in progress...</p>';
+
+        el.innerHTML = `
+            <details class="bg-slate-900 border border-slate-800 rounded-lg mb-4">
+                <summary class="px-4 py-3 text-sm cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium bg-pink-500/20 text-pink-400">REVIEW</span>
+                    ${statusBadge(review.status)}
+                    <span class="text-slate-400 text-xs">${escapeHtml(review.model || 'opus')}</span>
+                    <span class="text-slate-500 text-xs">${relativeTime(review.updated_at)}</span>
+                    <a href="#/tasks/${review.id}" onclick="event.stopPropagation()" class="text-xs text-blue-400 hover:text-blue-300 ml-auto">View full →</a>
+                </summary>
+                <div class="px-4 pb-3 prose-dark text-sm border-t border-slate-700/50">
+                    ${reviewContent}
+                </div>
+            </details>
+        `;
+    } catch (e) {
+        el.innerHTML = '';
     }
 }
 

@@ -93,13 +93,15 @@ async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     return stdout, stderr, proc.returncode
 
 
-async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
+async def setup_worktree(project: dict, dir_name: str, branch: str,
+                         depends_on: str | None = None) -> str:
     """Create git worktree for a task. Returns worktree path.
 
     Args:
         project: Project config dict.
         dir_name: Filesystem-safe directory name (no slashes).
         branch: Git branch name (may contain slashes like feature/foo).
+        depends_on: Parent task ID for branch chaining (branch from parent's branch).
     """
     base = project["working_dir"]
     worktree_path = os.path.join(base, dir_name)
@@ -147,9 +149,17 @@ async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
         f"{default_branch}:{default_branch}",
     )
 
+    # Branch chaining: if this task depends on another, branch from parent's branch
+    base_branch = default_branch
+    if depends_on:
+        parent_task = await db.get_task(depends_on)
+        if parent_task and parent_task.get("branch"):
+            base_branch = parent_task["branch"]
+            log.info(f"Branch chaining: branching from parent branch '{base_branch}' (depends_on={depends_on})")
+
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, default_branch,
+        "-b", branch, worktree_path, base_branch,
     )
     if rc != 0:
         # Branch might already exist, try without -b
@@ -249,10 +259,10 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
 # Prompt Building
 # ---------------------------------------------------------------------------
 
-def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
-                       checklist: list[dict] | None = None,
-                       escalation_criteria: str | None = None,
-                       review_feedback: list[dict] | None = None) -> str:
+async def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
+                             checklist: list[dict] | None = None,
+                             escalation_criteria: str | None = None,
+                             review_feedback: list[dict] | None = None) -> str:
     """Build the prompt CC receives when dispatched."""
     parts = []
 
@@ -271,6 +281,25 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
             header = f"### {title}" if title else f"### From {author}"
             parts.append(header)
             parts.append(msg.get("content", ""))
+            parts.append("")
+
+    # Context injection from parent task (dependency chain)
+    if task.get("depends_on"):
+        parent = await db.get_task(task["depends_on"])
+        if parent:
+            parts.append("## Prior Task Context")
+            parts.append(f"Task `{parent['id']}` completed. Branch: `{parent['branch']}`")
+
+            # Get parent's result message and handoff notes
+            parent_msgs = await db.read_task_messages(parent["id"])
+            for msg in reversed(parent_msgs.get("messages", [])):
+                if msg.get("type") == "result" and msg.get("author") == "cc-worker":
+                    parts.append(f"\n### Result\n{msg['content']}")
+                    break
+            for msg in reversed(parent_msgs.get("messages", [])):
+                if msg.get("type") == "handoff":
+                    parts.append(f"\n### Handoff Notes\n{msg['content']}")
+                    break
             parts.append("")
 
     parts.append(f"# Task: {task['goal']}")
@@ -301,6 +330,8 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
     parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')`")
     parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
     parts.append("- When done, commit your work and post a result summary as type='result'.")
+    parts.append("- Before finishing, post a handoff message with key decisions, gotchas, and notes for the next task:")
+    parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='handoff', content='...')`")
     parts.append("")
 
     # Grounding phase instructions (skip for revision retries — they already know the code)
@@ -419,7 +450,7 @@ async def _run_sdk_session(
         permission_mode="bypassPermissions",
         model=model,
         max_turns=max_turns,
-        setting_sources=["project"],
+        setting_sources=["user", "project"],
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
@@ -675,6 +706,25 @@ async def _run_sdk_session(
                     checklist_total=len(checklist),
                     result_preview=result_msg.result,
                 )
+
+                # Check if this is a review task — process result on parent
+                task = await db.get_task(task_id)
+                if task.get("parent_task_id"):
+                    await _process_review_result(task_id, task["parent_task_id"])
+                elif task.get("gate_passed_at"):
+                    # Gate already passed previously — this is a manual resume cycle
+                    # Don't re-run gate or auto-advance chain
+                    log.info(f"Task {task_id}: gate already passed, skipping gate pipeline (manual resume)")
+                else:
+                    # First-pass completion — run the gate pipeline
+                    project = await db.get_project(task["project_id"])
+                    if task.get("auto_test") and project and project.get("test_command"):
+                        await _run_test_gate(task_id, project, task)
+                    elif task.get("auto_review"):
+                        await _dispatch_review(task_id, project, task)
+                    else:
+                        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+                        await _check_and_dispatch_dependents(task_id)
         else:
             # No result message — shouldn't happen but handle gracefully
             await db.update_task(task_id, status="needs-review")
@@ -715,6 +765,256 @@ def _log_result(log_dir: Path, result: ResultMessage):
         f.write(f"  cost_usd: {result.total_cost_usd}\n")
         if result.usage:
             f.write(f"  usage: {json.dumps(result.usage)}\n")
+
+
+async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
+    """Run the project's test_command after task completion. Auto-retry on failure."""
+    test_command = project.get("test_command")
+    if not test_command:
+        log.warning(f"Task {task_id}: auto_test enabled but project has no test_command")
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        return
+
+    await db.update_task(task_id, gate_status="testing")
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        log.error(f"Task {task_id}: no worktree for test gate")
+        await db.update_task(task_id, gate_status="test-failed")
+        return
+
+    log.info(f"Task {task_id}: running test gate: {test_command}")
+    stdout, stderr, rc = await _run_as_worker(
+        "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
+    )
+    test_output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+
+    if rc == 0:
+        # Tests passed
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="test-result",
+            title="Tests passed",
+            content=f"```\n{test_output[-3000:]}\n```",
+        )
+        log.info(f"Task {task_id}: test gate passed")
+
+        # If auto_review is enabled, dispatch a review instead of passing immediately
+        task = await db.get_task(task_id)
+        if task.get("auto_review"):
+            await _dispatch_review(task_id, project, task)
+        else:
+            await notify.task_needs_review(
+                task_id=task_id, reason="Gate passed: tests passed.",
+            )
+            await _check_and_dispatch_dependents(task_id)
+    else:
+        # Refresh task to get current retry count
+        task = await db.get_task(task_id)
+        retries = (task.get("gate_retries") or 0) + 1
+        max_retries = task.get("max_gate_retries") or 3
+        await db.update_task(task_id, gate_status="test-failed", gate_retries=retries)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="test-result",
+            title=f"Tests failed (attempt {retries}/{max_retries})",
+            content=f"```\n{test_output[-3000:]}\n```",
+        )
+        log.warning(f"Task {task_id}: test gate failed (attempt {retries}/{max_retries})")
+
+        if retries < max_retries:
+            # Auto-retry: dispatch new session with test failure as review feedback
+            log.info(f"Task {task_id}: auto-retrying after test failure")
+            await retry_task(task_id)
+        else:
+            await db.update_task(task_id, status="needs-review")
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Tests failed {retries} times. Manual intervention needed.",
+            )
+
+
+async def _get_branch_diff(task: dict) -> str:
+    """Get git diff between default branch and task branch."""
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        return "(no worktree available)"
+    project = await db.get_project(task["project_id"])
+    default_branch = project["default_branch"] if project else "main"
+    stdout, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "diff", f"{default_branch}...HEAD", "--stat",
+    )
+    stat = stdout.decode(errors="replace")
+    stdout2, _, _ = await _run_as_worker(
+        "git", "-C", worktree, "diff", f"{default_branch}...HEAD",
+    )
+    full_diff = stdout2.decode(errors="replace")
+    return f"{stat}\n\n{full_diff}"
+
+
+async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
+    """Dispatch a self-review task for the completed task."""
+    await db.update_task(task_id, gate_status="reviewing")
+
+    review_id = f"{task_id}/review"
+    diff_output = await _get_branch_diff(task)
+
+    # Get spec content
+    pinned = await db.get_task_pinned(task_id)
+    spec_content = pinned["content"] if pinned else "(no spec)"
+
+    review_prompt = f"""# Code Review: {task['goal']}
+
+## Original Spec
+{spec_content}
+
+## Changes to Review
+```
+{diff_output[:10000]}
+```
+
+## Review Criteria
+- Do changes match the spec? Every requirement addressed?
+- Are tests testing the RIGHT things? (assertions match spec, not code output)
+- Any obvious bugs, edge cases, or security issues?
+- Code quality: naming, structure, unnecessary complexity?
+
+Post your review on the PARENT task:
+mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', ...)
+
+If clean: title="APPROVED"
+If changes needed: title="CHANGES REQUESTED" and list specific issues
+"""
+
+    log.info(f"Dispatching self-review for {task_id} as {review_id}")
+    try:
+        await dispatch_task(
+            project_id=task["project_id"],
+            task_id=review_id,
+            goal=f"Review: {task['goal']}",
+            spec=review_prompt,
+            model=task.get("review_model") or "opus",
+            auto_test=False,
+            auto_review=False,
+            parent_task_id=task_id,
+        )
+    except Exception as e:
+        log.error(f"Failed to dispatch review for {task_id}: {e}")
+        # Fall back to passing the gate
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await _check_and_dispatch_dependents(task_id)
+
+
+async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
+    """Check if review approved or requested changes."""
+    msgs = await db.read_task_messages(parent_task_id)
+    review_msg = next(
+        (m for m in reversed(msgs.get("messages", []))
+         if m.get("type") == "review"),
+        None,
+    )
+
+    if review_msg and "APPROVED" in (review_msg.get("title") or "").upper():
+        log.info(f"Review approved for {parent_task_id}")
+        await db.update_task(parent_task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await _check_and_dispatch_dependents(parent_task_id)
+    else:
+        parent = await db.get_task(parent_task_id)
+        retries = (parent.get("gate_retries") or 0) + 1
+        max_retries = parent.get("max_gate_retries") or 3
+        await db.update_task(parent_task_id, gate_status="review-failed", gate_retries=retries)
+        log.warning(f"Review failed for {parent_task_id} (attempt {retries}/{max_retries})")
+
+        if retries < max_retries:
+            await retry_task(parent_task_id)
+        else:
+            await db.update_task(parent_task_id, status="needs-review")
+            await notify.task_needs_review(
+                parent_task_id,
+                reason="Review failed after max retries.",
+            )
+
+
+async def _maybe_create_pr(task_id: str) -> None:
+    """Create PR if auto_pr is enabled and this is the tail of a chain."""
+    task = await db.get_task(task_id)
+    if not task or not task.get("auto_pr"):
+        return
+
+    # Check no dependents are waiting
+    dependents = await db.get_dependents(task_id)
+    if any(d["status"] not in ("completed", "cancelled") for d in dependents):
+        return  # Not the tail yet
+
+    project = await db.get_project(task["project_id"])
+    if not project:
+        return
+
+    worktree = task.get("worktree_path")
+    branch = task.get("branch")
+    default_branch = project["default_branch"]
+
+    if not worktree or not branch:
+        return
+
+    # Walk the chain to collect goals
+    chain = await db.get_chain(task_id)
+    goals = [t["goal"] for t in chain if not t.get("parent_task_id")]  # Exclude review tasks
+
+    title = task["goal"][:70]
+    body = "## Summary\n" + "\n".join(f"- {g}" for g in goals)
+
+    log.info(f"Auto-creating PR for {task_id}: {branch} → {default_branch}")
+    stdout, stderr, rc = await _run_as_worker(
+        "gh", "pr", "create",
+        "--title", title,
+        "--body", body,
+        "--base", default_branch,
+        "--head", branch,
+        cwd=worktree,
+    )
+
+    if rc == 0:
+        pr_url = stdout.decode().strip()
+        await db.add_artifact(task_id, "pr_url", pr_url)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="PR Created",
+            content=f"[{pr_url}]({pr_url})",
+        )
+        log.info(f"PR created for {task_id}: {pr_url}")
+    else:
+        log.warning(f"PR creation failed for {task_id}: {stderr.decode()}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="PR creation failed",
+            content=f"```\n{stderr.decode()[:2000]}\n```",
+        )
+
+
+async def _check_and_dispatch_dependents(task_id: str) -> None:
+    """If any tasks depend on this one and it's gate-passed, dispatch them."""
+    task = await db.get_task(task_id)
+    if not task or not task.get("gate_passed_at"):
+        return
+
+    dependents = await db.get_dependents(task_id)
+    dispatched_any = False
+    for dep in dependents:
+        if dep["status"] == "ready":
+            log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
+            try:
+                await dispatch_task(
+                    project_id=dep["project_id"],
+                    task_id=dep["id"],
+                    goal=dep["goal"],
+                    auto_test=dep.get("auto_test", True),
+                )
+                dispatched_any = True
+            except Exception as e:
+                log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
+
+    # If no dependents to dispatch, this might be the chain tail — try auto-PR
+    if not dispatched_any:
+        await _maybe_create_pr(task_id)
 
 
 async def _update_usage(task_id: str, result: ResultMessage):
@@ -758,6 +1058,12 @@ async def dispatch_task(
     jira_ticket: str | None = None,
     conversation_id: str | None = None,
     model: str | None = None,
+    auto_test: bool = True,
+    depends_on: str | None = None,
+    auto_review: bool = True,
+    review_model: str | None = None,
+    parent_task_id: str | None = None,
+    auto_pr: bool = False,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -784,7 +1090,9 @@ async def dispatch_task(
             branch=branch,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
             jira_ticket=jira_ticket, conversation_id=conversation_id,
-            model=model,
+            model=model, auto_test=auto_test, depends_on=depends_on,
+            auto_review=auto_review, review_model=review_model,
+            parent_task_id=parent_task_id, auto_pr=auto_pr,
         )
         if spec:
             await db.post_task_message(
@@ -793,6 +1101,17 @@ async def dispatch_task(
             )
         if checklist:
             await db.create_checklist_items(task_id, checklist)
+
+        # Backward trigger: if depends_on parent hasn't passed gate yet, don't dispatch
+        if depends_on:
+            parent = await db.get_task(depends_on)
+            if parent and not parent.get("gate_passed_at"):
+                log.info(f"Task {task_id} waiting on parent {depends_on}")
+                return {
+                    "task_id": task_id, "status": "ready",
+                    "waiting_on": depends_on,
+                    "branch": task["branch"],
+                }
     elif task["status"] in ("needs-review", "turns-exhausted", "completed"):
         is_resume = True
     elif task["status"] == "working":
@@ -804,7 +1123,8 @@ async def dispatch_task(
     effective_branch = task["branch"] or short_name
     if task["branch"] != effective_branch:
         await db.update_task(task_id, branch=effective_branch)
-    worktree_path = await setup_worktree(project, short_name, effective_branch)
+    worktree_path = await setup_worktree(project, short_name, effective_branch,
+                                         depends_on=task.get("depends_on"))
 
     # Run setup command
     await run_setup_command(project, worktree_path)
@@ -832,7 +1152,7 @@ async def dispatch_task(
     # Fetch checklist items with IDs so CC knows how to update them
     checklist_items = await db.get_checklist(task_id)
 
-    prompt = _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
+    prompt = await _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
 
     # Get session_id for resume
     session_id = task.get("session_id") if is_resume else None
@@ -983,6 +1303,69 @@ async def cancel_task(task_id: str) -> dict:
 
     await db.update_task(task_id, status="cancelled")
     return {"task_id": task_id, "status": "cancelled", "async_task_cancelled": cancelled_async}
+
+
+async def skip_gate(task_id: str) -> dict:
+    """Manually bypass the test/review gate, marking it as passed."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Gate skipped",
+        content="Gate manually bypassed by user.",
+    )
+    await _check_and_dispatch_dependents(task_id)
+    return {"task_id": task_id, "gate_status": "passed"}
+
+
+async def advance_chain(task_id: str) -> dict:
+    """Manually dispatch next dependent task (bypasses first-pass check)."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if not task.get("gate_passed_at"):
+        raise ValueError(f"Task '{task_id}' gate has not passed yet")
+
+    dependents = await db.get_dependents(task_id)
+    dispatched = []
+    for dep in dependents:
+        if dep["status"] == "ready":
+            try:
+                await dispatch_task(
+                    project_id=dep["project_id"],
+                    task_id=dep["id"],
+                    goal=dep["goal"],
+                    auto_test=dep.get("auto_test", True),
+                )
+                dispatched.append(dep["id"])
+            except Exception as e:
+                log.error(f"Failed to advance chain to {dep['id']}: {e}")
+    return {"task_id": task_id, "dispatched": dispatched}
+
+
+async def cancel_chain(task_id: str) -> dict:
+    """Cancel a task and all its dependents recursively."""
+    cancelled = []
+
+    async def _cancel_recursive(tid: str):
+        task = await db.get_task(tid)
+        if not task or task["status"] in ("cancelled", "completed"):
+            return
+        # Cancel running tasks
+        if task["status"] == "working":
+            await cancel_task(tid)
+        else:
+            await db.update_task(tid, status="cancelled")
+        cancelled.append(tid)
+        # Recurse into dependents
+        deps = await db.get_dependents(tid)
+        for dep in deps:
+            await _cancel_recursive(dep["id"])
+
+    await _cancel_recursive(task_id)
+    return {"cancelled": cancelled}
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:

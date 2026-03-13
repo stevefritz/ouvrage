@@ -221,6 +221,11 @@ TASK_TOOLS = [
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags for filtering, e.g. ['bugfix', 'review']"},
                 "conversation_id": {"type": "string", "description": "Optional conversation ID to link this task to a design conversation"},
                 "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Claude model for this task (overrides project default). Default: sonnet"},
+                "auto_test": {"type": "boolean", "description": "Run test_command after completion as a gate. Default: true", "default": True},
+                "auto_review": {"type": "boolean", "description": "Dispatch a self-review session after tests pass. Default: true", "default": True},
+                "review_model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Model for self-review task. Default: opus"},
+                "auto_pr": {"type": "boolean", "description": "Auto-create PR when chain tail passes all gates. Default: false", "default": False},
+                "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -414,6 +419,17 @@ TASK_TOOLS = [
         },
     ),
     Tool(
+        name="get_pipeline",
+        description="Get the full task dependency chain for any task in the chain. Returns ordered list of tasks from root to tail.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Any task ID in the chain"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
         name="search_task_messages",
         description="Full-text search across all task message content. Returns matching messages with task_id, author, type, content snippet.",
         inputSchema={
@@ -567,6 +583,11 @@ async def _handle_dispatch_task(arguments):
         jira_ticket=arguments.get("jira_ticket"),
         conversation_id=arguments.get("conversation_id"),
         model=arguments.get("model"),
+        auto_test=arguments.get("auto_test", True),
+        auto_review=arguments.get("auto_review", True),
+        review_model=arguments.get("review_model"),
+        auto_pr=arguments.get("auto_pr", False),
+        depends_on=arguments.get("depends_on"),
     )
     # Set tags if provided
     tags = arguments.get("tags")
@@ -794,6 +815,12 @@ async def _handle_update_checklist_item_text(arguments):
     )
 
 
+async def _handle_get_pipeline(arguments):
+    chain = await db.get_chain(arguments["task_id"])
+    current_idx = next((i for i, t in enumerate(chain) if t["id"] == arguments["task_id"]), -1)
+    return {"chain": chain, "current_index": current_idx}
+
+
 async def _handle_search_task_messages(arguments):
     return await db.search_task_messages(
         query=arguments["query"],
@@ -834,6 +861,7 @@ TOOL_HANDLERS = {
     "add_checklist_item": _handle_add_checklist_item,
     "remove_checklist_item": _handle_remove_checklist_item,
     "update_checklist_item": _handle_update_checklist_item_text,
+    "get_pipeline": _handle_get_pipeline,
     "search_task_messages": _handle_search_task_messages,
 }
 
