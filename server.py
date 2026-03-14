@@ -152,6 +152,10 @@ PROJECT_TOOLS = [
                 "max_turns": {"type": "integer", "description": "Default max turns per dispatch for this project"},
                 "max_wall_clock": {"type": "integer", "description": "Default max wall clock minutes per dispatch"},
                 "claude_md_path": {"type": "string", "description": "Path to CLAUDE.md relative to repo root"},
+                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Default Claude model for tasks in this project. Default: sonnet"},
+                "max_test_retries": {"type": "integer", "description": "Project-level default for max test gate retries. Default: 3"},
+                "max_review_retries": {"type": "integer", "description": "Project-level default for max review gate retries. Default: 3"},
+                "max_total_gate_retries": {"type": "integer", "description": "Project-level default for hard gate retry ceiling. Default: 6"},
             },
             "required": ["id", "repo", "working_dir"],
         },
@@ -184,6 +188,9 @@ PROJECT_TOOLS = [
                 "max_turns": {"type": ["integer", "null"], "description": "Project-level turn limit"},
                 "max_wall_clock": {"type": ["integer", "null"], "description": "Project-level wall clock limit (minutes)"},
                 "claude_md_path": {"type": ["string", "null"], "description": "Path to CLAUDE.md relative to repo root"},
+                "max_test_retries": {"type": ["integer", "null"], "description": "Project-level default for max test gate retries"},
+                "max_review_retries": {"type": ["integer", "null"], "description": "Project-level default for max review gate retries"},
+                "max_total_gate_retries": {"type": ["integer", "null"], "description": "Project-level default for hard gate retry ceiling"},
             },
             "required": ["id"],
         },
@@ -219,13 +226,22 @@ TASK_TOOLS = [
                 "jira_ticket": {"type": "string", "description": "Optional Jira ticket ID or URL, e.g. 'SUZY-1324' or full URL"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags for filtering, e.g. ['bugfix', 'review']"},
                 "conversation_id": {"type": "string", "description": "Optional conversation ID to link this task to a design conversation"},
+                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Claude model for this task (overrides project default). Default: sonnet"},
+                "auto_test": {"type": "boolean", "description": "Run test_command after completion as a gate. Default: true", "default": True},
+                "auto_review": {"type": "boolean", "description": "Dispatch a self-review session after tests pass. Default: true", "default": True},
+                "review_model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Model for self-review task. Default: opus"},
+                "auto_pr": {"type": "boolean", "description": "Auto-create PR when chain tail passes all gates. Default: false", "default": False},
+                "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
+                "max_test_retries": {"type": "integer", "description": "Max auto-retries for test failures before pausing for human. Default: 3 (from project or global default)."},
+                "max_review_retries": {"type": "integer", "description": "Max auto-retries for review rejections before pausing for human. Default: 3 (from project or global default)."},
+                "max_total_gate_retries": {"type": "integer", "description": "Hard ceiling on total gate retries (test + review combined). Task fails if exceeded. Default: 6."},
             },
             "required": ["project_id", "id", "goal"],
         },
     ),
     Tool(
         name="resume_task",
-        description="Resume a paused (needs-review) task. Reuses the same session for context preservation.",
+        description="Resume a paused or completed task. Reuses the same session for context preservation. Works for needs-review, turns-exhausted, or completed tasks.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -412,6 +428,17 @@ TASK_TOOLS = [
         },
     ),
     Tool(
+        name="get_pipeline",
+        description="Get the full task dependency chain for any task in the chain. Returns ordered list of tasks from root to tail.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Any task ID in the chain"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
         name="search_task_messages",
         description="Full-text search across all task message content. Returns matching messages with task_id, author, type, content snippet.",
         inputSchema={
@@ -534,6 +561,10 @@ async def _handle_create_project(arguments):
         max_turns=arguments.get("max_turns"),
         max_wall_clock=arguments.get("max_wall_clock"),
         claude_md_path=arguments.get("claude_md_path"),
+        model=arguments.get("model"),
+        max_test_retries=arguments.get("max_test_retries"),
+        max_review_retries=arguments.get("max_review_retries"),
+        max_total_gate_retries=arguments.get("max_total_gate_retries"),
     )
 
 async def _handle_get_project(arguments):
@@ -563,6 +594,17 @@ async def _handle_dispatch_task(arguments):
         branch=arguments.get("branch"),
         jira_ticket=arguments.get("jira_ticket"),
         conversation_id=arguments.get("conversation_id"),
+        model=arguments.get("model"),
+        auto_test=arguments.get("auto_test", True),
+        auto_review=arguments.get("auto_review", True),
+        review_model=arguments.get("review_model"),
+        auto_pr=arguments.get("auto_pr", False),
+        depends_on=(f"{project_id}/{arguments['depends_on']}"
+                    if arguments.get("depends_on") and "/" not in arguments["depends_on"]
+                    else arguments.get("depends_on")),
+        max_test_retries=arguments.get("max_test_retries"),
+        max_review_retries=arguments.get("max_review_retries"),
+        max_total_gate_retries=arguments.get("max_total_gate_retries"),
     )
     # Set tags if provided
     tags = arguments.get("tags")
@@ -790,6 +832,12 @@ async def _handle_update_checklist_item_text(arguments):
     )
 
 
+async def _handle_get_pipeline(arguments):
+    chain = await db.get_chain(arguments["task_id"])
+    current_idx = next((i for i, t in enumerate(chain) if t["id"] == arguments["task_id"]), -1)
+    return {"chain": chain, "current_index": current_idx}
+
+
 async def _handle_search_task_messages(arguments):
     return await db.search_task_messages(
         query=arguments["query"],
@@ -830,6 +878,7 @@ TOOL_HANDLERS = {
     "add_checklist_item": _handle_add_checklist_item,
     "remove_checklist_item": _handle_remove_checklist_item,
     "update_checklist_item": _handle_update_checklist_item_text,
+    "get_pipeline": _handle_get_pipeline,
     "search_task_messages": _handle_search_task_messages,
 }
 
@@ -906,6 +955,8 @@ async def main():
                 await ctx.__aenter__()
                 scope["state"] = {"session_manager_ctx": ctx}
                 await send({"type": "lifespan.startup.complete"})
+                # Recover tasks orphaned by previous shutdown
+                asyncio.create_task(tasks.recover_orphaned_tasks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     await ctx.__aexit__(None, None, None)

@@ -12,10 +12,10 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
     ResultMessage,
     SystemMessage,
     UserMessage,
-    query,
 )
 from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
@@ -27,104 +27,11 @@ log = logging.getLogger("switchboard.tasks")
 # Track running async tasks to prevent garbage collection and silent failures
 _running_tasks: set[asyncio.Task] = set()
 
-# Track message injectors for active tasks so we can signal them to stop
-_active_injectors: dict[str, "MessageInjector"] = {}
+# Track active SDK clients for tasks (used by cancel to interrupt)
+_active_clients: dict[str, ClaudeSDKClient] = {}
 
-
-class MessageInjector:
-    """Async iterable that yields user messages for the SDK's stream_input.
-
-    Sends the initial prompt, then polls the DB for new messages posted
-    to the task. When a non-dispatcher message appears, it's injected
-    into the CC session as a user message.
-    """
-    _SENTINEL = object()
-    POLL_INTERVAL = 5  # seconds between DB polls
-
-    def __init__(self, task_id: str, initial_prompt: str):
-        self._task_id = task_id
-        self._initial_prompt = initial_prompt
-        self._queue: asyncio.Queue = asyncio.Queue()
-        self._seen_ids: set[int] = set()
-        self._done = False
-        self._poll_task: asyncio.Task | None = None
-
-    def _make_user_msg(self, content: str) -> dict:
-        return {
-            "type": "user",
-            "session_id": "",
-            "message": {"role": "user", "content": content},
-            "parent_tool_use_id": None,
-        }
-
-    async def start(self):
-        """Seed initial prompt and start background polling."""
-        # Snapshot existing message IDs so we only inject NEW ones
-        thread = await db.read_task_messages(self._task_id)
-        for msg in thread.get("messages", []):
-            if msg.get("id"):
-                self._seen_ids.add(msg["id"])
-
-        # Queue the initial prompt
-        await self._queue.put(self._make_user_msg(self._initial_prompt))
-        # Start polling
-        self._poll_task = asyncio.create_task(
-            self._poll_for_messages(), name=f"msg-poll-{self._task_id}"
-        )
-
-    async def _poll_for_messages(self):
-        """Poll DB for new messages and queue them for injection."""
-        while not self._done:
-            await asyncio.sleep(self.POLL_INTERVAL)
-            if self._done:
-                break
-            try:
-                thread = await db.read_task_messages(self._task_id)
-                for msg in thread.get("messages", []):
-                    msg_id = msg.get("id")
-                    if not msg_id or msg_id in self._seen_ids:
-                        continue
-                    self._seen_ids.add(msg_id)
-                    # Only inject human-authored messages, not dispatcher/cc-worker status
-                    if msg.get("author") in ("dispatcher", "cc-worker"):
-                        continue
-                    # Build injection text with context
-                    author = msg.get("author", "user")
-                    msg_type = msg.get("type", "note")
-                    title = msg.get("title") or ""
-                    content = msg.get("content", "")
-                    injection = (
-                        f"--- LIVE MESSAGE FROM {author.upper()} ({msg_type}) ---\n"
-                        f"{(title + chr(10)) if title else ''}"
-                        f"{content}\n"
-                        f"--- END LIVE MESSAGE ---\n\n"
-                        f"The above message was just posted to your task thread. "
-                        f"Read it carefully and adjust your work accordingly."
-                    )
-                    log.info(f"Injecting message {msg_id} into task {self._task_id}")
-                    await self._queue.put(self._make_user_msg(injection))
-                    await notify.task_heartbeat(
-                        task_id=self._task_id, turns=0,
-                        elapsed_s=0, last_tool=f"[injected msg from {author}]",
-                    )
-            except Exception as e:
-                log.warning(f"Message poll error for {self._task_id}: {e}")
-
-    async def stop(self):
-        """Signal the iterable to end."""
-        self._done = True
-        if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
-        await self._queue.put(self._SENTINEL)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        item = await self._queue.get()
-        if item is self._SENTINEL:
-            raise StopAsyncIteration
-        return item
+MESSAGE_POLL_INTERVAL = 5  # seconds between DB polls for injected messages
+DEFAULT_MODEL = "sonnet"
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:
@@ -155,6 +62,90 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+async def recover_orphaned_tasks():
+    """Recover tasks left in broken states after a service restart.
+
+    Scans for:
+    - 'working' tasks with no live PID → mark as needs-review
+    - 'test-failed' or 'review-failed' gate status → re-trigger gate pipeline
+    """
+    tasks = await db.list_tasks(status="working")
+    for task in tasks:
+        pid = task.get("pid")
+        if pid and _is_pid_alive(pid):
+            continue  # still running, leave it alone
+        log.warning(f"Startup recovery: task {task['id']} stuck in 'working' with no live process")
+        await db.update_task(task["id"], status="needs-review")
+        await db.post_task_message(
+            task_id=task["id"], author="dispatcher", type="status",
+            title="Recovered after restart",
+            content="Service restarted while this task was running. Marked as needs-review. "
+                    "Resume or retry to continue.",
+        )
+
+    # Re-trigger gate for tasks stuck in test-failed/review-failed
+    all_tasks = await db.list_tasks(status="completed")
+    for task in all_tasks:
+        gate = task.get("gate_status")
+        if gate in ("test-failed", "review-failed"):
+            log.warning(f"Startup recovery: task {task['id']} has gate_status={gate}, re-triggering gate")
+            project = await db.get_project(task["project_id"])
+            if not project:
+                continue
+            if gate == "test-failed" and task.get("auto_test") and project.get("test_command"):
+                asyncio.create_task(_run_test_gate(task["id"], project, task))
+            elif gate == "review-failed" and task.get("auto_review"):
+                asyncio.create_task(_dispatch_review(task["id"], project, task))
+
+
+async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
+    """Force-push task branch if there are unpushed commits."""
+    worktree = task.get("worktree_path")
+    branch = task.get("branch")
+    if not worktree or not branch or not os.path.exists(worktree):
+        return
+
+    # Check if remote branch exists
+    stdout, _, rc = await _run_as_worker(
+        "git", "-C", worktree, "ls-remote", "--heads", "origin", branch,
+    )
+    remote_exists = rc == 0 and stdout.strip()
+
+    if remote_exists:
+        # Check for unpushed commits
+        stdout, _, rc = await _run_as_worker(
+            "git", "-C", worktree, "log", f"origin/{branch}..HEAD", "--oneline",
+        )
+        if rc != 0 or not stdout.strip():
+            return  # nothing to push
+    # else: remote doesn't exist yet, push to create it
+
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "push", "--force-with-lease", "origin", branch,
+    )
+    if rc != 0:
+        log.warning(f"Auto-push failed for {task_id}: {stderr.decode()}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-push failed",
+            content=f"```\n{stderr.decode()[:1000]}\n```",
+        )
+    else:
+        log.info(f"Auto-pushed branch {branch} for {task_id}")
+
+
+def _tail_lines(text: str, max_chars: int) -> str:
+    """Truncate text to last ~max_chars, breaking at line boundaries."""
+    if len(text) <= max_chars:
+        return text
+    # Find the first newline after the cut point
+    cut = len(text) - max_chars
+    idx = text.find("\n", cut)
+    if idx == -1:
+        return text[cut:]
+    return text[idx + 1:]
+
+
 # ---------------------------------------------------------------------------
 # Git Worktree Management
 # ---------------------------------------------------------------------------
@@ -171,38 +162,55 @@ def _get_worker_ids() -> tuple[int, int]:
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     """Run a command as the worker user via setuid (requires CAP_SETUID)."""
     uid, gid = _get_worker_ids()
+    pw = pwd.getpwnam(WORKER_USER)
 
     def _demote():
         os.setgid(gid)
         os.setuid(uid)
 
+    # Ensure HOME is set to the worker user's home dir, not the service user's
+    env = kwargs.pop("env", None) or os.environ.copy()
+    env["HOME"] = pw.pw_dir
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         preexec_fn=_demote,
+        env=env,
         **kwargs,
     )
     stdout, stderr = await proc.communicate()
     return stdout, stderr, proc.returncode
 
 
-async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
+async def setup_worktree(project: dict, dir_name: str, branch: str,
+                         depends_on: str | None = None) -> str:
     """Create git worktree for a task. Returns worktree path.
 
     Args:
         project: Project config dict.
         dir_name: Filesystem-safe directory name (no slashes).
         branch: Git branch name (may contain slashes like feature/foo).
+        depends_on: Parent task ID for branch chaining (branch from parent's branch).
     """
     base = project["working_dir"]
     worktree_path = os.path.join(base, dir_name)
 
     if os.path.exists(worktree_path):
-        log.info(f"Worktree already exists: {worktree_path}")
+        log.info(f"Worktree already exists: {worktree_path}, pulling latest")
+        # Fetch + pull so resumed tasks pick up upstream changes
+        await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
+        stdout, stderr, rc = await _run_as_worker(
+            "git", "-C", worktree_path, "merge", "--ff-only",
+            f"origin/{branch}",
+        )
+        if rc != 0:
+            # Non-fatal — branch may not exist on remote yet, or diverged
+            log.info(f"Auto-pull skipped (ff-only failed): {stderr.decode().strip()}")
         return worktree_path
 
-    # Ensure base directory exists (worker user should already own it)
-    os.makedirs(base, exist_ok=True)
+    # Ensure base directory exists (created as worker user so ownership is correct)
+    await _run_as_worker("mkdir", "-p", base)
 
     # Clone the repo as a bare repo if the base doesn't have .git
     bare_path = os.path.join(base, ".bare")
@@ -217,11 +225,31 @@ async def setup_worktree(project: dict, dir_name: str, branch: str) -> str:
     # Fetch latest from remote
     await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
 
-    # Create worktree
+    # Auto-detect default branch from bare clone HEAD if project config is wrong
     default_branch = project["default_branch"]
+    stdout, _, _ = await _run_as_worker("git", "-C", bare_path, "symbolic-ref", "HEAD")
+    detected = stdout.decode().strip().removeprefix("refs/heads/")
+    if detected and detected != default_branch:
+        log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
+        default_branch = detected
+
+    # Update local default branch ref to match origin BEFORE branching
+    await _run_as_worker(
+        "git", "-C", bare_path, "fetch", "origin",
+        f"{default_branch}:{default_branch}",
+    )
+
+    # Branch chaining: if this task depends on another, branch from parent's branch
+    base_branch = default_branch
+    if depends_on:
+        parent_task = await db.get_task(depends_on)
+        if parent_task and parent_task.get("branch"):
+            base_branch = parent_task["branch"]
+            log.info(f"Branch chaining: branching from parent branch '{base_branch}' (depends_on={depends_on})")
+
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, default_branch,
+        "-b", branch, worktree_path, base_branch,
     )
     if rc != 0:
         # Branch might already exist, try without -b
@@ -255,7 +283,13 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
     if not cmd:
         return
 
-    # Write env overrides to .env.testing if provided
+    log.info(f"Running setup: {cmd} in {worktree_path}")
+    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
+    if rc != 0:
+        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
+
+    # Append env overrides AFTER setup (setup may create .env.testing from template)
+    # Uses >> to append so we don't clobber APP_KEY etc. set by key:generate
     overrides = env_overrides
     if not overrides and project.get("env_overrides"):
         overrides = project["env_overrides"]
@@ -264,15 +298,12 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
 
     if overrides:
         env_path = os.path.join(worktree_path, ".env.testing")
-        with open(env_path, "w") as f:
-            for k, v in overrides.items():
-                f.write(f"{k}={v}\n")
-        log.info(f"Wrote env overrides to {env_path}")
-
-    log.info(f"Running setup: {cmd} in {worktree_path}")
-    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
-    if rc != 0:
-        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
+        env_content = "\n" + "\n".join(f"{k}={v}" for k, v in overrides.items()) + "\n"
+        # Append as worker user — later values override earlier ones in dotenv
+        await _run_as_worker(
+            "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
+        )
+        log.info(f"Appended env overrides to {env_path}")
 
 
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
@@ -321,10 +352,10 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
 # Prompt Building
 # ---------------------------------------------------------------------------
 
-def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
-                       checklist: list[dict] | None = None,
-                       escalation_criteria: str | None = None,
-                       review_feedback: list[dict] | None = None) -> str:
+async def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
+                             checklist: list[dict] | None = None,
+                             escalation_criteria: str | None = None,
+                             review_feedback: list[dict] | None = None) -> str:
     """Build the prompt CC receives when dispatched."""
     parts = []
 
@@ -343,6 +374,25 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
             header = f"### {title}" if title else f"### From {author}"
             parts.append(header)
             parts.append(msg.get("content", ""))
+            parts.append("")
+
+    # Context injection from parent task (dependency chain)
+    if task.get("depends_on"):
+        parent = await db.get_task(task["depends_on"])
+        if parent:
+            parts.append("## Prior Task Context")
+            parts.append(f"Task `{parent['id']}` completed. Branch: `{parent['branch']}`")
+
+            # Get parent's result message and handoff notes
+            parent_msgs = await db.read_task_messages(parent["id"])
+            for msg in reversed(parent_msgs.get("messages", [])):
+                if msg.get("type") == "result" and msg.get("author") == "cc-worker":
+                    parts.append(f"\n### Result\n{msg['content']}")
+                    break
+            for msg in reversed(parent_msgs.get("messages", [])):
+                if msg.get("type") == "handoff":
+                    parts.append(f"\n### Handoff Notes\n{msg['content']}")
+                    break
             parts.append("")
 
     parts.append(f"# Task: {task['goal']}")
@@ -372,7 +422,10 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
     parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='progress', content='...')`")
     parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='question', content='...')`")
     parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
-    parts.append("- When done, commit your work and post a result summary as type='result'.")
+    parts.append("- When done, commit your work, **push your branch** (`git push origin {branch}`), and post a result summary as type='result'.")
+    parts.append("- **Always push your branch before finishing.** Your work is headless — unpushed code has no value.")
+    parts.append("- Before finishing, post a handoff message with key decisions, gotchas, and notes for the next task:")
+    parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='handoff', content='...')`")
     parts.append("")
 
     # Grounding phase instructions (skip for revision retries — they already know the code)
@@ -389,8 +442,13 @@ def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
         parts.append("")
 
     if project.get("test_command"):
-        parts.append(f"## Test Command")
-        parts.append(f"Run tests with: `{project['test_command']}`")
+        parts.append(f"## Testing")
+        if task.get("auto_test"):
+            parts.append(f"**Tests will be run automatically** after you complete your work (`{project['test_command']}`).")
+            parts.append("Do NOT run the full test suite yourself — the gate handles this. If tests fail, you will be retried with the failure output.")
+            parts.append("Only run targeted tests if you need to debug a specific piece of logic during development.")
+        else:
+            parts.append(f"Run tests with: `{project['test_command']}`")
         parts.append("")
 
     if escalation_criteria:
@@ -427,12 +485,14 @@ async def _setup_log_dir(worktree_path: str) -> Path:
 
 def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
                         max_turns: int, max_wall_clock: int,
-                        worktree_path: str, is_resume: bool):
+                        worktree_path: str, is_resume: bool,
+                        model: str = "sonnet"):
     """Write dispatch metadata to log file."""
     log_path = log_dir / "dispatch.log"
     with open(log_path, "a") as f:
         f.write(f"[{db.now_iso()}] {'Resuming' if is_resume else 'Dispatching'} task {task_id}\n")
         f.write(f"  session_id: {session_id}\n")
+        f.write(f"  model: {model}\n")
         f.write(f"  max_turns: {max_turns}\n")
         f.write(f"  max_wall_clock: {max_wall_clock}m\n")
         f.write(f"  worktree: {worktree_path}\n")
@@ -456,7 +516,7 @@ async def _run_sdk_session(
     task_id: str, prompt: str, worktree_path: str,
     session_id: str | None, is_resume: bool,
     max_turns: int, max_wall_clock_minutes: int,
-    log_dir: Path,
+    log_dir: Path, model: str = "sonnet",
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     stderr_path = log_dir / "cc-stderr.log"
@@ -466,38 +526,36 @@ async def _run_sdk_session(
 
     # Build SDK options — run CC as restricted 'switchboard' user
     worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+
+    # Merge user-level MCP servers from ~/.claude.json (e.g. shopify-ai)
+    mcp_servers = {
+        "switchboard": {
+            "type": "http",
+            "url": "http://localhost:8100/mcp",
+        },
+    }
+    try:
+        with open(os.path.join(worker_home, ".claude.json")) as f:
+            for name, cfg in json.load(f).get("mcpServers", {}).items():
+                if name not in mcp_servers:
+                    mcp_servers[name] = cfg
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+        pass
+
     options = ClaudeAgentOptions(
         user="switchboard",
         cwd=str(worktree_path),
         env={"HOME": worker_home},
-        allowed_tools=[
-            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-            "mcp__switchboard__update_task_checklist",
-            "mcp__switchboard__update_task_phase",
-            "mcp__switchboard__post_task_message",
-            "mcp__switchboard__read_task_messages",
-            "mcp__switchboard__get_task_status",
-            "mcp__switchboard__get_session_log",
-            "mcp__switchboard__get_dispatch_log",
-            "mcp__switchboard__add_checklist_item",
-            "mcp__switchboard__remove_checklist_item",
-            "mcp__switchboard__update_checklist_item",
-            "mcp__switchboard__search_task_messages",
-        ],
         permission_mode="bypassPermissions",
+        model=model,
         max_turns=max_turns,
-        setting_sources=["project"],
+        setting_sources=["user", "project"],
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
             "append": prompt if not is_resume else "",
         },
-        mcp_servers={
-            "switchboard": {
-                "type": "http",
-                "url": "http://localhost:8100/mcp",
-            },
-        },
+        mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
     )
 
@@ -520,11 +578,11 @@ async def _run_sdk_session(
                     entry["content"] = []
                     for block in (msg.content or []):
                         if isinstance(block, TextBlock):
-                            entry["content"].append({"type": "text", "text": block.text[:2000]})
+                            entry["content"].append({"type": "text", "text": block.text})
                         elif isinstance(block, ToolUseBlock):
                             entry["content"].append({
                                 "type": "tool_use", "name": block.name,
-                                "input": str(block.input)[:1000],
+                                "input": str(block.input)[:5000],
                             })
                     entry["stop_reason"] = getattr(msg, "stop_reason", None)
                     entry["model"] = getattr(msg, "model", None)
@@ -532,19 +590,19 @@ async def _run_sdk_session(
                     entry["content"] = []
                     content = msg.content
                     if isinstance(content, str):
-                        entry["content"].append({"type": "text", "text": content[:2000]})
+                        entry["content"].append({"type": "text", "text": content})
                     else:
                         for block in (content or []):
                             if isinstance(block, ToolResultBlock):
                                 entry["content"].append({
                                     "type": "tool_result",
                                     "tool_use_id": block.tool_use_id,
-                                    "preview": str(block.content or "")[:500],
+                                    "preview": str(block.content or "")[:5000],
                                     "is_error": getattr(block, "is_error", None),
                                 })
                 elif isinstance(msg, ResultMessage):
                     entry["subtype"] = getattr(msg, "subtype", None)
-                    entry["result"] = (msg.result or "")[:1000]
+                    entry["result"] = msg.result or ""
                     entry["num_turns"] = msg.num_turns
                     entry["session_id"] = getattr(msg, "session_id", None)
                     entry["cost_usd"] = msg.total_cost_usd
@@ -554,6 +612,49 @@ async def _run_sdk_session(
                     f.write(json.dumps(entry) + "\n")
             except Exception as e:
                 log.warning(f"Failed to log message: {e}")
+
+        async def _check_for_injections(client: ClaudeSDKClient, seen_ids: set[int]) -> None:
+            """Poll DB for new messages and inject them via client.query()."""
+            try:
+                thread = await db.read_task_messages(task_id)
+                for msg in thread.get("messages", []):
+                    msg_id = msg.get("id")
+                    if not msg_id or msg_id in seen_ids:
+                        continue
+                    seen_ids.add(msg_id)
+                    # Only inject human-authored messages, not dispatcher/cc-worker status
+                    if msg.get("author") in ("dispatcher", "cc-worker"):
+                        continue
+                    author = msg.get("author", "user")
+                    msg_type = msg.get("type", "note")
+                    title = msg.get("title") or ""
+                    content = msg.get("content", "")
+                    injection = (
+                        f"--- LIVE MESSAGE FROM {author.upper()} ({msg_type}) ---\n"
+                        f"{(title + chr(10)) if title else ''}"
+                        f"{content}\n"
+                        f"--- END LIVE MESSAGE ---\n\n"
+                        f"The above message was just posted to your task thread. "
+                        f"Read it carefully and adjust your work accordingly."
+                    )
+                    log.info(f"Injecting message {msg_id} into task {task_id}")
+                    await client.query(injection)
+                    await notify.task_heartbeat(
+                        task_id=task_id, turns=0,
+                        elapsed_s=0, last_tool=f"[injected msg from {author}]",
+                    )
+            except Exception as e:
+                log.warning(f"Message poll error for {task_id}: {e}")
+
+        async def _poll_and_inject(client: ClaudeSDKClient, seen_ids: set[int], done: asyncio.Event):
+            """Background task: poll DB for new messages, inject via client.query()."""
+            while not done.is_set():
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=MESSAGE_POLL_INTERVAL)
+                    break  # done was set
+                except asyncio.TimeoutError:
+                    pass  # poll interval elapsed
+                await _check_for_injections(client, seen_ids)
 
         async def _run():
             nonlocal result_msg
@@ -566,52 +667,66 @@ async def _run_sdk_session(
 
             actual_prompt = _build_resume_prompt({"id": task_id}) if is_resume else prompt
 
-            # Use MessageInjector for live message injection during session
-            injector = MessageInjector(task_id, actual_prompt)
-            _active_injectors[task_id] = injector
-            await injector.start()
+            # Snapshot existing message IDs so we only inject NEW ones
+            seen_ids: set[int] = set()
+            thread = await db.read_task_messages(task_id)
+            for msg in thread.get("messages", []):
+                if msg.get("id"):
+                    seen_ids.add(msg["id"])
 
-            try:
-                async for message in query(prompt=injector, options=options):
-                    _log_message(message)
+            done_event = asyncio.Event()
 
-                    # Once we have the result, skip further processing
-                    if result_msg:
-                        continue
+            async with ClaudeSDKClient(options=options) as client:
+                _active_clients[task_id] = client
 
-                    if isinstance(message, AssistantMessage):
-                        turn_count += 1
-                        # Track last tool used for heartbeat context
-                        for block in (message.content or []):
-                            if isinstance(block, ToolUseBlock):
-                                last_tool_name = block.name
+                # Start background message injection poller
+                poll_task = asyncio.create_task(
+                    _poll_and_inject(client, seen_ids, done_event),
+                    name=f"msg-poll-{task_id}",
+                )
 
-                    if isinstance(message, ResultMessage):
-                        result_msg = message
-                        # Capture session_id from first dispatch
-                        if message.session_id:
-                            await db.update_task(task_id, session_id=message.session_id)
-                        running_cost = message.total_cost_usd or 0
-                        # Stop the injector so the SDK's stdin closes and the loop ends naturally
-                        await injector.stop()
-                        continue
+                try:
+                    # Send initial prompt
+                    await client.query(actual_prompt)
 
-                    # Heartbeat: post to Slack every N seconds
-                    now = time.monotonic()
-                    if now - last_heartbeat >= heartbeat_interval:
-                        last_heartbeat = now
-                        await notify.task_heartbeat(
-                            task_id=task_id,
-                            turns=turn_count,
-                            elapsed_s=now - start_time,
-                            last_tool=last_tool_name,
-                        )
+                    # Process all messages until ResultMessage
+                    async for message in client.receive_response():
+                        _log_message(message)
 
-                    # Update last_activity on each message
-                    await db.update_task(task_id, last_activity=db.now_iso())
-            finally:
-                await injector.stop()
-                _active_injectors.pop(task_id, None)
+                        if isinstance(message, AssistantMessage):
+                            turn_count += 1
+                            for block in (message.content or []):
+                                if isinstance(block, ToolUseBlock):
+                                    last_tool_name = block.name
+
+                        if isinstance(message, ResultMessage):
+                            result_msg = message
+                            if message.session_id:
+                                await db.update_task(task_id, session_id=message.session_id)
+                            running_cost = message.total_cost_usd or 0
+
+                        # Heartbeat
+                        now = time.monotonic()
+                        if now - last_heartbeat >= heartbeat_interval:
+                            last_heartbeat = now
+                            await notify.task_heartbeat(
+                                task_id=task_id,
+                                turns=turn_count,
+                                elapsed_s=now - start_time,
+                                last_tool=last_tool_name,
+                            )
+
+                        # Update last_activity on each message
+                        await db.update_task(task_id, last_activity=db.now_iso())
+
+                finally:
+                    done_event.set()
+                    poll_task.cancel()
+                    try:
+                        await poll_task
+                    except asyncio.CancelledError:
+                        pass
+                    _active_clients.pop(task_id, None)
 
         try:
             await asyncio.wait_for(_run(), timeout=timeout_seconds)
@@ -637,7 +752,37 @@ async def _run_sdk_session(
             _log_result(log_dir, result_msg)
             await _update_usage(task_id, result_msg)
 
-            if result_msg.is_error:
+            if result_msg.stop_reason == "max_turns" or (
+                result_msg.num_turns and result_msg.num_turns >= max_turns
+            ):
+                await db.update_task(task_id, status="turns-exhausted")
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Turns exhausted",
+                    content=f"CC session hit the {max_turns}-turn limit.\n\n"
+                            f"Turns: {result_msg.num_turns} | "
+                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                            f"Work is preserved in the worktree. Resume to continue with the same session.",
+                )
+
+                # Still push and try the gate — CC may have finished the work
+                task = await db.get_task(task_id)
+                await _ensure_branch_pushed(task_id, task)
+                if not task.get("gate_passed_at"):
+                    project = await db.get_project(task["project_id"])
+                    if task.get("auto_test") and project and project.get("test_command"):
+                        await _run_test_gate(task_id, project, task)
+                    elif task.get("auto_review"):
+                        await _dispatch_review(task_id, project, task)
+
+                # Only notify for manual review if gate didn't auto-handle it
+                task = await db.get_task(task_id)
+                if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing", "test-passed"):
+                    await notify.task_needs_review(
+                        task_id=task_id,
+                        reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
+                    )
+            elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
@@ -674,6 +819,28 @@ async def _run_sdk_session(
                     checklist_total=len(checklist),
                     result_preview=result_msg.result,
                 )
+
+                # Auto-push branch before gate pipeline
+                task = await db.get_task(task_id)
+                await _ensure_branch_pushed(task_id, task)
+
+                # Check if this is a review task — process result on parent
+                if task.get("parent_task_id"):
+                    await _process_review_result(task_id, task["parent_task_id"])
+                elif task.get("gate_passed_at"):
+                    # Gate already passed previously — this is a manual resume cycle
+                    # Don't re-run gate or auto-advance chain
+                    log.info(f"Task {task_id}: gate already passed, skipping gate pipeline (manual resume)")
+                else:
+                    # First-pass completion — run the gate pipeline
+                    project = await db.get_project(task["project_id"])
+                    if task.get("auto_test") and project and project.get("test_command"):
+                        await _run_test_gate(task_id, project, task)
+                    elif task.get("auto_review"):
+                        await _dispatch_review(task_id, project, task)
+                    else:
+                        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+                        await _check_and_dispatch_dependents(task_id)
         else:
             # No result message — shouldn't happen but handle gracefully
             await db.update_task(task_id, status="needs-review")
@@ -694,6 +861,13 @@ async def _run_sdk_session(
             title="Dispatch error",
             content=f"SDK session raised an exception:\n\n```\n{e}\n```",
         )
+        # If this was a review task, still try to process any review it posted
+        task = await db.get_task(task_id)
+        if task and task.get("parent_task_id"):
+            try:
+                await _process_review_result(task_id, task["parent_task_id"])
+            except Exception:
+                log.exception(f"Failed to process review result for crashed review task {task_id}")
         await notify.task_failed(task_id=task_id, error=str(e))
         with open(log_dir / "dispatch.log", "a") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
@@ -714,6 +888,602 @@ def _log_result(log_dir: Path, result: ResultMessage):
         f.write(f"  cost_usd: {result.total_cost_usd}\n")
         if result.usage:
             f.write(f"  usage: {json.dumps(result.usage)}\n")
+
+
+async def _run_subtask(
+    task_id: str,
+    subtask_type: str,
+    prompt: str,
+    model: str = "opus",
+    max_turns: int = 30,
+) -> dict:
+    """Run a lightweight CC session in the parent's worktree.
+
+    No separate worktree, no setup_command, no gate pipeline.
+    Returns the subtask record.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Parent task '{task_id}' not found")
+
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        raise ValueError(f"No worktree for task '{task_id}'")
+
+    # Generate subtask ID
+    existing = await db.get_subtasks(task_id)
+    count = sum(1 for s in existing if s["type"] == subtask_type) + 1
+    subtask_id = f"{task_id}/{subtask_type}-{count}"
+
+    await db.create_subtask(
+        id=subtask_id, task_id=task_id, type=subtask_type,
+        prompt=prompt, model=model,
+    )
+
+    # Build SDK options — same as _run_sdk_session but simpler
+    worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+    mcp_servers = {"switchboard": {"type": "http", "url": "http://localhost:8100/mcp"}}
+    try:
+        with open(os.path.join(worker_home, ".claude.json")) as f:
+            for name, cfg in json.load(f).get("mcpServers", {}).items():
+                if name not in mcp_servers:
+                    mcp_servers[name] = cfg
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+        pass
+
+    log_dir = Path(worktree) / ".switchboard"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = log_dir / f"{subtask_type}-{count}-stderr.log"
+    old_umask = os.umask(0o002)
+    stderr_log = open(stderr_path, "a")
+    os.umask(old_umask)
+
+    options = ClaudeAgentOptions(
+        user="switchboard",
+        cwd=str(worktree),
+        env={"HOME": worker_home},
+        permission_mode="bypassPermissions",
+        model=model,
+        max_turns=max_turns,
+        setting_sources=["user", "project"],
+        system_prompt={"type": "preset", "preset": "claude_code", "append": prompt},
+        mcp_servers=mcp_servers,
+        debug_stderr=stderr_log,
+    )
+
+    result_msg = None
+    log.info(f"Running subtask {subtask_id} (type={subtask_type}, model={model})")
+
+    try:
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt)
+            async for message in client.receive_response():
+                if isinstance(message, ResultMessage):
+                    result_msg = message
+    except Exception as e:
+        log.exception(f"Subtask {subtask_id} error: {e}")
+        await db.update_subtask(subtask_id, status="failed",
+                                result=str(e), completed_at=db.now_iso())
+        return await db.get_subtask(subtask_id)
+    finally:
+        stderr_log.close()
+
+    if result_msg:
+        input_tokens = 0
+        output_tokens = 0
+        if result_msg.usage:
+            input_tokens = (result_msg.usage.get("input_tokens", 0)
+                            + result_msg.usage.get("cache_creation_input_tokens", 0)
+                            + result_msg.usage.get("cache_read_input_tokens", 0))
+            output_tokens = result_msg.usage.get("output_tokens", 0)
+
+        await db.update_subtask(
+            subtask_id,
+            status="completed" if not result_msg.is_error else "failed",
+            result=result_msg.result or "",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=result_msg.total_cost_usd or 0.0,
+            duration_ms=result_msg.duration_ms or 0,
+            completed_at=db.now_iso(),
+        )
+
+        # Roll up cost to parent task
+        await _update_usage(task_id, result_msg)
+        log.info(f"Subtask {subtask_id} completed (cost=${result_msg.total_cost_usd or 0:.4f})")
+    else:
+        await db.update_subtask(subtask_id, status="failed",
+                                result="No result received", completed_at=db.now_iso())
+        log.warning(f"Subtask {subtask_id} ended without ResultMessage")
+
+    return await db.get_subtask(subtask_id)
+
+
+async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
+    """Run the project's test_command after task completion. Auto-retry on failure."""
+    test_command = project.get("test_command")
+    if not test_command:
+        log.warning(f"Task {task_id}: auto_test enabled but project has no test_command")
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        return
+
+    await db.update_task(task_id, gate_status="testing")
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        log.error(f"Task {task_id}: no worktree for test gate")
+        await db.update_task(task_id, gate_status="test-failed")
+        return
+
+    log.info(f"Task {task_id}: running test gate: {test_command}")
+    stdout, stderr, rc = await _run_as_worker(
+        "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
+    )
+    test_output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+
+    if rc == 0:
+        # Tests passed — but don't set gate_passed_at if review still pending
+        task = await db.get_task(task_id)
+        if task.get("auto_review"):
+            await db.update_task(task_id, gate_status="test-passed")
+        else:
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="test-result",
+            title="Tests passed",
+            content=f"```\n{_tail_lines(test_output, 3000)}\n```",
+        )
+        log.info(f"Task {task_id}: test gate passed")
+
+        # If auto_review is enabled, dispatch a review instead of passing immediately
+        if task.get("auto_review"):
+            await _dispatch_review(task_id, project, task)
+        else:
+            await notify.task_needs_review(
+                task_id=task_id, reason="Gate passed: tests passed.",
+            )
+            await _check_and_dispatch_dependents(task_id)
+    else:
+        # Refresh task to get current retry counts
+        task = await db.get_task(task_id)
+        test_retries = (task.get("test_retries") or 0) + 1
+        review_retries = task.get("review_retries") or 0
+        total_retries = test_retries + review_retries
+        max_test = task.get("max_test_retries") or 3
+        max_total = task.get("max_total_gate_retries") or 6
+        await db.update_task(task_id, gate_status="test-failed",
+                             test_retries=test_retries,
+                             gate_retries=total_retries)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="test-result",
+            title=f"Tests failed (test attempt {test_retries}/{max_test}, total {total_retries}/{max_total})",
+            content=f"```\n{_tail_lines(test_output, 3000)}\n```",
+        )
+        log.warning(f"Task {task_id}: test gate failed (test_retries={test_retries}/{max_test}, total={total_retries}/{max_total})")
+
+        if total_retries >= max_total:
+            # Hard limit: fail the task
+            await db.update_task(task_id, status="failed")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Gate hard limit reached — task failed",
+                content=f"Total gate retries ({total_retries}) reached the hard ceiling ({max_total}). "
+                        f"Test failures: {test_retries}, Review rejections: {review_retries}. "
+                        "Manual intervention required.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Gate hard limit: {total_retries} total retries ({test_retries} test, {review_retries} review). Task failed.",
+            )
+        elif test_retries >= max_test:
+            # Soft limit: pause for human
+            await db.update_task(task_id, status="needs-review")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title=f"Test soft limit reached — paused for review",
+                content=f"Tests failed {test_retries} times (limit: {max_test}). "
+                        f"Last failure output above. "
+                        "Use `retry_task` to try again (resets test_retries) or `close_task` to abandon.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Tests failed {test_retries} times. Soft limit reached — paused for human review.",
+            )
+        else:
+            # Auto-retry: dispatch new session with test failure as review feedback
+            log.info(f"Task {task_id}: auto-retrying after test failure")
+            await retry_task(task_id)
+
+
+async def _get_branch_diff(task: dict) -> str:
+    """Get git diff between default branch and task branch."""
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        return "(no worktree available)"
+    project = await db.get_project(task["project_id"])
+    default_branch = project["default_branch"] if project else "main"
+    stdout, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD", "--stat",
+    )
+    stat = stdout.decode(errors="replace")
+    stdout2, _, _ = await _run_as_worker(
+        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD",
+    )
+    full_diff = stdout2.decode(errors="replace")
+    return f"{stat}\n\n{full_diff}"
+
+
+async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
+    """Run a lightweight review subtask in the parent's worktree."""
+    await db.update_task(task_id, gate_status="reviewing")
+
+    diff_output = await _get_branch_diff(task)
+
+    # Get spec content
+    pinned = await db.get_task_pinned(task_id)
+    spec_content = pinned["content"] if pinned else "(no spec)"
+
+    review_prompt = f"""# Code Review: {task['goal']}
+
+## Original Spec
+{spec_content}
+
+## Changes to Review
+```
+{diff_output[:10000]}
+```
+
+## Review Criteria
+- Do changes match the spec? Every requirement addressed?
+- Are tests testing the RIGHT things? (assertions match spec, not code output)
+- Any obvious bugs, edge cases, or security issues?
+- Code quality: naming, structure, unnecessary complexity?
+
+Post your review on the task:
+mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', ...)
+
+If clean: title="APPROVED"
+If approved but with non-blocking nits: title="APPROVED WITH NITS" — gate passes, nits are logged for the next session
+If changes needed: title="CHANGES REQUESTED" and list specific issues
+"""
+
+    log.info(f"Running subtask review for {task_id}")
+    try:
+        subtask = await _run_subtask(
+            task_id=task_id,
+            subtask_type="review",
+            prompt=review_prompt,
+            model=task.get("review_model") or "opus",
+        )
+
+        if subtask.get("status") == "completed":
+            await _process_review_result_inline(task_id)
+        else:
+            log.warning(f"Review subtask failed for {task_id}, falling back to gate pass")
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+            await _check_and_dispatch_dependents(task_id)
+    except Exception as e:
+        log.error(f"Failed to run review subtask for {task_id}: {e}")
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await _check_and_dispatch_dependents(task_id)
+
+
+def _classify_review_verdict(title: str | None) -> str:
+    """Classify review title into 'approved', 'approved_with_nits', or 'changes_requested'."""
+    title_upper = (title or "").upper()
+    if "APPROVED" in title_upper:
+        if "NITS" in title_upper:
+            return "approved_with_nits"
+        return "approved"
+    return "changes_requested"
+
+
+async def _process_review_result_inline(task_id: str) -> None:
+    """Check review messages on task and process approval/rejection."""
+    msgs = await db.read_task_messages(task_id)
+    review_msg = next(
+        (m for m in reversed(msgs.get("messages", []))
+         if m.get("type") == "review"),
+        None,
+    )
+
+    verdict = _classify_review_verdict(review_msg.get("title") if review_msg else None)
+
+    if verdict in ("approved", "approved_with_nits"):
+        log.info(f"Review approved for {task_id} (verdict={verdict})")
+        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        # Log nits as a separate message so next dispatch sees them
+        if verdict == "approved_with_nits" and review_msg:
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="review-nits",
+                title="Review nits (non-blocking)",
+                content=f"Reviewer approved with nits. These are non-blocking but worth addressing:\n\n"
+                        f"{review_msg.get('content', '')}",
+            )
+        await _check_and_dispatch_dependents(task_id)
+    else:
+        task = await db.get_task(task_id)
+        review_retries = (task.get("review_retries") or 0) + 1
+        test_retries = task.get("test_retries") or 0
+        total_retries = test_retries + review_retries
+        max_review = task.get("max_review_retries") or 3
+        max_total = task.get("max_total_gate_retries") or 6
+        await db.update_task(task_id, gate_status="review-failed",
+                             review_retries=review_retries,
+                             gate_retries=total_retries)
+        log.warning(f"Review failed for {task_id} (review_retries={review_retries}/{max_review}, total={total_retries}/{max_total})")
+
+        if total_retries >= max_total:
+            # Hard limit: fail the task
+            await db.update_task(task_id, status="failed")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Gate hard limit reached — task failed",
+                content=f"Total gate retries ({total_retries}) reached the hard ceiling ({max_total}). "
+                        f"Test failures: {test_retries}, Review rejections: {review_retries}. "
+                        "Manual intervention required.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Gate hard limit: {total_retries} total retries ({test_retries} test, {review_retries} review). Task failed.",
+            )
+        elif review_retries >= max_review:
+            # Soft limit: pause for human
+            await db.update_task(task_id, status="needs-review")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title=f"Review soft limit reached — paused for review",
+                content=f"Review rejected {review_retries} times (limit: {max_review}). "
+                        f"Last review feedback above. "
+                        "Use `retry_task` to try again or `close_task` to abandon.",
+            )
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Review failed {review_retries} times. Soft limit reached — paused for human review.",
+            )
+        else:
+            await retry_task(task_id)
+
+
+async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
+    """Check if review approved or requested changes."""
+    msgs = await db.read_task_messages(parent_task_id)
+    review_msg = next(
+        (m for m in reversed(msgs.get("messages", []))
+         if m.get("type") == "review"),
+        None,
+    )
+
+    verdict = _classify_review_verdict(review_msg.get("title") if review_msg else None)
+
+    if verdict in ("approved", "approved_with_nits"):
+        log.info(f"Review approved for {parent_task_id} (verdict={verdict})")
+        await db.update_task(parent_task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        if verdict == "approved_with_nits" and review_msg:
+            await db.post_task_message(
+                task_id=parent_task_id, author="dispatcher", type="review-nits",
+                title="Review nits (non-blocking)",
+                content=f"Reviewer approved with nits. These are non-blocking but worth addressing:\n\n"
+                        f"{review_msg.get('content', '')}",
+            )
+        await _check_and_dispatch_dependents(parent_task_id)
+    else:
+        parent = await db.get_task(parent_task_id)
+        review_retries = (parent.get("review_retries") or 0) + 1
+        test_retries = parent.get("test_retries") or 0
+        total_retries = test_retries + review_retries
+        max_review = parent.get("max_review_retries") or 3
+        max_total = parent.get("max_total_gate_retries") or 6
+        await db.update_task(parent_task_id, gate_status="review-failed",
+                             review_retries=review_retries,
+                             gate_retries=total_retries)
+        log.warning(f"Review failed for {parent_task_id} (review_retries={review_retries}/{max_review}, total={total_retries}/{max_total})")
+
+        if total_retries >= max_total:
+            await db.update_task(parent_task_id, status="failed")
+            await db.post_task_message(
+                task_id=parent_task_id, author="dispatcher", type="status",
+                title="Gate hard limit reached — task failed",
+                content=f"Total gate retries ({total_retries}) reached the hard ceiling ({max_total}). "
+                        f"Test failures: {test_retries}, Review rejections: {review_retries}. "
+                        "Manual intervention required.",
+            )
+            await notify.task_needs_review(
+                task_id=parent_task_id,
+                reason=f"Gate hard limit: {total_retries} total retries. Task failed.",
+            )
+        elif review_retries >= max_review:
+            await db.update_task(parent_task_id, status="needs-review")
+            await db.post_task_message(
+                task_id=parent_task_id, author="dispatcher", type="status",
+                title=f"Review soft limit reached — paused for review",
+                content=f"Review rejected {review_retries} times (limit: {max_review}). "
+                        "Use `retry_task` to try again or `close_task` to abandon.",
+            )
+            await notify.task_needs_review(
+                parent_task_id,
+                reason=f"Review failed {review_retries} times. Soft limit reached.",
+            )
+        else:
+            await retry_task(parent_task_id)
+
+
+async def _maybe_create_pr(task_id: str) -> None:
+    """Create PR if auto_pr is enabled and this is the tail of a chain."""
+    task = await db.get_task(task_id)
+    if not task or not task.get("auto_pr"):
+        return
+
+    # Check no dependents are waiting
+    dependents = await db.get_dependents(task_id)
+    if any(d["status"] not in ("completed", "cancelled") for d in dependents):
+        return  # Not the tail yet
+
+    project = await db.get_project(task["project_id"])
+    if not project:
+        return
+
+    worktree = task.get("worktree_path")
+    branch = task.get("branch")
+    default_branch = project["default_branch"]
+
+    if not worktree or not branch:
+        return
+
+    # Walk the chain to collect goals
+    chain = await db.get_chain(task_id)
+    goals = [t["goal"] for t in chain if not t.get("parent_task_id")]  # Exclude review tasks
+
+    title = task["goal"][:70]
+    body = "## Summary\n" + "\n".join(f"- {g}" for g in goals)
+
+    log.info(f"Auto-creating PR for {task_id}: {branch} → {default_branch}")
+    stdout, stderr, rc = await _run_as_worker(
+        "gh", "pr", "create",
+        "--title", title,
+        "--body", body,
+        "--base", default_branch,
+        "--head", branch,
+        cwd=worktree,
+    )
+
+    if rc == 0:
+        pr_url = stdout.decode().strip()
+        await db.add_artifact(task_id, "pr_url", pr_url)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="PR Created",
+            content=f"[{pr_url}]({pr_url})",
+        )
+        log.info(f"PR created for {task_id}: {pr_url}")
+    else:
+        log.warning(f"PR creation failed for {task_id}: {stderr.decode()}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="PR creation failed",
+            content=f"```\n{stderr.decode()[:2000]}\n```",
+        )
+
+
+async def _check_and_dispatch_dependents(task_id: str) -> None:
+    """If any tasks depend on this one and it's gate-passed, dispatch them."""
+    task = await db.get_task(task_id)
+    if not task or not task.get("gate_passed_at"):
+        return
+
+    dependents = await db.get_dependents(task_id)
+    dispatched_any = False
+    for dep in dependents:
+        if dep["status"] == "ready":
+            log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
+            try:
+                await dispatch_task(
+                    project_id=dep["project_id"],
+                    task_id=dep["id"],
+                    goal=dep["goal"],
+                    auto_test=dep.get("auto_test", True),
+                )
+                dispatched_any = True
+            except Exception as e:
+                log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
+        elif dep.get("gate_status") == "stale" and dep["status"] in ("completed", "cancelled"):
+            # Re-dispatch stale downstream task with rebase
+            log.info(f"Re-dispatching stale dependent {dep['id']} (parent {task_id} gate passed)")
+            try:
+                await _rebase_and_redispatch(dep, task)
+                dispatched_any = True
+            except Exception as e:
+                log.error(f"Failed to re-dispatch stale dependent {dep['id']}: {e}")
+
+    # If no dependents to dispatch, this might be the chain tail — try auto-PR
+    if not dispatched_any:
+        await _maybe_create_pr(task_id)
+
+
+async def _invalidate_chain(task_id: str) -> None:
+    """Mark all downstream tasks as stale when a parent is re-dispatched."""
+    dependents = await db.get_dependents(task_id)
+    for dep in dependents:
+        if dep["status"] == "working":
+            try:
+                await cancel_task(dep["id"])
+            except Exception as e:
+                log.error(f"Failed to cancel working dependent {dep['id']}: {e}")
+
+        current_gate = dep.get("gate_status")
+        if dep["status"] in ("completed", "ready") or current_gate in ("passed", "testing", "reviewing"):
+            await db.update_task(
+                dep["id"],
+                gate_status="stale",
+                gate_passed_at=None,
+            )
+            log.info(f"Marked {dep['id']} as stale (parent {task_id} re-dispatched)")
+
+        # Recurse down the chain
+        await _invalidate_chain(dep["id"])
+
+
+async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
+    """Rebase a stale task's branch onto parent's updated branch, then re-dispatch."""
+    worktree = dep.get("worktree_path")
+    dep_branch = dep.get("branch")
+    parent_branch = parent.get("branch")
+
+    if not worktree or not dep_branch or not parent_branch:
+        log.warning(f"Cannot rebase {dep['id']}: missing worktree or branch info")
+        return
+
+    # Fetch latest
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    # Attempt rebase
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "rebase", f"origin/{parent_branch}",
+    )
+
+    if rc != 0:
+        # Rebase failed — abort and let CC handle it
+        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+        log.warning(f"Rebase failed for {dep['id']}, CC will handle manually")
+        rebase_context = (
+            f"WARNING: Automatic rebase onto the updated parent branch `{parent_branch}` failed "
+            f"due to conflicts. Run `git rebase origin/{parent_branch}` and resolve conflicts, "
+            "or cherry-pick your changes onto the updated parent."
+        )
+    else:
+        rebase_context = (
+            f"Your branch has been automatically rebased onto the updated parent branch "
+            f"`{parent_branch}`. Review the parent's changes and evaluate if your work "
+            "needs adjustment. If no rework is needed, just commit and finish."
+        )
+
+    # Reset gate state — fresh run
+    await db.update_task(
+        dep["id"],
+        gate_status=None,
+        gate_retries=0,
+        gate_passed_at=None,
+        session_id=None,
+    )
+
+    # Post context message
+    await db.post_task_message(
+        task_id=dep["id"], author="dispatcher", type="status",
+        title="Re-dispatched (parent changed)",
+        content=rebase_context,
+    )
+
+    # Re-dispatch with rebase context as review feedback
+    await dispatch_task(
+        project_id=dep["project_id"],
+        task_id=dep["id"],
+        goal=dep["goal"],
+        phase="revisions",
+        review_feedback=[{
+            "author": "dispatcher",
+            "title": "Parent Updated",
+            "content": rebase_context,
+        }],
+    )
 
 
 async def _update_usage(task_id: str, result: ResultMessage):
@@ -756,6 +1526,16 @@ async def dispatch_task(
     branch: str | None = None,
     jira_ticket: str | None = None,
     conversation_id: str | None = None,
+    model: str | None = None,
+    auto_test: bool = True,
+    depends_on: str | None = None,
+    auto_review: bool = True,
+    review_model: str | None = None,
+    parent_task_id: str | None = None,
+    auto_pr: bool = False,
+    max_test_retries: int | None = None,
+    max_review_retries: int | None = None,
+    max_total_gate_retries: int | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -777,11 +1557,25 @@ async def dispatch_task(
     is_resume = False
 
     if task is None:
+        # Resolve gate retry limits: caller param > project default > global default
+        _project_max_test = project.get("max_test_retries")
+        _project_max_review = project.get("max_review_retries")
+        _project_max_total = project.get("max_total_gate_retries")
+        resolved_max_test = max_test_retries if max_test_retries is not None else (_project_max_test if _project_max_test is not None else 3)
+        resolved_max_review = max_review_retries if max_review_retries is not None else (_project_max_review if _project_max_review is not None else 3)
+        resolved_max_total = max_total_gate_retries if max_total_gate_retries is not None else (_project_max_total if _project_max_total is not None else 6)
+
         task = await db.create_task(
             id=task_id, project_id=project_id, goal=goal,
             branch=branch,
             max_turns=max_turns, max_wall_clock=max_wall_clock,
             jira_ticket=jira_ticket, conversation_id=conversation_id,
+            model=model, auto_test=auto_test, depends_on=depends_on,
+            auto_review=auto_review, review_model=review_model,
+            parent_task_id=parent_task_id, auto_pr=auto_pr,
+            max_test_retries=resolved_max_test,
+            max_review_retries=resolved_max_review,
+            max_total_gate_retries=resolved_max_total,
         )
         if spec:
             await db.post_task_message(
@@ -790,8 +1584,23 @@ async def dispatch_task(
             )
         if checklist:
             await db.create_checklist_items(task_id, checklist)
-    elif task["status"] == "needs-review":
+
+        # Backward trigger: if depends_on parent hasn't passed gate yet, don't dispatch
+        if depends_on:
+            parent = await db.get_task(depends_on)
+            if parent and not parent.get("gate_passed_at"):
+                log.info(f"Task {task_id} waiting on parent {depends_on}")
+                return {
+                    "task_id": task_id, "status": "ready",
+                    "waiting_on": depends_on,
+                    "branch": task["branch"],
+                }
+    elif task["status"] in ("needs-review", "turns-exhausted", "completed"):
         is_resume = True
+        # Update depends_on if caller provided a new value (fixes stale prefix issue)
+        if depends_on and task.get("depends_on") != depends_on:
+            await db.update_task(task_id, depends_on=depends_on)
+            task["depends_on"] = depends_on
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
 
@@ -801,7 +1610,8 @@ async def dispatch_task(
     effective_branch = task["branch"] or short_name
     if task["branch"] != effective_branch:
         await db.update_task(task_id, branch=effective_branch)
-    worktree_path = await setup_worktree(project, short_name, effective_branch)
+    worktree_path = await setup_worktree(project, short_name, effective_branch,
+                                         depends_on=task.get("depends_on"))
 
     # Run setup command
     await run_setup_command(project, worktree_path)
@@ -809,12 +1619,15 @@ async def dispatch_task(
     # Setup logging
     log_dir = await _setup_log_dir(worktree_path)
 
-    # Resolve limits
+    # Resolve limits and model
     effective_max_turns = _resolve_limit(
         task.get("max_turns"), project.get("max_turns"), db.DEFAULT_MAX_TURNS
     )
     effective_max_wall_clock = _resolve_limit(
         task.get("max_wall_clock"), project.get("max_wall_clock"), db.DEFAULT_MAX_WALL_CLOCK
+    )
+    effective_model = _resolve_limit(
+        task.get("model"), project.get("model"), DEFAULT_MODEL
     )
 
     # Build prompt
@@ -826,7 +1639,7 @@ async def dispatch_task(
     # Fetch checklist items with IDs so CC knows how to update them
     checklist_items = await db.get_checklist(task_id)
 
-    prompt = _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
+    prompt = await _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
 
     # Get session_id for resume
     session_id = task.get("session_id") if is_resume else None
@@ -846,7 +1659,7 @@ async def dispatch_task(
     _write_dispatch_log(
         log_dir, task_id, session_id or "(new)",
         effective_max_turns, effective_max_wall_clock,
-        worktree_path, is_resume,
+        worktree_path, is_resume, effective_model,
     )
 
     # Launch SDK session in background — non-blocking
@@ -860,6 +1673,7 @@ async def dispatch_task(
             max_turns=effective_max_turns,
             max_wall_clock_minutes=effective_max_wall_clock,
             log_dir=log_dir,
+            model=effective_model,
         ),
         name=f"sdk-session-{task_id}",
     )
@@ -886,6 +1700,7 @@ async def dispatch_task(
         "dispatch_count": dispatch_count,
         "max_turns": effective_max_turns,
         "max_wall_clock": effective_max_wall_clock,
+        "model": effective_model,
         "resumed": is_resume,
     }
 
@@ -895,8 +1710,8 @@ async def resume_task(task_id: str) -> dict:
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    if task["status"] != "needs-review":
-        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected 'needs-review'")
+    if task["status"] not in ("needs-review", "turns-exhausted", "completed"):
+        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected 'needs-review', 'turns-exhausted', or 'completed'")
 
     return await dispatch_task(
         project_id=task["project_id"],
@@ -916,8 +1731,15 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Clear session to force new one
-    await db.update_task(task_id, session_id=None)
+    # Clear session and gate state to force fresh run through the pipeline.
+    # Reset BOTH separate counters (human has decided to give CC another chance).
+    await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
+                         test_retries=0, review_retries=0, gate_retries=0)
+
+    # Invalidate downstream chain if this task has dependents
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
 
     # Optionally clean worktree
     if clean and task.get("worktree_path") and os.path.exists(task["worktree_path"]):
@@ -975,6 +1797,69 @@ async def cancel_task(task_id: str) -> dict:
 
     await db.update_task(task_id, status="cancelled")
     return {"task_id": task_id, "status": "cancelled", "async_task_cancelled": cancelled_async}
+
+
+async def skip_gate(task_id: str) -> dict:
+    """Manually bypass the test/review gate, marking it as passed."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Gate skipped",
+        content="Gate manually bypassed by user.",
+    )
+    await _check_and_dispatch_dependents(task_id)
+    return {"task_id": task_id, "gate_status": "passed"}
+
+
+async def advance_chain(task_id: str) -> dict:
+    """Manually dispatch next dependent task (bypasses first-pass check)."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if not task.get("gate_passed_at"):
+        raise ValueError(f"Task '{task_id}' gate has not passed yet")
+
+    dependents = await db.get_dependents(task_id)
+    dispatched = []
+    for dep in dependents:
+        if dep["status"] == "ready":
+            try:
+                await dispatch_task(
+                    project_id=dep["project_id"],
+                    task_id=dep["id"],
+                    goal=dep["goal"],
+                    auto_test=dep.get("auto_test", True),
+                )
+                dispatched.append(dep["id"])
+            except Exception as e:
+                log.error(f"Failed to advance chain to {dep['id']}: {e}")
+    return {"task_id": task_id, "dispatched": dispatched}
+
+
+async def cancel_chain(task_id: str) -> dict:
+    """Cancel a task and all its dependents recursively."""
+    cancelled = []
+
+    async def _cancel_recursive(tid: str):
+        task = await db.get_task(tid)
+        if not task or task["status"] in ("cancelled", "completed"):
+            return
+        # Cancel running tasks
+        if task["status"] == "working":
+            await cancel_task(tid)
+        else:
+            await db.update_task(tid, status="cancelled")
+        cancelled.append(tid)
+        # Recurse into dependents
+        deps = await db.get_dependents(tid)
+        for dep in deps:
+            await _cancel_recursive(dep["id"])
+
+    await _cancel_recursive(task_id)
+    return {"cancelled": cancelled}
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:

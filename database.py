@@ -118,38 +118,33 @@ async def init_db():
                 FOREIGN KEY (task_id) REFERENCES tasks(id),
                 UNIQUE(task_id, tag)
             );
+
+            CREATE TABLE IF NOT EXISTS subtasks (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'working',
+                model TEXT DEFAULT 'opus',
+                prompt TEXT,
+                result TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                duration_ms INTEGER,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                completed_at TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_subtask_task ON subtasks(task_id);
         """)
 
         # Migrate messages table: add task_id column if missing
-        columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
-        col_names = [c["name"] for c in columns]
-
-        if "task_id" not in col_names:
-            # Need to rebuild messages table to make conversation_id nullable + add task_id
-            await conn.executescript("""
-                CREATE TABLE IF NOT EXISTS messages_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT,
-                    task_id TEXT,
-                    author TEXT NOT NULL,
-                    type TEXT,
-                    title TEXT,
-                    content TEXT NOT NULL,
-                    pinned BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                    FOREIGN KEY (conversation_id) REFERENCES conversations(id),
-                    FOREIGN KEY (task_id) REFERENCES tasks(id)
-                );
-
-                INSERT INTO messages_new (id, conversation_id, author, type, title, content, pinned, created_at)
-                    SELECT id, conversation_id, author, type, title, content, pinned, created_at FROM messages;
-
-                DROP TABLE messages;
-                ALTER TABLE messages_new RENAME TO messages;
-            """)
-        elif "messages" not in [t["name"] for t in await conn.execute_fetchall(
+        table_exists = await conn.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
-        )]:
+        )
+
+        if not table_exists:
             # Fresh install — create messages table
             await conn.executescript("""
                 CREATE TABLE messages (
@@ -166,6 +161,32 @@ async def init_db():
                     FOREIGN KEY (task_id) REFERENCES tasks(id)
                 );
             """)
+        else:
+            columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
+            col_names = [c["name"] for c in columns]
+            if "task_id" not in col_names:
+                # Old schema — rebuild to add task_id and make conversation_id nullable
+                await conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS messages_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id TEXT,
+                        task_id TEXT,
+                        author TEXT NOT NULL,
+                        type TEXT,
+                        title TEXT,
+                        content TEXT NOT NULL,
+                        pinned BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                        FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+                        FOREIGN KEY (task_id) REFERENCES tasks(id)
+                    );
+
+                    INSERT INTO messages_new (id, conversation_id, author, type, title, content, pinned, created_at)
+                        SELECT id, conversation_id, author, type, title, content, pinned, created_at FROM messages;
+
+                    DROP TABLE messages;
+                    ALTER TABLE messages_new RENAME TO messages;
+                """)
 
         # Migrate tasks table: add jira_ticket, conversation_id columns if missing
         task_columns = await conn.execute_fetchall("PRAGMA table_info(tasks)")
@@ -174,6 +195,53 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN jira_ticket TEXT")
         if "conversation_id" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN conversation_id TEXT")
+        if "model" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN model TEXT")
+        if "auto_test" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_test BOOLEAN DEFAULT TRUE")
+        if "gate_status" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_status TEXT")
+        if "gate_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_retries INTEGER DEFAULT 0")
+        if "max_gate_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_gate_retries INTEGER DEFAULT 3")
+        if "gate_passed_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN gate_passed_at TIMESTAMP")
+        if "depends_on" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN depends_on TEXT")
+        if "auto_review" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_review BOOLEAN DEFAULT TRUE")
+        if "review_model" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN review_model TEXT DEFAULT 'opus'")
+        if "parent_task_id" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
+        if "auto_pr" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
+        # Separate gate counters (gate-separate-counters feature)
+        if "test_retries" not in task_col_names:
+            # Migrate existing gate_retries → test_retries (worst-case assumption)
+            await conn.execute("ALTER TABLE tasks ADD COLUMN test_retries INTEGER DEFAULT 0")
+            await conn.execute("UPDATE tasks SET test_retries = gate_retries WHERE gate_retries > 0")
+        if "review_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN review_retries INTEGER DEFAULT 0")
+        if "max_test_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_test_retries INTEGER DEFAULT 3")
+        if "max_review_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_review_retries INTEGER DEFAULT 3")
+        if "max_total_gate_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_total_gate_retries INTEGER DEFAULT 6")
+
+        # Migrate projects table: add model and gate retry limit columns if missing
+        project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
+        project_col_names = [c["name"] for c in project_columns]
+        if "model" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN model TEXT")
+        if "max_test_retries" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN max_test_retries INTEGER")
+        if "max_review_retries" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN max_review_retries INTEGER")
+        if "max_total_gate_retries" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN max_total_gate_retries INTEGER")
 
         # Create/recreate indexes
         await conn.executescript("""
@@ -426,7 +494,9 @@ async def create_project(
     setup_command: str | None = None, teardown_command: str | None = None,
     test_command: str | None = None, env_overrides: dict | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
-    claude_md_path: str | None = None,
+    claude_md_path: str | None = None, model: str | None = None,
+    max_test_retries: int | None = None, max_review_retries: int | None = None,
+    max_total_gate_retries: int | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
@@ -434,10 +504,12 @@ async def create_project(
         await db.execute(
             """INSERT INTO projects
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
-                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
+                max_test_retries, max_review_retries, max_total_gate_retries, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
-             test_command, env_json, max_turns, max_wall_clock, claude_md_path, ts),
+             test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
+             max_test_retries, max_review_retries, max_total_gate_retries, ts),
         )
         await db.commit()
         return {
@@ -446,6 +518,9 @@ async def create_project(
             "teardown_command": teardown_command, "test_command": test_command,
             "env_overrides": env_overrides, "max_turns": max_turns,
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
+            "model": model, "max_test_retries": max_test_retries,
+            "max_review_retries": max_review_retries,
+            "max_total_gate_retries": max_total_gate_retries,
             "created_at": ts,
         }
 
@@ -502,6 +577,12 @@ async def create_task(
     id: str, project_id: str, goal: str, branch: str | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
     jira_ticket: str | None = None, conversation_id: str | None = None,
+    model: str | None = None, auto_test: bool = True,
+    depends_on: str | None = None,
+    auto_review: bool = True, review_model: str | None = None,
+    parent_task_id: str | None = None, auto_pr: bool = False,
+    max_test_retries: int = 3, max_review_retries: int = 3,
+    max_total_gate_retries: int = 6,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -516,10 +597,16 @@ async def create_task(
         await db.execute(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
-                jira_ticket, conversation_id, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)""",
+                jira_ticket, conversation_id, model, auto_test, depends_on,
+                auto_review, review_model, parent_task_id, auto_pr,
+                max_test_retries, max_review_retries, max_total_gate_retries,
+                created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
-             jira_ticket, conversation_id, ts, ts),
+             jira_ticket, conversation_id, model, auto_test, depends_on,
+             auto_review, review_model, parent_task_id, auto_pr,
+             max_test_retries, max_review_retries, max_total_gate_retries,
+             ts, ts),
         )
         await db.commit()
         return {
@@ -527,6 +614,12 @@ async def create_task(
             "phase": None, "branch": branch, "worktree_path": None,
             "max_turns": max_turns, "max_wall_clock": max_wall_clock,
             "jira_ticket": jira_ticket, "conversation_id": conversation_id,
+            "model": model, "auto_test": auto_test, "depends_on": depends_on,
+            "auto_review": auto_review, "review_model": review_model,
+            "parent_task_id": parent_task_id, "auto_pr": auto_pr,
+            "test_retries": 0, "review_retries": 0,
+            "max_test_retries": max_test_retries, "max_review_retries": max_review_retries,
+            "max_total_gate_retries": max_total_gate_retries,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -545,6 +638,11 @@ TASK_MUTABLE_FIELDS = {
     "total_input_tokens", "total_output_tokens", "total_cost_usd",
     "dispatch_count", "last_activity", "updated_at",
     "jira_ticket", "conversation_id",
+    "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
+    "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
+    # Separate gate counters
+    "test_retries", "review_retries",
+    "max_test_retries", "max_review_retries", "max_total_gate_retries",
 }
 
 
@@ -624,6 +722,49 @@ async def get_project_task_counts() -> dict[str, dict]:
             }
             for r in rows
         }
+
+
+async def get_dependents(task_id: str) -> list[dict]:
+    """Get tasks that depend on the given task."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at", (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_chain(task_id: str) -> list[dict]:
+    """Walk the dependency chain from root to tail, given any member."""
+    async with get_db() as db:
+        # Walk up to find root
+        current_id = task_id
+        visited = set()
+        while True:
+            if current_id in visited:
+                break
+            visited.add(current_id)
+            rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
+            if not rows:
+                break
+            task = dict(rows[0])
+            if not task.get("depends_on"):
+                break
+            current_id = task["depends_on"]
+
+        # Walk down from root
+        chain = []
+        rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
+        if rows:
+            chain.append(dict(rows[0]))
+            while True:
+                deps = await db.execute_fetchall(
+                    "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at LIMIT 1",
+                    (chain[-1]["id"],),
+                )
+                if not deps:
+                    break
+                chain.append(dict(deps[0]))
+        return chain
 
 
 async def count_active_tasks() -> int:
@@ -853,6 +994,11 @@ async def get_task_status(task_id: str) -> dict:
         )
         task["tags"] = [r["tag"] for r in tag_rows]
 
+        # Backward compat: gate_retries = test_retries + review_retries
+        test_retries = task.get("test_retries") or 0
+        review_retries = task.get("review_retries") or 0
+        task["gate_retries"] = test_retries + review_retries
+
         return task
 
 
@@ -884,6 +1030,57 @@ async def get_task_tags(task_id: str) -> list[str]:
             "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task_id,),
         )
         return [r["tag"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Subtasks
+# ---------------------------------------------------------------------------
+
+async def create_subtask(id: str, task_id: str, type: str, prompt: str, model: str = "opus") -> dict:
+    """Create a subtask record."""
+    async with get_db() as conn:
+        ts = now_iso()
+        await conn.execute(
+            """INSERT INTO subtasks (id, task_id, type, status, model, prompt, created_at)
+               VALUES (?, ?, ?, 'working', ?, ?, ?)""",
+            (id, task_id, type, model, prompt, ts),
+        )
+        await conn.commit()
+        return {"id": id, "task_id": task_id, "type": type, "status": "working",
+                "model": model, "prompt": prompt, "created_at": ts}
+
+
+async def update_subtask(id: str, **fields) -> dict:
+    """Update a subtask. Only allowed fields are updated."""
+    async with get_db() as conn:
+        allowed = {"status", "result", "input_tokens", "output_tokens",
+                    "cost_usd", "duration_ms", "completed_at"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+            return dict(rows[0]) if rows else {}
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [id]
+        await conn.execute(f"UPDATE subtasks SET {set_clause} WHERE id = ?", values)
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else {}
+
+
+async def get_subtasks(task_id: str) -> list[dict]:
+    """Get all subtasks for a task, ordered by creation time."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at", (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_subtask(id: str) -> dict | None:
+    """Get a single subtask by ID."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else None
 
 
 # ---------------------------------------------------------------------------
