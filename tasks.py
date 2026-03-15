@@ -476,11 +476,47 @@ async def _setup_log_dir(worktree_path: str) -> Path:
 
     Created as the worker user (who owns the worktree), with group-write
     so the service user can also write dispatch/session logs.
+
+    Also ensures .switchboard is gitignored and removes any stale
+    git-tracked .switchboard files (which cause permission issues
+    when inherited from parent branches).
     """
     log_dir = Path(worktree_path) / ".switchboard"
+
+    # If .switchboard exists and is git-tracked, remove tracked files first
+    # (they'll have wrong ownership from git checkout)
+    stdout, _, rc = await _run_as_worker(
+        "git", "-C", worktree_path, "ls-files", ".switchboard",
+    )
+    if rc == 0 and stdout.strip():
+        log.info(f"Removing git-tracked .switchboard files from {worktree_path}")
+        await _run_as_worker("git", "-C", worktree_path, "rm", "-rf", "--cached", ".switchboard")
+
+    # Ensure .switchboard is gitignored so CC never commits it
+    gitignore_path = Path(worktree_path) / ".gitignore"
+    if gitignore_path.exists():
+        content = gitignore_path.read_text()
+        if ".switchboard" not in content:
+            await _run_as_worker("sh", "-c", f"echo '.switchboard/' >> {gitignore_path}")
+    else:
+        await _run_as_worker("sh", "-c", f"echo '.switchboard/' > {gitignore_path}")
+
+    # Remove any stale files from a previous task (wrong ownership)
+    if log_dir.exists():
+        await _run_as_worker("rm", "-rf", str(log_dir))
+
     await _run_as_worker("mkdir", "-p", str(log_dir))
     await _run_as_worker("chmod", "775", str(log_dir))
     return log_dir
+
+
+def _open_shared(path, mode="a"):
+    """Open a file with group-writable umask (for switchboard-svc + switchboard user)."""
+    old = os.umask(0o002)
+    try:
+        return open(path, mode)
+    finally:
+        os.umask(old)
 
 
 def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
@@ -489,7 +525,7 @@ def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
                         model: str = "sonnet"):
     """Write dispatch metadata to log file."""
     log_path = log_dir / "dispatch.log"
-    with open(log_path, "a") as f:
+    with _open_shared(log_path) as f:
         f.write(f"[{db.now_iso()}] {'Resuming' if is_resume else 'Dispatching'} task {task_id}\n")
         f.write(f"  session_id: {session_id}\n")
         f.write(f"  model: {model}\n")
@@ -520,9 +556,7 @@ async def _run_sdk_session(
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     stderr_path = log_dir / "cc-stderr.log"
-    old_umask = os.umask(0o002)  # Files group-writable (shared switchboard group)
-    stderr_log = open(stderr_path, "a")
-    os.umask(old_umask)
+    stderr_log = _open_shared(stderr_path)
 
     # Build SDK options — run CC as restricted 'switchboard' user
     worker_home = pwd.getpwnam(WORKER_USER).pw_dir
@@ -609,7 +643,7 @@ async def _run_sdk_session(
                     entry["cost_usd"] = msg.total_cost_usd
                     entry["duration_ms"] = getattr(msg, "duration_ms", None)
                     entry["is_error"] = getattr(msg, "is_error", None)
-                with open(session_log_path, "a") as f:
+                with _open_shared(session_log_path) as f:
                     f.write(json.dumps(entry) + "\n")
             except Exception as e:
                 log.warning(f"Failed to log message: {e}")
@@ -744,7 +778,7 @@ async def _run_sdk_session(
                 task_id=task_id,
                 reason=f"Wall clock timeout ({max_wall_clock_minutes}m). Work preserved in worktree.",
             )
-            with open(log_dir / "dispatch.log", "a") as f:
+            with _open_shared(log_dir / "dispatch.log") as f:
                 f.write(f"[{db.now_iso()}] Wall clock timeout ({max_wall_clock_minutes}m)\n")
             return
 
@@ -870,7 +904,7 @@ async def _run_sdk_session(
             except Exception:
                 log.exception(f"Failed to process review result for crashed review task {task_id}")
         await notify.task_failed(task_id=task_id, error=str(e))
-        with open(log_dir / "dispatch.log", "a") as f:
+        with _open_shared(log_dir / "dispatch.log") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
     finally:
         stderr_log.close()
@@ -878,7 +912,7 @@ async def _run_sdk_session(
 
 def _log_result(log_dir: Path, result: ResultMessage):
     """Write result metadata to dispatch log."""
-    with open(log_dir / "dispatch.log", "a") as f:
+    with _open_shared(log_dir / "dispatch.log") as f:
         f.write(f"[{db.now_iso()}] Session complete\n")
         f.write(f"  session_id: {result.session_id}\n")
         f.write(f"  turns: {result.num_turns}\n")
@@ -935,9 +969,7 @@ async def _run_subtask(
     log_dir = Path(worktree) / ".switchboard"
     log_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = log_dir / f"{subtask_type}-{count}-stderr.log"
-    old_umask = os.umask(0o002)
-    stderr_log = open(stderr_path, "a")
-    os.umask(old_umask)
+    stderr_log = _open_shared(stderr_path)
 
     options = ClaudeAgentOptions(
         user="switchboard",
@@ -958,9 +990,7 @@ async def _run_subtask(
 
     # Subtask session log — write to .switchboard/{type}-{count}-session.jsonl
     subtask_log_path = log_dir / f"{subtask_type}-{count}-session.jsonl"
-    old_umask2 = os.umask(0o002)
-    subtask_log_file = open(subtask_log_path, "a")
-    os.umask(old_umask2)
+    subtask_log_file = _open_shared(subtask_log_path)
 
     def _log_subtask_msg(msg):
         entry = {"timestamp": db.now_iso(), "type": type(msg).__name__}
