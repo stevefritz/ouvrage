@@ -1,0 +1,373 @@
+import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { api } from '../api.js';
+import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { MessageThread } from './MessageThread.js';
+import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+
+function DetailHeader({ task, onAction, jiraBaseUrl }) {
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center gap-3 mb-2">
+                        <${StatusBadge} status=${task.status} />
+                        <${GateBadge} task=${task} />
+                        <span class="font-mono text-lg text-slate-200">${task.id}</span>
+                    </div>
+                    <p class="text-slate-300 mb-3">${task.goal}</p>
+                    <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
+                        <span>Branch: <span class="font-mono text-slate-300">${task.branch || '\u2014'}</span></span>
+                        <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
+                        <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                        <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                        ${task.model ? html`<span>Model: <span class="text-slate-300">${task.model}</span></span>` : null}
+                        ${task.phase ? html`<span>Phase: <span class="text-slate-300">${task.phase}</span></span>` : null}
+                        <${PrUrlBadge} task=${task} />
+                        ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
+                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
+                        ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
+                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${task.conversation_id}</a>` : null}
+                    </div>
+                    ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
+                </div>
+                <div class="flex gap-2 ml-4"><${ActionButtons} task=${task} onAction=${onAction} /></div>
+            </div>
+        </div>
+    `;
+}
+
+function GatePipeline({ task }) {
+    if (!task.auto_test && !task.auto_review) return null;
+
+    const stages = [];
+    stages.push({ label: 'Task', status: task.status === 'completed' ? 'done' : task.status === 'working' ? 'active' : 'pending' });
+
+    if (task.auto_test) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'testing') s = 'active';
+        else if (gs === 'test-failed') s = 'failed';
+        else if (['test-passed', 'reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
+        else if (task.status === 'completed') s = 'done';
+        stages.push({ label: 'Tests', status: s });
+    }
+
+    if (task.auto_review) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'reviewing') s = 'active';
+        else if (gs === 'review-failed') s = 'failed';
+        else if (gs === 'passed') s = 'done';
+        stages.push({ label: 'Review', status: s });
+    }
+
+    stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending' });
+
+    const stageColors = {
+        done: 'bg-emerald-500 text-white',
+        active: 'bg-blue-500 text-white gate-pulse',
+        failed: 'bg-red-500 text-white',
+        pending: 'bg-slate-700 text-slate-400',
+    };
+    const stageIcons = { done: '\u2713', active: '\u25CF', failed: '\u2715', pending: '\u25CB' };
+
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <div class="flex items-center gap-2 overflow-x-auto">
+                ${stages.map((st, i) => html`
+                    <div key=${i} class="flex items-center gap-2 shrink-0">
+                        <div class="flex flex-col items-center">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm ${stageColors[st.status]}">
+                                ${stageIcons[st.status]}
+                            </div>
+                            <span class="text-xs text-slate-400 mt-1">${st.label}</span>
+                        </div>
+                        ${i < stages.length - 1 ? html`<div class="w-8 h-px bg-slate-600"></div>` : null}
+                    </div>
+                `)}
+            </div>
+            ${task.gate_retries > 0 ? html`<span class="text-xs text-slate-400 mt-1">Retries: ${task.gate_retries}/${task.max_gate_retries || 3}</span>` : null}
+        </div>
+    `;
+}
+
+function ChainVisualization({ taskId }) {
+    const [chain, setChain] = useState(null);
+    const [currentIdx, setCurrentIdx] = useState(-1);
+
+    useEffect(() => {
+        api.getChain(taskId)
+            .then(data => {
+                if (data && data.chain && data.chain.length > 1) {
+                    setChain(data.chain);
+                    setCurrentIdx(data.current_index);
+                } else {
+                    setChain(null);
+                }
+            })
+            .catch(() => setChain(null));
+    }, [taskId]);
+
+    if (!chain) return null;
+
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <h3 class="text-sm font-medium text-slate-300 mb-3">\u26D3 Task Chain</h3>
+            <div class="flex items-center gap-2 overflow-x-auto pb-2">
+                ${chain.map((t, i) => {
+                    if (t.parent_task_id) return null;
+                    const isCurrent = i === currentIdx;
+                    const border = isCurrent ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-slate-700';
+                    const shortId = t.id.split('/').pop();
+                    return html`
+                        <a key=${t.id} href="#/tasks/${t.id}" class="shrink-0 block p-2 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[120px] max-w-[180px]">
+                            <div class="flex items-center gap-1 mb-1">
+                                <${StatusBadge} status=${t.status} />
+                                <${GateBadge} task=${t} />
+                            </div>
+                            <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
+                            <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
+                        </a>
+                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-600 shrink-0">\u2192</span>` : null}
+                    `;
+                })}
+            </div>
+        </div>
+    `;
+}
+
+function Subtasks({ subtasks }) {
+    if (!subtasks || subtasks.length === 0) return null;
+
+    const typeColors = {
+        review:  { bg: 'bg-pink-500/20', text: 'text-pink-400', icon: '\uD83D\uDC41' },
+        test:    { bg: 'bg-violet-500/20', text: 'text-violet-400', icon: '\u2699' },
+        fix:     { bg: 'bg-amber-500/20', text: 'text-amber-400', icon: '\uD83D\uDD27' },
+        default: { bg: 'bg-slate-500/20', text: 'text-slate-400', icon: '\u25CF' },
+    };
+
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <h3 class="text-sm font-medium text-slate-300 mb-3">Subtasks</h3>
+            <div class="flex flex-col gap-2">
+                ${subtasks.map(sub => {
+                    const tc = typeColors[sub.type] || typeColors.default;
+                    const isWorking = sub.status === 'working';
+                    const isFailed = sub.status === 'failed';
+                    const isDone = sub.status === 'completed';
+
+                    let statusIcon;
+                    if (isWorking) statusIcon = html`<span class="status-dot-working text-blue-400">\u25CF</span>`;
+                    else if (isDone) statusIcon = html`<span class="text-emerald-400">\u2713</span>`;
+                    else if (isFailed) statusIcon = html`<span class="text-red-400">\u2715</span>`;
+                    else statusIcon = html`<span class="text-slate-500">\u25CB</span>`;
+
+                    let duration = '';
+                    if (sub.duration_ms) {
+                        const secs = Math.round(sub.duration_ms / 1000);
+                        duration = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+                    } else if (isWorking && sub.created_at) {
+                        const elapsed = Math.floor((Date.now() - new Date(sub.created_at + (sub.created_at.endsWith('Z') ? '' : 'Z')).getTime()) / 1000);
+                        duration = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+                    }
+
+                    const cost = sub.cost_usd ? `$${sub.cost_usd.toFixed(4)}` : '';
+                    const shortId = sub.id.split('/').pop();
+
+                    return html`
+                        <details key=${sub.id} open=${isWorking} class="border border-slate-700/50 rounded-lg overflow-hidden ${isWorking ? 'ring-1 ring-blue-500/30' : ''}">
+                            <summary class="px-4 py-2.5 text-sm cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                                ${statusIcon}
+                                <span class="px-2 py-0.5 rounded text-xs font-medium ${tc.bg} ${tc.text}">${tc.icon} ${sub.type.toUpperCase()}</span>
+                                <span class="text-slate-400 text-xs font-mono">${shortId}</span>
+                                <span class="text-slate-500 text-xs">${sub.model || ''}</span>
+                                ${isWorking ? html`<span class="text-blue-400 text-xs status-dot-working">running...</span>` : null}
+                                <span class="ml-auto flex items-center gap-3 text-xs text-slate-500">
+                                    ${duration ? html`<span>${duration}</span>` : null}
+                                    ${cost ? html`<span>${cost}</span>` : null}
+                                    ${sub.completed_at ? html`<span>${relativeTime(sub.completed_at)}</span>` : null}
+                                </span>
+                            </summary>
+                            ${sub.result && sub.result.trim() ? html`
+                                <div class="px-4 pb-3 border-t border-slate-700/50 mt-2">
+                                    <div class="prose-dark text-sm max-h-64 overflow-y-auto"
+                                        dangerouslySetInnerHTML=${{ __html: renderMarkdown(sub.result) }}>
+                                    </div>
+                                </div>
+                            ` : null}
+                        </details>
+                    `;
+                })}
+            </div>
+        </div>
+    `;
+}
+
+function Checklist({ task }) {
+    const items = task.checklist || [];
+    if (items.length === 0) {
+        return html`<div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <p class="text-slate-500 text-sm">No checklist items</p>
+        </div>`;
+    }
+
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+            <h3 class="text-sm font-medium text-slate-300 mb-2">Checklist (${task.checklist_done}/${task.checklist_total})</h3>
+            <div class="space-y-1">
+                ${items.map(c => html`
+                    <div key=${c.id} class="flex items-center gap-2 text-sm ${c.done ? 'text-slate-400' : 'text-slate-200'}">
+                        <span>${c.done ? '\u2705' : '\u2B1C'}</span>
+                        <span>${c.item}</span>
+                    </div>
+                `)}
+            </div>
+        </div>
+    `;
+}
+
+function PlanSection({ messages }) {
+    const planMsg = [...(messages || [])].reverse().find(m => m.type === 'plan');
+    if (!planMsg) return null;
+
+    const contentHtml = renderMarkdown(planMsg.content);
+    const time = planMsg.created_at ? new Date(planMsg.created_at + (planMsg.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
+
+    return html`
+        <details class="bg-slate-900 border border-slate-800 rounded-lg mb-4" open>
+            <summary class="px-4 py-3 text-sm font-medium text-slate-300 cursor-pointer hover:text-slate-100">
+                Implementation Plan <span class="text-xs text-slate-500 ml-2">${time}</span>
+            </summary>
+            <div class="px-4 pb-3 prose-dark text-sm border-t border-slate-700/50"
+                dangerouslySetInnerHTML=${{ __html: contentHtml }}>
+            </div>
+        </details>
+    `;
+}
+
+function MessageInput({ taskId, task, onAction, onMessageSent }) {
+    const [msgContent, setMsgContent] = useState('');
+    const [msgType, setMsgType] = useState('review');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const content = msgContent.trim();
+        if (!content) return;
+        try {
+            await api.postMessage(taskId, content, msgType);
+            setMsgContent('');
+            onMessageSent();
+        } catch (err) {
+            alert(`Error posting message: ${err.message}`);
+        }
+    };
+
+    const resumable = ['completed', 'needs-review', 'turns-exhausted'].includes(task?.status);
+
+    return html`
+        <form onSubmit=${handleSubmit} class="mt-4 border-t border-slate-700 pt-3">
+            <div class="flex gap-2">
+                <select class="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-300 w-28"
+                    value=${msgType} onChange=${(e) => setMsgType(e.target.value)}>
+                    <option value="review">Review</option>
+                    <option value="note">Note</option>
+                    <option value="answer">Answer</option>
+                </select>
+                <input type="text" placeholder="Post a message..."
+                    class="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                    value=${msgContent} onInput=${(e) => setMsgContent(e.target.value)} />
+                <button type="submit" class="px-4 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-500">Send</button>
+            </div>
+            ${resumable ? html`
+                <div class="mt-2">
+                    <button type="button" onClick=${() => onAction('resume', taskId)}
+                        class="w-full px-3 py-2 text-sm rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30">
+                        Resume session with new messages
+                    </button>
+                </div>
+            ` : null}
+        </form>
+    `;
+}
+
+export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
+    const [task, setTask] = useState(null);
+    const [error, setError] = useState(null);
+    const [sessionLogOpen, setSessionLogOpen] = useState(false);
+    const [dispatchLogOpen, setDispatchLogOpen] = useState(false);
+    const mountedRef = useRef(true);
+
+    const loadTask = useCallback(async () => {
+        try {
+            const data = await api.getTask(taskId);
+            if (mountedRef.current) setTask(data);
+        } catch (e) {
+            if (mountedRef.current) {
+                if (!task) setError(e.message);
+                else console.warn('Poll error:', e.message);
+            }
+        }
+    }, [taskId]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        setTask(null);
+        setError(null);
+        setSessionLogOpen(false);
+        setDispatchLogOpen(false);
+        loadTask();
+        return () => { mountedRef.current = false; };
+    }, [taskId]);
+
+    useEffect(() => {
+        if (!task) return;
+        const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
+        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive;
+        if (!shouldPoll) return;
+
+        const timer = setInterval(loadTask, 5000);
+        return () => clearInterval(timer);
+    }, [task?.status, task?.gate_status, loadTask]);
+
+    if (error) {
+        return html`<div class="p-6">
+            <div class="mb-4"><a href="#/" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Board</a></div>
+            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4"><p class="text-red-400">Error loading task: ${error}</p></div>
+        </div>`;
+    }
+
+    if (!task) {
+        return html`<div class="p-6">
+            <div class="mb-4"><a href="#/" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Board</a></div>
+            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4"><p class="text-slate-500">Loading...</p></div>
+        </div>`;
+    }
+
+    const autoRefreshLogs = task.status === 'working';
+
+    return html`
+        <div class="p-6">
+            <div class="mb-4">
+                <a href="#/" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Board</a>
+            </div>
+
+            <${DetailHeader} task=${task} onAction=${onAction} jiraBaseUrl=${jiraBaseUrl} />
+            <${GatePipeline} task=${task} />
+            <${ChainVisualization} taskId=${taskId} />
+            <${Subtasks} subtasks=${task.subtasks} />
+            <${Checklist} task=${task} />
+            <${PlanSection} messages=${task.messages} />
+
+            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+                <h3 class="text-sm font-medium text-slate-300 mb-3">Messages</h3>
+                <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="msg" />
+                <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
+            </div>
+
+            <${SessionLogPanel} taskId=${taskId} isOpen=${sessionLogOpen}
+                onToggle=${() => setSessionLogOpen(!sessionLogOpen)} autoRefresh=${autoRefreshLogs} />
+            <${DispatchLogPanel} taskId=${taskId} isOpen=${dispatchLogOpen}
+                onToggle=${() => setDispatchLogOpen(!dispatchLogOpen)} />
+        </div>
+    `;
+}

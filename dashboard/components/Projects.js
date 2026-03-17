@@ -1,0 +1,48 @@
+import { useState, useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
+import { api } from '../api.js';
+import { html, navigate } from './utils.js';
+
+export function Projects() {
+    const [projects, setProjects] = useState(null);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        api.getProjects()
+            .then(setProjects)
+            .catch(e => setError(e.message));
+    }, []);
+
+    if (error) {
+        return html`<div class="p-6"><p class="text-red-400 p-4">Error: ${error}</p></div>`;
+    }
+
+    if (projects === null) {
+        return html`<div class="p-6"><p class="text-slate-500">Loading...</p></div>`;
+    }
+
+    return html`
+        <div class="p-6">
+            <h2 class="text-lg font-medium text-slate-200 mb-4">Projects</h2>
+            <div class="grid gap-4">
+                ${projects.length === 0
+                    ? html`<p class="text-slate-500 text-center p-8">No projects registered</p>`
+                    : projects.map(p => html`
+                        <div key=${p.id} class="bg-slate-900 border border-slate-700 rounded-lg p-4 hover:border-slate-600 cursor-pointer"
+                            onClick=${() => navigate(`#/?project_id=${p.id}`)}>
+                            <h3 class="text-lg font-medium text-slate-200 mb-1">${p.id}</h3>
+                            <div class="text-sm text-slate-400 mb-2">
+                                <span class="font-mono">${p.repo}</span>
+                                <span class="mx-2">\u00B7</span>
+                                branch: <span class="font-mono">${p.default_branch}</span>
+                            </div>
+                            <div class="flex gap-4 text-sm">
+                                <span class=${p.active_task_count > 0 ? 'text-emerald-400' : 'text-slate-500'}>${p.active_task_count} active</span>
+                                <span class="text-slate-500">${p.total_tasks} total</span>
+                                <span class="text-slate-500">$${p.total_cost.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    `)}
+            </div>
+        </div>
+    `;
+}
