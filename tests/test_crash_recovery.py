@@ -304,6 +304,33 @@ class TestFlapDetection:
         messages = thread.get("messages", [])
         assert any("Recovery limit reached" in m.get("title", "") for m in messages)
 
+    async def test_at_boundary_escalates(self, db, sample_project):
+        """Task with recovery_count exactly at MAX_RECOVERY_ATTEMPTS escalates (no off-by-one)."""
+        import tasks
+
+        # recovery_count=3 in DB, MAX=3 → should escalate (3 >= 3), NOT recover
+        await _create_orphan(db, recovery_count=3)
+
+        await tasks.recover_orphaned_tasks()
+
+        task = await db.get_task("test-project/orphan-1")
+        assert task["status"] == "needs-review"
+        # Count should NOT be incremented — we checked before incrementing
+        assert task["recovery_count"] == 3
+
+    async def test_one_below_boundary_recovers(self, db, sample_project):
+        """Task with recovery_count one below MAX still recovers."""
+        import tasks
+
+        # recovery_count=2 in DB, MAX=3 → should recover (2 < 3), count becomes 3
+        await _create_orphan(db, recovery_count=2, session_id=None)
+
+        await tasks.recover_orphaned_tasks()
+
+        task = await db.get_task("test-project/orphan-1")
+        assert task["status"] == "working"
+        assert task["recovery_count"] == 3
+
     async def test_under_flap_limit_recovers(self, db, sample_project):
         """Task with recovery_count < MAX_RECOVERY_ATTEMPTS recovers normally."""
         import tasks
@@ -494,8 +521,8 @@ class TestWorktreeVerification:
         with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
-    async def test_dirty_worktree_fails(self, tmp_path):
-        """Worktree with uncommitted changes fails verification."""
+    async def test_dirty_worktree_passes(self, tmp_path):
+        """Dirty worktree is OK for resume — SIGTERM'd tasks always have uncommitted changes."""
         from tasks import _verify_worktree
         (tmp_path / ".git").touch()
 
@@ -504,7 +531,7 @@ class TestWorktreeVerification:
         mock_proc.communicate = AsyncMock(return_value=(b" M tasks.py\n", b""))
 
         with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
-            assert await _verify_worktree({"worktree_path": str(tmp_path)}) is False
+            assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
     async def test_corrupted_worktree_fails(self, tmp_path):
         """Worktree where git status returns non-zero fails verification."""

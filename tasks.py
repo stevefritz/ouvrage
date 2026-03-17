@@ -127,8 +127,8 @@ async def _verify_worktree(task: dict) -> bool:
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             return False  # corrupted worktree
-        if stdout.strip():
-            return False  # dirty worktree
+        # Dirty worktree is expected for SIGTERM'd tasks — CC will resume
+        # into whatever state was left. Only reject truly corrupted worktrees.
         return True
     except Exception:
         return False
@@ -152,9 +152,8 @@ async def _build_recovery_message(task: dict, method: str, position: int, total:
     }.get(method, method)
 
     return (
-        f"⚡ Service restart detected — auto-recovering task\n"
+        f"⚡ Service restart detected — auto-resuming session {session_id}\n"
         f"  Previous state: working (phase: {phase}, {done}/{checklist_total} checklist)\n"
-        f"  Session: {session_id}\n"
         f"  Recovery method: {method_label}\n"
         f"  Recovery attempt: {recovery_count}\n"
         f"  Stagger position: {position} of {total} tasks recovering"
@@ -182,9 +181,9 @@ async def recover_orphaned_tasks():
             if not project:
                 continue
             if gate == "test-failed" and task.get("auto_test") and project.get("test_command"):
-                asyncio.create_task(_run_test_gate(task["id"], project, task))
+                await _run_test_gate(task["id"], project, task)
             elif gate == "review-failed" and task.get("auto_review"):
-                asyncio.create_task(_dispatch_review(task["id"], project, task))
+                await _dispatch_review(task["id"], project, task)
 
     # Find orphaned working tasks
     working_tasks = await db.list_tasks(status="working")
@@ -203,11 +202,10 @@ async def recover_orphaned_tasks():
     for task in orphans:
         await db.update_task(task["id"], status="needs-review")
 
-    # If recovery is disabled, fall back to old behavior: mark needs-review
+    # If recovery is disabled, just post messages (already marked needs-review above)
     if not RECOVERY_ENABLED:
         for task in orphans:
             log.warning(f"Startup recovery (disabled): task {task['id']} marked needs-review")
-            await db.update_task(task["id"], status="needs-review")
             await db.post_task_message(
                 task_id=task["id"], author="dispatcher", type="status",
                 title="Recovered after restart",
@@ -228,20 +226,21 @@ async def recover_orphaned_tasks():
 
     for position, (priority, method, task) in enumerate(classified, 1):
         task_id = task["id"]
-        recovery_count = (task.get("recovery_count") or 0) + 1
+        current_count = task.get("recovery_count") or 0
 
-        # Flap detection
-        if recovery_count >= MAX_RECOVERY_ATTEMPTS:
-            log.warning(f"Recovery limit reached for {task_id} ({recovery_count} attempts)")
-            await db.update_task(task_id, status="needs-review",
-                                 recovery_count=recovery_count)
+        # Flap detection — check BEFORE incrementing
+        if current_count >= MAX_RECOVERY_ATTEMPTS:
+            log.warning(f"Recovery limit reached for {task_id} ({current_count} attempts)")
+            await db.update_task(task_id, status="needs-review")
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Recovery limit reached",
-                content=f"Recovery limit reached ({recovery_count} attempts). "
+                content=f"Recovery limit reached ({current_count} attempts). "
                         "Manual intervention required.",
             )
             continue
+
+        recovery_count = current_count + 1
 
         # Update recovery tracking
         await db.update_task(task_id,
