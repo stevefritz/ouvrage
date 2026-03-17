@@ -509,3 +509,109 @@ class TestHistoricalLogReading:
             result = await _handle_get_session_log({"task_id": task_id})
 
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Dashboard _resolve_dashboard_log_dir
+# ---------------------------------------------------------------------------
+
+class TestResolveDashboardLogDir:
+    """Unit tests for dashboard_api._resolve_dashboard_log_dir."""
+
+    @pytest.mark.asyncio
+    async def test_returns_live_worktree_when_no_attempt(self, tmp_path, db):
+        from dashboard_api import _resolve_dashboard_log_dir
+
+        wt = tmp_path / "my-task"
+        sb = wt / ".switchboard"
+        sb.mkdir(parents=True)
+
+        task = {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": str(wt),
+        }
+        project = {"id": "proj", "working_dir": str(tmp_path / "proj")}
+
+        with patch("dashboard_api.db.get_project", AsyncMock(return_value=project)):
+            result = await _resolve_dashboard_log_dir(task, attempt=None)
+
+        assert result == sb
+
+    @pytest.mark.asyncio
+    async def test_returns_archive_when_attempt_specified(self, tmp_path, db):
+        from dashboard_api import _resolve_dashboard_log_dir
+
+        working_dir = tmp_path / "proj"
+        dest = working_dir / ".task-history" / "my-task" / "attempt-1"
+        dest.mkdir(parents=True)
+
+        task = {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": None,
+        }
+        project = {"id": "proj", "working_dir": str(working_dir)}
+
+        with patch("dashboard_api.db.get_project", AsyncMock(return_value=project)):
+            result = await _resolve_dashboard_log_dir(task, attempt=1)
+
+        assert result == dest
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_highest_archive_when_worktree_gone(self, tmp_path, db):
+        from dashboard_api import _resolve_dashboard_log_dir
+
+        working_dir = tmp_path / "proj"
+        for n in (1, 2):
+            dest = working_dir / ".task-history" / "my-task" / f"attempt-{n}"
+            dest.mkdir(parents=True)
+
+        task = {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": None,
+        }
+        project = {"id": "proj", "working_dir": str(working_dir)}
+
+        with patch("dashboard_api.db.get_project", AsyncMock(return_value=project)):
+            result = await _resolve_dashboard_log_dir(task, attempt=None)
+
+        assert result == working_dir / ".task-history" / "my-task" / "attempt-2"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_nothing_exists(self, tmp_path, db):
+        from dashboard_api import _resolve_dashboard_log_dir
+
+        task = {
+            "id": "proj/no-archive",
+            "project_id": "proj",
+            "worktree_path": None,
+        }
+        project = {"id": "proj", "working_dir": str(tmp_path / "proj")}
+
+        with patch("dashboard_api.db.get_project", AsyncMock(return_value=project)):
+            result = await _resolve_dashboard_log_dir(task, attempt=None)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_missing_attempt(self, tmp_path, db):
+        from dashboard_api import _resolve_dashboard_log_dir
+
+        working_dir = tmp_path / "proj"
+        # only attempt-1 exists, but we ask for attempt-5
+        dest = working_dir / ".task-history" / "my-task" / "attempt-1"
+        dest.mkdir(parents=True)
+
+        task = {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": None,
+        }
+        project = {"id": "proj", "working_dir": str(working_dir)}
+
+        with patch("dashboard_api.db.get_project", AsyncMock(return_value=project)):
+            result = await _resolve_dashboard_log_dir(task, attempt=5)
+
+        assert result is None

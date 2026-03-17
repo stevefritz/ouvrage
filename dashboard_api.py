@@ -139,10 +139,10 @@ async def handle_request(scope, receive, send):
                     return await _handle_get_messages(scope, send, task_id)
                 if rest.endswith("/session-log"):
                     task_id = rest[:-len("/session-log")]
-                    return await _handle_session_log(send, task_id)
+                    return await _handle_session_log(scope, send, task_id)
                 if rest.endswith("/dispatch-log"):
                     task_id = rest[:-len("/dispatch-log")]
-                    return await _handle_dispatch_log(send, task_id)
+                    return await _handle_dispatch_log(scope, send, task_id)
                 if rest.endswith("/attempts"):
                     task_id = rest[:-len("/attempts")]
                     return await _handle_get_attempts(send, task_id)
@@ -258,18 +258,52 @@ async def _handle_get_messages(scope, send, task_id):
     await _json_response(send, thread)
 
 
-async def _handle_session_log(send, task_id):
+async def _resolve_dashboard_log_dir(task: dict, attempt: int | None):
+    """Return a Path to the .switchboard/ dir to read logs from.
+
+    Priority: specific attempt archive → live worktree → highest archive → None.
+    """
+    from pathlib import Path
+
+    project = await db.get_project(task["project_id"])
+
+    if attempt is not None:
+        if project:
+            archive = tasks._find_archive_path(project, task["id"], attempt)
+            if archive:
+                return archive
+        return None
+
+    # Try live worktree first
+    wt = task.get("worktree_path")
+    if wt:
+        live = Path(wt) / ".switchboard"
+        if live.exists():
+            return live
+
+    # Fall back to highest-numbered archive
+    if project:
+        archive = tasks._find_archive_path(project, task["id"], None)
+        if archive:
+            return archive
+
+    return None
+
+
+async def _handle_session_log(scope, send, task_id):
+    params = _parse_qs(scope)
+    attempt = int(params["attempt"]) if "attempt" in params else None
+
     task = await db.get_task(task_id)
     if not task:
         return await _error(send, f"Task '{task_id}' not found", 404)
 
-    wt = task.get("worktree_path")
-    if not wt:
+    log_dir = await _resolve_dashboard_log_dir(task, attempt)
+    if log_dir is None:
         return await _json_response(send, [])
 
-    import os
-    log_path = os.path.join(wt, ".switchboard", "session.jsonl")
-    if not os.path.exists(log_path):
+    log_path = log_dir / "session.jsonl"
+    if not log_path.exists():
         return await _json_response(send, [])
 
     entries = []
@@ -288,18 +322,20 @@ async def _handle_session_log(send, task_id):
     await _json_response(send, entries)
 
 
-async def _handle_dispatch_log(send, task_id):
+async def _handle_dispatch_log(scope, send, task_id):
+    params = _parse_qs(scope)
+    attempt = int(params["attempt"]) if "attempt" in params else None
+
     task = await db.get_task(task_id)
     if not task:
         return await _error(send, f"Task '{task_id}' not found", 404)
 
-    wt = task.get("worktree_path")
-    if not wt:
+    log_dir = await _resolve_dashboard_log_dir(task, attempt)
+    if log_dir is None:
         return await _text_response(send, "")
 
-    import os
-    log_path = os.path.join(wt, ".switchboard", "dispatch.log")
-    if not os.path.exists(log_path):
+    log_path = log_dir / "dispatch.log"
+    if not log_path.exists():
         return await _text_response(send, "")
 
     try:
