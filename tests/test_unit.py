@@ -528,3 +528,143 @@ class TestRebaseAndRedispatch:
 
         # Should still dispatch (CC handles conflicts)
         self.mock_dispatch.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# web_push — dispatch logic
+# ---------------------------------------------------------------------------
+
+class TestWebPushDispatch:
+    """Tests for web_push.dispatch_notification — settings checks, dispatch routing."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_vapid(self, monkeypatch):
+        """Patch VAPID keys so is_enabled() returns True."""
+        import web_push
+        monkeypatch.setattr(web_push, "VAPID_PRIVATE_KEY", "fake-private-key")
+        monkeypatch.setattr(web_push, "VAPID_PUBLIC_KEY", "fake-public-key")
+
+    @pytest.fixture
+    def mock_settings(self):
+        return {
+            "id": 1,
+            "notify_failed": True,
+            "notify_needs_review": True,
+            "notify_completed": False,
+            "notify_question": True,
+        }
+
+    @pytest.fixture
+    def one_subscription(self):
+        return [{"endpoint": "https://push.example.com/sub1", "p256dh": "key1", "auth": "auth1"}]
+
+    async def test_failed_triggers_notification(self, mock_settings, one_subscription):
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("failed", "proj/task-a", "✕ failed", "Error msg")
+        mock_send.assert_called_once()
+        payload = mock_send.call_args[0][1]
+        import json
+        payload_dict = json.loads(payload)
+        assert payload_dict["title"] == "✕ failed"
+        assert payload_dict["tag"] == "task-proj/task-a"
+        assert "proj/task-a" in payload_dict["data"]["url"]
+
+    async def test_completed_off_by_default_no_dispatch(self, mock_settings, one_subscription):
+        """notify_completed=False → no push sent."""
+        assert mock_settings["notify_completed"] is False
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("completed", "proj/task-a", "✓ done", "Summary")
+        mock_send.assert_not_called()
+
+    async def test_completed_on_dispatches(self, mock_settings, one_subscription):
+        """notify_completed=True → push sent."""
+        mock_settings["notify_completed"] = True
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("completed", "proj/task-a", "✓ done", "Summary")
+        mock_send.assert_called_once()
+
+    async def test_question_triggers_notification(self, mock_settings, one_subscription):
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("question", "proj/task-a", "❓ question", "What?")
+        mock_send.assert_called_once()
+
+    async def test_needs_review_triggers_notification(self, mock_settings, one_subscription):
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("needs_review", "proj/task-a", "⚠ needs review", "Timeout")
+        mock_send.assert_called_once()
+
+    async def test_no_subscriptions_no_crash(self, mock_settings):
+        """Empty subscriptions list → no crash, returns 0."""
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=[])):
+            import web_push
+            count = await web_push.send_notification({"title": "test", "body": "body", "tag": "t"})
+        assert count == 0
+
+    async def test_send_failure_does_not_raise(self, mock_settings, one_subscription):
+        """pywebpush raising an exception should not propagate."""
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=False):
+            import web_push
+            # Should not raise
+            await web_push.dispatch_notification("failed", "proj/task-a", "Failed", "Error")
+
+    async def test_vapid_disabled_skips_dispatch(self, monkeypatch, mock_settings, one_subscription):
+        """No VAPID keys → dispatch is a no-op."""
+        import web_push
+        monkeypatch.setattr(web_push, "VAPID_PRIVATE_KEY", "")
+        monkeypatch.setattr(web_push, "VAPID_PUBLIC_KEY", "")
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            await web_push.dispatch_notification("failed", "proj/task-a", "Failed", "Error")
+        mock_send.assert_not_called()
+
+    async def test_settings_error_does_not_raise(self, one_subscription):
+        """DB error in get_notification_settings → dispatch swallows the exception."""
+        with patch("web_push.db.get_notification_settings", AsyncMock(side_effect=Exception("DB error"))), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=one_subscription)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            await web_push.dispatch_notification("failed", "proj/task-a", "Failed", "Error")
+        mock_send.assert_not_called()
+
+    async def test_multiple_subscriptions_all_receive(self, mock_settings):
+        """Multiple subs → each receives a push."""
+        subs = [
+            {"endpoint": "https://push.example.com/sub1", "p256dh": "k1", "auth": "a1"},
+            {"endpoint": "https://push.example.com/sub2", "p256dh": "k2", "auth": "a2"},
+            {"endpoint": "https://push.example.com/sub3", "p256dh": "k3", "auth": "a3"},
+        ]
+        with patch("web_push.db.get_notification_settings", AsyncMock(return_value=mock_settings)), \
+             patch("web_push.db.get_push_subscriptions", AsyncMock(return_value=subs)), \
+             patch("web_push._send_one", return_value=True) as mock_send:
+            import web_push
+            count = await web_push.dispatch_notification("failed", "proj/task-a", "Failed", "Err")
+        assert mock_send.call_count == 3
+
+    async def test_is_enabled_false_without_keys(self, monkeypatch):
+        import web_push
+        monkeypatch.setattr(web_push, "VAPID_PRIVATE_KEY", "")
+        monkeypatch.setattr(web_push, "VAPID_PUBLIC_KEY", "")
+        assert web_push.is_enabled() is False
+
+    async def test_is_enabled_true_with_keys(self):
+        import web_push
+        assert web_push.is_enabled() is True

@@ -4,6 +4,7 @@ import logging
 import os
 
 import httpx
+import web_push
 
 log = logging.getLogger("switchboard.notify")
 
@@ -223,6 +224,12 @@ async def checklist_progress(task_id: str, item_text: str, done: int, total: int
 
 async def task_question(task_id: str, question: str):
     """Notify when CC posts a question and needs human input."""
+    await web_push.dispatch_notification(
+        "question", task_id,
+        title=f"❓ Question: {task_id}",
+        body=question[:200],
+    )
+
     if not is_enabled():
         return
 
@@ -251,6 +258,14 @@ async def task_completed(task_id: str, turns: int, duration_s: float,
                          cost_usd: float, checklist_done: int, checklist_total: int,
                          result_preview: str | None = None):
     """Notify when a task completes successfully."""
+    mins = int(duration_s // 60)
+    secs = int(duration_s % 60)
+    await web_push.dispatch_notification(
+        "completed", task_id,
+        title=f"✓ {task_id} completed",
+        body=f"{checklist_done}/{checklist_total} · {mins}m{secs:02d}s · ${cost_usd:.2f}",
+    )
+
     if not is_enabled():
         return
 
@@ -297,6 +312,12 @@ async def task_completed(task_id: str, turns: int, duration_s: float,
 
 async def task_failed(task_id: str, error: str, turns: int = 0, cost_usd: float = 0):
     """Notify when a task fails."""
+    await web_push.dispatch_notification(
+        "failed", task_id,
+        title=f"✕ {task_id} failed",
+        body=error[:200],
+    )
+
     if not is_enabled():
         return
 
@@ -325,6 +346,12 @@ async def task_failed(task_id: str, error: str, turns: int = 0, cost_usd: float 
 
 async def task_needs_review(task_id: str, reason: str):
     """Notify when a task needs human review (timeout, no result, etc.)."""
+    await web_push.dispatch_notification(
+        "needs_review", task_id,
+        title=f"⚠ {task_id} needs review",
+        body=reason[:200],
+    )
+
     if not is_enabled():
         return
 

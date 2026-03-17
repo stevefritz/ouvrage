@@ -112,6 +112,7 @@ export function getRoute() {
     if (hash.startsWith('/conversations/')) return { view: 'conversation-detail', convId: decodeURIComponent(hash.slice(15)) };
     if (hash === '/conversations') return { view: 'conversations' };
     if (hash === '/projects') return { view: 'projects' };
+    if (hash === '/settings') return { view: 'settings' };
     return { view: 'board', params: Object.fromEntries(new URLSearchParams(hash.slice(2))) };
 }
 

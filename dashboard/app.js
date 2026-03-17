@@ -9,6 +9,13 @@ import { Projects } from './components/Projects.js';
 import { ConversationsList, ConversationDetail } from './components/Conversations.js';
 import { GraphView } from './components/GraphView.js';
 import { ActivityBar } from './components/ActivityBar.js';
+import { Settings } from './components/Settings.js';
+
+// Register service worker for push notifications
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/dashboard/sw.js', { scope: '/dashboard/' })
+        .catch(e => console.warn('SW registration failed:', e));
+}
 
 function App() {
     const [route, setRoute] = useState(getRoute());
@@ -79,6 +86,8 @@ function App() {
         view = html`<${ConversationsList} />`;
     } else if (route.view === 'conversation-detail') {
         view = html`<${ConversationDetail} key=${route.convId} convId=${route.convId} />`;
+    } else if (route.view === 'settings') {
+        view = html`<${Settings} />`;
     }
 
     return html`

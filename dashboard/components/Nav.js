@@ -5,6 +5,7 @@ export function Nav({ route, systemInfo }) {
         if (navView === 'board' && route.view === 'board') return true;
         if (navView === 'conversations' && (route.view === 'conversations' || route.view === 'conversation-detail')) return true;
         if (navView === 'projects' && (route.view === 'projects' || route.view === 'graph')) return true;
+        if (navView === 'settings' && route.view === 'settings') return true;
         return false;
     };
 
@@ -18,6 +19,7 @@ export function Nav({ route, systemInfo }) {
                 <a href="#/" class=${linkClass('board')}>Board</a>
                 <a href="#/conversations" class=${linkClass('conversations')}>Conversations</a>
                 <a href="#/projects" class=${linkClass('projects')}>Projects</a>
+                <a href="#/settings" class=${linkClass('settings')}>Settings</a>
             </div>
             <div class="flex items-center gap-4 text-sm text-slate-400">
                 <span>${systemInfo ? `${systemInfo.active_tasks} active` : '\u2014'}</span>
