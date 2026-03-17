@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, unquote
 
 import database as db
 import tasks
+import web_push
 
 _start_time = time.monotonic()
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
@@ -132,6 +133,22 @@ async def handle_request(scope, receive, send):
         # GET /dashboard/api/activity
         if path == "/dashboard/api/activity" and method == "GET":
             return await _handle_activity(scope, send)
+
+        # Push subscription endpoints
+        if path == "/dashboard/api/push/subscribe" and method == "POST":
+            return await _handle_push_subscribe(receive, send)
+        if path == "/dashboard/api/push/unsubscribe" and method == "POST":
+            return await _handle_push_unsubscribe(receive, send)
+
+        # Notification settings endpoints
+        if path == "/dashboard/api/settings/notifications" and method == "GET":
+            return await _handle_get_notification_settings(send)
+        if path == "/dashboard/api/settings/notifications" and method == "POST":
+            return await _handle_update_notification_settings(receive, send)
+
+        # Push public key (needed by browser to subscribe)
+        if path == "/dashboard/api/push/vapid-public-key" and method == "GET":
+            return await _handle_vapid_public_key(send)
 
         # GET /dashboard/api/tasks
         if path == "/dashboard/api/tasks" and method == "GET":
@@ -659,3 +676,54 @@ async def _handle_dispatch_punchlist_item(receive, send, component_id, item_id):
     # Mark punchlist item as claimed
     await db.update_punchlist_item(item_id, status="claimed", claimed_by=new_task_id)
     await _json_response(send, {"task_id": new_task_id}, 201)
+
+
+# ── Push subscriptions ──────────────────────────────────────────────────────
+
+async def _handle_push_subscribe(receive, send):
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+    endpoint = data.get("endpoint", "").strip()
+    p256dh = data.get("p256dh", "").strip()
+    auth = data.get("auth", "").strip()
+    if not (endpoint and p256dh and auth):
+        return await _error(send, "endpoint, p256dh, and auth are required")
+    sub = await db.save_push_subscription(endpoint, p256dh, auth)
+    await _json_response(send, sub, 201)
+
+
+async def _handle_push_unsubscribe(receive, send):
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+    endpoint = data.get("endpoint", "").strip()
+    if not endpoint:
+        return await _error(send, "endpoint is required")
+    deleted = await db.delete_push_subscription(endpoint)
+    await _json_response(send, {"deleted": deleted})
+
+
+async def _handle_vapid_public_key(send):
+    key = web_push.VAPID_PUBLIC_KEY
+    await _json_response(send, {"vapid_public_key": key})
+
+
+# ── Notification settings ────────────────────────────────────────────────────
+
+async def _handle_get_notification_settings(send):
+    settings = await db.get_notification_settings()
+    await _json_response(send, settings)
+
+
+async def _handle_update_notification_settings(receive, send):
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+    allowed = {"notify_failed", "notify_needs_review", "notify_completed", "notify_question"}
+    updates = {k: bool(v) for k, v in data.items() if k in allowed}
+    settings = await db.update_notification_settings(**updates)
+    await _json_response(send, settings)

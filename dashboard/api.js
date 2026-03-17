@@ -86,4 +86,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ content, type, title }),
     }),
+
+    // Push subscriptions
+    pushSubscribe: (data) => request('/push/subscribe', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
+    pushUnsubscribe: (data) => request('/push/unsubscribe', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
+    getVapidPublicKey: () => request('/push/vapid-public-key'),
+
+    // Notification settings
+    getNotificationSettings: () => request('/settings/notifications'),
+    updateNotificationSettings: (data) => request('/settings/notifications', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
 };

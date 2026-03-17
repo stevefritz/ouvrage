@@ -114,6 +114,7 @@ export function getRoute() {
     if (hash.startsWith('/components/')) return { view: 'component-detail', componentId: decodeURIComponent(hash.slice(12)) };
     if (hash.startsWith('/projects/')) return { view: 'project-detail', projectId: decodeURIComponent(hash.slice(10)) };
     if (hash === '/projects') return { view: 'projects' };
+    if (hash === '/settings') return { view: 'settings' };
     return { view: 'board', params: Object.fromEntries(new URLSearchParams(hash.slice(2))) };
 }
 

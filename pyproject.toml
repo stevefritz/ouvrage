@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.28.0",
     "pyjwt[crypto]>=2.11.0",
     "claude-agent-sdk>=0.1.0",
+    "pywebpush>=2.0.0",
 ]
 
 [project.optional-dependencies]
