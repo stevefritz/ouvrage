@@ -29,9 +29,10 @@ const COMPONENT_PALETTE = [
 // ── Layout constants ─────────────────────────────────────────
 export const NODE_W = 280;
 export const NODE_H = 120;
-const GAP_X = 50;
-const GAP_Y = 70;
+const GAP_X = 60;               // horizontal gap between nodes in same rank
+const GAP_Y = 110;              // vertical gap between ranks — more room for edges to route
 const PADDING = 40;
+const DAGRE_NODE_PADDING = 20;  // extra dagre bbox margin so edges route further from node edges
 
 // ── Layout engine ────────────────────────────────────────────
 
@@ -65,6 +66,31 @@ function findConnectedComponents(taskIds, adjacency) {
         components.push(component);
     }
     return components;
+}
+
+// ── Push an edge control point outside a node bounding box ───
+function pushPointOutsideNode(pt, box, margin = 8) {
+    const left = box.x - margin;
+    const right = box.x + box.w + margin;
+    const top = box.y - margin;
+    const bottom = box.y + box.h + margin;
+    if (pt.x < left || pt.x > right || pt.y < top || pt.y > bottom) return pt;
+    // Point is inside the padded box — push it to the nearest edge
+    const distLeft = pt.x - left;
+    const distRight = right - pt.x;
+    const distTop = pt.y - top;
+    const distBottom = bottom - pt.y;
+    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+    if (minDist === distLeft)   return { x: left,   y: pt.y   };
+    if (minDist === distRight)  return { x: right,  y: pt.y   };
+    if (minDist === distTop)    return { x: pt.x,   y: top    };
+    return                             { x: pt.x,   y: bottom };
+}
+
+function pushPointOutsideNodes(pt, nodeBoxes) {
+    let result = pt;
+    for (const box of nodeBoxes) result = pushPointOutsideNode(result, box);
+    return result;
 }
 
 export function computeLayout(tasks, stateColors) {
@@ -127,14 +153,15 @@ export function computeLayout(tasks, stateColors) {
             rankdir: 'TB',
             ranksep: GAP_Y,
             nodesep: GAP_X,
+            edgesep: 20,
             marginx: 0,
             marginy: 0,
         });
         g.setDefaultEdgeLabel(() => ({}));
 
-        // Add nodes
+        // Add nodes — inflate dimensions so dagre routes edges further from visual edges
         for (const t of compTasks) {
-            g.setNode(t.id, { width: NODE_W, height: NODE_H });
+            g.setNode(t.id, { width: NODE_W + DAGRE_NODE_PADDING, height: NODE_H + DAGRE_NODE_PADDING });
         }
 
         // Add edges (depends_on → task, i.e. parent → child)
@@ -147,21 +174,24 @@ export function computeLayout(tasks, stateColors) {
         // Run dagre layout
         dagre.layout(g);
 
-        // Find bounding box of this component
+        // Find bounding box of this component (use inflated dims to match dagre's coordinate space)
+        const halfW = (NODE_W + DAGRE_NODE_PADDING) / 2;
+        const halfH = (NODE_H + DAGRE_NODE_PADDING) / 2;
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         for (const id of compIds) {
             const n = g.node(id);
-            minX = Math.min(minX, n.x - NODE_W / 2);
-            maxX = Math.max(maxX, n.x + NODE_W / 2);
-            minY = Math.min(minY, n.y - NODE_H / 2);
-            maxY = Math.max(maxY, n.y + NODE_H / 2);
+            minX = Math.min(minX, n.x - halfW);
+            maxX = Math.max(maxX, n.x + halfW);
+            minY = Math.min(minY, n.y - halfH);
+            maxY = Math.max(maxY, n.y + halfH);
         }
 
         // Map dagre positions to our coordinate space (offset so component starts at xOffset)
+        const compNodeBoxes = [];  // screen-space bboxes for post-processing
         for (const t of compTasks) {
             const dagreNode = g.node(t.id);
             const x = xOffset + (dagreNode.x - minX) - NODE_W / 2 + PADDING;
-            const y = (dagreNode.y - minY) + PADDING;  // dagre y is center, convert to top-left
+            const y = (dagreNode.y - minY) + PADDING - NODE_H / 2;
             const comp = deriveComponent(t);
             const status = effectiveStatus(t);
 
@@ -169,12 +199,13 @@ export function computeLayout(tasks, stateColors) {
                 id: t.id,
                 task: t,
                 x,
-                y: y - NODE_H / 2,
+                y,
                 status,
                 component: comp,
                 componentColor: componentColors.get(comp),
                 stateColor: STATE_COLORS[status] || STATE_COLORS.ready,
             });
+            compNodeBoxes.push({ x, y, w: NODE_W, h: NODE_H });
         }
 
         // Map dagre edges — use dagre's routed points for clean paths
@@ -185,12 +216,17 @@ export function computeLayout(tasks, stateColors) {
                 const to = nodeMap.get(t.id);
                 const crossComponent = deriveComponent(from.task) !== deriveComponent(to.task);
 
-                // Get dagre's edge points for better routing
+                // Get dagre's edge points and map to screen space
                 const edgeData = g.edge(t.depends_on, t.id);
-                const points = edgeData && edgeData.points ? edgeData.points.map(p => ({
+                let points = edgeData && edgeData.points ? edgeData.points.map(p => ({
                     x: xOffset + (p.x - minX) + PADDING,
                     y: (p.y - minY) + PADDING,
                 })) : null;
+
+                // Post-process: push any control point that lands inside a node bbox outward
+                if (points) {
+                    points = points.map(pt => pushPointOutsideNodes(pt, compNodeBoxes));
+                }
 
                 allEdges.push({
                     fromId: from.id,
@@ -239,6 +275,24 @@ function heartbeatLabel(cls) {
     return '';
 }
 
+// ── Catmull-Rom → cubic bezier for smooth curves through waypoints ──
+function catmullRomPath(pts) {
+    if (pts.length < 2) return '';
+    const d = [`M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`];
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        d.push(`C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`);
+    }
+    return d.join(' ');
+}
+
 // ── SVG Edge component ──────────────────────────────────────
 export function EdgePath({ edge, highlighted, dimmed }) {
     const { x1, y1, x2, y2, points, crossComponent } = edge;
@@ -247,32 +301,10 @@ export function EdgePath({ edge, highlighted, dimmed }) {
     const dashArray = crossComponent ? '6,4' : 'none';
     const strokeWidth = highlighted ? 2.5 : 1.5;
 
-    // Use dagre's routed points for smooth curves, fallback to simple bezier
+    // Build smooth path: use catmull-rom through dagre's waypoints, fallback to simple bezier
     let d;
-    if (points && points.length >= 2) {
-        // Build smooth path through dagre's control points
-        d = `M${x1},${y1}`;
-        if (points.length === 2) {
-            // Simple case: just two intermediate points — cubic bezier
-            d += ` C${points[0].x},${points[0].y} ${points[1].x},${points[1].y} ${x2},${y2}`;
-        } else {
-            // Multiple points: use first point as control, then smooth through rest
-            const pts = [{ x: x1, y: y1 }, ...points, { x: x2, y: y2 }];
-            for (let i = 1; i < pts.length - 1; i++) {
-                const prev = pts[i - 1];
-                const cur = pts[i];
-                const next = pts[i + 1];
-                const cpx1 = prev.x + (cur.x - prev.x) * 0.5;
-                const cpy1 = cur.y;
-                const cpx2 = cur.x + (next.x - cur.x) * 0.5;
-                const cpy2 = cur.y;
-                if (i === pts.length - 2) {
-                    d += ` C${cpx1},${cpy1} ${cpx2},${cpy2} ${next.x},${next.y}`;
-                } else {
-                    d += ` C${cpx1},${cpy1} ${cpx2},${cpy2} ${cur.x + (next.x - cur.x) * 0.5},${cur.y + (next.y - cur.y) * 0.5}`;
-                }
-            }
-        }
+    if (points && points.length >= 1) {
+        d = catmullRomPath([{ x: x1, y: y1 }, ...points, { x: x2, y: y2 }]);
     } else {
         const midY = (y1 + y2) / 2;
         d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
