@@ -138,8 +138,9 @@ export function computeLayout(tasks, stateColors) {
     const chains = connectedComponents.filter(c => c.length > 1);
     const singletons = connectedComponents.filter(c => c.length === 1);
 
-    // Sort chains: largest first, then alphabetically
-    chains.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+    // Sort chains by earliest task created_at (oldest first = left-to-right timeline)
+    const earliestCreated = (ids) => Math.min(...ids.map(id => new Date(taskMap.get(id).created_at || 0).getTime()));
+    chains.sort((a, b) => earliestCreated(a) - earliestCreated(b));
 
     // Lay out each chain with dagre, then grid-pack singletons
     const allNodes = [];
@@ -256,8 +257,11 @@ export function computeLayout(tasks, stateColors) {
     // Grid-pack singletons: stack N-high based on chain depth
     if (singletons.length > 0) {
         const rows = Math.max(1, Math.round(maxChainHeight / (NODE_H + GAP_Y)));
-        // Sort singletons alphabetically
-        singletons.sort((a, b) => a[0].localeCompare(b[0]));
+        // Sort singletons by created_at (oldest first)
+        singletons.sort((a, b) => {
+            const ta = taskMap.get(a[0]), tb = taskMap.get(b[0]);
+            return new Date(ta.created_at || 0).getTime() - new Date(tb.created_at || 0).getTime();
+        });
 
         for (let i = 0; i < singletons.length; i++) {
             const t = taskMap.get(singletons[i][0]);
