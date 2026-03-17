@@ -6,6 +6,7 @@ import logging
 import os
 import pwd
 import shlex
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1734,10 +1735,117 @@ async def _perform_auto_merge(task_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Log Archive
+# ---------------------------------------------------------------------------
+
+def _task_slug(task_id: str) -> str:
+    """Return filesystem-safe slug from task_id (last path component)."""
+    return task_id.split("/")[-1] if "/" in task_id else task_id
+
+
+async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | None:
+    """Copy .switchboard/ contents to persistent .task-history archive.
+
+    Dest: {project.working_dir}/.task-history/{task_slug}/attempt-{dispatch_count}/
+    Writes metadata.json alongside copied files.
+    No-op if worktree is absent or .switchboard/ doesn't exist.
+    """
+    worktree = task.get("worktree_path")
+    if not worktree:
+        return None
+
+    src = Path(worktree) / ".switchboard"
+    if not src.exists():
+        return None
+
+    slug = _task_slug(task["id"])
+    dispatch_count = task.get("dispatch_count") or 1
+    dest = Path(project["working_dir"]) / ".task-history" / slug / f"attempt-{dispatch_count}"
+
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        for src_file in src.iterdir():
+            if src_file.is_file():
+                shutil.copy2(src_file, dest / src_file.name)
+
+        metadata = {
+            "task_id": task["id"],
+            "attempt": dispatch_count,
+            "reason": reason,
+            "session_id": task.get("session_id"),
+            "cost_usd": task.get("total_cost_usd"),
+            "input_tokens": task.get("total_input_tokens"),
+            "output_tokens": task.get("total_output_tokens"),
+            "archived_at": db.now_iso(),
+        }
+        (dest / "metadata.json").write_text(json.dumps(metadata, indent=2))
+        log.info(f"Archived logs for {task['id']} attempt {dispatch_count} to {dest} (reason={reason})")
+        return dest
+    except Exception as e:
+        log.warning(f"archive_task_logs failed for {task['id']}: {e}")
+        return None
+
+
+async def list_attempts(task_id: str) -> dict:
+    """List archived attempt folders for a task."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+
+    project = await db.get_project(task["project_id"])
+    if not project:
+        raise ValueError(f"Project '{task['project_id']}' not found")
+
+    slug = _task_slug(task_id)
+    history_dir = Path(project["working_dir"]) / ".task-history" / slug
+
+    if not history_dir.exists():
+        return {"task_id": task_id, "attempts": []}
+
+    attempts = []
+    for attempt_dir in sorted(history_dir.iterdir()):
+        if not attempt_dir.is_dir() or not attempt_dir.name.startswith("attempt-"):
+            continue
+        meta_path = attempt_dir / "metadata.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception:
+                meta = {}
+        else:
+            try:
+                meta = {"attempt": int(attempt_dir.name.split("-")[1])}
+            except (IndexError, ValueError):
+                meta = {}
+        meta["files"] = sorted(f.name for f in attempt_dir.iterdir() if f.is_file())
+        attempts.append(meta)
+
+    attempts.sort(key=lambda a: a.get("attempt", 0))
+    return {"task_id": task_id, "attempts": attempts}
+
+
+def _find_archive_path(project: dict, task_id: str, attempt: int | None) -> Path | None:
+    """Resolve the archive dir for a task attempt. If attempt is None, returns highest-numbered."""
+    slug = _task_slug(task_id)
+    history_dir = Path(project["working_dir"]) / ".task-history" / slug
+    if not history_dir.exists():
+        return None
+    if attempt is not None:
+        p = history_dir / f"attempt-{attempt}"
+        return p if p.exists() else None
+    # Find highest-numbered attempt
+    candidates = sorted(
+        (d for d in history_dir.iterdir() if d.is_dir() and d.name.startswith("attempt-")),
+        key=lambda d: int(d.name.split("-")[1]) if d.name.split("-")[1].isdigit() else 0,
+    )
+    return candidates[-1] if candidates else None
+
+
+# ---------------------------------------------------------------------------
 # Worktree Lifecycle
 # ---------------------------------------------------------------------------
 
-async def release_worktree(task_id: str) -> dict:
+async def release_worktree(task_id: str, reason: str = "detach") -> dict:
     """Detach worktree without closing the task. Branch stays on origin."""
     task = await db.get_task(task_id)
     if not task:
@@ -1748,6 +1856,11 @@ async def release_worktree(task_id: str) -> dict:
         return {"task_id": task_id, "released": False, "reason": "No worktree attached"}
 
     project = await db.get_project(task["project_id"])
+
+    # Archive logs before destroying the worktree
+    if project:
+        await archive_task_logs(task, project, reason)
+
     if project:
         bare_path = os.path.join(project["working_dir"], ".bare")
         if os.path.exists(bare_path) and os.path.exists(worktree):
@@ -1782,7 +1895,7 @@ async def _auto_release_worktree(task_id: str) -> None:
         return
 
     log.info(f"Auto-releasing worktree for {task_id}")
-    await release_worktree(task_id)
+    await release_worktree(task_id, reason="completion")
 
 
 # ---------------------------------------------------------------------------
@@ -2022,6 +2135,11 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
+    # Archive current attempt's logs before overwriting on next dispatch
+    project = await db.get_project(task["project_id"])
+    if project:
+        await archive_task_logs(task, project, "retry")
+
     # Clear session and gate state to force fresh run through the pipeline
     await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None)
 
@@ -2162,6 +2280,10 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
         raise ValueError(f"Task '{task_id}' not found")
 
     project = await db.get_project(task["project_id"])
+
+    # Archive logs before destroying the worktree
+    if project:
+        await archive_task_logs(task, project, "close")
 
     if cleanup and project:
         await cleanup_worktree(project, task, force_delete_branch)

@@ -259,7 +259,7 @@ class TestWorktreeLifecycle:
 
         with patch("tasks.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
             await _auto_release_worktree("test-project/auto-release")
-            mock_release.assert_awaited_once_with("test-project/auto-release")
+            mock_release.assert_awaited_once_with("test-project/auto-release", reason="completion")
 
     async def test_no_auto_release_when_disabled(self, db, sample_project):
         """auto_release_worktree=false skips release."""

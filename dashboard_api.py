@@ -61,7 +61,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
     # Strip trailing action segments like /cancel, /retry, /resume, /messages, /session-log, /dispatch-log
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
                     "/advance-chain", "/cancel-chain", "/chain", "/review-task",
-                    "/messages", "/session-log", "/dispatch-log"):
+                    "/messages", "/session-log", "/dispatch-log", "/attempts"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -143,6 +143,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/dispatch-log"):
                     task_id = rest[:-len("/dispatch-log")]
                     return await _handle_dispatch_log(send, task_id)
+                if rest.endswith("/attempts"):
+                    task_id = rest[:-len("/attempts")]
+                    return await _handle_get_attempts(send, task_id)
                 if rest.endswith("/chain"):
                     task_id = rest[:-len("/chain")]
                     return await _handle_get_chain(send, task_id)
@@ -304,6 +307,14 @@ async def _handle_dispatch_log(send, task_id):
             return await _text_response(send, f.read())
     except Exception:
         return await _text_response(send, "")
+
+
+async def _handle_get_attempts(send, task_id):
+    try:
+        result = await tasks.list_attempts(task_id)
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+    await _json_response(send, result)
 
 
 # ── Actions ───────────────────────────────────────────────────────────────
