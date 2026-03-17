@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, escapeHtml, relativeTime, navigate } from './utils.js';
+import { html, relativeTime, navigate } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 
 export function ConversationsList() {
@@ -43,10 +43,10 @@ export function ConversationsList() {
                                     <tr key=${c.id} class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer"
                                         onClick=${() => navigate(`#/conversations/${encodeURIComponent(c.id)}`)}>
                                         <td class="p-3">
-                                            <div class="font-mono text-sm text-slate-200">${escapeHtml(c.id)}</div>
-                                            <div class="text-sm text-slate-400 truncate max-w-md">${escapeHtml(c.goal || '')}</div>
+                                            <div class="font-mono text-sm text-slate-200">${c.id}</div>
+                                            <div class="text-sm text-slate-400 truncate max-w-md">${c.goal || ''}</div>
                                         </td>
-                                        <td class="p-3 text-sm text-slate-400">${escapeHtml(c.project || '')}</td>
+                                        <td class="p-3 text-sm text-slate-400">${c.project || ''}</td>
                                         <td class="p-3 text-sm text-slate-400">${c.message_count || 0}</td>
                                         <td class="p-3 text-xs text-slate-500">${relativeTime(c.last_message_at || c.updated_at)}</td>
                                         <td class="p-3 text-sm">${c.has_pinned ? '\uD83D\uDCCC' : ''}</td>
@@ -95,7 +95,7 @@ export function ConversationDetail({ convId }) {
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
                 <div class="flex items-center gap-3 mb-1">
-                    <span class="font-mono text-lg text-slate-200">${escapeHtml(convId)}</span>
+                    <span class="font-mono text-lg text-slate-200">${convId}</span>
                 </div>
                 <div class="text-sm text-slate-400">${msgs.length} messages</div>
             </div>

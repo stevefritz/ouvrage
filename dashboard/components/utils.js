@@ -73,7 +73,7 @@ export function GateBadge({ task }) {
 export function PrUrlBadge({ task }) {
     const prUrl = task.pr_url || (task.artifacts && task.artifacts.find(a => a.type === 'pr_url')?.ref);
     if (!prUrl) return null;
-    return html`<a href=${escapeHtml(prUrl)} target="_blank" rel="noopener"
+    return html`<a href=${prUrl} target="_blank" rel="noopener"
         class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">PR \u2197</a>`;
 }
 

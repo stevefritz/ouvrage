@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, escapeHtml, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 
@@ -12,23 +12,23 @@ function DetailHeader({ task, onAction, jiraBaseUrl }) {
                     <div class="flex items-center gap-3 mb-2">
                         <${StatusBadge} status=${task.status} />
                         <${GateBadge} task=${task} />
-                        <span class="font-mono text-lg text-slate-200">${escapeHtml(task.id)}</span>
+                        <span class="font-mono text-lg text-slate-200">${task.id}</span>
                     </div>
-                    <p class="text-slate-300 mb-3">${escapeHtml(task.goal)}</p>
+                    <p class="text-slate-300 mb-3">${task.goal}</p>
                     <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
-                        <span>Branch: <span class="font-mono text-slate-300">${escapeHtml(task.branch || '\u2014')}</span></span>
+                        <span>Branch: <span class="font-mono text-slate-300">${task.branch || '\u2014'}</span></span>
                         <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
                         <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
                         <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
-                        ${task.model ? html`<span>Model: <span class="text-slate-300">${escapeHtml(task.model)}</span></span>` : null}
-                        ${task.phase ? html`<span>Phase: <span class="text-slate-300">${escapeHtml(task.phase)}</span></span>` : null}
+                        ${task.model ? html`<span>Model: <span class="text-slate-300">${task.model}</span></span>` : null}
+                        ${task.phase ? html`<span>Phase: <span class="text-slate-300">${task.phase}</span></span>` : null}
                         <${PrUrlBadge} task=${task} />
                         ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
-                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${escapeHtml(jiraLabel(task.jira_ticket))}</a>` : null}
+                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
                         ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
-                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${escapeHtml(task.conversation_id)}</a>` : null}
+                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${task.conversation_id}</a>` : null}
                     </div>
-                    ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${escapeHtml(t)}</span>`)}</div>` : null}
+                    ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
                 </div>
                 <div class="flex gap-2 ml-4"><${ActionButtons} task=${task} onAction=${onAction} /></div>
             </div>
@@ -125,8 +125,8 @@ function ChainVisualization({ taskId }) {
                                 <${StatusBadge} status=${t.status} />
                                 <${GateBadge} task=${t} />
                             </div>
-                            <div class="text-xs font-mono text-slate-300 truncate">${escapeHtml(shortId)}</div>
-                            <div class="text-xs text-slate-500 truncate">${escapeHtml((t.goal || '').slice(0, 40))}</div>
+                            <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
+                            <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
                         </a>
                         ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-600 shrink-0">\u2192</span>` : null}
                     `;
@@ -179,8 +179,8 @@ function Subtasks({ subtasks }) {
                             <summary class="px-4 py-2.5 text-sm cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
                                 ${statusIcon}
                                 <span class="px-2 py-0.5 rounded text-xs font-medium ${tc.bg} ${tc.text}">${tc.icon} ${sub.type.toUpperCase()}</span>
-                                <span class="text-slate-400 text-xs font-mono">${escapeHtml(shortId)}</span>
-                                <span class="text-slate-500 text-xs">${escapeHtml(sub.model || '')}</span>
+                                <span class="text-slate-400 text-xs font-mono">${shortId}</span>
+                                <span class="text-slate-500 text-xs">${sub.model || ''}</span>
                                 ${isWorking ? html`<span class="text-blue-400 text-xs status-dot-working">running...</span>` : null}
                                 <span class="ml-auto flex items-center gap-3 text-xs text-slate-500">
                                     ${duration ? html`<span>${duration}</span>` : null}
@@ -218,7 +218,7 @@ function Checklist({ task }) {
                 ${items.map(c => html`
                     <div key=${c.id} class="flex items-center gap-2 text-sm ${c.done ? 'text-slate-400' : 'text-slate-200'}">
                         <span>${c.done ? '\u2705' : '\u2B1C'}</span>
-                        <span>${escapeHtml(c.item)}</span>
+                        <span>${c.item}</span>
                     </div>
                 `)}
             </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, escapeHtml, relativeTime, progressBar, navigate, StatusBadge, GateBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, progressBar, navigate, StatusBadge, GateBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
 
 export function Board({ params = {}, jiraBaseUrl, onAction }) {
     const [tasks, setTasks] = useState(null);
@@ -91,18 +91,18 @@ export function Board({ params = {}, jiraBaseUrl, onAction }) {
                                     <td class="p-3"><${StatusBadge} status=${t.status} /> <${GateBadge} task=${t} /></td>
                                     <td class="p-3">
                                         <div class="flex items-center gap-2">
-                                            <span class="font-mono text-sm text-slate-200">${escapeHtml(t.id)}</span>
-                                            ${t.pr_url ? html`<a href=${escapeHtml(t.pr_url)} target="_blank" rel="noopener"
+                                            <span class="font-mono text-sm text-slate-200">${t.id}</span>
+                                            ${t.pr_url ? html`<a href=${t.pr_url} target="_blank" rel="noopener"
                                                 onClick=${(e) => e.stopPropagation()}
                                                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30" title="View PR">PR</a>` : null}
                                             ${t.jira_ticket ? html`<a href=${jiraUrl(t.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                                                 onClick=${(e) => e.stopPropagation()}
-                                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30" title="Jira">${escapeHtml(jiraLabel(t.jira_ticket))}</a>` : null}
+                                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30" title="Jira">${jiraLabel(t.jira_ticket)}</a>` : null}
                                         </div>
-                                        <div class="text-sm text-slate-400 truncate max-w-md">${escapeHtml(t.goal)}</div>
+                                        <div class="text-sm text-slate-400 truncate max-w-md">${t.goal}</div>
                                         <div class="flex items-center gap-1 mt-0.5">
-                                            ${t.phase ? html`<span class="text-xs text-slate-500">${escapeHtml(t.phase)}</span>` : null}
-                                            ${(t.tags || []).map(tag => html`<span class="px-1.5 py-0 rounded text-xs bg-slate-700 text-slate-300">${escapeHtml(tag)}</span>`)}
+                                            ${t.phase ? html`<span class="text-xs text-slate-500">${t.phase}</span>` : null}
+                                            ${(t.tags || []).map(tag => html`<span class="px-1.5 py-0 rounded text-xs bg-slate-700 text-slate-300">${tag}</span>`)}
                                         </div>
                                     </td>
                                     <td class="p-3">

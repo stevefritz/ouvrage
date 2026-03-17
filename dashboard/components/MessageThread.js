@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
-import { html, escapeHtml, renderMarkdown } from './utils.js';
+import { html, renderMarkdown } from './utils.js';
 
 const BORDER_COLORS = {
     spec: 'border-l-blue-500',
@@ -30,10 +30,10 @@ function Message({ msg, index, expandedMessages, onToggle, idPrefix = 'msg' }) {
             <div class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 border-b border-slate-700/50">
                 <span>${pinIcon}${type}</span>
                 <span>\u2014</span>
-                <span>${escapeHtml(msg.author || '')}</span>
+                <span>${msg.author || ''}</span>
                 <span>\u2014</span>
                 <span>${time}</span>
-                ${msg.title ? html`<span class="text-slate-300 ml-1">${escapeHtml(msg.title)}</span>` : null}
+                ${msg.title ? html`<span class="text-slate-300 ml-1">${msg.title}</span>` : null}
             </div>
             <div class="px-3 py-2 prose-dark text-sm ${isLong && !isExpanded ? 'msg-collapsed' : ''}"
                 dangerouslySetInnerHTML=${{ __html: contentHtml }}>
