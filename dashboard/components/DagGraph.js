@@ -30,9 +30,9 @@ const COMPONENT_PALETTE = [
 export const NODE_W = 280;
 export const NODE_H = 120;
 const GAP_X = 60;               // horizontal gap between nodes in same rank
-const GAP_Y = 110;              // vertical gap between ranks — more room for edges to route
+const GAP_Y = 140;              // vertical gap between ranks — more room for edges to route
 const PADDING = 40;
-const DAGRE_NODE_PADDING = 20;  // extra dagre bbox margin so edges route further from node edges
+const DAGRE_NODE_PADDING = 36;  // extra dagre bbox margin so edges route further from node edges
 
 // ── Layout engine ────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ function findConnectedComponents(taskIds, adjacency) {
 }
 
 // ── Push an edge control point outside a node bounding box ───
-function pushPointOutsideNode(pt, box, margin = 8) {
+function pushPointOutsideNode(pt, box, margin = 14) {
     const left = box.x - margin;
     const right = box.x + box.w + margin;
     const top = box.y - margin;
@@ -301,13 +301,15 @@ export function EdgePath({ edge, highlighted, dimmed }) {
     const dashArray = crossComponent ? '6,4' : 'none';
     const strokeWidth = highlighted ? 2.5 : 1.5;
 
-    // Build smooth path: use catmull-rom through dagre's waypoints, fallback to simple bezier
+    // Build path: simple vertical-first step routing that never clips through nodes
     let d;
-    if (points && points.length >= 1) {
-        d = catmullRomPath([{ x: x1, y: y1 }, ...points, { x: x2, y: y2 }]);
+    const midY = (y1 + y2) / 2;
+    if (x1 === x2) {
+        // Straight vertical line
+        d = `M${x1},${y1} L${x2},${y2}`;
     } else {
-        const midY = (y1 + y2) / 2;
-        d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+        // Step path: go down to midpoint, move horizontally, then down to target
+        d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
     }
 
     return html`
