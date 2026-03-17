@@ -378,25 +378,38 @@ TASK_TOOLS = [
     ),
     Tool(
         name="get_session_log",
-        description="Get the session log (JSONL) for a task — shows CC's tool calls, text output, and results.",
+        description="Get the session log (JSONL) for a task — shows CC's tool calls, text output, and results. Pass attempt to read a historical archive.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID"},
                 "tail": {"type": "integer", "description": "Return only the last N entries. Default 50.", "default": 50},
                 "types": {"type": "string", "description": "Comma-separated type filter, e.g. 'text,tool,result'. Omit for all types."},
+                "attempt": {"type": "integer", "description": "Attempt number to read from archive. Omit for current/latest."},
             },
             "required": ["task_id"],
         },
     ),
     Tool(
         name="get_dispatch_log",
-        description="Get the dispatch log for a task — shows dispatch/completion metadata, cost, tokens, timing.",
+        description="Get the dispatch log for a task — shows dispatch/completion metadata, cost, tokens, timing. Pass attempt to read a historical archive.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID"},
                 "tail": {"type": "integer", "description": "Return only the last N lines. Default 20.", "default": 20},
+                "attempt": {"type": "integer", "description": "Attempt number to read from archive. Omit for current/latest."},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="list_attempts",
+        description="List all archived attempts for a task — shows attempt number, reason (retry/close/detach/completion), cost, tokens, session_id, timestamp.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
             },
             "required": ["task_id"],
         },
@@ -1001,17 +1014,50 @@ async def _handle_read_task_messages(arguments):
     )
 
 
-async def _handle_get_session_log(arguments):
-    task = await db.get_task(arguments["task_id"])
-    if not task:
-        return {"error": f"Task '{arguments['task_id']}' not found"}
-    worktree_path = task.get("worktree_path")
-    if not worktree_path:
-        return {"error": "Task has no worktree path (not dispatched or already cleaned up)"}
+def _resolve_log_dir(task: dict, project: dict | None, attempt: int | None) -> tuple[str | None, str | None]:
+    """Return (log_dir_path, source_label) for reading logs.
 
-    log_path = os.path.join(worktree_path, ".switchboard", "session.jsonl")
+    Priority:
+    1. If attempt specified → read from archive
+    2. If worktree exists → read from live worktree
+    3. Fallback → read from highest-numbered archive
+    Returns (path_or_None, label).
+    """
+    if attempt is not None:
+        if not project:
+            return None, "archive"
+        archive = tasks._find_archive_path(project, task["id"], attempt)
+        return str(archive) if archive else None, f"archive attempt-{attempt}"
+
+    worktree = task.get("worktree_path")
+    if worktree and os.path.isdir(os.path.join(worktree, ".switchboard")):
+        return os.path.join(worktree, ".switchboard"), "live"
+
+    # Fallback to highest archive
+    if project:
+        archive = tasks._find_archive_path(project, task["id"], None)
+        if archive:
+            return str(archive), "archive (latest)"
+
+    return None, None
+
+
+async def _handle_get_session_log(arguments):
+    task_id = arguments["task_id"]
+    task = await db.get_task(task_id)
+    if not task:
+        return {"error": f"Task '{task_id}' not found"}
+
+    attempt = arguments.get("attempt")
+    project = await db.get_project(task["project_id"]) if task.get("project_id") else None
+    log_dir, source = _resolve_log_dir(task, project, attempt)
+
+    if not log_dir:
+        return {"error": "No log data found (no live worktree and no archived attempts)"}
+
+    log_path = os.path.join(log_dir, "session.jsonl")
     if not os.path.isfile(log_path):
-        return {"entries": [], "message": "No session log file found"}
+        return {"entries": [], "message": "No session log file found", "source": source}
 
     tail = arguments.get("tail", 50)
     type_filter = None
@@ -1048,20 +1094,25 @@ async def _handle_get_session_log(arguments):
         if isinstance(entry.get("result"), str) and len(entry["result"]) > 500:
             entry["result"] = entry["result"][:500] + "... [truncated]"
 
-    return {"entries": entries, "count": len(entries)}
+    return {"entries": entries, "count": len(entries), "source": source}
 
 
 async def _handle_get_dispatch_log(arguments):
-    task = await db.get_task(arguments["task_id"])
+    task_id = arguments["task_id"]
+    task = await db.get_task(task_id)
     if not task:
-        return {"error": f"Task '{arguments['task_id']}' not found"}
-    worktree_path = task.get("worktree_path")
-    if not worktree_path:
-        return {"error": "Task has no worktree path (not dispatched or already cleaned up)"}
+        return {"error": f"Task '{task_id}' not found"}
 
-    log_path = os.path.join(worktree_path, ".switchboard", "dispatch.log")
+    attempt = arguments.get("attempt")
+    project = await db.get_project(task["project_id"]) if task.get("project_id") else None
+    log_dir, source = _resolve_log_dir(task, project, attempt)
+
+    if not log_dir:
+        return {"error": "No log data found (no live worktree and no archived attempts)"}
+
+    log_path = os.path.join(log_dir, "dispatch.log")
     if not os.path.isfile(log_path):
-        return {"text": "", "message": "No dispatch log file found"}
+        return {"text": "", "message": "No dispatch log file found", "source": source}
 
     tail = arguments.get("tail", 20)
     try:
@@ -1071,7 +1122,11 @@ async def _handle_get_dispatch_log(arguments):
     except Exception as e:
         return {"error": f"Failed to read dispatch log: {e}"}
 
-    return {"text": text}
+    return {"text": text, "source": source}
+
+
+async def _handle_list_attempts(arguments):
+    return await tasks.list_attempts(arguments["task_id"])
 
 
 async def _handle_add_checklist_item(arguments):
@@ -1290,6 +1345,7 @@ TOOL_HANDLERS = {
     "read_task_messages": _handle_read_task_messages,
     "get_session_log": _handle_get_session_log,
     "get_dispatch_log": _handle_get_dispatch_log,
+    "list_attempts": _handle_list_attempts,
     "add_checklist_item": _handle_add_checklist_item,
     "remove_checklist_item": _handle_remove_checklist_item,
     "update_checklist_item": _handle_update_checklist_item_text,
