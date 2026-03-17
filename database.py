@@ -1,4 +1,5 @@
 import aiosqlite
+import httpx
 import json
 import os
 from contextlib import asynccontextmanager
@@ -1430,6 +1431,17 @@ async def resolve_config(task_id: str) -> dict:
     return resolved
 
 
+def _make_snippet(content: str, query: str) -> str:
+    """Extract a ~120-char snippet around the first match of query in content."""
+    lower_content = content.lower()
+    idx = lower_content.find(query.lower())
+    if idx >= 0:
+        start = max(0, idx - 50)
+        end = min(len(content), idx + len(query) + 50)
+        return ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+    return content[:120] + ("..." if len(content) > 120 else "")
+
+
 # ---------------------------------------------------------------------------
 # Search Task Messages
 # ---------------------------------------------------------------------------
@@ -1460,18 +1472,143 @@ async def search_task_messages(query: str, project_id: str | None = None, limit:
         results = []
         for r in rows:
             row = dict(r)
-            # Create a content snippet around the match
             content = row["content"] or ""
-            lower_content = content.lower()
-            idx = lower_content.find(query.lower())
-            if idx >= 0:
-                start = max(0, idx - 50)
-                end = min(len(content), idx + len(query) + 50)
-                snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-            else:
-                snippet = content[:120] + ("..." if len(content) > 120 else "")
-            row["snippet"] = snippet
+            row["snippet"] = _make_snippet(content, query)
             del row["content"]
             results.append(row)
 
         return results
+
+
+# ---------------------------------------------------------------------------
+# search_component — unified search across conversations + tasks + Graphiti
+# ---------------------------------------------------------------------------
+
+async def search_component(
+    component_id: str,
+    query: str,
+    include_graphiti: bool = False,
+    limit: int = 20,
+) -> dict:
+    """Search across all content linked to a component.
+
+    Searches:
+    1. Messages in conversations linked to this component
+    2. Messages in tasks belonging to this component
+    3. Optionally, Graphiti via the project's connectors config
+
+    Returns {results: [...], sources: [...], graphiti_error: str|None}
+    Each result: {source, id, author, type, created_at, snippet, [conversation_id|task_id]}
+    """
+    async with get_db() as db:
+        # Verify component exists and get project_id
+        comp_rows = await db.execute_fetchall("SELECT id, project_id FROM components WHERE id = ?", (component_id,))
+        if not comp_rows:
+            raise ValueError(f"Component '{component_id}' not found")
+        project_id = comp_rows[0]["project_id"]
+
+        # --- Search conversation messages ---
+        conv_rows = await db.execute_fetchall(
+            "SELECT conversation_id FROM component_conversations WHERE component_id = ?",
+            (component_id,),
+        )
+        conv_ids = [r["conversation_id"] for r in conv_rows]
+
+        conversation_results = []
+        if conv_ids:
+            placeholders = ",".join("?" * len(conv_ids))
+            conv_sql = f"""
+                SELECT m.id, m.conversation_id, m.author, m.type, m.content, m.created_at
+                FROM messages m
+                WHERE m.conversation_id IN ({placeholders}) AND m.content LIKE ?
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """
+            conv_msg_rows = await db.execute_fetchall(
+                conv_sql, conv_ids + [f"%{query}%", limit]
+            )
+            for r in conv_msg_rows:
+                row = dict(r)
+                content = row.pop("content", "") or ""
+                row["snippet"] = _make_snippet(content, query)
+                row["source"] = "conversation"
+                conversation_results.append(row)
+
+        # --- Search task messages ---
+        task_rows = await db.execute_fetchall(
+            "SELECT id FROM tasks WHERE component_id = ?",
+            (component_id,),
+        )
+        task_ids = [r["id"] for r in task_rows]
+
+        task_results = []
+        if task_ids:
+            placeholders = ",".join("?" * len(task_ids))
+            task_sql = f"""
+                SELECT m.id, m.task_id, m.author, m.type, m.content, m.created_at
+                FROM messages m
+                WHERE m.task_id IN ({placeholders}) AND m.content LIKE ?
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """
+            task_msg_rows = await db.execute_fetchall(
+                task_sql, task_ids + [f"%{query}%", limit]
+            )
+            for r in task_msg_rows:
+                row = dict(r)
+                content = row.pop("content", "") or ""
+                row["snippet"] = _make_snippet(content, query)
+                row["source"] = "task"
+                task_results.append(row)
+
+        # Merge and sort by created_at descending
+        all_results = conversation_results + task_results
+        all_results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        all_results = all_results[:limit]
+
+        sources = list({r["source"] for r in all_results})
+
+        # --- Graphiti proxy (optional) ---
+        graphiti_results = []
+        graphiti_error = None
+
+        if include_graphiti:
+            proj_rows = await db.execute_fetchall(
+                "SELECT connectors FROM projects WHERE id = ?", (project_id,)
+            )
+            connectors_raw = proj_rows[0]["connectors"] if proj_rows else None
+            connectors = json.loads(connectors_raw) if connectors_raw else {}
+            graphiti_cfg = connectors.get("graphiti", {})
+            graphiti_url = graphiti_cfg.get("url")
+            graphiti_group_id = graphiti_cfg.get("group_id")
+
+            if graphiti_url and graphiti_group_id:
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(
+                            f"{graphiti_url.rstrip('/')}/search",
+                            json={"query": query, "group_id": graphiti_group_id},
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        raw_results = data if isinstance(data, list) else data.get("results", [])
+                        for item in raw_results:
+                            graphiti_results.append({
+                                "source": "graphiti",
+                                "id": item.get("uuid") or item.get("id"),
+                                "author": item.get("source_description") or "graphiti",
+                                "type": item.get("type"),
+                                "created_at": item.get("created_at"),
+                                "snippet": item.get("fact") or item.get("content") or item.get("name", ""),
+                            })
+                        if "graphiti" not in sources and graphiti_results:
+                            sources.append("graphiti")
+                except Exception as e:
+                    graphiti_error = str(e)
+
+    return {
+        "results": all_results + graphiti_results,
+        "sources": sources,
+        "total": len(all_results) + len(graphiti_results),
+        "graphiti_error": graphiti_error,
+    }
