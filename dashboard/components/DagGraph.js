@@ -134,16 +134,21 @@ export function computeLayout(tasks, stateColors) {
         mainTasks.map(t => t.id), undirectedAdj
     );
 
-    // Sort components: largest first, then alphabetically by first task id
-    connectedComponents.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+    // Separate chains (2+ tasks) from singletons (independent tasks)
+    const chains = connectedComponents.filter(c => c.length > 1);
+    const singletons = connectedComponents.filter(c => c.length === 1);
 
-    // Lay out each connected component separately with dagre
+    // Sort chains: largest first, then alphabetically
+    chains.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+
+    // Lay out each chain with dagre, then grid-pack singletons
     const allNodes = [];
     const allEdges = [];
     let xOffset = PADDING;
     const COMPONENT_GAP = 80;
+    let maxChainHeight = 0;  // track tallest chain for singleton grid rows
 
-    for (const compIds of connectedComponents) {
+    for (const compIds of chains) {
         const compTaskSet = new Set(compIds);
         const compTasks = compIds.map(id => taskMap.get(id));
 
@@ -243,7 +248,37 @@ export function computeLayout(tasks, stateColors) {
 
         // Advance xOffset for next component
         const compWidth = maxX - minX + PADDING * 2;
+        const compHeight = maxY - minY + PADDING * 2;
+        maxChainHeight = Math.max(maxChainHeight, compHeight);
         xOffset += compWidth + COMPONENT_GAP;
+    }
+
+    // Grid-pack singletons: stack N-high based on chain depth
+    if (singletons.length > 0) {
+        const rows = Math.max(1, Math.round(maxChainHeight / (NODE_H + GAP_Y)));
+        // Sort singletons alphabetically
+        singletons.sort((a, b) => a[0].localeCompare(b[0]));
+
+        for (let i = 0; i < singletons.length; i++) {
+            const t = taskMap.get(singletons[i][0]);
+            const col = Math.floor(i / rows);
+            const row = i % rows;
+            const x = xOffset + col * (NODE_W + GAP_X);
+            const y = PADDING + row * (NODE_H + GAP_Y);
+            const comp = deriveComponent(t);
+            const status = effectiveStatus(t);
+
+            allNodes.push({
+                id: t.id,
+                task: t,
+                x,
+                y,
+                status,
+                component: comp,
+                componentColor: componentColors.get(comp),
+                stateColor: STATE_COLORS[status] || STATE_COLORS.ready,
+            });
+        }
     }
 
     // Calculate total dimensions
