@@ -659,7 +659,7 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
-    "component_id",
+    "component_id", "model",
     # v5 migration toolkit fields
     "base_branch", "branch_target", "claude_chat_url",
     "auto_merge", "max_test_retries", "max_review_retries",

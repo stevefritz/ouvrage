@@ -89,8 +89,8 @@ class TestUpdateTask:
         assert updated["max_review_retries"] == 2
 
     async def test_update_model(self, db, sample_task):
-        updated = await db.update_task(sample_task["id"], model="opus")
-        assert updated["model"] == "opus"
+        updated = await db.update_task(sample_task["id"], model="sonnet")
+        assert updated["model"] == "sonnet"
 
     async def test_update_jira_ticket(self, db, sample_task):
         updated = await db.update_task(sample_task["id"], jira_ticket="SUZY-999")
