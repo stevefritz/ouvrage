@@ -250,6 +250,9 @@ class TestCheckAndDispatchDependents:
         self.mock_dispatch = AsyncMock()
         self.mock_rebase = AsyncMock()
         self.mock_pr = AsyncMock()
+        self.mock_drain = AsyncMock()
+        self.mock_auto_merge = AsyncMock(return_value=True)
+        self.mock_auto_release = AsyncMock()
 
         patches = [
             patch("tasks.db.get_task", self.mock_get_task),
@@ -257,6 +260,9 @@ class TestCheckAndDispatchDependents:
             patch("tasks.dispatch_task", self.mock_dispatch),
             patch("tasks._rebase_and_redispatch", self.mock_rebase),
             patch("tasks._maybe_create_pr", self.mock_pr),
+            patch("tasks._drain_queue", self.mock_drain),
+            patch("tasks._perform_auto_merge", self.mock_auto_merge),
+            patch("tasks._auto_release_worktree", self.mock_auto_release),
         ]
         for p in patches:
             p.start()

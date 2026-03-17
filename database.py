@@ -274,8 +274,24 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN branch_target TEXT")
         if "claude_chat_url" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN claude_chat_url TEXT")
+        # v5-auto-merge-queue: FIFO queue + auto-merge fields
+        if "queued_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN queued_at TEXT")
         if "auto_merge" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_merge BOOLEAN")
+        if "auto_release_worktree" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_release_worktree BOOLEAN DEFAULT 1")
+        if "base_branch" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
+        if "branch_target" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN branch_target TEXT")
+        if "pushed_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN pushed_at TEXT")
+        if "pr_status" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN pr_status TEXT")
+        if "pr_error" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN pr_error TEXT")
+        # v5-migration-toolkit fields
         if "max_test_retries" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN max_test_retries INTEGER")
         if "max_review_retries" not in task_col_names:
@@ -646,6 +662,9 @@ async def create_task(
     parent_task_id: str | None = None, auto_pr: bool = False,
     component_id: str | None = None,
     claude_chat_url: str | None = None,
+    auto_merge: bool = False,
+    auto_release_worktree: bool = True,
+    base_branch: str | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -662,12 +681,14 @@ async def create_task(
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
                 jira_ticket, conversation_id, model, auto_test, depends_on,
                 auto_review, review_model, parent_task_id, auto_pr, component_id,
-                claude_chat_url, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                claude_chat_url, auto_merge, auto_release_worktree, base_branch,
+                created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
              jira_ticket, conversation_id, model, auto_test, depends_on,
              auto_review, review_model, parent_task_id, auto_pr, component_id,
-             claude_chat_url, ts, ts),
+             claude_chat_url, auto_merge, auto_release_worktree, base_branch,
+             ts, ts),
         )
         await db.commit()
         return {
@@ -679,6 +700,8 @@ async def create_task(
             "auto_review": auto_review, "review_model": review_model,
             "parent_task_id": parent_task_id, "auto_pr": auto_pr,
             "component_id": component_id, "claude_chat_url": claude_chat_url,
+            "auto_merge": auto_merge, "auto_release_worktree": auto_release_worktree,
+            "base_branch": base_branch,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -699,10 +722,13 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
-    "component_id", "model",
+    "component_id", "model", "claude_chat_url",
     # v5 migration toolkit fields
-    "base_branch", "branch_target", "claude_chat_url",
-    "auto_merge", "max_test_retries", "max_review_retries",
+    "base_branch", "branch_target",
+    "max_test_retries", "max_review_retries",
+    # v5 auto-merge-queue fields
+    "queued_at", "auto_merge", "auto_release_worktree",
+    "pushed_at", "pr_status", "pr_error",
 }
 
 
@@ -897,6 +923,28 @@ async def count_active_tasks() -> int:
             "SELECT COUNT(*) as cnt FROM tasks WHERE status = 'working'"
         )
         return rows[0]["cnt"]
+
+
+async def get_queued_tasks() -> list[dict]:
+    """Return ready tasks with queued_at set, ordered FIFO (oldest first).
+
+    Excludes tasks whose depends_on parent hasn't gate-passed yet.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT t.* FROM tasks t
+               WHERE t.status = 'ready'
+                 AND t.queued_at IS NOT NULL
+                 AND (
+                   t.depends_on IS NULL
+                   OR EXISTS (
+                     SELECT 1 FROM tasks p
+                     WHERE p.id = t.depends_on AND p.gate_passed_at IS NOT NULL
+                   )
+                 )
+               ORDER BY t.queued_at ASC"""
+        )
+        return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -1245,6 +1293,7 @@ SYSTEM_DEFAULTS = {
     "max_review_retries": 2,
     "auto_pr": False,
     "auto_merge": False,
+    "auto_release_worktree": True,
 }
 
 
@@ -1456,12 +1505,13 @@ async def resolve_config(task_id: str) -> dict:
     resolved = {}
 
     # Boolean fields that need normalization from SQLite 0/1
-    bool_fields = {"auto_test", "auto_review", "auto_pr", "auto_merge"}
+    bool_fields = {"auto_test", "auto_review", "auto_pr", "auto_merge", "auto_release_worktree"}
 
     # Scalar config fields: task > component > project > system default
     scalar_fields = [
         "base_branch", "model", "auto_test", "auto_review", "review_model",
         "max_test_retries", "max_review_retries", "auto_pr", "auto_merge",
+        "auto_release_worktree",
         "setup_command", "test_command", "max_turns", "max_wall_clock",
     ]
 
