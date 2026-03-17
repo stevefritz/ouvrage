@@ -57,6 +57,26 @@ export const api = {
     getChain: (id) => request(`/tasks/${eid(id)}/chain`),
     getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
 
+    // Components
+    getComponents: (projectId) => request(`/components?project_id=${encodeURIComponent(projectId)}`),
+    getComponent: (id) => request(`/components/${eid(id)}`),
+    getComponentActivity: (id) => request(`/components/${eid(id)}/activity`),
+
+    // Punchlist
+    getPunchlist: (componentId) => request(`/punchlist/${eid(componentId)}`),
+    addPunchlistItem: (componentId, item) => request(`/punchlist/${eid(componentId)}`, {
+        method: 'POST', body: JSON.stringify({ item }),
+    }),
+    updatePunchlistItem: (componentId, itemId, data) => request(`/punchlist/${eid(componentId)}/${itemId}`, {
+        method: 'PATCH', body: JSON.stringify(data),
+    }),
+    deletePunchlistItem: (componentId, itemId) => request(`/punchlist/${eid(componentId)}/${itemId}`, {
+        method: 'DELETE',
+    }),
+    dispatchPunchlistItem: (componentId, itemId, opts = {}) => request(`/punchlist/${eid(componentId)}/${itemId}/dispatch`, {
+        method: 'POST', body: JSON.stringify(opts),
+    }),
+
     // Messages
     postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${eid(id)}/messages`, {
         method: 'POST',
