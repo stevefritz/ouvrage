@@ -448,6 +448,68 @@ TASK_TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="update_task",
+        description="Update task metadata post-dispatch. Use to assign components, correct branching info, toggle gates, or update any task field. Validates component_id if provided.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to update"},
+                "component_id": {"type": ["string", "null"], "description": "Assign/reassign to component. Validated to exist."},
+                "base_branch": {"type": ["string", "null"], "description": "Correct base branch"},
+                "branch_target": {"type": ["string", "null"], "description": "Branch target override"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Replace all tags"},
+                "auto_test": {"type": ["boolean", "null"], "description": "Toggle auto-test gate"},
+                "auto_review": {"type": ["boolean", "null"], "description": "Toggle auto-review gate"},
+                "auto_merge": {"type": ["boolean", "null"], "description": "Toggle auto-merge"},
+                "auto_pr": {"type": ["boolean", "null"], "description": "Toggle auto-PR"},
+                "max_test_retries": {"type": ["integer", "null"], "description": "Max test retry attempts"},
+                "max_review_retries": {"type": ["integer", "null"], "description": "Max review retry attempts"},
+                "model": {"type": ["string", "null"], "enum": ["sonnet", "opus", None], "description": "Override model"},
+                "jira_ticket": {"type": ["string", "null"], "description": "Jira ticket ID or URL"},
+                "conversation_id": {"type": ["string", "null"], "description": "Link to design conversation"},
+                "claude_chat_url": {"type": ["string", "null"], "description": "Claude.ai chat URL"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="bulk_update_tasks",
+        description="Apply the same field updates to multiple tasks in one call. Use case: assign all chatbot-* tasks to a component at once. Returns count of updated tasks.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_ids": {"type": "array", "items": {"type": "string"}, "description": "List of task IDs to update"},
+                "component_id": {"type": ["string", "null"], "description": "Assign/reassign to component"},
+                "base_branch": {"type": ["string", "null"], "description": "Base branch override"},
+                "branch_target": {"type": ["string", "null"], "description": "Branch target override"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Replace all tags on each task"},
+                "auto_test": {"type": ["boolean", "null"], "description": "Toggle auto-test gate"},
+                "auto_review": {"type": ["boolean", "null"], "description": "Toggle auto-review gate"},
+                "auto_merge": {"type": ["boolean", "null"], "description": "Toggle auto-merge"},
+                "auto_pr": {"type": ["boolean", "null"], "description": "Toggle auto-PR"},
+                "max_test_retries": {"type": ["integer", "null"], "description": "Max test retry attempts"},
+                "max_review_retries": {"type": ["integer", "null"], "description": "Max review retry attempts"},
+                "model": {"type": ["string", "null"], "enum": ["sonnet", "opus", None], "description": "Override model"},
+                "jira_ticket": {"type": ["string", "null"], "description": "Jira ticket ID or URL"},
+                "conversation_id": {"type": ["string", "null"], "description": "Link to design conversation"},
+                "claude_chat_url": {"type": ["string", "null"], "description": "Claude.ai chat URL"},
+            },
+            "required": ["task_ids"],
+        },
+    ),
+    Tool(
+        name="move_task",
+        description="Reassign a task to a different component. Validates the target component exists and belongs to the same project. Sugar for update_task with component_id.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task to reassign"},
+                "component_id": {"type": "string", "description": "Target component ID"},
+            },
+            "required": ["task_id", "component_id"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -821,6 +883,31 @@ async def _handle_list_tasks(arguments):
     return task_list
 
 
+_UPDATE_TASK_FIELDS = {
+    "component_id", "base_branch", "branch_target", "tags",
+    "auto_test", "auto_review", "auto_merge", "auto_pr",
+    "max_test_retries", "max_review_retries",
+    "model", "jira_ticket", "conversation_id", "claude_chat_url",
+}
+
+
+async def _handle_update_task(arguments):
+    task_id = arguments["task_id"]
+    fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
+    return await db.update_task(task_id, **fields)
+
+
+async def _handle_bulk_update_tasks(arguments):
+    task_ids = arguments["task_ids"]
+    fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
+    count = await db.bulk_update_tasks(task_ids, **fields)
+    return {"updated": count, "requested": len(task_ids)}
+
+
+async def _handle_move_task(arguments):
+    return await db.move_task(arguments["task_id"], arguments["component_id"])
+
+
 async def _handle_update_task_checklist(arguments):
     result = await db.update_checklist_item(
         item_id=arguments["item_id"],
@@ -1173,6 +1260,9 @@ TOOL_HANDLERS = {
     "close_task": _handle_close_task,
     "get_task_status": _handle_get_task_status,
     "list_tasks": _handle_list_tasks,
+    "update_task": _handle_update_task,
+    "bulk_update_tasks": _handle_bulk_update_tasks,
+    "move_task": _handle_move_task,
     "update_task_checklist": _handle_update_task_checklist,
     "update_task_phase": _handle_update_task_phase,
     "post_task_message": _handle_post_task_message,

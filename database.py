@@ -268,8 +268,18 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
         if "component_id" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN component_id TEXT")
+        if "base_branch" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
+        if "branch_target" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN branch_target TEXT")
         if "claude_chat_url" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN claude_chat_url TEXT")
+        if "auto_merge" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN auto_merge BOOLEAN")
+        if "max_test_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_test_retries INTEGER")
+        if "max_review_retries" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN max_review_retries INTEGER")
 
         # Migrate conversations table: add claude_chat_url if missing
         conv_columns = await conn.execute_fetchall("PRAGMA table_info(conversations)")
@@ -689,7 +699,10 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
-    "component_id", "claude_chat_url",
+    "component_id", "model",
+    # v5 migration toolkit fields
+    "base_branch", "branch_target", "claude_chat_url",
+    "auto_merge", "max_test_retries", "max_review_retries",
 }
 
 
@@ -698,17 +711,78 @@ async def update_task(id: str, **fields) -> dict:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
         if not rows:
             raise ValueError(f"Task '{id}' not found")
+        task = dict(rows[0])
+
+        # Extract tags — handled separately via task_tags table
+        tags = fields.pop("tags", None)
+
+        # Validate component_id if provided
+        if "component_id" in fields and fields["component_id"] is not None:
+            comp_rows = await db.execute_fetchall(
+                "SELECT id FROM components WHERE id = ?", (fields["component_id"],)
+            )
+            if not comp_rows:
+                raise ValueError(f"Component '{fields['component_id']}' not found")
 
         # Filter to allowed fields to prevent SQL column injection
-        fields = {k: v for k, v in fields.items() if k in TASK_MUTABLE_FIELDS}
-        fields["updated_at"] = now_iso()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [id]
+        col_fields = {k: v for k, v in fields.items() if k in TASK_MUTABLE_FIELDS}
+        col_fields["updated_at"] = now_iso()
+        set_clause = ", ".join(f"{k} = ?" for k in col_fields)
+        values = list(col_fields.values()) + [id]
         await db.execute(f"UPDATE tasks SET {set_clause} WHERE id = ?", values)
+
+        # Update tags if provided
+        if tags is not None:
+            await db.execute("DELETE FROM task_tags WHERE task_id = ?", (id,))
+            for tag in tags:
+                await db.execute(
+                    "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
+                    (id, tag.strip().lower()),
+                )
+
         await db.commit()
 
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
-        return dict(rows[0])
+        result = dict(rows[0])
+        tag_rows = await db.execute_fetchall(
+            "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (id,)
+        )
+        result["tags"] = [r["tag"] for r in tag_rows]
+        return result
+
+
+async def bulk_update_tasks(task_ids: list[str], **fields) -> int:
+    """Apply the same field updates to multiple tasks. Returns count of updated tasks."""
+    count = 0
+    for task_id in task_ids:
+        try:
+            await update_task(task_id, **fields)
+            count += 1
+        except ValueError:
+            pass  # skip tasks that don't exist
+    return count
+
+
+async def move_task(task_id: str, component_id: str) -> dict:
+    """Reassign a task to a component. Validates component exists and belongs to same project."""
+    async with get_db() as db:
+        task_rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if not task_rows:
+            raise ValueError(f"Task '{task_id}' not found")
+        task = dict(task_rows[0])
+
+        comp_rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (component_id,))
+        if not comp_rows:
+            raise ValueError(f"Component '{component_id}' not found")
+        component = dict(comp_rows[0])
+
+        if component["project_id"] != task["project_id"]:
+            raise ValueError(
+                f"Component '{component_id}' belongs to project '{component['project_id']}', "
+                f"but task '{task_id}' belongs to project '{task['project_id']}'"
+            )
+
+    return await update_task(task_id, component_id=component_id)
 
 
 async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None, component_id: str | None = None) -> list[dict]:
