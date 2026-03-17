@@ -281,10 +281,6 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_merge BOOLEAN")
         if "auto_release_worktree" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_release_worktree BOOLEAN DEFAULT 1")
-        if "base_branch" not in task_col_names:
-            await conn.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
-        if "branch_target" not in task_col_names:
-            await conn.execute("ALTER TABLE tasks ADD COLUMN branch_target TEXT")
         if "pushed_at" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN pushed_at TEXT")
         if "pr_status" not in task_col_names:

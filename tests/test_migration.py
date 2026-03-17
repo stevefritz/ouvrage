@@ -254,6 +254,6 @@ class TestNewTaskColumns:
         assert task["base_branch"] is None
         assert task["branch_target"] is None
         assert task["claude_chat_url"] is None
-        assert task["auto_merge"] is None
+        assert not task["auto_merge"]  # False/0 from create_task default
         assert task["max_test_retries"] is None
         assert task["max_review_retries"] is None
