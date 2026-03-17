@@ -10,6 +10,7 @@ import { ProjectDetail } from './components/ProjectDetail.js';
 import { ComponentDetail } from './components/ComponentDetail.js';
 import { ConversationsList, ConversationDetail } from './components/Conversations.js';
 import { GraphView } from './components/GraphView.js';
+import { ActivityBar } from './components/ActivityBar.js';
 
 function App() {
     const [route, setRoute] = useState(getRoute());
@@ -88,6 +89,7 @@ function App() {
 
     return html`
         <${Nav} route=${route} systemInfo=${systemInfo} />
+        <${ActivityBar} />
         ${view}
     `;
 }

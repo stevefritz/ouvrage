@@ -1730,6 +1730,42 @@ def _make_snippet(content: str, query: str) -> str:
 # Search Task Messages
 # ---------------------------------------------------------------------------
 
+async def get_activity(
+    project_id: str | None = None, limit: int = 30, offset: int = 0
+) -> list[dict]:
+    """Get recent significant task messages for the activity feed."""
+    async with get_db() as db:
+        conditions = [
+            "m.task_id IS NOT NULL",
+            "m.type IN ('result', 'test-result', 'review', 'handoff', 'status')",
+        ]
+        params: list = []
+
+        if project_id:
+            conditions.append("t.project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        params.extend([limit, offset])
+
+        rows = await db.execute_fetchall(
+            f"""
+            SELECT
+                m.id, m.task_id, m.type AS event_type,
+                m.content, m.title, m.created_at,
+                t.goal AS task_goal, t.project_id,
+                t.total_cost_usd, t.status AS task_status
+            FROM messages m
+            JOIN tasks t ON m.task_id = t.id
+            WHERE {where}
+            ORDER BY m.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        )
+        return [dict(r) for r in rows]
+
+
 async def search_task_messages(query: str, project_id: str | None = None, limit: int = 20) -> list[dict]:
     """Search across all task message content using LIKE."""
     async with get_db() as db:

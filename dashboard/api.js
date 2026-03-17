@@ -43,6 +43,10 @@ export const api = {
         const qs = new URLSearchParams(params).toString();
         return request(`/conversations/${eid(id)}` + (qs ? '?' + qs : ''));
     },
+    getActivity: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request('/activity' + (qs ? '?' + qs : ''));
+    },
 
     // Actions
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),

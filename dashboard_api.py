@@ -129,6 +129,10 @@ async def handle_request(scope, receive, send):
             conv_id = unquote(path[len("/dashboard/api/conversations/"):])
             return await _handle_get_conversation(scope, send, conv_id)
 
+        # GET /dashboard/api/activity
+        if path == "/dashboard/api/activity" and method == "GET":
+            return await _handle_activity(scope, send)
+
         # GET /dashboard/api/tasks
         if path == "/dashboard/api/tasks" and method == "GET":
             return await _handle_list_tasks(scope, send)
@@ -236,6 +240,21 @@ async def _handle_get_project(send, project_id):
     task_list = await db.list_tasks(project_id=project_id)
     project["tasks"] = task_list
     await _json_response(send, project)
+
+
+async def _handle_activity(scope, send):
+    params = _parse_qs(scope)
+    project_id = params.get("project_id")
+    try:
+        limit = int(params.get("limit", 30))
+        offset = int(params.get("offset", 0))
+    except (ValueError, TypeError):
+        return await _error(send, "limit and offset must be integers", 400)
+    if limit < 0 or offset < 0:
+        return await _error(send, "limit and offset must be non-negative", 400)
+    limit = min(limit, 100)
+    events = await db.get_activity(project_id=project_id, limit=limit, offset=offset)
+    await _json_response(send, events)
 
 
 async def _handle_list_tasks(scope, send):

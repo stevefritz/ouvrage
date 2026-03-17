@@ -12,8 +12,10 @@ export function escapeHtml(str) {
     return div.innerHTML;
 }
 
-// Sanitization guard — if DOMPurify CDN fails, escape HTML instead of passing raw
-export const sanitize = typeof DOMPurify !== 'undefined'
+// Sanitization guard — if DOMPurify CDN fails, escape HTML instead of passing raw.
+// Check .sanitize is a function, not just that the global exists, in case the CDN
+// loads a partial/broken object.
+export const sanitize = typeof DOMPurify?.sanitize === 'function'
     ? (dirty) => DOMPurify.sanitize(dirty)
     : (dirty) => {
         console.warn('DOMPurify not loaded — falling back to HTML escaping');
