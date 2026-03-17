@@ -253,6 +253,7 @@ class TestCheckAndDispatchDependents:
         self.mock_drain = AsyncMock()
         self.mock_auto_merge = AsyncMock(return_value=True)
         self.mock_auto_release = AsyncMock()
+        self.mock_resolve_punchlist = AsyncMock(return_value=0)
 
         patches = [
             patch("tasks.db.get_task", self.mock_get_task),
@@ -263,6 +264,7 @@ class TestCheckAndDispatchDependents:
             patch("tasks._drain_queue", self.mock_drain),
             patch("tasks._perform_auto_merge", self.mock_auto_merge),
             patch("tasks._auto_release_worktree", self.mock_auto_release),
+            patch("tasks.db.resolve_punchlist_items_for_task", self.mock_resolve_punchlist),
         ]
         for p in patches:
             p.start()

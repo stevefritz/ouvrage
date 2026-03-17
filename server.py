@@ -665,6 +665,63 @@ COMPONENT_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Punchlist Tools
+# ---------------------------------------------------------------------------
+
+PUNCHLIST_TOOLS = [
+    Tool(
+        name="add_punchlist_item",
+        description="Add a punchlist item to a component. Punchlist items are small tasks or TODOs tracked at the component level.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component_id": {"type": "string", "description": "Component ID"},
+                "item": {"type": "string", "description": "Description of the punchlist item"},
+                "author": {"type": "string", "description": "Who is adding this item (e.g. task_id or username)"},
+            },
+            "required": ["component_id", "item"],
+        },
+    ),
+    Tool(
+        name="list_punchlist",
+        description="List punchlist items for a component. By default excludes 'done' items.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component_id": {"type": "string", "description": "Component ID"},
+                "include_done": {"type": "boolean", "description": "Include completed items", "default": False},
+                "claimed_by": {"type": "string", "description": "Filter to items claimed by a specific task_id"},
+            },
+            "required": ["component_id"],
+        },
+    ),
+    Tool(
+        name="claim_punchlist_item",
+        description="Claim a punchlist item for a task. Sets status to 'claimed' and records which task is working on it.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "description": "Punchlist item ID"},
+                "task_id": {"type": "string", "description": "Task ID claiming this item"},
+            },
+            "required": ["item_id", "task_id"],
+        },
+    ),
+    Tool(
+        name="resolve_punchlist_item",
+        description="Mark a punchlist item as done. Typically called when a task that claimed the item completes successfully.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "description": "Punchlist item ID"},
+                "task_id": {"type": "string", "description": "Task ID that resolved this item"},
+            },
+            "required": ["item_id", "task_id"],
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Ops Tools
 # ---------------------------------------------------------------------------
 
@@ -676,7 +733,7 @@ OPS_TOOLS = [
     ),
 ]
 
-TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + OPS_TOOLS
+TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + PUNCHLIST_TOOLS + OPS_TOOLS
 
 
 @server.list_tools()
@@ -1279,6 +1336,49 @@ Switchboard is an async task orchestration system for Claude Code sessions. Thin
 """
 
 
+# ---------------------------------------------------------------------------
+# Punchlist tool handlers
+# ---------------------------------------------------------------------------
+
+async def _handle_add_punchlist_item(arguments):
+    result = await db.add_punchlist_item(
+        component_id=arguments["component_id"],
+        item=arguments["item"],
+        author=arguments.get("author"),
+    )
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+async def _handle_list_punchlist(arguments):
+    items = await db.list_punchlist(
+        component_id=arguments["component_id"],
+        include_done=arguments.get("include_done", False),
+        claimed_by=arguments.get("claimed_by"),
+    )
+    return [TextContent(type="text", text=json.dumps(items, indent=2))]
+
+
+async def _handle_claim_punchlist_item(arguments):
+    result = await db.claim_punchlist_item(
+        item_id=arguments["item_id"],
+        task_id=arguments["task_id"],
+    )
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+async def _handle_resolve_punchlist_item(arguments):
+    item = await db.get_punchlist_item(arguments["item_id"])
+    if not item:
+        raise ValueError(f"Punchlist item {arguments['item_id']} not found")
+    result = await db.update_punchlist_item(
+        item_id=arguments["item_id"],
+        status="done",
+        resolved_by=arguments["task_id"],
+        resolved_at=db.now_iso(),
+    )
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
 async def _handle_get_guide(arguments):
     """Return the Switchboard guide with live system summary appended."""
     parts = [GUIDE_STATIC]
@@ -1358,6 +1458,11 @@ TOOL_HANDLERS = {
     "list_components": _handle_list_components,
     "link_conversation": _handle_link_conversation,
     "unlink_conversation": _handle_unlink_conversation,
+    # Punchlist tools
+    "add_punchlist_item": _handle_add_punchlist_item,
+    "list_punchlist": _handle_list_punchlist,
+    "claim_punchlist_item": _handle_claim_punchlist_item,
+    "resolve_punchlist_item": _handle_resolve_punchlist_item,
     # Ops tools
     "get_guide": _handle_get_guide,
     "search_component": _handle_search_component,

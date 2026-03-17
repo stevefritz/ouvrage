@@ -449,9 +449,11 @@ class TestConcurrencyDuringRecovery:
     async def test_queued_with_recovery_priority(self, db, sample_project):
         """When concurrency is full, recovery tasks queue with priority flag."""
         import tasks
+        import database as _db
 
-        # Fill all 3 concurrency slots with non-orphan working tasks (live PID)
-        for i in range(3):
+        # Fill all concurrency slots with non-orphan working tasks (live PID)
+        max_concurrent = _db.DEFAULT_MAX_CONCURRENT
+        for i in range(max_concurrent):
             t = await db.create_task(id=f"test-project/active-{i}",
                                       project_id="test-project", goal=f"Active {i}")
             await db.update_task(t["id"], status="working", pid=os.getpid())  # live PID

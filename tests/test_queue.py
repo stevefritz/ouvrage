@@ -4,6 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import database as _db
+
+# Use actual concurrency limit from the database module
+_MAX_CONCURRENT = _db.DEFAULT_MAX_CONCURRENT
+
 
 # ---------------------------------------------------------------------------
 # dispatch_task queuing behavior
@@ -32,9 +37,11 @@ class TestDispatchTaskQueuing:
     async def test_queued_at_concurrency_limit(self, db, sample_project):
         """Task is created with queued_at when concurrency is full."""
         import tasks
+        import database as _db
 
-        # Create 3 working tasks to fill concurrency
-        for i in range(3):
+        # Fill all concurrency slots with working tasks
+        max_concurrent = _db.DEFAULT_MAX_CONCURRENT
+        for i in range(max_concurrent):
             t = await db.create_task(
                 id=f"test-project/worker-{i}",
                 project_id="test-project",
@@ -76,7 +83,7 @@ class TestDispatchTaskQueuing:
         """Queued response includes the branch name."""
         import tasks
 
-        for i in range(3):
+        for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/w-{i}", project_id="test-project", goal=f"W {i}",
             )
@@ -146,7 +153,7 @@ class TestQueueDrain:
         import tasks
 
         # Fill concurrency
-        for i in range(3):
+        for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/active-{i}", project_id="test-project", goal=f"Active {i}",
             )
@@ -280,7 +287,7 @@ class TestMutualExclusion:
         import tasks
 
         # Fill concurrency so it queues (avoids SDK launch)
-        for i in range(3):
+        for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/filler-{i}", project_id="test-project", goal=f"F {i}",
             )
@@ -299,7 +306,7 @@ class TestMutualExclusion:
         """auto_pr without auto_merge is fine."""
         import tasks
 
-        for i in range(3):
+        for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/filler2-{i}", project_id="test-project", goal=f"F {i}",
             )

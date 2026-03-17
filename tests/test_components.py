@@ -108,7 +108,11 @@ class TestComponentCRUD:
             component_id="counted",
         )
         comps = await db.list_components(project_id="test-project")
-        assert comps[0]["task_count"] == 2
+        assert comps[0]["total_tasks"] == 2
+        assert comps[0]["active_tasks"] == 0
+        assert comps[0]["done_tasks"] == 0
+        assert comps[0]["conversation_count"] == 0
+        assert comps[0]["open_punchlist"] == 0
 
     async def test_get_component_task_summary(self, db, sample_project):
         await db.create_component(id="summarized", project_id="test-project", name="Summarized")

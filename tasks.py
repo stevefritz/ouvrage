@@ -1850,6 +1850,11 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     if not task or not task.get("gate_passed_at"):
         return
 
+    # Resolve punchlist items claimed by this task
+    resolved = await db.resolve_punchlist_items_for_task(task_id)
+    if resolved:
+        log.info(f"Task {task_id}: resolved {resolved} punchlist item(s)")
+
     # Auto-merge if enabled (before chain advancement)
     if task.get("auto_merge"):
         merge_ok = await _perform_auto_merge(task_id)
@@ -2574,6 +2579,11 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if project:
         await archive_task_logs(task, project, "retry")
 
+    # Revert any punchlist items claimed by this task back to 'open'
+    reverted = await db.revert_punchlist_items_for_task(task_id)
+    if reverted:
+        log.info(f"Task {task_id}: reverted {reverted} punchlist item(s) on retry")
+
     # Clear session and gate state to force fresh run through the pipeline
     # Increment current_attempt — this is a new attempt, not a resume
     new_attempt = (task.get("current_attempt") or 1) + 1
@@ -2640,6 +2650,11 @@ async def cancel_task(task_id: str) -> dict:
         log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
 
     await db.update_task(task_id, status="cancelled")
+
+    # Revert any punchlist items claimed by this task back to 'open'
+    reverted = await db.revert_punchlist_items_for_task(task_id)
+    if reverted:
+        log.info(f"Task {task_id}: reverted {reverted} punchlist item(s) on cancel")
 
     # A slot freed up — drain the FIFO queue
     await _drain_queue()
