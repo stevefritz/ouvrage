@@ -1154,6 +1154,18 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
     )
     test_output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
 
+    # Store structured test output on the task
+    task = await db.get_task(task_id)
+    stdout_lines = test_output.split("\n")
+    stdout_tail = "\n".join(stdout_lines[-100:])
+    last_test_output = json.dumps({
+        "exit_code": rc,
+        "stdout_tail": stdout_tail,
+        "ran_at": db.now_iso(),
+        "attempt": task.get("current_attempt") or 1,
+    })
+    await db.update_task(task_id, last_test_output=last_test_output)
+
     if rc == 0:
         # Tests passed — but don't set gate_passed_at if review still pending
         task = await db.get_task(task_id)
@@ -2023,7 +2035,10 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
         raise ValueError(f"Task '{task_id}' not found")
 
     # Clear session and gate state to force fresh run through the pipeline
-    await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None)
+    # Increment current_attempt — this is a new attempt, not a resume
+    new_attempt = (task.get("current_attempt") or 1) + 1
+    await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
+                         current_attempt=new_attempt)
 
     # Invalidate downstream chain if this task has dependents
     dependents = await db.get_dependents(task_id)

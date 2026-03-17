@@ -286,6 +286,17 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN pr_status TEXT")
         if "pr_error" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN pr_error TEXT")
+        # v5-realtime-output: structured test output + attempt tracking
+        if "last_test_output" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN last_test_output TEXT")
+        if "current_attempt" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN current_attempt INTEGER DEFAULT 1")
+
+        # Migrate messages table: add attempt_number if missing
+        msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
+        msg_col_names = [c["name"] for c in msg_columns]
+        if "attempt_number" not in msg_col_names:
+            await conn.execute("ALTER TABLE messages ADD COLUMN attempt_number INTEGER DEFAULT 1")
 
         # Migrate conversations table: add claude_chat_url if missing
         conv_columns = await conn.execute_fetchall("PRAGMA table_info(conversations)")
@@ -715,6 +726,7 @@ TASK_MUTABLE_FIELDS = {
     "component_id", "claude_chat_url",
     "queued_at", "auto_merge", "auto_release_worktree", "base_branch",
     "branch_target", "pushed_at", "pr_status", "pr_error",
+    "last_test_output", "current_attempt",
 }
 
 
@@ -881,9 +893,11 @@ async def post_task_message(
     type: str | None = None, title: str | None = None, pinned: bool = False,
 ) -> dict:
     async with get_db() as db:
-        rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
+        rows = await db.execute_fetchall("SELECT id, current_attempt FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             raise ValueError(f"Task '{task_id}' not found")
+
+        attempt_number = rows[0]["current_attempt"] or 1
 
         if pinned:
             await db.execute(
@@ -893,9 +907,9 @@ async def post_task_message(
 
         ts = now_iso()
         cursor = await db.execute(
-            """INSERT INTO messages (task_id, author, type, title, content, pinned, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, author, type, title, content, pinned, ts),
+            """INSERT INTO messages (task_id, author, type, title, content, pinned, created_at, attempt_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, author, type, title, content, pinned, ts, attempt_number),
         )
         msg_id = cursor.lastrowid
 
@@ -904,7 +918,7 @@ async def post_task_message(
         return {
             "id": msg_id, "task_id": task_id, "author": author,
             "type": type, "title": title, "content": content,
-            "pinned": pinned, "created_at": ts,
+            "pinned": pinned, "created_at": ts, "attempt_number": attempt_number,
         }
 
 
@@ -1091,7 +1105,118 @@ async def get_task_status(task_id: str) -> dict:
         )
         task["tags"] = [r["tag"] for r in tag_rows]
 
+        # Review subtask (from subtasks table, type='review', most recent)
+        review_rows = await db.execute_fetchall(
+            """SELECT id, status, model, created_at, completed_at
+               FROM subtasks WHERE task_id = ? AND type = 'review'
+               ORDER BY rowid DESC LIMIT 1""",
+            (task_id,),
+        )
+        if review_rows:
+            rs = dict(review_rows[0])
+            now_dt = datetime.now(timezone.utc)
+            created_dt = datetime.fromisoformat(rs["created_at"].replace("Z", "+00:00"))
+            if rs["status"] == "working" or not rs["completed_at"]:
+                elapsed_s = int((now_dt - created_dt).total_seconds())
+            else:
+                completed_dt = datetime.fromisoformat(rs["completed_at"].replace("Z", "+00:00"))
+                elapsed_s = int((completed_dt - created_dt).total_seconds())
+            task["review_subtask"] = {
+                "task_id": rs["id"],
+                "status": rs["status"],
+                "session_id": None,
+                "elapsed": f"{elapsed_s}s",
+                "model": rs["model"],
+            }
+        else:
+            task["review_subtask"] = None
+
+        # Parse last_test_output JSON if present
+        if task.get("last_test_output"):
+            try:
+                task["last_test_output"] = json.loads(task["last_test_output"])
+            except (json.JSONDecodeError, TypeError):
+                pass  # leave as raw string
+
         return task
+
+
+async def get_task_attempts(task_id: str) -> list[dict]:
+    """Return messages grouped by attempt_number, each group with an outcome summary.
+
+    Outcome values: "in-progress", "success", "test-failure", "review-rejection",
+                    "wall-clock-timeout", "turns-exhausted", "error", "retried"
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
+        if not rows:
+            raise ValueError(f"Task '{task_id}' not found")
+
+        msg_rows = await db.execute_fetchall(
+            """SELECT id, author, type, title, content, created_at, attempt_number
+               FROM messages WHERE task_id = ? ORDER BY created_at ASC""",
+            (task_id,),
+        )
+        messages = [dict(r) for r in msg_rows]
+
+    # Group by attempt_number (default to 1 if NULL)
+    groups: dict[int, list[dict]] = {}
+    for msg in messages:
+        attempt = msg.get("attempt_number") or 1
+        groups.setdefault(attempt, []).append(msg)
+
+    # Determine outcome for each attempt
+    max_attempt = max(groups.keys()) if groups else 1
+    result = []
+    for attempt_num in sorted(groups.keys()):
+        group_messages = groups[attempt_num]
+        is_last = attempt_num == max_attempt
+        outcome = _determine_attempt_outcome(group_messages, is_last, attempt_num < max_attempt)
+        result.append({
+            "attempt_number": attempt_num,
+            "messages": group_messages,
+            "outcome": outcome,
+        })
+
+    return result
+
+
+def _determine_attempt_outcome(messages: list[dict], is_last: bool, has_next: bool) -> str:
+    """Determine how an attempt ended based on its messages."""
+    # Walk messages in reverse to find the most significant terminal event
+    for msg in reversed(messages):
+        msg_type = msg.get("type") or ""
+        title = (msg.get("title") or "").upper()
+        author = msg.get("author") or ""
+
+        if author == "dispatcher":
+            if msg_type == "test-result":
+                if "FAILED" in title or "FAIL" in title:
+                    if has_next:
+                        return "test-failure"
+                    return "test-failure"
+                elif "PASSED" in title or "PASS" in title:
+                    if not is_last:
+                        return "test-failure"  # more attempts followed
+            if "WALL CLOCK" in title or "TIMEOUT" in title:
+                return "wall-clock-timeout"
+            if "TURNS EXHAUSTED" in title or "TURNS" in title:
+                return "turns-exhausted"
+            if msg_type == "status" and ("ERROR" in title or "FAILED" in title or "DISPATCH ERROR" in title):
+                return "error"
+
+        if msg_type == "review":
+            if "APPROVED" in title:
+                if not has_next:
+                    return "success"
+            elif "CHANGES REQUESTED" in title or "REJECT" in title:
+                if has_next:
+                    return "review-rejection"
+                return "review-rejection"
+
+    if has_next:
+        return "retried"
+    return "in-progress"
 
 
 def get_merged_state_definitions(project: dict | None = None) -> dict:
