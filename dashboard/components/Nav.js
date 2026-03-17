@@ -4,7 +4,7 @@ export function Nav({ route, systemInfo }) {
     const isActive = (navView) => {
         if (navView === 'board' && route.view === 'board') return true;
         if (navView === 'conversations' && (route.view === 'conversations' || route.view === 'conversation-detail')) return true;
-        if (navView === 'projects' && route.view === 'projects') return true;
+        if (navView === 'projects' && (route.view === 'projects' || route.view === 'project-detail' || route.view === 'component-detail')) return true;
         return false;
     };
 

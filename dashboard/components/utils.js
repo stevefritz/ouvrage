@@ -103,6 +103,8 @@ export function getRoute() {
     if (hash.startsWith('/tasks/')) return { view: 'detail', taskId: hash.slice(7) };
     if (hash.startsWith('/conversations/')) return { view: 'conversation-detail', convId: decodeURIComponent(hash.slice(15)) };
     if (hash === '/conversations') return { view: 'conversations' };
+    if (hash.startsWith('/components/')) return { view: 'component-detail', componentId: decodeURIComponent(hash.slice(12)) };
+    if (hash.startsWith('/projects/')) return { view: 'project-detail', projectId: decodeURIComponent(hash.slice(10)) };
     if (hash === '/projects') return { view: 'projects' };
     return { view: 'board', params: Object.fromEntries(new URLSearchParams(hash.slice(2))) };
 }

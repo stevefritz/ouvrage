@@ -28,7 +28,7 @@ export function Projects() {
                     ? html`<p class="text-slate-500 text-center p-8">No projects registered</p>`
                     : projects.map(p => html`
                         <div key=${p.id} class="bg-slate-900 border border-slate-700 rounded-lg p-4 hover:border-slate-600 cursor-pointer"
-                            onClick=${() => navigate(`#/?project_id=${p.id}`)}>
+                            onClick=${() => navigate(`#/projects/${encodeURIComponent(p.id)}`)}>
                             <h3 class="text-lg font-medium text-slate-200 mb-1">${p.id}</h3>
                             <div class="text-sm text-slate-400 mb-2">
                                 <span class="font-mono">${p.repo}</span>

@@ -6,6 +6,8 @@ import { Nav } from './components/Nav.js';
 import { Board } from './components/Board.js';
 import { TaskDetail } from './components/TaskDetail.js';
 import { Projects } from './components/Projects.js';
+import { ProjectDetail } from './components/ProjectDetail.js';
+import { ComponentDetail } from './components/ComponentDetail.js';
 import { ConversationsList, ConversationDetail } from './components/Conversations.js';
 
 function App() {
@@ -71,6 +73,10 @@ function App() {
         view = html`<${TaskDetail} key=${route.taskId} taskId=${route.taskId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'projects') {
         view = html`<${Projects} />`;
+    } else if (route.view === 'project-detail') {
+        view = html`<${ProjectDetail} key=${route.projectId} projectId=${route.projectId} />`;
+    } else if (route.view === 'component-detail') {
+        view = html`<${ComponentDetail} key=${route.componentId} componentId=${route.componentId} />`;
     } else if (route.view === 'conversations') {
         view = html`<${ConversationsList} />`;
     } else if (route.view === 'conversation-detail') {

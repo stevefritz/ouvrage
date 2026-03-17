@@ -119,6 +119,30 @@ async def init_db():
                 UNIQUE(task_id, tag)
             );
 
+            CREATE TABLE IF NOT EXISTS components (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                base_branch TEXT,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS punchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                component_id TEXT NOT NULL,
+                item TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                claimed_by TEXT,
+                resolved_by TEXT,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (component_id) REFERENCES components(id)
+            );
+
             CREATE TABLE IF NOT EXISTS subtasks (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -217,6 +241,8 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
         if "auto_pr" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
+        if "component_id" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN component_id TEXT")
 
         # Migrate projects table: add model column if missing
         project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
@@ -238,6 +264,9 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_task_tags ON task_tags(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
             CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
+            CREATE INDEX IF NOT EXISTS idx_component_project ON components(project_id);
+            CREATE INDEX IF NOT EXISTS idx_punchlist_component ON punchlist(component_id);
+            CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
         """)
 
         await conn.commit()
@@ -605,6 +634,7 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
+    "component_id",
 }
 
 
@@ -1085,3 +1115,203 @@ async def search_task_messages(query: str, project_id: str | None = None, limit:
             results.append(row)
 
         return results
+
+
+# ---------------------------------------------------------------------------
+# Components
+# ---------------------------------------------------------------------------
+
+async def list_components(project_id: str) -> list[dict]:
+    """List all components for a project, enriched with task stats and punchlist counts."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM components WHERE project_id = ? ORDER BY name",
+            (project_id,),
+        )
+        components = [dict(r) for r in rows]
+
+        for c in components:
+            cid = c["id"]
+            # Task stats
+            task_rows = await conn.execute_fetchall(
+                "SELECT status, total_cost_usd FROM tasks WHERE component_id = ?",
+                (cid,),
+            )
+            c["total_tasks"] = len(task_rows)
+            c["done_tasks"] = sum(1 for t in task_rows if t["status"] == "completed")
+            c["active_tasks"] = sum(1 for t in task_rows if t["status"] == "working")
+            c["total_cost"] = sum((t["total_cost_usd"] or 0) for t in task_rows)
+
+            # Conversation count (tasks in this component that have conversation_id)
+            conv_rows = await conn.execute_fetchall(
+                "SELECT DISTINCT conversation_id FROM tasks WHERE component_id = ? AND conversation_id IS NOT NULL",
+                (cid,),
+            )
+            c["conversation_count"] = len(conv_rows)
+
+            # Open punchlist count
+            pl_rows = await conn.execute_fetchall(
+                "SELECT COUNT(*) as cnt FROM punchlist WHERE component_id = ? AND status != 'done'",
+                (cid,),
+            )
+            c["open_punchlist"] = pl_rows[0]["cnt"] if pl_rows else 0
+
+        return components
+
+
+async def get_component(component_id: str) -> dict | None:
+    """Get a single component with full task list and conversations."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM components WHERE id = ?", (component_id,)
+        )
+        if not rows:
+            return None
+        component = dict(rows[0])
+
+        # Tasks
+        task_rows = await conn.execute_fetchall(
+            "SELECT id, goal, status, model, total_cost_usd, created_at, updated_at, last_activity "
+            "FROM tasks WHERE component_id = ? ORDER BY created_at DESC",
+            (component_id,),
+        )
+        tasks = [dict(t) for t in task_rows]
+        component["tasks"] = tasks
+        component["total_tasks"] = len(tasks)
+        component["done_tasks"] = sum(1 for t in tasks if t["status"] == "completed")
+        component["active_tasks"] = sum(1 for t in tasks if t["status"] == "working")
+        component["total_cost"] = sum((t["total_cost_usd"] or 0) for t in tasks)
+
+        # Linked conversations (via conversation_id on tasks)
+        conv_ids = list({t["id"] for t in task_rows})  # placeholder — we'll use task conv links
+        conv_rows = await conn.execute_fetchall(
+            "SELECT DISTINCT t.conversation_id FROM tasks t "
+            "WHERE t.component_id = ? AND t.conversation_id IS NOT NULL",
+            (component_id,),
+        )
+        conv_id_list = [r["conversation_id"] for r in conv_rows]
+        conversations = []
+        for cid in conv_id_list:
+            c_rows = await conn.execute_fetchall(
+                "SELECT id, goal, project, created_at FROM conversations WHERE id = ?", (cid,)
+            )
+            if c_rows:
+                conversations.append(dict(c_rows[0]))
+        component["conversations"] = conversations
+
+        return component
+
+
+async def create_component(id: str, project_id: str, name: str, description: str = None,
+                            status: str = "planning", base_branch: str = None) -> dict:
+    async with get_db() as conn:
+        ts = now_iso()
+        await conn.execute(
+            """INSERT INTO components (id, project_id, name, description, status, base_branch, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (id, project_id, name, description, status, base_branch, ts, ts),
+        )
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else {}
+
+
+async def update_component(id: str, **fields) -> dict:
+    async with get_db() as conn:
+        allowed = {"name", "description", "status", "base_branch"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            rows = await conn.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+            return dict(rows[0]) if rows else {}
+        fields["updated_at"] = now_iso()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [id]
+        await conn.execute(f"UPDATE components SET {set_clause} WHERE id = ?", values)
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+        return dict(rows[0]) if rows else {}
+
+
+# ---------------------------------------------------------------------------
+# Punchlist
+# ---------------------------------------------------------------------------
+
+async def list_punchlist(component_id: str) -> list[dict]:
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM punchlist WHERE component_id = ? ORDER BY created_at",
+            (component_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def create_punchlist_item(component_id: str, item: str) -> dict:
+    async with get_db() as conn:
+        ts = now_iso()
+        cursor = await conn.execute(
+            """INSERT INTO punchlist (component_id, item, status, created_at, updated_at)
+               VALUES (?, ?, 'open', ?, ?)""",
+            (component_id, item, ts, ts),
+        )
+        await conn.commit()
+        item_id = cursor.lastrowid
+        rows = await conn.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        return dict(rows[0]) if rows else {}
+
+
+async def update_punchlist_item(item_id: int, **fields) -> dict:
+    async with get_db() as conn:
+        allowed = {"status", "claimed_by", "resolved_by", "item"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            rows = await conn.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+            return dict(rows[0]) if rows else {}
+        fields["updated_at"] = now_iso()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [item_id]
+        await conn.execute(f"UPDATE punchlist SET {set_clause} WHERE id = ?", values)
+        await conn.commit()
+        rows = await conn.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        return dict(rows[0]) if rows else {}
+
+
+async def delete_punchlist_item(item_id: int) -> bool:
+    async with get_db() as conn:
+        await conn.execute("DELETE FROM punchlist WHERE id = ?", (item_id,))
+        await conn.commit()
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Component Activity Timeline
+# ---------------------------------------------------------------------------
+
+ACTIVITY_TYPES = {"result", "question", "handoff", "plan", "note"}
+
+async def get_component_activity(component_id: str, limit: int = 50) -> list[dict]:
+    """Return recent notable messages from tasks in this component."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            """SELECT m.id, m.task_id, m.type, m.author, m.title, m.content, m.created_at
+               FROM messages m
+               JOIN tasks t ON t.id = m.task_id
+               WHERE t.component_id = ?
+                 AND (m.type IN ('result', 'question', 'handoff', 'plan', 'note')
+                      OR (m.type = 'progress' AND (
+                          m.content LIKE '%gate%passed%' OR
+                          m.content LIKE '%completed%' OR
+                          m.content LIKE '%failed%'
+                      )))
+               ORDER BY m.created_at DESC
+               LIMIT ?""",
+            (component_id, limit),
+        )
+        events = []
+        for r in rows:
+            row = dict(r)
+            # Truncate long content to a summary
+            content = row.get("content") or ""
+            row["summary"] = content[:200] + ("..." if len(content) > 200 else "")
+            del row["content"]
+            events.append(row)
+        return events
