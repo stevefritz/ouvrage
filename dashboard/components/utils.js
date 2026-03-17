@@ -100,6 +100,7 @@ export function renderMarkdown(content) {
 
 export function getRoute() {
     const hash = location.hash.slice(1) || '/';
+    if (hash.startsWith('/graph/')) return { view: 'graph', projectId: decodeURIComponent(hash.slice(7)) };
     if (hash.startsWith('/tasks/')) return { view: 'detail', taskId: hash.slice(7) };
     if (hash.startsWith('/conversations/')) return { view: 'conversation-detail', convId: decodeURIComponent(hash.slice(15)) };
     if (hash === '/conversations') return { view: 'conversations' };

@@ -95,3 +95,109 @@
     50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
 }
 .gate-pulse { animation: gate-pulse 2s ease-in-out infinite; }
+
+/* ── DAG Graph Styles ────────────────────────────────────── */
+
+/* Layout: graph + detail panel side by side */
+.graph-layout {
+    display: flex;
+    gap: 0;
+    min-height: calc(100vh - 140px);
+}
+.graph-main {
+    flex: 1;
+    min-width: 0;
+    transition: flex 0.3s ease;
+}
+.graph-layout-split .graph-main {
+    flex: 1 1 50%;
+}
+
+/* Graph container */
+.dag-container {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.dag-scroll {
+    overflow: auto;
+    max-height: calc(100vh - 260px);
+    position: relative;
+}
+.dag-canvas {
+    min-width: 100%;
+}
+
+/* Task node */
+.dag-node {
+    position: absolute;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    padding: 10px 12px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    z-index: 2;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+    overflow: hidden;
+}
+.dag-node:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 3;
+}
+.dag-node-selected {
+    border-width: 2px;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+    z-index: 4;
+}
+
+/* SVG edge layer */
+.dag-edges {
+    z-index: 1;
+}
+
+/* Detail panel — slide in from right */
+.graph-detail-panel {
+    width: 45%;
+    min-width: 380px;
+    max-width: 600px;
+    background: #0f172a;
+    border-left: 1px solid #1e293b;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideInRight 0.25s ease;
+}
+@keyframes slideInRight {
+    from { transform: translateX(30px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* Heartbeat indicators */
+.heartbeat-active {
+    background: #22c55e;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+.heartbeat-stale {
+    background: #f59e0b;
+    animation: pulse 3s ease-in-out infinite;
+}
+.heartbeat-dead {
+    background: #ef4444;
+}
+
+/* Responsive: narrow screens overlay the panel */
+@media (max-width: 900px) {
+    .graph-detail-panel {
+        position: fixed;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 50;
+        width: 85%;
+        max-width: none;
+        box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+    }
+}
