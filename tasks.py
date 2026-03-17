@@ -63,28 +63,94 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+# ---------------------------------------------------------------------------
+# Crash Recovery Configuration
+# ---------------------------------------------------------------------------
+
+RECOVERY_STAGGER_SECONDS = int(os.environ.get("RECOVERY_STAGGER_SECONDS", "30"))
+MAX_RECOVERY_ATTEMPTS = int(os.environ.get("MAX_RECOVERY_ATTEMPTS", "3"))
+RECOVERY_ENABLED = os.environ.get("RECOVERY_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def _classify_orphan(task: dict) -> tuple[int, str]:
+    """Classify an orphaned task for recovery priority and method.
+
+    Returns (priority, method) where lower priority = dispatched first.
+    Priority:
+      0 = gate subtask (unblock parent)
+      1 = chain parent with waiting dependents
+      2 = has session_id (resume)
+      3 = no session_id (retry)
+    Method: 'gate_subtask', 'resume', 'retry'
+    """
+    # Gate subtask: has parent_task_id → re-trigger parent gate
+    if task.get("parent_task_id"):
+        return (0, "gate_subtask")
+
+    # Has session_id → resumable
+    if task.get("session_id"):
+        return (2, "resume")
+
+    # No session_id → retry
+    return (3, "retry")
+
+
+async def _classify_with_dependents(task: dict) -> tuple[int, str]:
+    """Like _classify_orphan but checks for waiting dependents (async DB query)."""
+    priority, method = _classify_orphan(task)
+
+    # Upgrade priority if this task has waiting dependents (chain parent)
+    if priority > 1 and not task.get("parent_task_id"):
+        dependents = await db.get_dependents(task["id"])
+        if any(d["status"] == "ready" for d in dependents):
+            return (1, method)
+
+    return (priority, method)
+
+
+def _verify_worktree(task: dict) -> bool:
+    """Check if a task's worktree exists and looks valid."""
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        return False
+    # Check for .git file/dir (worktree marker)
+    return os.path.exists(os.path.join(worktree, ".git"))
+
+
+def _build_recovery_message(task: dict, method: str, position: int, total: int,
+                             recovery_count: int) -> str:
+    """Build a status message for a recovered task."""
+    session_id = task.get("session_id") or "(none)"
+    phase = task.get("phase") or "unknown"
+
+    method_label = {
+        "resume": "resume (session preserved)",
+        "retry": "retry (fresh session)",
+        "gate_subtask": "re-trigger parent gate",
+    }.get(method, method)
+
+    return (
+        f"⚡ Service restart detected — auto-recovering task\n"
+        f"  Previous state: working (phase: {phase})\n"
+        f"  Session: {session_id}\n"
+        f"  Recovery method: {method_label}\n"
+        f"  Recovery attempt: {recovery_count}\n"
+        f"  Stagger position: {position} of {total} tasks recovering"
+    )
+
+
 async def recover_orphaned_tasks():
     """Recover tasks left in broken states after a service restart.
 
-    Scans for:
-    - 'working' tasks with no live PID → mark as needs-review
-    - 'test-failed' or 'review-failed' gate status → re-trigger gate pipeline
-    """
-    tasks = await db.list_tasks(status="working")
-    for task in tasks:
-        pid = task.get("pid")
-        if pid and _is_pid_alive(pid):
-            continue  # still running, leave it alone
-        log.warning(f"Startup recovery: task {task['id']} stuck in 'working' with no live process")
-        await db.update_task(task["id"], status="needs-review")
-        await db.post_task_message(
-            task_id=task["id"], author="dispatcher", type="status",
-            title="Recovered after restart",
-            content="Service restarted while this task was running. Marked as needs-review. "
-                    "Resume or retry to continue.",
-        )
+    Handles three categories:
+    1. Orphaned CC sessions (status=working, no live PID) → auto-resume or retry
+    2. Gate subtasks (parent_task_id set) → re-trigger parent gate
+    3. Gate pipeline stuck (test-failed/review-failed) → re-trigger gate
 
+    Features staggered recovery, flap detection, and FIFO queue priority.
+    """
     # Re-trigger gate for tasks stuck in test-failed/review-failed
+    # (this is independent of RECOVERY_ENABLED — it's existing behavior)
     all_tasks = await db.list_tasks(status="completed")
     for task in all_tasks:
         gate = task.get("gate_status")
@@ -97,6 +163,182 @@ async def recover_orphaned_tasks():
                 asyncio.create_task(_run_test_gate(task["id"], project, task))
             elif gate == "review-failed" and task.get("auto_review"):
                 asyncio.create_task(_dispatch_review(task["id"], project, task))
+
+    # Find orphaned working tasks
+    working_tasks = await db.list_tasks(status="working")
+    orphans = []
+    for task in working_tasks:
+        pid = task.get("pid")
+        if pid and _is_pid_alive(pid):
+            continue  # still running
+        orphans.append(task)
+
+    if not orphans:
+        return
+
+    # Mark all orphans as needs-review immediately so they don't count against
+    # concurrency while we process them one by one with stagger delays
+    for task in orphans:
+        await db.update_task(task["id"], status="needs-review")
+
+    # If recovery is disabled, fall back to old behavior: mark needs-review
+    if not RECOVERY_ENABLED:
+        for task in orphans:
+            log.warning(f"Startup recovery (disabled): task {task['id']} marked needs-review")
+            await db.update_task(task["id"], status="needs-review")
+            await db.post_task_message(
+                task_id=task["id"], author="dispatcher", type="status",
+                title="Recovered after restart",
+                content="Service restarted while this task was running. "
+                        "Auto-recovery is disabled. Marked as needs-review.",
+            )
+        return
+
+    # Classify and sort orphans by priority
+    classified: list[tuple[int, str, dict]] = []
+    for task in orphans:
+        priority, method = await _classify_with_dependents(task)
+        classified.append((priority, method, task))
+    classified.sort(key=lambda x: x[0])
+
+    total = len(classified)
+    log.info(f"Startup recovery: {total} orphaned tasks to recover")
+
+    for position, (priority, method, task) in enumerate(classified, 1):
+        task_id = task["id"]
+        recovery_count = (task.get("recovery_count") or 0) + 1
+
+        # Flap detection
+        if recovery_count > MAX_RECOVERY_ATTEMPTS:
+            log.warning(f"Recovery limit reached for {task_id} ({recovery_count - 1} attempts)")
+            await db.update_task(task_id, status="needs-review",
+                                 recovery_count=recovery_count - 1)
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Recovery limit reached",
+                content=f"Recovery limit reached ({recovery_count - 1} attempts). "
+                        "Manual intervention required.",
+            )
+            continue
+
+        # Update recovery tracking
+        await db.update_task(task_id,
+                             recovery_count=recovery_count,
+                             last_recovery_at=db.now_iso())
+
+        # Post recovery status message
+        msg = _build_recovery_message(task, method, position, total, recovery_count)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-recovery initiated", content=msg,
+        )
+
+        # Stagger: first task dispatches immediately, subsequent tasks wait
+        if position > 1:
+            log.info(f"Recovery stagger: waiting {RECOVERY_STAGGER_SECONDS}s before {task_id} ({position}/{total})")
+            await asyncio.sleep(RECOVERY_STAGGER_SECONDS)
+
+        # Check concurrency before dispatching
+        active = await db.count_active_tasks()
+        if active >= db.DEFAULT_MAX_CONCURRENT:
+            # Queue with recovery priority (front of FIFO queue)
+            log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{db.DEFAULT_MAX_CONCURRENT})")
+            await db.update_task(task_id, status="ready",
+                                 queued_at=db.now_iso(), recovery_priority=True)
+            continue
+
+        # Dispatch based on method
+        try:
+            await _recover_task(task_id, task, method)
+        except Exception as e:
+            log.error(f"Recovery failed for {task_id}: {e}")
+            await db.update_task(task_id, status="needs-review")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Recovery failed",
+                content=f"Auto-recovery failed:\n```\n{e}\n```\nMarked as needs-review.",
+            )
+
+
+async def _recover_task(task_id: str, task: dict, method: str) -> None:
+    """Execute the recovery method for a single task."""
+    if method == "gate_subtask":
+        await _recover_gate_subtask(task_id, task)
+    elif method == "resume":
+        await _recover_with_resume(task_id, task)
+    elif method == "retry":
+        await _recover_with_retry(task_id, task)
+
+
+async def _recover_gate_subtask(task_id: str, task: dict) -> None:
+    """Re-trigger parent gate pipeline for an orphaned gate subtask."""
+    parent_id = task["parent_task_id"]
+    parent = await db.get_task(parent_id)
+    if not parent:
+        log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} not found, falling back to needs-review")
+        await db.update_task(task_id, status="needs-review")
+        return
+
+    project = await db.get_project(parent["project_id"])
+    if not project:
+        await db.update_task(task_id, status="needs-review")
+        return
+
+    # Cancel the orphaned subtask
+    await db.update_task(task_id, status="cancelled")
+
+    # Re-trigger the appropriate gate step on the parent
+    gate = parent.get("gate_status")
+    if gate in ("testing", "test-failed") and parent.get("auto_test") and project.get("test_command"):
+        log.info(f"Recovery: re-triggering test gate for parent {parent_id}")
+        asyncio.create_task(_run_test_gate(parent_id, project, parent))
+    elif gate in ("reviewing", "review-failed") and parent.get("auto_review"):
+        log.info(f"Recovery: re-triggering review for parent {parent_id}")
+        asyncio.create_task(_dispatch_review(parent_id, project, parent))
+    else:
+        log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} gate_status={gate}, cannot re-trigger")
+        await db.update_task(task_id, status="needs-review")
+
+
+async def _recover_with_resume(task_id: str, task: dict) -> None:
+    """Resume a task with existing session_id. Falls back to retry on failure."""
+    # Verify worktree before resume
+    if not _verify_worktree(task):
+        log.warning(f"Recovery: worktree missing/corrupt for {task_id}, falling back to retry")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Worktree unavailable",
+            content="Worktree missing or corrupted — falling back to fresh retry.",
+        )
+        await _recover_with_retry(task_id, task)
+        return
+
+    # Task is already in needs-review status (set at start of recovery)
+    try:
+        await resume_task(task_id)
+        log.info(f"Recovery: resumed {task_id} with session {task.get('session_id')}")
+    except Exception as e:
+        log.warning(f"Recovery: resume failed for {task_id}: {e}, falling back to retry")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Resume failed",
+            content=f"Could not resume session: {e}\nFalling back to fresh retry.",
+        )
+        # Ensure task is in a retryable state
+        await db.update_task(task_id, status="needs-review")
+        await _recover_with_retry(task_id, task)
+
+
+async def _recover_with_retry(task_id: str, task: dict) -> None:
+    """Retry a task with a fresh session."""
+    # Task is already in needs-review status (set at start of recovery)
+    try:
+        await retry_task(task_id)
+        log.info(f"Recovery: retried {task_id} with fresh session")
+    except Exception as e:
+        log.warning(f"Recovery: retry failed for {task_id}: {e}")
+        await db.update_task(task_id, status="needs-review")
+        raise
 
 
 STALL_THRESHOLD_SECONDS = 300  # 5 minutes
