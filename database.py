@@ -1636,9 +1636,9 @@ async def get_component(id: str) -> dict | None:
 
         # Linked conversations (return objects with id + goal)
         conv_rows = await db.execute_fetchall(
-            """SELECT conv.id, conv.goal
+            """SELECT cc.conversation_id AS id, conv.goal
                FROM component_conversations cc
-               JOIN conversations conv ON conv.id = cc.conversation_id
+               LEFT JOIN conversations conv ON conv.id = cc.conversation_id
                WHERE cc.component_id = ?""",
             (id,),
         )

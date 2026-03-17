@@ -105,8 +105,9 @@ class TestConversationLinking:
         await db.link_conversation("search-comp", "conv-a")
         await db.link_conversation("search-comp", "conv-b")
         comp = await db.get_component("search-comp")
-        assert "conv-a" in comp["conversations"]
-        assert "conv-b" in comp["conversations"]
+        conv_ids = [c["id"] for c in comp["conversations"]]
+        assert "conv-a" in conv_ids
+        assert "conv-b" in conv_ids
         assert len(comp["conversations"]) == 2
 
     async def test_get_component_conversations_helper(self, db, sample_project, component):

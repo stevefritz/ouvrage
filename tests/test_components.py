@@ -161,7 +161,8 @@ class TestComponentConversations:
         await db.create_component(id="with-conv", project_id="test-project", name="With Conv")
         await db.link_conversation("with-conv", "widget-redesign")
         comp = await db.get_component("with-conv")
-        assert "widget-redesign" in comp["conversations"]
+        conv_ids = [c["id"] for c in comp["conversations"]]
+        assert "widget-redesign" in conv_ids
 
 
 # ---------------------------------------------------------------------------
