@@ -253,6 +253,8 @@ async def init_db():
         # Migrate tasks table: add jira_ticket, conversation_id columns if missing
         task_columns = await conn.execute_fetchall("PRAGMA table_info(tasks)")
         task_col_names = [c["name"] for c in task_columns]
+        if "pid" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN pid INTEGER")
         if "jira_ticket" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN jira_ticket TEXT")
         if "conversation_id" not in task_col_names:
@@ -305,6 +307,13 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN max_test_retries INTEGER")
         if "max_review_retries" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN max_review_retries INTEGER")
+        # v5-crash-recovery: flap detection + queue priority
+        if "recovery_count" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN recovery_count INTEGER DEFAULT 0")
+        if "last_recovery_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN last_recovery_at TEXT")
+        if "recovery_priority" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN recovery_priority BOOLEAN DEFAULT 0")
 
         # Migrate conversations table: add claude_chat_url if missing
         conv_columns = await conn.execute_fetchall("PRAGMA table_info(conversations)")
@@ -752,6 +761,8 @@ TASK_MUTABLE_FIELDS = {
     # v5 auto-merge-queue fields
     "queued_at", "auto_merge", "auto_release_worktree",
     "pushed_at", "pr_status", "pr_error",
+    # v5 crash-recovery fields
+    "recovery_count", "last_recovery_at", "recovery_priority",
 }
 
 
@@ -965,7 +976,7 @@ async def get_queued_tasks() -> list[dict]:
                      WHERE p.id = t.depends_on AND p.gate_passed_at IS NOT NULL
                    )
                  )
-               ORDER BY t.queued_at ASC"""
+               ORDER BY t.recovery_priority DESC, t.queued_at ASC"""
         )
         return [dict(r) for r in rows]
 
