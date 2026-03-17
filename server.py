@@ -555,6 +555,20 @@ COMPONENT_TOOLS = [
             "required": ["component_id", "conversation_id"],
         },
     ),
+    Tool(
+        name="search_component",
+        description="Search across all content linked to a component: messages from linked conversations and task messages.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component_id": {"type": "string", "description": "Component ID to search within"},
+                "query": {"type": "string", "description": "Search query (substring match)"},
+                "include_graphiti": {"type": "boolean", "description": "Also search Graphiti if configured on the project's connectors", "default": False},
+                "limit": {"type": "integer", "description": "Max results per source (default 20)", "default": 20},
+            },
+            "required": ["component_id", "query"],
+        },
+    ),
 ]
 
 TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS
@@ -990,6 +1004,15 @@ async def _handle_unlink_conversation(arguments):
     )
 
 
+async def _handle_search_component(arguments):
+    return await db.search_component(
+        component_id=arguments["component_id"],
+        query=arguments["query"],
+        include_graphiti=arguments.get("include_graphiti", False),
+        limit=arguments.get("limit", 20),
+    )
+
+
 TOOL_HANDLERS = {
     # Conversation tools
     "board": _handle_board,
@@ -1031,6 +1054,7 @@ TOOL_HANDLERS = {
     "list_components": _handle_list_components,
     "link_conversation": _handle_link_conversation,
     "unlink_conversation": _handle_unlink_conversation,
+    "search_component": _handle_search_component,
 }
 
 
