@@ -137,7 +137,7 @@ export function Settings() {
     const notifDisabled = !push.subscribed;
 
     return html`
-        <div class="max-w-2xl mx-auto px-6 py-8">
+        <div class="px-6 py-8">
             <h1 class="text-xl font-semibold text-slate-100 mb-6">Settings</h1>
 
             <!-- Push notifications card -->

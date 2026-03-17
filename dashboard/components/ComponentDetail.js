@@ -412,7 +412,7 @@ export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
     const projectId = comp.project_id;
 
     return html`
-        <div class="p-6 max-w-5xl">
+        <div class="p-6">
             <!-- Breadcrumb -->
             <div class="flex items-center gap-2 text-sm text-slate-500 mb-4">
                 <a href="#/projects" class="hover:text-slate-300">Projects</a>
