@@ -1,5 +1,6 @@
 // DAG Graph Visualization — dependency graph as primary component view
 import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
+import dagre from 'https://esm.sh/dagre@0.8.5';
 import { api } from '../api.js';
 import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorState, EmptyState, navigate } from './utils.js';
 
@@ -42,6 +43,30 @@ function deriveComponent(task) {
     return match ? match[1] : short;
 }
 
+// ── Connected component detection ────────────────────────────
+function findConnectedComponents(taskIds, adjacency) {
+    const visited = new Set();
+    const components = [];
+    for (const id of taskIds) {
+        if (visited.has(id)) continue;
+        const component = [];
+        const queue = [id];
+        visited.add(id);
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            component.push(cur);
+            for (const neighbor of (adjacency.get(cur) || [])) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    queue.push(neighbor);
+                }
+            }
+        }
+        components.push(component);
+    }
+    return components;
+}
+
 export function computeLayout(tasks, stateColors) {
     const STATE_COLORS = stateColors;
     if (!tasks || tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
@@ -50,7 +75,7 @@ export function computeLayout(tasks, stateColors) {
     const mainTasks = tasks.filter(t => !t.parent_task_id);
     const taskMap = new Map(mainTasks.map(t => [t.id, t]));
 
-    // Determine effective status: if depends_on exists and parent isn't completed/merged, it's blocked
+    // Determine effective status
     const effectiveStatus = (t) => {
         if (t.depends_on && taskMap.has(t.depends_on)) {
             const parent = taskMap.get(t.depends_on);
@@ -58,133 +83,142 @@ export function computeLayout(tasks, stateColors) {
                 if (t.status === 'ready') return 'blocked';
             }
         }
-        // Map gate_status to display status for active gates
         if (t.status === 'working' && t.gate_status === 'testing') return 'testing';
         if (t.status === 'working' && t.gate_status === 'reviewing') return 'reviewing';
         return t.status || 'ready';
     };
 
-    // Build adjacency: parent → children
-    const children = new Map();
-    const parents = new Map();
-    for (const t of mainTasks) {
-        if (!children.has(t.id)) children.set(t.id, []);
-        if (!parents.has(t.id)) parents.set(t.id, []);
-        if (t.depends_on && taskMap.has(t.depends_on)) {
-            parents.get(t.id).push(t.depends_on);
-            if (!children.has(t.depends_on)) children.set(t.depends_on, []);
-            children.get(t.depends_on).push(t.id);
-        }
-    }
-
-    // Assign ranks via BFS from roots
-    const ranks = new Map();
-    const roots = mainTasks.filter(t => !t.depends_on || !taskMap.has(t.depends_on));
-
-    // For tasks with deps, rank = parent rank + 1. For roots, rank = 0
-    const queue = [...roots.map(t => t.id)];
-    for (const id of queue) {
-        if (!ranks.has(id)) ranks.set(id, 0);
-    }
-
-    // BFS: assign ranks (use Set for O(1) visited checks)
-    const queued = new Set(queue);
-    let i = 0;
-    while (i < queue.length) {
-        const id = queue[i++];
-        const rank = ranks.get(id);
-        for (const childId of (children.get(id) || [])) {
-            const newRank = rank + 1;
-            if (!ranks.has(childId) || ranks.get(childId) < newRank) {
-                ranks.set(childId, newRank);
-            }
-            if (!queued.has(childId)) {
-                queued.add(childId);
-                queue.push(childId);
-            }
-        }
-    }
-
-    // Handle orphans (tasks not reachable from roots, shouldn't happen but be safe)
-    for (const t of mainTasks) {
-        if (!ranks.has(t.id)) ranks.set(t.id, 0);
-    }
-
-    // Group by rank
-    const rankGroups = new Map();
-    for (const t of mainTasks) {
-        const r = ranks.get(t.id);
-        if (!rankGroups.has(r)) rankGroups.set(r, []);
-        rankGroups.get(r).push(t);
-    }
-
-    // Sort ranks, then sort within each rank by component then creation order
-    const sortedRanks = [...rankGroups.keys()].sort((a, b) => a - b);
-
     // Assign component colors
     const components = [...new Set(mainTasks.map(deriveComponent))];
     const componentColors = new Map(components.map((c, i) => [c, COMPONENT_PALETTE[i % COMPONENT_PALETTE.length]]));
 
-    // Compute positions
-    const nodes = [];
-    let maxX = 0;
+    // Build undirected adjacency for connected component detection
+    const undirectedAdj = new Map();
+    for (const t of mainTasks) {
+        if (!undirectedAdj.has(t.id)) undirectedAdj.set(t.id, []);
+        if (t.depends_on && taskMap.has(t.depends_on)) {
+            undirectedAdj.get(t.id).push(t.depends_on);
+            if (!undirectedAdj.has(t.depends_on)) undirectedAdj.set(t.depends_on, []);
+            undirectedAdj.get(t.depends_on).push(t.id);
+        }
+    }
 
-    for (const rank of sortedRanks) {
-        const group = rankGroups.get(rank);
-        // Sort by component name, then by creation date
-        group.sort((a, b) => {
-            const ca = deriveComponent(a), cb = deriveComponent(b);
-            if (ca !== cb) return ca.localeCompare(cb);
-            return (a.created_at || '').localeCompare(b.created_at || '');
+    // Detect connected components
+    const connectedComponents = findConnectedComponents(
+        mainTasks.map(t => t.id), undirectedAdj
+    );
+
+    // Sort components: largest first, then alphabetically by first task id
+    connectedComponents.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+
+    // Lay out each connected component separately with dagre
+    const allNodes = [];
+    const allEdges = [];
+    let xOffset = PADDING;
+    const COMPONENT_GAP = 80;
+
+    for (const compIds of connectedComponents) {
+        const compTaskSet = new Set(compIds);
+        const compTasks = compIds.map(id => taskMap.get(id));
+
+        // Build dagre graph for this component
+        const g = new dagre.graphlib.Graph();
+        g.setGraph({
+            rankdir: 'TB',
+            ranksep: GAP_Y,
+            nodesep: GAP_X,
+            marginx: 0,
+            marginy: 0,
         });
+        g.setDefaultEdgeLabel(() => ({}));
 
-        const startX = PADDING;
+        // Add nodes
+        for (const t of compTasks) {
+            g.setNode(t.id, { width: NODE_W, height: NODE_H });
+        }
 
-        for (let j = 0; j < group.length; j++) {
-            const t = group[j];
-            const x = startX + j * (NODE_W + GAP_X);
-            const y = PADDING + rank * (NODE_H + GAP_Y);
+        // Add edges (depends_on → task, i.e. parent → child)
+        for (const t of compTasks) {
+            if (t.depends_on && compTaskSet.has(t.depends_on)) {
+                g.setEdge(t.depends_on, t.id);
+            }
+        }
+
+        // Run dagre layout
+        dagre.layout(g);
+
+        // Find bounding box of this component
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const id of compIds) {
+            const n = g.node(id);
+            minX = Math.min(minX, n.x - NODE_W / 2);
+            maxX = Math.max(maxX, n.x + NODE_W / 2);
+            minY = Math.min(minY, n.y - NODE_H / 2);
+            maxY = Math.max(maxY, n.y + NODE_H / 2);
+        }
+
+        // Map dagre positions to our coordinate space (offset so component starts at xOffset)
+        for (const t of compTasks) {
+            const dagreNode = g.node(t.id);
+            const x = xOffset + (dagreNode.x - minX) - NODE_W / 2 + PADDING;
+            const y = (dagreNode.y - minY) + PADDING;  // dagre y is center, convert to top-left
             const comp = deriveComponent(t);
             const status = effectiveStatus(t);
 
-            nodes.push({
+            allNodes.push({
                 id: t.id,
                 task: t,
-                x, y,
+                x,
+                y: y - NODE_H / 2,
                 status,
                 component: comp,
                 componentColor: componentColors.get(comp),
                 stateColor: STATE_COLORS[status] || STATE_COLORS.ready,
             });
-
-            if (x + NODE_W > maxX) maxX = x + NODE_W;
         }
+
+        // Map dagre edges — use dagre's routed points for clean paths
+        const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+        for (const t of compTasks) {
+            if (t.depends_on && compTaskSet.has(t.depends_on) && nodeMap.has(t.depends_on) && nodeMap.has(t.id)) {
+                const from = nodeMap.get(t.depends_on);
+                const to = nodeMap.get(t.id);
+                const crossComponent = deriveComponent(from.task) !== deriveComponent(to.task);
+
+                // Get dagre's edge points for better routing
+                const edgeData = g.edge(t.depends_on, t.id);
+                const points = edgeData && edgeData.points ? edgeData.points.map(p => ({
+                    x: xOffset + (p.x - minX) + PADDING,
+                    y: (p.y - minY) + PADDING,
+                })) : null;
+
+                allEdges.push({
+                    fromId: from.id,
+                    toId: to.id,
+                    x1: from.x + NODE_W / 2,
+                    y1: from.y + NODE_H,
+                    x2: to.x + NODE_W / 2,
+                    y2: to.y,
+                    points,
+                    crossComponent,
+                });
+            }
+        }
+
+        // Advance xOffset for next component
+        const compWidth = maxX - minX + PADDING * 2;
+        xOffset += compWidth + COMPONENT_GAP;
     }
 
-    // Build edges
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const edges = [];
-    for (const t of mainTasks) {
-        if (t.depends_on && nodeMap.has(t.depends_on) && nodeMap.has(t.id)) {
-            const from = nodeMap.get(t.depends_on);
-            const to = nodeMap.get(t.id);
-            const crossComponent = deriveComponent(from.task) !== deriveComponent(to.task);
-            edges.push({
-                fromId: from.id,
-                toId: to.id,
-                x1: from.x + NODE_W / 2,
-                y1: from.y + NODE_H,
-                x2: to.x + NODE_W / 2,
-                y2: to.y,
-                crossComponent,
-            });
-        }
+    // Calculate total dimensions
+    let totalWidth = 0, totalHeight = 0;
+    for (const n of allNodes) {
+        totalWidth = Math.max(totalWidth, n.x + NODE_W + PADDING);
+        totalHeight = Math.max(totalHeight, n.y + NODE_H + PADDING);
     }
+    totalWidth = Math.max(totalWidth, 600);
 
-    const height = (sortedRanks.length > 0 ? (Math.max(...sortedRanks) + 1) * (NODE_H + GAP_Y) : NODE_H) + PADDING * 2;
-    const width = Math.max(maxX + PADDING, 600);
-
-    return { nodes, edges, width, height, componentColors };
+    return { nodes: allNodes, edges: allEdges, width: totalWidth, height: totalHeight, componentColors };
 }
 
 // ── Heartbeat helper ─────────────────────────────────────────
@@ -207,13 +241,42 @@ function heartbeatLabel(cls) {
 
 // ── SVG Edge component ──────────────────────────────────────
 export function EdgePath({ edge, highlighted, dimmed }) {
-    const { x1, y1, x2, y2, crossComponent } = edge;
-    const midY = (y1 + y2) / 2;
-    const d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+    const { x1, y1, x2, y2, points, crossComponent } = edge;
     const opacity = dimmed ? 0.1 : highlighted ? 1 : 0.4;
     const stroke = crossComponent ? '#a78bfa' : '#475569';
     const dashArray = crossComponent ? '6,4' : 'none';
     const strokeWidth = highlighted ? 2.5 : 1.5;
+
+    // Use dagre's routed points for smooth curves, fallback to simple bezier
+    let d;
+    if (points && points.length >= 2) {
+        // Build smooth path through dagre's control points
+        d = `M${x1},${y1}`;
+        if (points.length === 2) {
+            // Simple case: just two intermediate points — cubic bezier
+            d += ` C${points[0].x},${points[0].y} ${points[1].x},${points[1].y} ${x2},${y2}`;
+        } else {
+            // Multiple points: use first point as control, then smooth through rest
+            const pts = [{ x: x1, y: y1 }, ...points, { x: x2, y: y2 }];
+            for (let i = 1; i < pts.length - 1; i++) {
+                const prev = pts[i - 1];
+                const cur = pts[i];
+                const next = pts[i + 1];
+                const cpx1 = prev.x + (cur.x - prev.x) * 0.5;
+                const cpy1 = cur.y;
+                const cpx2 = cur.x + (next.x - cur.x) * 0.5;
+                const cpy2 = cur.y;
+                if (i === pts.length - 2) {
+                    d += ` C${cpx1},${cpy1} ${cpx2},${cpy2} ${next.x},${next.y}`;
+                } else {
+                    d += ` C${cpx1},${cpy1} ${cpx2},${cpy2} ${cur.x + (next.x - cur.x) * 0.5},${cur.y + (next.y - cur.y) * 0.5}`;
+                }
+            }
+        }
+    } else {
+        const midY = (y1 + y2) / 2;
+        d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+    }
 
     return html`
         <g>
