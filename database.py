@@ -1627,12 +1627,23 @@ async def get_component(id: str) -> dict | None:
         c["total_cost"] = round(total_cost, 2)
 
         # Full task list for component detail view
-        all_tasks = await db.execute_fetchall(
-            """SELECT id, goal, status, model, total_cost_usd, last_activity, created_at
-               FROM tasks WHERE component_id = ? ORDER BY created_at DESC""",
+        all_task_rows = await db.execute_fetchall(
+            """SELECT t.*,
+                (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id) as checklist_total,
+                (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id AND done = TRUE) as checklist_done,
+                (SELECT ref FROM task_artifacts WHERE task_id = t.id AND type = 'pr_url' LIMIT 1) as pr_url
+               FROM tasks t WHERE t.component_id = ? ORDER BY t.created_at DESC""",
             (id,),
         )
-        c["tasks"] = [dict(t) for t in all_tasks]
+        all_tasks = []
+        for t in all_task_rows:
+            task = dict(t)
+            tag_rows = await db.execute_fetchall(
+                "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task["id"],)
+            )
+            task["tags"] = [tr["tag"] for tr in tag_rows]
+            all_tasks.append(task)
+        c["tasks"] = all_tasks
 
         # Linked conversations (return objects with id + goal)
         conv_rows = await db.execute_fetchall(
