@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="bg-slate-950">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,8 +8,15 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
     <link rel="stylesheet" href="/dashboard/style.css">
+    <script>
+        // Apply saved theme before paint to prevent flash
+        (function() {
+            var theme = localStorage.getItem('switchboard-theme') || 'dark';
+            if (theme === 'light') document.documentElement.classList.add('theme-light');
+        })();
+    </script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
+<body class="min-h-screen" style="background: var(--bg-primary); color: var(--text-primary);">
     <div id="app"></div>
     <script type="module" src="/dashboard/app.js"></script>
 </body>

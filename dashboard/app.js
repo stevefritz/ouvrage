@@ -1,6 +1,6 @@
-import { h, render } from 'https://esm.sh/preact@10.25.4';
+import { h, render, Component } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
-import { html, getRoute, navigate } from './components/utils.js';
+import { html, getRoute, navigate, ConfirmDialog } from './components/utils.js';
 import { api } from './api.js';
 import { Nav } from './components/Nav.js';
 import { Board } from './components/Board.js';
@@ -17,10 +17,57 @@ if ('serviceWorker' in navigator) {
         .catch(e => console.warn('SW registration failed:', e));
 }
 
+// ── Error Boundary ───────────────────────────────────────────
+class ErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { error: error.message || 'An unexpected error occurred' };
+    }
+    componentDidCatch(error) {
+        console.error('ErrorBoundary caught:', error);
+    }
+    render() {
+        if (this.state.error) {
+            return html`<div class="error-state" style="margin-top: 4rem;">
+                <div class="error-state-icon">\u26A0</div>
+                <div class="error-state-msg">${this.state.error}</div>
+                <button class="error-state-retry" onClick=${() => { this.setState({ error: null }); location.reload(); }}>Reload</button>
+            </div>`;
+        }
+        return this.props.children;
+    }
+}
+
+// ── Theme ────────────────────────────────────────────────────
+function useTheme() {
+    const [theme, setThemeState] = useState(() => localStorage.getItem('switchboard-theme') || 'dark');
+
+    const setTheme = useCallback((t) => {
+        setThemeState(t);
+        localStorage.setItem('switchboard-theme', t);
+        if (t === 'light') {
+            document.documentElement.classList.add('theme-light');
+        } else {
+            document.documentElement.classList.remove('theme-light');
+        }
+    }, []);
+
+    const toggleTheme = useCallback(() => {
+        setTheme(theme === 'dark' ? 'light' : 'dark');
+    }, [theme, setTheme]);
+
+    return { theme, toggleTheme };
+}
+
 function App() {
     const [route, setRoute] = useState(getRoute());
     const [systemInfo, setSystemInfo] = useState(null);
     const [jiraBaseUrl, setJiraBaseUrl] = useState(null);
+    const [confirmState, setConfirmState] = useState(null); // { action, taskId }
+    const { theme, toggleTheme } = useTheme();
 
     // Router: listen for hash changes
     useEffect(() => {
@@ -45,19 +92,16 @@ function App() {
         return () => clearInterval(timer);
     }, []);
 
-    // Action handler shared across views
+    // Action handler — show confirmation dialog
     const handleAction = useCallback(async (action, taskId) => {
-        const labels = { cancel: 'Cancel', retry: 'Retry', resume: 'Resume', close: 'Close', 'skip-gate': 'Skip Gate', 'advance-chain': 'Advance Chain', 'cancel-chain': 'Cancel Chain' };
-        const msg = action === 'close'
-            ? `Close task "${taskId}"? This will clean up the worktree and branch.`
-            : action === 'skip-gate'
-            ? `Skip gate for "${taskId}"? This bypasses automated checks.`
-            : action === 'advance-chain'
-            ? `Dispatch next dependent task in the chain?`
-            : action === 'cancel-chain'
-            ? `Cancel "${taskId}" and ALL dependent tasks?`
-            : `${labels[action]} task "${taskId}"?`;
-        if (!confirm(msg)) return;
+        setConfirmState({ action, taskId });
+    }, []);
+
+    // Execute confirmed action
+    const executeAction = useCallback(async () => {
+        if (!confirmState) return;
+        const { action, taskId } = confirmState;
+        setConfirmState(null);
         try {
             if (action === 'cancel') await api.cancelTask(taskId);
             else if (action === 'retry') await api.retryTask(taskId);
@@ -71,7 +115,7 @@ function App() {
         } catch (e) {
             alert(`Error: ${e.message}`);
         }
-    }, []);
+    }, [confirmState]);
 
     let view;
     if (route.view === 'board') {
@@ -91,9 +135,16 @@ function App() {
     }
 
     return html`
-        <${Nav} route=${route} systemInfo=${systemInfo} />
+        <${Nav} route=${route} systemInfo=${systemInfo} theme=${theme} onToggleTheme=${toggleTheme} />
         <${ActivityBar} />
-        ${view}
+        <${ErrorBoundary}>
+            ${view}
+        <//>
+        <${ConfirmDialog}
+            action=${confirmState?.action}
+            taskId=${confirmState?.taskId}
+            onConfirm=${executeAction}
+            onCancel=${() => setConfirmState(null)} />
     `;
 }
 
