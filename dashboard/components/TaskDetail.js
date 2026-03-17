@@ -1,32 +1,67 @@
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+
+// ── Review Verdict Badge ─────────────────────────────────────
+function ReviewVerdictBadge({ subtasks }) {
+    const reviews = (subtasks || []).filter(s => s.type === 'review');
+    if (reviews.length === 0) return null;
+    const latest = reviews[reviews.length - 1];
+
+    let cls, label, icon;
+    if (latest.status === 'completed') {
+        const result = (latest.result || '').toLowerCase();
+        if (result.includes('changes requested') || result.includes('changes_requested')) {
+            cls = 'verdict-changes'; label = 'CHANGES REQUESTED'; icon = '\u2715';
+        } else {
+            cls = 'verdict-approved'; label = 'APPROVED'; icon = '\u2713';
+        }
+    } else if (latest.status === 'failed') {
+        cls = 'verdict-changes'; label = 'REVIEW FAILED'; icon = '\u2715';
+    } else if (latest.status === 'working') {
+        cls = 'verdict-pending'; label = 'REVIEWING...'; icon = '\uD83D\uDC41';
+    } else {
+        return null;
+    }
+
+    return html`<${Tip} text="Latest verdict from automated code review">
+        <span class="verdict-badge ${cls}">${icon} ${label}</span>
+    <//>`;
+}
 
 function DetailHeader({ task, onAction, jiraBaseUrl }) {
     return html`
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
             <div class="flex items-start justify-between">
                 <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-2">
+                    <div class="flex items-center gap-3 mb-2 flex-wrap">
                         <${StatusBadge} status=${task.status} />
                         <${GateBadge} task=${task} />
+                        <${ReviewVerdictBadge} subtasks=${task.subtasks} />
+                        <${HeartbeatIndicator} task=${task} />
                         <span class="font-mono text-lg text-slate-200">${task.id}</span>
                     </div>
                     <p class="text-slate-300 mb-3">${task.goal}</p>
                     <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
                         <span>Branch: <span class="font-mono text-slate-300">${task.branch || '\u2014'}</span></span>
                         <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
-                        <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
-                        <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                        <${Tip} text="Total API cost across all dispatches">
+                            <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                        <//>
+                        <${Tip} text="Input/output token count across all dispatches">
+                            <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                        <//>
                         ${task.model ? html`<span>Model: <span class="text-slate-300">${task.model}</span></span>` : null}
                         ${task.phase ? html`<span>Phase: <span class="text-slate-300">${task.phase}</span></span>` : null}
+                        <${WorktreeIndicator} task=${task} />
                         <${PrUrlBadge} task=${task} />
                         ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                             class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
                         ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
                             class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${task.conversation_id}</a>` : null}
+                        <${ClaudeChatLink} url=${task.claude_chat_url} />
                     </div>
                     ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
                 </div>
@@ -49,7 +84,8 @@ function GatePipeline({ task }) {
         else if (gs === 'test-failed') s = 'failed';
         else if (['test-passed', 'reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
         else if (task.status === 'completed') s = 'done';
-        stages.push({ label: 'Tests', status: s });
+        const retries = task.gate_retries > 0 ? ` (attempt ${task.gate_retries + 1}/${task.max_gate_retries || 3})` : '';
+        stages.push({ label: 'Tests', status: s, tip: `Automated tests${retries}` });
     }
 
     if (task.auto_review) {
@@ -58,10 +94,10 @@ function GatePipeline({ task }) {
         if (gs === 'reviewing') s = 'active';
         else if (gs === 'review-failed') s = 'failed';
         else if (gs === 'passed') s = 'done';
-        stages.push({ label: 'Review', status: s });
+        stages.push({ label: 'Review', status: s, tip: 'Automated code review' });
     }
 
-    stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending' });
+    stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending', tip: 'Ready to advance to next task in chain' });
 
     const stageColors = {
         done: 'bg-emerald-500 text-white',
@@ -76,12 +112,14 @@ function GatePipeline({ task }) {
             <div class="flex items-center gap-2 overflow-x-auto">
                 ${stages.map((st, i) => html`
                     <div key=${i} class="flex items-center gap-2 shrink-0">
-                        <div class="flex flex-col items-center">
-                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm ${stageColors[st.status]}">
-                                ${stageIcons[st.status]}
+                        <${Tip} text=${st.tip || st.label}>
+                            <div class="flex flex-col items-center">
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm ${stageColors[st.status]}">
+                                    ${stageIcons[st.status]}
+                                </div>
+                                <span class="text-xs text-slate-400 mt-1">${st.label}</span>
                             </div>
-                            <span class="text-xs text-slate-400 mt-1">${st.label}</span>
-                        </div>
+                        <//>
                         ${i < stages.length - 1 ? html`<div class="w-8 h-px bg-slate-600"></div>` : null}
                     </div>
                 `)}
@@ -128,7 +166,7 @@ function ChainVisualization({ taskId }) {
                             <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
                             <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
                         </a>
-                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-600 shrink-0">\u2192</span>` : null}
+                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-500 shrink-0">\u2192</span>` : null}
                     `;
                 })}
             </div>
@@ -280,10 +318,12 @@ function MessageInput({ taskId, task, onAction, onMessageSent }) {
             </div>
             ${resumable ? html`
                 <div class="mt-2">
-                    <button type="button" onClick=${() => onAction('resume', taskId)}
-                        class="w-full px-3 py-2 text-sm rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30">
-                        Resume session with new messages
-                    </button>
+                    <${Tip} text="Continue the existing CC session with full conversation history">
+                        <button type="button" onClick=${() => onAction('resume', taskId)}
+                            class="w-full px-3 py-2 text-sm rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30">
+                            Resume session with new messages
+                        </button>
+                    <//>
                 </div>
             ` : null}
         </form>
@@ -300,7 +340,7 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
     const loadTask = useCallback(async () => {
         try {
             const data = await api.getTask(taskId);
-            if (mountedRef.current) setTask(data);
+            if (mountedRef.current) { setTask(data); setError(null); }
         } catch (e) {
             if (mountedRef.current) {
                 if (!task) setError(e.message);
@@ -332,14 +372,14 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
     if (error) {
         return html`<div class="p-6">
             <div class="mb-4"><a href="#/" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Board</a></div>
-            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4"><p class="text-red-400">Error loading task: ${error}</p></div>
+            <${ErrorState} message="Error loading task: ${error}" onRetry=${loadTask} />
         </div>`;
     }
 
     if (!task) {
         return html`<div class="p-6">
             <div class="mb-4"><a href="#/" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Board</a></div>
-            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4"><p class="text-slate-500">Loading...</p></div>
+            <${LoadingState} message="Loading task..." />
         </div>`;
     }
 

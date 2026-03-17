@@ -1,7 +1,7 @@
 // DAG Graph Visualization — dependency graph as primary component view
 import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, StatusBadge, GateBadge, navigate } from './utils.js';
+import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorState, EmptyState, navigate } from './utils.js';
 
 // ── Default state colors (can be overridden by project config) ──
 const DEFAULT_STATE_COLORS = {
@@ -259,7 +259,7 @@ function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhove
                 <span class="inline-block w-2.5 h-2.5 rounded-full ${stateColor.pulse ? 'status-dot-working' : ''}"
                     style="background: ${stateColor.dot}"></span>
                 <span class="text-xs font-medium truncate" style="color: ${stateColor.text}">${(stateColor.label || status).toUpperCase()}</span>
-                ${hb ? html`<span class="w-2 h-2 rounded-full ${hb}" title=${heartbeatLabel(hb)}></span>` : null}
+                ${hb ? html`<${Tip} text=${heartbeatLabel(hb)}><span class="w-2 h-2 rounded-full ${hb}"></span><//>` : null}
             </div>
 
             <div class="text-sm font-mono text-slate-200 truncate mb-0.5" title=${task.id}>${shortId}</div>
@@ -267,7 +267,7 @@ function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhove
 
             <div class="flex items-center gap-2 text-xs text-slate-500 mt-auto">
                 ${task.model ? html`<span>${task.model}</span>` : null}
-                ${task.total_cost_usd ? html`<span>$${task.total_cost_usd.toFixed(2)}</span>` : null}
+                ${task.total_cost_usd ? html`<${Tip} text="Total API cost across all dispatches"><span>$${task.total_cost_usd.toFixed(2)}</span><//>` : null}
                 ${task.last_activity ? html`<span>${relativeTime(task.last_activity)}</span>` : null}
             </div>
 
@@ -328,10 +328,10 @@ function StateLegend({ tasks, stateColors }) {
                 <span key=${status} class="flex items-center gap-1.5 text-xs">
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background: ${sc.dot}"></span>
                     <span style="color: ${sc.text}">${sc.label}</span>
-                    <span class="text-slate-600">(${counts[status]})</span>
+                    <span class="text-slate-500">(${counts[status]})</span>
                 </span>
             `)}
-            <span class="text-xs text-slate-600 ml-2">Total: ${tasks.length}</span>
+            <span class="text-xs text-slate-500 ml-2">Total: ${tasks.length}</span>
         </div>
     `;
 }
@@ -426,17 +426,15 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
     }, [hoveredId, layout]);
 
     if (error) {
-        return html`<div class="p-6"><div class="bg-slate-900 border border-slate-800 rounded-lg p-4">
-            <p class="text-red-400">Error loading tasks: ${error}</p>
-        </div></div>`;
+        return html`<div class="p-6"><${ErrorState} message="Error loading tasks: ${error}" onRetry=${loadTasks} /></div>`;
     }
 
     if (!tasks || !layout) {
-        return html`<div class="p-6"><p class="text-slate-500">Loading graph...</p></div>`;
+        return html`<div class="p-6"><${LoadingState} message="Loading graph..." /></div>`;
     }
 
     if (layout.nodes.length === 0) {
-        return html`<div class="p-6"><p class="text-slate-500">No tasks in this project</p></div>`;
+        return html`<div class="p-6"><${EmptyState} message="No tasks in this project" /></div>`;
     }
 
     return html`

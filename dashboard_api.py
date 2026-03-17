@@ -181,6 +181,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/cancel-chain"):
                     task_id = rest[:-len("/cancel-chain")]
                     return await _handle_cancel_chain(send, task_id)
+                if rest.endswith("/release-worktree"):
+                    task_id = rest[:-len("/release-worktree")]
+                    return await _handle_release_worktree(send, task_id)
                 if rest.endswith("/messages"):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
@@ -333,7 +336,7 @@ async def _handle_get_task(send, task_id):
 
 async def _handle_get_messages(scope, send, task_id):
     params = _parse_qs(scope)
-    last_n = int(params["limit"]) if "limit" in params else None
+    last_n = min(int(params["limit"]), 200) if "limit" in params else None
     after = int(params["after"]) if "after" in params else None
     thread = await db.read_task_messages(task_id, last_n=last_n, after=after)
     await _json_response(send, thread)
@@ -463,6 +466,11 @@ async def _handle_close(receive, send, task_id):
     )
     await _json_response(send, result)
 
+
+
+async def _handle_release_worktree(send, task_id):
+    result = await tasks.release_worktree(task_id)
+    await _json_response(send, result)
 
 
 async def _handle_skip_gate(send, task_id):

@@ -1,94 +1,76 @@
 // Graph Detail Panel — slide-in task detail for DAG graph view
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel, BUTTON_TOOLTIPS } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 
 // ── Attempt grouping for messages ────────────────────────────
-// Groups messages by dispatch/retry cycle. Boundaries are dispatcher "status"
-// messages (which signal end of a CC session). Each cycle = one "attempt".
 function groupMessagesByAttempt(messages) {
     if (!messages || messages.length === 0) return [];
     const attempts = [];
     let current = { messages: [], outcome: null, startTime: null, endTime: null };
 
     for (const msg of messages) {
-        // Skip plan messages (shown separately)
         if (msg.type === 'plan') continue;
-
         if (!current.startTime) current.startTime = msg.created_at;
         current.endTime = msg.created_at;
         current.messages.push(msg);
-
-        // Dispatcher status messages mark the end of an attempt
         if (msg.author === 'dispatcher' && msg.type === 'status') {
             current.outcome = msg.title || msg.content?.slice(0, 80) || 'Completed';
             attempts.push(current);
             current = { messages: [], outcome: null, startTime: null, endTime: null };
         }
     }
-
-    // Remaining messages form the current (in-progress) attempt
     if (current.messages.length > 0) {
         current.outcome = 'In Progress';
         attempts.push(current);
     }
-
     return attempts;
 }
 
-// ── Tooltip wrapper ─────────────────────────────────────────
-function Tip({ text, children }) {
-    return html`<span class="relative group inline-flex">
-        ${children}
-        <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs rounded bg-slate-700 text-slate-200 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">${text}</span>
-    </span>`;
-}
-
-// ── Action buttons with tooltips ────────────────────────────
+// ── Action buttons with tooltips (panel version) ─────────────
 function TooltipActionButtons({ task, onAction }) {
-    const btn = (action, label, colorClass, tip) => html`
-        <${Tip} text=${tip}>
+    const btn = (action, label, colorClass) => html`
+        <${Tip} text=${BUTTON_TOOLTIPS[action] || action}>
             <button onClick=${() => onAction(action, task.id)}
                 class="px-2 py-1 text-xs rounded ${colorClass}">${label}</button>
         <//>`;
 
     const btns = [];
     if (task.status === 'working') {
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30', 'Stop the running session'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
     if (task.status === 'failed' || task.status === 'cancelled') {
-        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', 'Dispatch a fresh session'));
+        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
     }
     if (task.status === 'completed' || task.status === 'needs-review' || task.status === 'turns-exhausted') {
-        btns.push(btn('resume', 'Resume', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', 'Continue the session with existing context'));
-        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', 'Dispatch a clean new session'));
+        btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
+        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
     }
     if (task.status === 'completed' && !task.worktree_path) {
-        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30', 'Clean up worktree and branch'));
+        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30'));
     }
     if (task.status === 'needs-review' || task.status === 'turns-exhausted') {
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30', 'Cancel this task'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
-        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30', 'Bypass automated test/review gates'));
+        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30'));
     }
     if (task.status === 'completed' && task.gate_status === 'passed') {
-        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30', 'Dispatch the next dependent task'));
+        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30'));
     }
     if (task.depends_on || task.gate_status) {
-        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20', 'Cancel this task and all dependents'));
+        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20'));
     }
-    // Release worktree
     if (task.worktree_path) {
-        btns.push(btn('close', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30', 'Release the git worktree for this task'));
+        btns.push(btn('release-worktree', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'));
     }
 
     return html`<div class="flex gap-2 flex-wrap">${btns}</div>`;
 }
 
-// ── Gate Pipeline (same as TaskDetail but inline) ───────────
+// ── Gate Pipeline (inline) ───────────────────────────────────
 function GatePipeline({ task }) {
     if (!task.auto_test && !task.auto_review) return null;
 
@@ -102,7 +84,8 @@ function GatePipeline({ task }) {
         else if (gs === 'test-failed') s = 'failed';
         else if (['test-passed', 'reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
         else if (task.status === 'completed') s = 'done';
-        stages.push({ label: 'Tests', status: s });
+        const retries = task.gate_retries > 0 ? ` (attempt ${task.gate_retries + 1}/${task.max_gate_retries || 3})` : '';
+        stages.push({ label: 'Tests', status: s, tip: `Automated tests${retries}` });
     }
 
     if (task.auto_review) {
@@ -111,7 +94,7 @@ function GatePipeline({ task }) {
         if (gs === 'reviewing') s = 'active';
         else if (gs === 'review-failed') s = 'failed';
         else if (gs === 'passed') s = 'done';
-        stages.push({ label: 'Review', status: s });
+        stages.push({ label: 'Review', status: s, tip: 'Automated code review' });
     }
 
     stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending' });
@@ -128,12 +111,14 @@ function GatePipeline({ task }) {
         <div class="flex items-center gap-2 overflow-x-auto mb-3">
             ${stages.map((st, i) => html`
                 <div key=${i} class="flex items-center gap-2 shrink-0">
-                    <div class="flex flex-col items-center">
-                        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs ${colors[st.status]}">
-                            ${icons[st.status]}
+                    <${Tip} text=${st.tip || st.label}>
+                        <div class="flex flex-col items-center">
+                            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs ${colors[st.status]}">
+                                ${icons[st.status]}
+                            </div>
+                            <span class="text-xs text-slate-500 mt-0.5">${st.label}</span>
                         </div>
-                        <span class="text-xs text-slate-500 mt-0.5">${st.label}</span>
-                    </div>
+                    <//>
                     ${i < stages.length - 1 ? html`<div class="w-6 h-px bg-slate-600"></div>` : null}
                 </div>
             `)}
@@ -168,21 +153,30 @@ function ReviewSection({ subtasks }) {
     if (reviews.length === 0) return null;
     const latest = reviews[reviews.length - 1];
 
-    const verdictColor = latest.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' :
-                         latest.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                         latest.status === 'working' ? 'bg-blue-500/20 text-blue-400' :
-                         'bg-slate-500/20 text-slate-400';
+    let verdictCls, verdictLabel;
+    if (latest.status === 'completed') {
+        const result = (latest.result || '').toLowerCase();
+        if (result.includes('changes requested') || result.includes('changes_requested')) {
+            verdictCls = 'verdict-changes'; verdictLabel = 'CHANGES REQUESTED';
+        } else {
+            verdictCls = 'verdict-approved'; verdictLabel = 'APPROVED';
+        }
+    } else if (latest.status === 'failed') {
+        verdictCls = 'verdict-changes'; verdictLabel = 'REVIEW FAILED';
+    } else if (latest.status === 'working') {
+        verdictCls = 'verdict-pending'; verdictLabel = 'REVIEWING...';
+    } else {
+        verdictCls = 'bg-slate-500/20 text-slate-400'; verdictLabel = latest.status.toUpperCase();
+    }
 
     return html`
         <details class="bg-slate-800/50 border border-slate-700 rounded mb-3" open=${latest.status === 'working'}>
             <summary class="px-3 py-2 text-sm cursor-pointer hover:bg-slate-800">
                 <span class="inline-flex items-center gap-2">
                     Review Output
-                    <span class="px-2 py-0.5 rounded text-xs font-medium ${verdictColor}">
-                        ${latest.status === 'completed' ? 'PASSED' : latest.status === 'failed' ? 'FAILED' : latest.status.toUpperCase()}
-                    </span>
+                    <span class="verdict-badge ${verdictCls}">${verdictLabel}</span>
                     ${latest.model ? html`<span class="text-xs text-slate-500">${latest.model}</span>` : null}
-                    <a href="#/tasks/${latest.id}" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="View reviewer session log">Session Log ↗</a>
+                    <a href="#/tasks/${latest.id}" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="View reviewer session log">Session Log \u2197</a>
                 </span>
             </summary>
             ${latest.result ? html`
@@ -293,7 +287,7 @@ function MessageInput({ taskId, task, onAction, onRefresh }) {
                 <//>
             </div>
             ${resumable ? html`
-                <${Tip} text="Resume the CC session with any new messages">
+                <${Tip} text="Continue the existing CC session with full conversation history">
                     <button type="button" onClick=${() => onAction('resume', taskId)}
                         class="w-full mt-1.5 px-2 py-1.5 text-xs rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30">
                         Resume session with new messages
@@ -321,9 +315,17 @@ function ProofOfLife({ task }) {
 
     return html`
         <div class="flex items-center gap-2 text-xs text-slate-400 mb-2">
-            <span class="w-2 h-2 rounded-full ${indicator}"></span>
+            <${Tip} text=${age !== null ? `Last activity ${Math.floor(age)}s ago` : 'No activity data'}>
+                <span class="w-2 h-2 rounded-full ${indicator}"></span>
+            <//>
             <span>${label}</span>
-            ${task.total_cost_usd ? html`<span class="ml-auto">$${task.total_cost_usd.toFixed(4)} | ${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span>` : null}
+            ${task.total_cost_usd ? html`
+                <span class="ml-auto">
+                    <${Tip} text="Total API cost | Input/output tokens">
+                        <span>$${task.total_cost_usd.toFixed(4)} | ${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span>
+                    <//>
+                </span>
+            ` : null}
         </div>
     `;
 }
@@ -355,7 +357,6 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
         return () => { mountedRef.current = false; };
     }, [taskId]);
 
-    // Poll while active
     useEffect(() => {
         if (!task) return;
         const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
@@ -377,7 +378,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
     if (!task) {
         return html`<div class="graph-detail-panel">
             <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-                <span class="text-sm text-slate-500">Loading...</span>
+                <${LoadingState} message="Loading..." />
                 <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg">\u00D7</button>
             </div>
         </div>`;
@@ -393,8 +394,11 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 <div class="flex items-center gap-2 min-w-0">
                     <${StatusBadge} status=${task.status} />
                     <${GateBadge} task=${task} />
+                    <${HeartbeatIndicator} task=${task} />
                     <span class="font-mono text-sm text-slate-200 truncate">${shortId}</span>
-                    <a href="#/tasks/${task.id}" class="text-xs text-blue-400 hover:text-blue-300 shrink-0" title="Open full task view">\u2197</a>
+                    <${Tip} text="Open full task view">
+                        <a href="#/tasks/${task.id}" class="text-xs text-blue-400 hover:text-blue-300 shrink-0">\u2197</a>
+                    <//>
                 </div>
                 <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg ml-2 shrink-0">\u00D7</button>
             </div>
@@ -406,13 +410,18 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-3">
                     ${task.branch ? html`<span>Branch: <span class="font-mono text-slate-400">${task.branch}</span></span>` : null}
                     ${task.model ? html`<span>Model: <span class="text-slate-400">${task.model}</span></span>` : null}
-                    <span>Cost: <span class="text-slate-400">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
-                    <span>Tokens: <span class="text-slate-400">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                    <${Tip} text="Total API cost across all dispatches">
+                        <span>Cost: <span class="text-slate-400">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                    <//>
+                    <${Tip} text="Input/output token count">
+                        <span>Tokens: <span class="text-slate-400">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                    <//>
                     <span>Dispatches: <span class="text-slate-400">${task.dispatch_count || 0}</span></span>
                     ${task.phase ? html`<span>Phase: <span class="text-slate-400">${task.phase}</span></span>` : null}
                     <${PrUrlBadge} task=${task} />
                     ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                         class="px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
+                    <${ClaudeChatLink} url=${task.claude_chat_url} />
                 </div>
 
                 <!-- Component badge + tags -->
@@ -422,12 +431,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 </div>
 
                 <!-- Worktree indicator -->
-                ${task.worktree_path ? html`
-                    <div class="flex items-center gap-2 text-xs text-slate-500 mb-2">
-                        <span class="w-2 h-2 rounded-full ${task.status === 'working' ? 'bg-emerald-500' : 'bg-slate-500'}"></span>
-                        Worktree: ${task.status === 'working' ? 'attached' : 'detached'}
-                    </div>
-                ` : null}
+                <${WorktreeIndicator} task=${task} />
 
                 <${ProofOfLife} task=${task} />
                 <${GatePipeline} task=${task} />
@@ -442,7 +446,6 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                     const attempts = groupMessagesByAttempt(task.messages);
                     const nonPlanCount = (task.messages || []).filter(m => m.type !== 'plan').length;
                     if (attempts.length <= 1) {
-                        // Single attempt or no messages — show flat like before
                         return html`
                             <details class="mb-3" open>
                                 <summary class="text-sm font-medium text-slate-400 cursor-pointer hover:text-slate-300 mb-2">
@@ -454,11 +457,10 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                 <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
                             </details>`;
                     }
-                    // Multiple attempts — group with collapsible sections
                     return html`
                         <div class="mb-3">
                             <div class="text-sm font-medium text-slate-400 mb-2">
-                                Messages (${nonPlanCount}) · ${attempts.length} attempts
+                                Messages (${nonPlanCount}) \u00B7 ${attempts.length} attempts
                             </div>
                             ${attempts.map((attempt, idx) => {
                                 const isLast = idx === attempts.length - 1;
@@ -470,7 +472,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                         <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
                                             <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
                                             <span class="${outcomeColor}">${attempt.outcome}</span>
-                                            <span class="text-slate-600 ml-auto">${attempt.messages.length} msgs</span>
+                                            <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
                                         </summary>
                                         <div class="px-2 pb-2 max-h-64 overflow-y-auto">
                                             <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
