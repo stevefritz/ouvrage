@@ -1,40 +1,6 @@
 import { useState, useEffect, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, escapeHtml, relativeTime, progressBar, navigate, StatusBadge, GateBadge, jiraUrl, jiraLabel } from './utils.js';
-
-function ActionButtons({ task, onAction }) {
-    const btn = (action, label, colorClass) => html`
-        <button onClick=${(e) => { e.stopPropagation(); onAction(action, task.id); }}
-            class="px-2 py-1 text-xs rounded ${colorClass}">${label}</button>`;
-
-    const btns = [];
-    if (task.status === 'working') {
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
-    }
-    if (task.status === 'failed' || task.status === 'cancelled') {
-        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
-    }
-    if (task.status === 'completed') {
-        btns.push(btn('resume', 'Resume', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
-        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
-        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30'));
-    }
-    if (task.status === 'needs-review' || task.status === 'turns-exhausted') {
-        btns.push(btn('resume', 'Resume', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
-        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
-    }
-    if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
-        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30'));
-    }
-    if (task.status === 'completed' && task.gate_status === 'passed') {
-        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30'));
-    }
-    if (task.depends_on || task.gate_status) {
-        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20'));
-    }
-    return html`<span class="flex gap-1 flex-wrap">${btns}</span>`;
-}
+import { html, escapeHtml, relativeTime, progressBar, navigate, StatusBadge, GateBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
 
 export function Board({ params = {}, jiraBaseUrl, onAction }) {
     const [tasks, setTasks] = useState(null);
@@ -146,7 +112,7 @@ export function Board({ params = {}, jiraBaseUrl, onAction }) {
                                     <td class="p-3 text-sm text-slate-400">$${(t.total_cost_usd || 0).toFixed(2)}</td>
                                     <td class="p-3 text-xs text-slate-500">${relativeTime(t.last_activity || t.updated_at)}</td>
                                     <td class="p-3" onClick=${(e) => e.stopPropagation()}>
-                                        <${ActionButtons} task=${t} onAction=${onAction} />
+                                        <${ActionButtons} task=${t} onAction=${onAction} stopPropagation=${true} />
                                     </td>
                                 </tr>
                             `)}

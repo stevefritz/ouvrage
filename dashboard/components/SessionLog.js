@@ -48,7 +48,7 @@ function SessionLogEntries({ entries, filters }) {
                         full=${full.length > 150 ? full : null} logType="text" filters=${filters} />`;
                 }
                 if (b.type === 'tool_use') {
-                    const input = b.input || '';
+                    const input = typeof b.input === 'string' ? b.input : JSON.stringify(b.input) || '';
                     const preview = `${b.name || ''} \u2192 ${input.slice(0, 100)}`;
                     return html`<${LogExpandable} key=${`${idx}-${bi}`} ts=${ts} label="TOOL " labelCls="log-tool"
                         preview=${preview + (input.length > 100 ? '\u2026' : '')}
