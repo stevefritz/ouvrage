@@ -482,7 +482,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                         <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
                                             <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
                                             <span class="${outcomeColor}">${attempt.outcome}</span>
-                                            <span class="text-slate-600 ml-auto">${attempt.messages.length} msgs</span>
+                                            <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
                                         </summary>
                                         <div class="px-2 pb-2 max-h-64 overflow-y-auto">
                                             <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />

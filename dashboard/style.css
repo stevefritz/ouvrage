@@ -11,15 +11,15 @@
     --bg-input: #1e293b;
     --bg-overlay: rgba(0, 0, 0, 0.6);
 
-    --border-primary: #1e293b;
-    --border-secondary: #334155;
+    --border-primary: #233044;
+    --border-secondary: #3a4d66;
     --border-subtle: rgba(51, 65, 85, 0.5);
 
     --text-primary: #f1f5f9;
     --text-secondary: #e2e8f0;
     --text-muted: #94a3b8;
-    --text-faint: #64748b;
-    --text-disabled: #475569;
+    --text-faint: #718096;
+    --text-disabled: #576a82;
 
     --scrollbar-track: #0f172a;
     --scrollbar-thumb: #334155;
@@ -860,7 +860,16 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     border-color: var(--text-faint);
 }
 
-/* ── Responsive: mobile/tablet ───────────────────────────── */
+/* ── Responsive: tablet ───────────────────────────────────── */
+@media (max-width: 1024px) {
+    /* Board table: hide less important columns */
+    table th:nth-child(3),
+    table td:nth-child(3) { display: none; } /* Progress */
+    table th:nth-child(5),
+    table td:nth-child(5) { display: none; } /* Activity */
+}
+
+/* ── Responsive: mobile ──────────────────────────────────── */
 @media (max-width: 768px) {
     .activity-bar-left { gap: 0.375rem; }
     .activity-working-task { max-width: 160px; }
@@ -869,6 +878,16 @@ body { background: var(--bg-primary); color: var(--text-primary); }
 
     nav .flex.items-center.gap-6 { gap: 0.75rem; }
     nav .flex.items-center.gap-6 > a:first-child { font-size: 0.875rem; }
+
+    /* Board table: hide even more columns on mobile */
+    table th:nth-child(4),
+    table td:nth-child(4) { display: none; } /* Cost */
+
+    /* Task detail: stack layout */
+    .p-6 { padding: 1rem; }
+
+    /* Graph: full-height scroll */
+    .dag-scroll { max-height: calc(100vh - 200px); }
 }
 
 /* ── Light theme specific overrides ──────────────────────── */

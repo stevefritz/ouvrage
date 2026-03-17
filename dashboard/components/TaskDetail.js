@@ -166,7 +166,7 @@ function ChainVisualization({ taskId }) {
                             <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
                             <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
                         </a>
-                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-600 shrink-0">\u2192</span>` : null}
+                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-500 shrink-0">\u2192</span>` : null}
                     `;
                 })}
             </div>

@@ -328,10 +328,10 @@ function StateLegend({ tasks, stateColors }) {
                 <span key=${status} class="flex items-center gap-1.5 text-xs">
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background: ${sc.dot}"></span>
                     <span style="color: ${sc.text}">${sc.label}</span>
-                    <span class="text-slate-600">(${counts[status]})</span>
+                    <span class="text-slate-500">(${counts[status]})</span>
                 </span>
             `)}
-            <span class="text-xs text-slate-600 ml-2">Total: ${tasks.length}</span>
+            <span class="text-xs text-slate-500 ml-2">Total: ${tasks.length}</span>
         </div>
     `;
 }

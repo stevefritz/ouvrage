@@ -10,13 +10,13 @@ function LogExpandable({ ts, label, labelCls, preview, full, logType, filters })
 
     if (!full || full === preview) {
         return html`<div class="${labelCls} text-xs py-0.5">
-            <span class="text-slate-600 mr-2">${ts}</span>${label} ${preview}
+            <span class="text-slate-500 mr-2">${ts}</span>${label} ${preview}
         </div>`;
     }
 
     return html`
         <div class="${labelCls} text-xs py-0.5 cursor-pointer" onClick=${() => setExpanded(!expanded)}>
-            <span class="text-slate-600 mr-2">${ts}</span>${label} ${preview} <span class="text-slate-600">${expanded ? '\u25BE' : '\u25B8'}</span>
+            <span class="text-slate-500 mr-2">${ts}</span>${label} ${preview} <span class="text-slate-500">${expanded ? '\u25BE' : '\u25B8'}</span>
         </div>
         ${expanded ? html`<div class="text-xs ml-8 py-1 px-2 mb-1 bg-slate-800/50 rounded whitespace-pre-wrap text-slate-300 max-h-96 overflow-y-auto">${full}</div>` : null}
     `;
@@ -33,7 +33,7 @@ function SessionLogEntries({ entries, filters }) {
 
         if (type === 'SystemMessage') {
             return html`<div key=${idx} class="log-system text-xs py-0.5">
-                <span class="text-slate-600 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}
+                <span class="text-slate-500 mr-2">${ts}</span>SYSTEM ${e.subtype || ''}
             </div>`;
         }
 
