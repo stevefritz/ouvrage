@@ -949,7 +949,7 @@ async def _run_sdk_session(
         pass
 
     options = ClaudeAgentOptions(
-        user="switchboard",
+        user=WORKER_USER,
         cwd=str(worktree_path),
         env={"HOME": worker_home},
         permission_mode="bypassPermissions",
@@ -1351,7 +1351,7 @@ async def _run_subtask(
     stderr_log = _open_shared(stderr_path)
 
     options = ClaudeAgentOptions(
-        user="switchboard",
+        user=WORKER_USER,
         cwd=str(worktree),
         env={"HOME": worker_home},
         permission_mode="bypassPermissions",
