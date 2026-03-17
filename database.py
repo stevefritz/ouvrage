@@ -137,6 +137,39 @@ async def init_db():
             );
 
             CREATE INDEX IF NOT EXISTS idx_subtask_task ON subtasks(task_id);
+
+            CREATE TABLE IF NOT EXISTS components (
+                id              TEXT PRIMARY KEY,
+                project_id      TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                description     TEXT,
+                phase           TEXT DEFAULT 'planning',
+                base_branch     TEXT,
+                setup_command   TEXT,
+                test_command    TEXT,
+                model           TEXT,
+                auto_test       BOOLEAN,
+                auto_review     BOOLEAN,
+                review_model    TEXT,
+                max_test_retries INTEGER,
+                max_review_retries INTEGER,
+                auto_pr         BOOLEAN,
+                auto_merge      BOOLEAN,
+                max_turns       INTEGER,
+                max_wall_clock  INTEGER,
+                env_overrides   TEXT,
+                secrets         TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS component_conversations (
+                component_id    TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                PRIMARY KEY (component_id, conversation_id),
+                FOREIGN KEY (component_id) REFERENCES components(id)
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
@@ -217,12 +250,16 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
         if "auto_pr" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
+        if "component_id" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN component_id TEXT")
 
         # Migrate projects table: add model column if missing
         project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
         project_col_names = [c["name"] for c in project_columns]
         if "model" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN model TEXT")
+        if "connectors" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN connectors TEXT")
 
         # Create/recreate indexes
         await conn.executescript("""
@@ -238,6 +275,8 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_task_tags ON task_tags(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
             CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
+            CREATE INDEX IF NOT EXISTS idx_component_project ON components(project_id);
+            CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
         """)
 
         await conn.commit()
@@ -555,6 +594,7 @@ async def create_task(
     depends_on: str | None = None,
     auto_review: bool = True, review_model: str | None = None,
     parent_task_id: str | None = None, auto_pr: bool = False,
+    component_id: str | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -570,11 +610,12 @@ async def create_task(
             """INSERT INTO tasks
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
                 jira_ticket, conversation_id, model, auto_test, depends_on,
-                auto_review, review_model, parent_task_id, auto_pr, created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                auto_review, review_model, parent_task_id, auto_pr, component_id,
+                created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
              jira_ticket, conversation_id, model, auto_test, depends_on,
-             auto_review, review_model, parent_task_id, auto_pr, ts, ts),
+             auto_review, review_model, parent_task_id, auto_pr, component_id, ts, ts),
         )
         await db.commit()
         return {
@@ -585,6 +626,7 @@ async def create_task(
             "model": model, "auto_test": auto_test, "depends_on": depends_on,
             "auto_review": auto_review, "review_model": review_model,
             "parent_task_id": parent_task_id, "auto_pr": auto_pr,
+            "component_id": component_id,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -605,6 +647,7 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
+    "component_id",
 }
 
 
@@ -626,7 +669,7 @@ async def update_task(id: str, **fields) -> dict:
         return dict(rows[0])
 
 
-async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None) -> list[dict]:
+async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None, component_id: str | None = None) -> list[dict]:
     async with get_db() as db:
         conditions = []
         params: list = []
@@ -637,6 +680,9 @@ async def list_tasks(project_id: str | None = None, status: str | None = None, t
         if status:
             conditions.append("t.status = ?")
             params.append(status)
+        if component_id:
+            conditions.append("t.component_id = ?")
+            params.append(component_id)
         if tag:
             conditions.append("EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag = ?)")
             params.append(tag.strip().lower())
@@ -1038,6 +1084,289 @@ async def get_subtask(id: str) -> dict | None:
     async with get_db() as conn:
         rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
         return dict(rows[0]) if rows else None
+
+
+# ---------------------------------------------------------------------------
+# Components
+# ---------------------------------------------------------------------------
+
+COMPONENT_CONFIG_FIELDS = {
+    "base_branch", "setup_command", "test_command", "model",
+    "auto_test", "auto_review", "review_model",
+    "max_test_retries", "max_review_retries",
+    "auto_pr", "auto_merge", "max_turns", "max_wall_clock",
+}
+
+COMPONENT_MUTABLE_FIELDS = COMPONENT_CONFIG_FIELDS | {
+    "name", "description", "phase", "env_overrides", "secrets",
+}
+
+SYSTEM_DEFAULTS = {
+    "auto_test": True,
+    "auto_review": True,
+    "review_model": "opus",
+    "max_test_retries": 3,
+    "max_review_retries": 2,
+    "auto_pr": False,
+    "auto_merge": False,
+}
+
+
+async def create_component(
+    id: str, project_id: str, name: str,
+    description: str | None = None, phase: str = "planning",
+    **config_fields,
+) -> dict:
+    async with get_db() as db:
+        # Verify project exists
+        rows = await db.execute_fetchall("SELECT id FROM projects WHERE id = ?", (project_id,))
+        if not rows:
+            raise ValueError(f"Project '{project_id}' not found")
+
+        ts = now_iso()
+        env_json = json.dumps(config_fields.pop("env_overrides")) if "env_overrides" in config_fields and config_fields["env_overrides"] is not None else config_fields.pop("env_overrides", None)
+        secrets_json = json.dumps(config_fields.pop("secrets")) if "secrets" in config_fields and config_fields["secrets"] is not None else config_fields.pop("secrets", None)
+
+        # Filter to valid config fields
+        valid_config = {k: v for k, v in config_fields.items() if k in COMPONENT_CONFIG_FIELDS}
+
+        cols = ["id", "project_id", "name", "description", "phase", "env_overrides", "secrets", "created_at", "updated_at"]
+        vals = [id, project_id, name, description, phase, env_json, secrets_json, ts, ts]
+
+        for k, v in valid_config.items():
+            cols.append(k)
+            vals.append(v)
+
+        placeholders = ", ".join("?" for _ in vals)
+        col_str = ", ".join(cols)
+        await db.execute(f"INSERT INTO components ({col_str}) VALUES ({placeholders})", vals)
+        await db.commit()
+
+        result = {
+            "id": id, "project_id": project_id, "name": name,
+            "description": description, "phase": phase,
+            "env_overrides": json.loads(env_json) if env_json else None,
+            "secrets": json.loads(secrets_json) if secrets_json else None,
+            "created_at": ts, "updated_at": ts,
+        }
+        result.update(valid_config)
+        return result
+
+
+async def get_component(id: str) -> dict | None:
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+        if not rows:
+            return None
+        c = dict(rows[0])
+        if c.get("env_overrides"):
+            c["env_overrides"] = json.loads(c["env_overrides"])
+        if c.get("secrets"):
+            c["secrets"] = json.loads(c["secrets"])
+
+        # Task summary
+        task_rows = await db.execute_fetchall(
+            """SELECT status, COUNT(*) as cnt, COALESCE(SUM(total_cost_usd), 0) as cost
+               FROM tasks WHERE component_id = ? GROUP BY status""",
+            (id,),
+        )
+        task_summary = {}
+        total_tasks = 0
+        total_cost = 0.0
+        active_tasks = 0
+        for r in task_rows:
+            task_summary[r["status"]] = r["cnt"]
+            total_tasks += r["cnt"]
+            total_cost += r["cost"]
+            if r["status"] == "working":
+                active_tasks = r["cnt"]
+        c["task_summary"] = {
+            "by_status": task_summary,
+            "total": total_tasks,
+            "active": active_tasks,
+            "total_cost": round(total_cost, 2),
+        }
+
+        # Linked conversations
+        conv_rows = await db.execute_fetchall(
+            "SELECT conversation_id FROM component_conversations WHERE component_id = ?",
+            (id,),
+        )
+        c["conversations"] = [r["conversation_id"] for r in conv_rows]
+
+        return c
+
+
+async def update_component(id: str, **fields) -> dict:
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+        if not rows:
+            raise ValueError(f"Component '{id}' not found")
+
+        # Handle JSON fields
+        if "env_overrides" in fields:
+            val = fields["env_overrides"]
+            fields["env_overrides"] = json.dumps(val) if isinstance(val, dict) else val
+        if "secrets" in fields:
+            val = fields["secrets"]
+            fields["secrets"] = json.dumps(val) if isinstance(val, dict) else val
+
+        # Filter to allowed fields
+        fields = {k: v for k, v in fields.items() if k in COMPONENT_MUTABLE_FIELDS}
+        fields["updated_at"] = now_iso()
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [id]
+        await db.execute(f"UPDATE components SET {set_clause} WHERE id = ?", values)
+        await db.commit()
+
+        rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
+        c = dict(rows[0])
+        if c.get("env_overrides"):
+            c["env_overrides"] = json.loads(c["env_overrides"])
+        if c.get("secrets"):
+            c["secrets"] = json.loads(c["secrets"])
+        return c
+
+
+async def list_components(project_id: str | None = None) -> list[dict]:
+    async with get_db() as db:
+        if project_id:
+            rows = await db.execute_fetchall(
+                """SELECT c.*,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as task_count
+                   FROM components c WHERE c.project_id = ? ORDER BY c.created_at DESC""",
+                (project_id,),
+            )
+        else:
+            rows = await db.execute_fetchall(
+                """SELECT c.*,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as task_count
+                   FROM components c ORDER BY c.created_at DESC"""
+            )
+        results = []
+        for r in rows:
+            c = dict(r)
+            if c.get("env_overrides"):
+                c["env_overrides"] = json.loads(c["env_overrides"])
+            if c.get("secrets"):
+                c["secrets"] = json.loads(c["secrets"])
+            results.append(c)
+        return results
+
+
+# ---------------------------------------------------------------------------
+# Component Conversations
+# ---------------------------------------------------------------------------
+
+async def link_conversation(component_id: str, conversation_id: str) -> dict:
+    async with get_db() as db:
+        # Verify component exists
+        rows = await db.execute_fetchall("SELECT id FROM components WHERE id = ?", (component_id,))
+        if not rows:
+            raise ValueError(f"Component '{component_id}' not found")
+        await db.execute(
+            "INSERT OR IGNORE INTO component_conversations (component_id, conversation_id) VALUES (?, ?)",
+            (component_id, conversation_id),
+        )
+        await db.commit()
+        return {"component_id": component_id, "conversation_id": conversation_id, "linked": True}
+
+
+async def unlink_conversation(component_id: str, conversation_id: str) -> dict:
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM component_conversations WHERE component_id = ? AND conversation_id = ?",
+            (component_id, conversation_id),
+        )
+        await db.commit()
+        return {"component_id": component_id, "conversation_id": conversation_id, "unlinked": True}
+
+
+async def get_component_conversations(component_id: str) -> list[str]:
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT conversation_id FROM component_conversations WHERE component_id = ?",
+            (component_id,),
+        )
+        return [r["conversation_id"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Config Inheritance
+# ---------------------------------------------------------------------------
+
+async def resolve_config(task_id: str) -> dict:
+    """Resolve effective config for a task: task → component → project → system defaults.
+
+    For scalar fields, returns the most-specific non-null value.
+    For env_overrides and secrets, performs shallow merge (most-specific key wins).
+    """
+    async with get_db() as db:
+        task_rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if not task_rows:
+            raise ValueError(f"Task '{task_id}' not found")
+        task = dict(task_rows[0])
+
+        project_rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (task["project_id"],))
+        project = dict(project_rows[0]) if project_rows else {}
+
+        component = None
+        if task.get("component_id"):
+            comp_rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (task["component_id"],))
+            if comp_rows:
+                component = dict(comp_rows[0])
+
+    resolved = {}
+
+    # Boolean fields that need normalization from SQLite 0/1
+    bool_fields = {"auto_test", "auto_review", "auto_pr", "auto_merge"}
+
+    # Scalar config fields: task > component > project > system default
+    scalar_fields = [
+        "base_branch", "model", "auto_test", "auto_review", "review_model",
+        "max_test_retries", "max_review_retries", "auto_pr", "auto_merge",
+        "setup_command", "test_command", "max_turns", "max_wall_clock",
+    ]
+
+    for field in scalar_fields:
+        val = task.get(field)
+        if val is None and component:
+            val = component.get(field)
+        if val is None:
+            val = project.get(field)
+        if val is None:
+            val = SYSTEM_DEFAULTS.get(field)
+        # Normalize SQLite 0/1 to Python bool
+        if field in bool_fields and val is not None:
+            val = bool(val)
+        resolved[field] = val
+
+    # Shallow merge fields: project (base) ← component ← task (wins)
+    for merge_field in ("env_overrides", "secrets"):
+        merged = {}
+        # Start with project
+        pval = project.get(merge_field)
+        if isinstance(pval, str):
+            pval = json.loads(pval)
+        if pval:
+            merged.update(pval)
+        # Layer component
+        if component:
+            cval = component.get(merge_field)
+            if isinstance(cval, str):
+                cval = json.loads(cval)
+            if cval:
+                merged.update(cval)
+        # Layer task (tasks don't currently have env_overrides/secrets columns, but future-proof)
+        tval = task.get(merge_field)
+        if isinstance(tval, str):
+            tval = json.loads(tval)
+        if tval:
+            merged.update(tval)
+        resolved[merge_field] = merged if merged else None
+
+    return resolved
 
 
 # ---------------------------------------------------------------------------

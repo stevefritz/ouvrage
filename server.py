@@ -226,6 +226,7 @@ TASK_TOOLS = [
                 "review_model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Model for self-review task. Default: opus"},
                 "auto_pr": {"type": "boolean", "description": "Auto-create PR when chain tail passes all gates. Default: false", "default": False},
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
+                "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -291,13 +292,14 @@ TASK_TOOLS = [
     ),
     Tool(
         name="list_tasks",
-        description="List tasks, optionally filtered by project, status, and/or tag.",
+        description="List tasks, optionally filtered by project, status, tag, and/or component.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "Filter to one project"},
                 "status": {"type": "string", "description": "Filter by status: ready, working, needs-review, completed, failed, cancelled"},
                 "tag": {"type": "string", "description": "Filter by tag"},
+                "component_id": {"type": "string", "description": "Filter to one component"},
             },
         },
     ),
@@ -444,7 +446,118 @@ TASK_TOOLS = [
     ),
 ]
 
-TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS
+# ---------------------------------------------------------------------------
+# Component Tools
+# ---------------------------------------------------------------------------
+
+COMPONENT_TOOLS = [
+    Tool(
+        name="create_component",
+        description="Create a new component (feature/epic) within a project. Components group tasks and provide config inheritance.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project this component belongs to"},
+                "id": {"type": "string", "description": "Component slug, e.g. chatbot-discovery"},
+                "name": {"type": "string", "description": "Human-readable name"},
+                "description": {"type": "string", "description": "What this component is about"},
+                "phase": {"type": "string", "description": "Lifecycle phase: planning, building, testing, polish, review, deployed, archived", "default": "planning"},
+                "base_branch": {"type": "string", "description": "Git branch for tasks in this component"},
+                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Default model for tasks"},
+                "setup_command": {"type": "string", "description": "Setup command override"},
+                "test_command": {"type": "string", "description": "Test command override"},
+                "auto_test": {"type": "boolean", "description": "Auto-run tests after task completion"},
+                "auto_review": {"type": "boolean", "description": "Auto-dispatch review after tests pass"},
+                "review_model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Model for reviews"},
+                "max_test_retries": {"type": "integer", "description": "Max test retry attempts"},
+                "max_review_retries": {"type": "integer", "description": "Max review retry attempts"},
+                "auto_pr": {"type": "boolean", "description": "Auto-create PR when gates pass"},
+                "auto_merge": {"type": "boolean", "description": "Auto-merge PR after approval"},
+                "max_turns": {"type": "integer", "description": "Default turn limit for tasks"},
+                "max_wall_clock": {"type": "integer", "description": "Default wall clock limit (minutes)"},
+                "env_overrides": {"type": "object", "description": "Environment variable overrides (shallow-merged with project)"},
+                "secrets": {"type": "object", "description": "Secret overrides (shallow-merged with project)"},
+            },
+            "required": ["project_id", "id", "name"],
+        },
+    ),
+    Tool(
+        name="update_component",
+        description="Update a component's fields. Only provided fields are changed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Component ID"},
+                "name": {"type": "string", "description": "Human-readable name"},
+                "description": {"type": ["string", "null"], "description": "Description"},
+                "phase": {"type": "string", "description": "Lifecycle phase"},
+                "base_branch": {"type": ["string", "null"], "description": "Git branch override"},
+                "model": {"type": ["string", "null"], "description": "Model override"},
+                "setup_command": {"type": ["string", "null"], "description": "Setup command override"},
+                "test_command": {"type": ["string", "null"], "description": "Test command override"},
+                "auto_test": {"type": ["boolean", "null"], "description": "Auto-test override"},
+                "auto_review": {"type": ["boolean", "null"], "description": "Auto-review override"},
+                "review_model": {"type": ["string", "null"], "description": "Review model override"},
+                "max_test_retries": {"type": ["integer", "null"], "description": "Max test retries"},
+                "max_review_retries": {"type": ["integer", "null"], "description": "Max review retries"},
+                "auto_pr": {"type": ["boolean", "null"], "description": "Auto-PR override"},
+                "auto_merge": {"type": ["boolean", "null"], "description": "Auto-merge override"},
+                "max_turns": {"type": ["integer", "null"], "description": "Turn limit override"},
+                "max_wall_clock": {"type": ["integer", "null"], "description": "Wall clock limit override"},
+                "env_overrides": {"type": ["object", "null"], "description": "Env overrides"},
+                "secrets": {"type": ["object", "null"], "description": "Secret overrides"},
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
+        name="get_component",
+        description="Get a component with config, linked conversations, and task summary.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Component ID"},
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
+        name="list_components",
+        description="List components, optionally filtered by project.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Filter to one project"},
+            },
+        },
+    ),
+    Tool(
+        name="link_conversation",
+        description="Link a conversation to a component for context tracking.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component_id": {"type": "string", "description": "Component ID"},
+                "conversation_id": {"type": "string", "description": "Conversation ID to link"},
+            },
+            "required": ["component_id", "conversation_id"],
+        },
+    ),
+    Tool(
+        name="unlink_conversation",
+        description="Remove a conversation link from a component.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "component_id": {"type": "string", "description": "Component ID"},
+                "conversation_id": {"type": "string", "description": "Conversation ID to unlink"},
+            },
+            "required": ["component_id", "conversation_id"],
+        },
+    ),
+]
+
+TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS
 
 
 @server.list_tools()
@@ -587,6 +700,7 @@ async def _handle_dispatch_task(arguments):
         auto_review=arguments.get("auto_review", True),
         review_model=arguments.get("review_model"),
         auto_pr=arguments.get("auto_pr", False),
+        component_id=arguments.get("component_id"),
         depends_on=(f"{project_id}/{arguments['depends_on']}"
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
                     else arguments.get("depends_on")),
@@ -623,6 +737,11 @@ async def _handle_close_task(arguments):
 
 async def _handle_get_task_status(arguments):
     result = await db.get_task_status(arguments["task_id"])
+    # Add resolved config
+    try:
+        result["resolved_config"] = await db.resolve_config(arguments["task_id"])
+    except Exception:
+        pass
     # Liveness detection based on status + last_activity
     result["alive"] = result.get("status") == "working"
     if result["alive"] and result.get("last_activity"):
@@ -650,6 +769,7 @@ async def _handle_list_tasks(arguments):
         project_id=arguments.get("project_id"),
         status=arguments.get("status"),
         tag=arguments.get("tag"),
+        component_id=arguments.get("component_id"),
     )
 
 
@@ -831,6 +951,45 @@ async def _handle_search_task_messages(arguments):
     )
 
 
+async def _handle_create_component(arguments):
+    component_id = arguments.pop("id")
+    project_id = arguments.pop("project_id")
+    name = arguments.pop("name")
+    return await db.create_component(
+        id=component_id, project_id=project_id, name=name, **arguments,
+    )
+
+
+async def _handle_update_component(arguments):
+    component_id = arguments.pop("id")
+    if not arguments:
+        return {"error": "No fields to update"}
+    return await db.update_component(component_id, **arguments)
+
+
+async def _handle_get_component(arguments):
+    result = await db.get_component(arguments["id"])
+    return result if result else {"error": f"Component '{arguments['id']}' not found"}
+
+
+async def _handle_list_components(arguments):
+    return await db.list_components(project_id=arguments.get("project_id"))
+
+
+async def _handle_link_conversation(arguments):
+    return await db.link_conversation(
+        component_id=arguments["component_id"],
+        conversation_id=arguments["conversation_id"],
+    )
+
+
+async def _handle_unlink_conversation(arguments):
+    return await db.unlink_conversation(
+        component_id=arguments["component_id"],
+        conversation_id=arguments["conversation_id"],
+    )
+
+
 TOOL_HANDLERS = {
     # Conversation tools
     "board": _handle_board,
@@ -865,6 +1024,13 @@ TOOL_HANDLERS = {
     "update_checklist_item": _handle_update_checklist_item_text,
     "get_pipeline": _handle_get_pipeline,
     "search_task_messages": _handle_search_task_messages,
+    # Component tools
+    "create_component": _handle_create_component,
+    "update_component": _handle_update_component,
+    "get_component": _handle_get_component,
+    "list_components": _handle_list_components,
+    "link_conversation": _handle_link_conversation,
+    "unlink_conversation": _handle_unlink_conversation,
 }
 
 

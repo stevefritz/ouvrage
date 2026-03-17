@@ -1505,6 +1505,7 @@ async def dispatch_task(
     review_model: str | None = None,
     parent_task_id: str | None = None,
     auto_pr: bool = False,
+    component_id: str | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -1534,6 +1535,7 @@ async def dispatch_task(
             model=model, auto_test=auto_test, depends_on=depends_on,
             auto_review=auto_review, review_model=review_model,
             parent_task_id=parent_task_id, auto_pr=auto_pr,
+            component_id=component_id,
         )
         if spec:
             await db.post_task_message(
