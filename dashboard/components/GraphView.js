@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { html, navigate } from './utils.js';
 import { DagGraph } from './DagGraph.js';
 import { GraphDetailPanel } from './GraphDetailPanel.js';
+import { ActivityTimeline } from './ActivityTimeline.js';
 
 export function GraphView({ projectId, jiraBaseUrl, onAction }) {
     const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -48,6 +49,8 @@ export function GraphView({ projectId, jiraBaseUrl, onAction }) {
                         onAction=${onAction} />
                 ` : null}
             </div>
+
+            <${ActivityTimeline} projectId=${projectId} />
         </div>
     `;
 }
