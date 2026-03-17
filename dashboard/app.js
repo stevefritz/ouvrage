@@ -9,6 +9,7 @@ import { Projects } from './components/Projects.js';
 import { ProjectDetail } from './components/ProjectDetail.js';
 import { ComponentDetail } from './components/ComponentDetail.js';
 import { ConversationsList, ConversationDetail } from './components/Conversations.js';
+import { GraphView } from './components/GraphView.js';
 
 function App() {
     const [route, setRoute] = useState(getRoute());
@@ -69,6 +70,8 @@ function App() {
     let view;
     if (route.view === 'board') {
         view = html`<${Board} key=${JSON.stringify(route.params)} params=${route.params || {}} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
+    } else if (route.view === 'graph') {
+        view = html`<${GraphView} key=${route.projectId} projectId=${route.projectId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'detail') {
         view = html`<${TaskDetail} key=${route.taskId} taskId=${route.taskId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'projects') {

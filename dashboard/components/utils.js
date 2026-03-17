@@ -5,17 +5,20 @@ import htm from 'https://esm.sh/htm@3.1.1';
 
 export const html = htm.bind(h);
 
-// Sanitization guard
-export const sanitize = typeof DOMPurify !== 'undefined'
-    ? (dirty) => DOMPurify.sanitize(dirty)
-    : (dirty) => dirty;
-
 export function escapeHtml(str) {
     if (!str) return '';
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
 }
+
+// Sanitization guard — if DOMPurify CDN fails, escape HTML instead of passing raw
+export const sanitize = typeof DOMPurify !== 'undefined'
+    ? (dirty) => DOMPurify.sanitize(dirty)
+    : (dirty) => {
+        console.warn('DOMPurify not loaded — falling back to HTML escaping');
+        return escapeHtml(dirty);
+    };
 
 export function relativeTime(iso) {
     if (!iso) return '\u2014';
@@ -34,7 +37,7 @@ export function progressBar(done, total, len = 10) {
 }
 
 const STATUS_MAP = {
-    working:          { bg: 'bg-emerald-500/20', text: 'text-emerald-400', icon: '\u25CF', dot: true },
+    working:          { bg: 'bg-amber-500/20', text: 'text-amber-400', icon: '\u25CF', dot: true },
     completed:        { bg: 'bg-blue-500/20', text: 'text-blue-400', icon: '\u2713' },
     failed:           { bg: 'bg-red-500/20', text: 'text-red-400', icon: '\u2715' },
     'needs-review':   { bg: 'bg-amber-500/20', text: 'text-amber-400', icon: '\u26A0' },
@@ -73,19 +76,21 @@ export function GateBadge({ task }) {
 export function PrUrlBadge({ task }) {
     const prUrl = task.pr_url || (task.artifacts && task.artifacts.find(a => a.type === 'pr_url')?.ref);
     if (!prUrl) return null;
-    return html`<a href=${prUrl} target="_blank" rel="noopener"
+    // Validate protocol to prevent javascript: XSS
+    const safeUrl = (typeof prUrl === 'string' && (prUrl.startsWith('https://') || prUrl.startsWith('http://'))) ? prUrl : '#';
+    return html`<a href=${safeUrl} target="_blank" rel="noopener"
         class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">PR \u2197</a>`;
 }
 
 export function jiraUrl(ticket, jiraBaseUrl) {
-    if (!ticket) return '#';
+    if (!ticket || typeof ticket !== 'string') return '#';
     if (ticket.startsWith('http')) return ticket;
     if (jiraBaseUrl) return `${jiraBaseUrl}/browse/${ticket}`;
     return '#';
 }
 
 export function jiraLabel(ticket) {
-    if (!ticket) return '';
+    if (!ticket || typeof ticket !== 'string') return '';
     if (ticket.startsWith('http')) {
         const parts = ticket.split('/');
         return parts[parts.length - 1] || ticket;
@@ -100,6 +105,7 @@ export function renderMarkdown(content) {
 
 export function getRoute() {
     const hash = location.hash.slice(1) || '/';
+    if (hash.startsWith('/graph/')) return { view: 'graph', projectId: decodeURIComponent(hash.slice(7)) };
     if (hash.startsWith('/tasks/')) return { view: 'detail', taskId: hash.slice(7) };
     if (hash.startsWith('/conversations/')) return { view: 'conversation-detail', convId: decodeURIComponent(hash.slice(15)) };
     if (hash === '/conversations') return { view: 'conversations' };

@@ -1,0 +1,497 @@
+// Graph Detail Panel — slide-in task detail for DAG graph view
+import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { api } from '../api.js';
+import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, jiraUrl, jiraLabel } from './utils.js';
+import { MessageThread } from './MessageThread.js';
+import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+
+// ── Attempt grouping for messages ────────────────────────────
+// Groups messages by dispatch/retry cycle. Boundaries are dispatcher "status"
+// messages (which signal end of a CC session). Each cycle = one "attempt".
+function groupMessagesByAttempt(messages) {
+    if (!messages || messages.length === 0) return [];
+    const attempts = [];
+    let current = { messages: [], outcome: null, startTime: null, endTime: null };
+
+    for (const msg of messages) {
+        // Skip plan messages (shown separately)
+        if (msg.type === 'plan') continue;
+
+        if (!current.startTime) current.startTime = msg.created_at;
+        current.endTime = msg.created_at;
+        current.messages.push(msg);
+
+        // Dispatcher status messages mark the end of an attempt
+        if (msg.author === 'dispatcher' && msg.type === 'status') {
+            current.outcome = msg.title || msg.content?.slice(0, 80) || 'Completed';
+            attempts.push(current);
+            current = { messages: [], outcome: null, startTime: null, endTime: null };
+        }
+    }
+
+    // Remaining messages form the current (in-progress) attempt
+    if (current.messages.length > 0) {
+        current.outcome = 'In Progress';
+        attempts.push(current);
+    }
+
+    return attempts;
+}
+
+// ── Tooltip wrapper ─────────────────────────────────────────
+function Tip({ text, children }) {
+    return html`<span class="relative group inline-flex">
+        ${children}
+        <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs rounded bg-slate-700 text-slate-200 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">${text}</span>
+    </span>`;
+}
+
+// ── Action buttons with tooltips ────────────────────────────
+function TooltipActionButtons({ task, onAction }) {
+    const btn = (action, label, colorClass, tip) => html`
+        <${Tip} text=${tip}>
+            <button onClick=${() => onAction(action, task.id)}
+                class="px-2 py-1 text-xs rounded ${colorClass}">${label}</button>
+        <//>`;
+
+    const btns = [];
+    if (task.status === 'working') {
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30', 'Stop the running session'));
+    }
+    if (task.status === 'failed' || task.status === 'cancelled') {
+        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', 'Dispatch a fresh session'));
+    }
+    if (task.status === 'completed' || task.status === 'needs-review' || task.status === 'turns-exhausted') {
+        btns.push(btn('resume', 'Resume', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', 'Continue the session with existing context'));
+        btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', 'Dispatch a clean new session'));
+    }
+    if (task.status === 'completed' && !task.worktree_path) {
+        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30', 'Clean up worktree and branch'));
+    }
+    if (task.status === 'needs-review' || task.status === 'turns-exhausted') {
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30', 'Cancel this task'));
+    }
+    if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
+        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30', 'Bypass automated test/review gates'));
+    }
+    if (task.status === 'completed' && task.gate_status === 'passed') {
+        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30', 'Dispatch the next dependent task'));
+    }
+    if (task.depends_on || task.gate_status) {
+        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20', 'Cancel this task and all dependents'));
+    }
+    // Release worktree
+    if (task.worktree_path) {
+        btns.push(btn('close', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30', 'Release the git worktree for this task'));
+    }
+
+    return html`<div class="flex gap-2 flex-wrap">${btns}</div>`;
+}
+
+// ── Gate Pipeline (same as TaskDetail but inline) ───────────
+function GatePipeline({ task }) {
+    if (!task.auto_test && !task.auto_review) return null;
+
+    const stages = [];
+    stages.push({ label: 'Task', status: task.status === 'completed' ? 'done' : task.status === 'working' ? 'active' : 'pending' });
+
+    if (task.auto_test) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'testing') s = 'active';
+        else if (gs === 'test-failed') s = 'failed';
+        else if (['test-passed', 'reviewing', 'review-failed', 'passed'].includes(gs)) s = 'done';
+        else if (task.status === 'completed') s = 'done';
+        stages.push({ label: 'Tests', status: s });
+    }
+
+    if (task.auto_review) {
+        const gs = task.gate_status;
+        let s = 'pending';
+        if (gs === 'reviewing') s = 'active';
+        else if (gs === 'review-failed') s = 'failed';
+        else if (gs === 'passed') s = 'done';
+        stages.push({ label: 'Review', status: s });
+    }
+
+    stages.push({ label: 'Advance', status: task.gate_status === 'passed' ? 'done' : 'pending' });
+
+    const colors = {
+        done: 'bg-emerald-500 text-white',
+        active: 'bg-blue-500 text-white gate-pulse',
+        failed: 'bg-red-500 text-white',
+        pending: 'bg-slate-700 text-slate-400',
+    };
+    const icons = { done: '\u2713', active: '\u25CF', failed: '\u2715', pending: '\u25CB' };
+
+    return html`
+        <div class="flex items-center gap-2 overflow-x-auto mb-3">
+            ${stages.map((st, i) => html`
+                <div key=${i} class="flex items-center gap-2 shrink-0">
+                    <div class="flex flex-col items-center">
+                        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs ${colors[st.status]}">
+                            ${icons[st.status]}
+                        </div>
+                        <span class="text-xs text-slate-500 mt-0.5">${st.label}</span>
+                    </div>
+                    ${i < stages.length - 1 ? html`<div class="w-6 h-px bg-slate-600"></div>` : null}
+                </div>
+            `)}
+            ${task.gate_retries > 0 ? html`<span class="text-xs text-slate-500 ml-1">Retries: ${task.gate_retries}/${task.max_gate_retries || 3}</span>` : null}
+        </div>
+    `;
+}
+
+// ── Blockers section ────────────────────────────────────────
+function BlockersSection({ task, allTasks }) {
+    if (!task.depends_on) return null;
+    const parent = allTasks && allTasks.find(t => t.id === task.depends_on);
+    if (!parent) return null;
+    if (['completed', 'merged'].includes(parent.status) && (!parent.gate_status || parent.gate_status === 'passed')) return null;
+
+    return html`
+        <div class="bg-slate-800/50 border border-slate-700 rounded p-3 mb-3">
+            <h4 class="text-xs font-medium text-amber-400 mb-2">Blocked By</h4>
+            <div class="flex items-center gap-2">
+                <${StatusBadge} status=${parent.status} />
+                <span class="text-sm font-mono text-slate-300">${parent.id.split('/').pop()}</span>
+                ${parent.gate_status && parent.gate_status !== 'passed' ? html`<${GateBadge} task=${parent} />` : null}
+            </div>
+            <p class="text-xs text-slate-500 mt-1">${parent.goal}</p>
+        </div>
+    `;
+}
+
+// ── Review output section ───────────────────────────────────
+function ReviewSection({ subtasks }) {
+    const reviews = (subtasks || []).filter(s => s.type === 'review');
+    if (reviews.length === 0) return null;
+    const latest = reviews[reviews.length - 1];
+
+    const verdictColor = latest.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' :
+                         latest.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                         latest.status === 'working' ? 'bg-blue-500/20 text-blue-400' :
+                         'bg-slate-500/20 text-slate-400';
+
+    return html`
+        <details class="bg-slate-800/50 border border-slate-700 rounded mb-3" open=${latest.status === 'working'}>
+            <summary class="px-3 py-2 text-sm cursor-pointer hover:bg-slate-800">
+                <span class="inline-flex items-center gap-2">
+                    Review Output
+                    <span class="px-2 py-0.5 rounded text-xs font-medium ${verdictColor}">
+                        ${latest.status === 'completed' ? 'PASSED' : latest.status === 'failed' ? 'FAILED' : latest.status.toUpperCase()}
+                    </span>
+                    ${latest.model ? html`<span class="text-xs text-slate-500">${latest.model}</span>` : null}
+                    <a href="#/tasks/${latest.id}" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="View reviewer session log">Session Log ↗</a>
+                </span>
+            </summary>
+            ${latest.result ? html`
+                <div class="px-3 pb-3 border-t border-slate-700/50 prose-dark text-sm max-h-48 overflow-y-auto"
+                    dangerouslySetInnerHTML=${{ __html: renderMarkdown(latest.result) }}></div>
+            ` : null}
+        </details>
+    `;
+}
+
+// ── Test output section ─────────────────────────────────────
+function TestSection({ subtasks }) {
+    const tests = (subtasks || []).filter(s => s.type === 'test');
+    if (tests.length === 0) return null;
+    const latest = tests[tests.length - 1];
+
+    const exitColor = latest.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' :
+                      latest.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                      latest.status === 'working' ? 'bg-blue-500/20 text-blue-400' :
+                      'bg-slate-500/20 text-slate-400';
+
+    return html`
+        <details class="bg-slate-800/50 border border-slate-700 rounded mb-3" open=${latest.status === 'failed'}>
+            <summary class="px-3 py-2 text-sm cursor-pointer hover:bg-slate-800">
+                <span class="inline-flex items-center gap-2">
+                    Test Output
+                    <span class="px-2 py-0.5 rounded text-xs font-medium ${exitColor}">
+                        ${latest.status === 'completed' ? 'PASSED' : latest.status === 'failed' ? 'FAILED' : latest.status.toUpperCase()}
+                    </span>
+                    <span class="text-xs text-slate-500">Attempt ${tests.length}</span>
+                </span>
+            </summary>
+            ${latest.result ? html`
+                <div class="px-3 pb-3 border-t border-slate-700/50">
+                    <pre class="text-xs text-slate-400 whitespace-pre-wrap max-h-48 overflow-y-auto">${latest.result}</pre>
+                </div>
+            ` : null}
+        </details>
+    `;
+}
+
+// ── Checklist ───────────────────────────────────────────────
+function Checklist({ task }) {
+    const items = task.checklist || [];
+    if (items.length === 0) return null;
+
+    return html`
+        <div class="mb-3">
+            <h4 class="text-xs font-medium text-slate-400 mb-1">Checklist (${task.checklist_done}/${task.checklist_total})</h4>
+            <div class="space-y-0.5">
+                ${items.map(c => html`
+                    <div key=${c.id} class="flex items-center gap-2 text-xs ${c.done ? 'text-slate-500' : 'text-slate-300'}">
+                        <span>${c.done ? '\u2705' : '\u2B1C'}</span>
+                        <span>${c.item}</span>
+                    </div>
+                `)}
+            </div>
+        </div>
+    `;
+}
+
+// ── Plan section ────────────────────────────────────────────
+function PlanSection({ messages }) {
+    const planMsg = [...(messages || [])].reverse().find(m => m.type === 'plan');
+    if (!planMsg) return null;
+    return html`
+        <details class="bg-slate-800/50 border border-slate-700 rounded mb-3">
+            <summary class="px-3 py-2 text-sm text-slate-300 cursor-pointer hover:bg-slate-800">
+                Implementation Plan
+            </summary>
+            <div class="px-3 pb-3 prose-dark text-sm border-t border-slate-700/50 max-h-64 overflow-y-auto"
+                dangerouslySetInnerHTML=${{ __html: renderMarkdown(planMsg.content) }}></div>
+        </details>
+    `;
+}
+
+// ── Message input ───────────────────────────────────────────
+function MessageInput({ taskId, task, onAction, onRefresh }) {
+    const [content, setContent] = useState('');
+    const [type, setType] = useState('review');
+
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!content.trim()) return;
+        try {
+            await api.postMessage(taskId, content.trim(), type);
+            setContent('');
+            onRefresh();
+        } catch (err) { alert(`Error: ${err.message}`); }
+    };
+
+    const resumable = ['completed', 'needs-review', 'turns-exhausted'].includes(task?.status);
+
+    return html`
+        <form onSubmit=${submit} class="mt-3 border-t border-slate-700 pt-2">
+            <div class="flex gap-1">
+                <select class="bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-xs text-slate-300 w-20"
+                    value=${type} onChange=${(e) => setType(e.target.value)}>
+                    <option value="review">Review</option>
+                    <option value="note">Note</option>
+                    <option value="answer">Answer</option>
+                </select>
+                <input type="text" placeholder="Post a message..."
+                    class="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                    value=${content} onInput=${(e) => setContent(e.target.value)} />
+                <${Tip} text="Send message to task thread">
+                    <button type="submit" class="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500">Send</button>
+                <//>
+            </div>
+            ${resumable ? html`
+                <${Tip} text="Resume the CC session with any new messages">
+                    <button type="button" onClick=${() => onAction('resume', taskId)}
+                        class="w-full mt-1.5 px-2 py-1.5 text-xs rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30">
+                        Resume session with new messages
+                    </button>
+                <//>
+            ` : null}
+        </form>
+    `;
+}
+
+// ── Proof of Life ───────────────────────────────────────────
+function ProofOfLife({ task }) {
+    if (task.status !== 'working') return null;
+    const alive = task.alive;
+    const pid = task.pid;
+    const la = task.last_activity;
+    const age = la ? (Date.now() - new Date(la + (la.endsWith('Z') ? '' : 'Z')).getTime()) / 1000 : null;
+
+    let indicator, label;
+    if (!pid) { indicator = 'bg-slate-500'; label = 'No PID'; }
+    else if (!alive) { indicator = 'bg-red-500'; label = `PID ${pid} (dead)`; }
+    else if (age > 300) { indicator = 'bg-red-500'; label = `PID ${pid} — stale ${Math.floor(age / 60)}m`; }
+    else if (age > 120) { indicator = 'bg-amber-500'; label = `PID ${pid} — ${Math.floor(age)}s ago`; }
+    else { indicator = 'bg-emerald-500 status-dot-working'; label = `PID ${pid} — active`; }
+
+    return html`
+        <div class="flex items-center gap-2 text-xs text-slate-400 mb-2">
+            <span class="w-2 h-2 rounded-full ${indicator}"></span>
+            <span>${label}</span>
+            ${task.total_cost_usd ? html`<span class="ml-auto">$${task.total_cost_usd.toFixed(4)} | ${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span>` : null}
+        </div>
+    `;
+}
+
+// ── Main Panel ──────────────────────────────────────────────
+export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAction }) {
+    const [task, setTask] = useState(null);
+    const [error, setError] = useState(null);
+    const [sessionLogOpen, setSessionLogOpen] = useState(false);
+    const [dispatchLogOpen, setDispatchLogOpen] = useState(false);
+    const mountedRef = useRef(true);
+
+    const loadTask = useCallback(async () => {
+        try {
+            const data = await api.getTask(taskId);
+            if (mountedRef.current) { setTask(data); setError(null); }
+        } catch (e) {
+            if (mountedRef.current && !task) setError(e.message);
+        }
+    }, [taskId]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        setTask(null);
+        setError(null);
+        setSessionLogOpen(false);
+        setDispatchLogOpen(false);
+        loadTask();
+        return () => { mountedRef.current = false; };
+    }, [taskId]);
+
+    // Poll while active
+    useEffect(() => {
+        if (!task) return;
+        const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
+        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive;
+        if (!shouldPoll) return;
+        const timer = setInterval(loadTask, 5000);
+        return () => clearInterval(timer);
+    }, [task?.status, task?.gate_status, loadTask]);
+
+    if (error) {
+        return html`<div class="graph-detail-panel">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                <span class="text-sm text-red-400">Error: ${error}</span>
+                <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg">\u00D7</button>
+            </div>
+        </div>`;
+    }
+
+    if (!task) {
+        return html`<div class="graph-detail-panel">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                <span class="text-sm text-slate-500">Loading...</span>
+                <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg">\u00D7</button>
+            </div>
+        </div>`;
+    }
+
+    const shortId = task.id.includes('/') ? task.id.split('/').pop() : task.id;
+    const autoRefreshLogs = task.status === 'working';
+
+    return html`
+        <div class="graph-detail-panel">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700 sticky top-0 bg-slate-900 z-10">
+                <div class="flex items-center gap-2 min-w-0">
+                    <${StatusBadge} status=${task.status} />
+                    <${GateBadge} task=${task} />
+                    <span class="font-mono text-sm text-slate-200 truncate">${shortId}</span>
+                    <a href="#/tasks/${task.id}" class="text-xs text-blue-400 hover:text-blue-300 shrink-0" title="Open full task view">\u2197</a>
+                </div>
+                <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg ml-2 shrink-0">\u00D7</button>
+            </div>
+
+            <!-- Content -->
+            <div class="overflow-y-auto flex-1 px-4 py-3">
+                <!-- Goal & metadata -->
+                <p class="text-sm text-slate-300 mb-2">${task.goal}</p>
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-3">
+                    ${task.branch ? html`<span>Branch: <span class="font-mono text-slate-400">${task.branch}</span></span>` : null}
+                    ${task.model ? html`<span>Model: <span class="text-slate-400">${task.model}</span></span>` : null}
+                    <span>Cost: <span class="text-slate-400">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                    <span>Tokens: <span class="text-slate-400">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                    <span>Dispatches: <span class="text-slate-400">${task.dispatch_count || 0}</span></span>
+                    ${task.phase ? html`<span>Phase: <span class="text-slate-400">${task.phase}</span></span>` : null}
+                    <${PrUrlBadge} task=${task} />
+                    ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
+                        class="px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
+                </div>
+
+                <!-- Component badge + tags -->
+                <div class="flex flex-wrap gap-1 mb-3">
+                    ${task.project_id ? html`<span class="px-2 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-400">${task.project_id}</span>` : null}
+                    ${(task.tags || []).map(t => html`<span key=${t} class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}
+                </div>
+
+                <!-- Worktree indicator -->
+                ${task.worktree_path ? html`
+                    <div class="flex items-center gap-2 text-xs text-slate-500 mb-2">
+                        <span class="w-2 h-2 rounded-full ${task.status === 'working' ? 'bg-emerald-500' : 'bg-slate-500'}"></span>
+                        Worktree: ${task.status === 'working' ? 'attached' : 'detached'}
+                    </div>
+                ` : null}
+
+                <${ProofOfLife} task=${task} />
+                <${GatePipeline} task=${task} />
+                <${BlockersSection} task=${task} allTasks=${allTasks} />
+                <${ReviewSection} subtasks=${task.subtasks} />
+                <${TestSection} subtasks=${task.subtasks} />
+                <${Checklist} task=${task} />
+                <${PlanSection} messages=${task.messages} />
+
+                <!-- Messages grouped by attempt -->
+                ${(() => {
+                    const attempts = groupMessagesByAttempt(task.messages);
+                    const nonPlanCount = (task.messages || []).filter(m => m.type !== 'plan').length;
+                    if (attempts.length <= 1) {
+                        // Single attempt or no messages — show flat like before
+                        return html`
+                            <details class="mb-3" open>
+                                <summary class="text-sm font-medium text-slate-400 cursor-pointer hover:text-slate-300 mb-2">
+                                    Messages (${nonPlanCount})
+                                </summary>
+                                <div class="max-h-96 overflow-y-auto">
+                                    <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="panel-msg" />
+                                </div>
+                                <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
+                            </details>`;
+                    }
+                    // Multiple attempts — group with collapsible sections
+                    return html`
+                        <div class="mb-3">
+                            <div class="text-sm font-medium text-slate-400 mb-2">
+                                Messages (${nonPlanCount}) · ${attempts.length} attempts
+                            </div>
+                            ${attempts.map((attempt, idx) => {
+                                const isLast = idx === attempts.length - 1;
+                                const outcomeColor = attempt.outcome === 'In Progress' ? 'text-blue-400' :
+                                    attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? 'text-red-400' :
+                                    'text-emerald-400';
+                                return html`
+                                    <details key=${idx} class="border border-slate-700 rounded mb-2" open=${isLast}>
+                                        <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                                            <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
+                                            <span class="${outcomeColor}">${attempt.outcome}</span>
+                                            <span class="text-slate-600 ml-auto">${attempt.messages.length} msgs</span>
+                                        </summary>
+                                        <div class="px-2 pb-2 max-h-64 overflow-y-auto">
+                                            <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
+                                        </div>
+                                    </details>`;
+                            })}
+                            <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
+                        </div>`;
+                })()}
+
+                <!-- Actions -->
+                <div class="border-t border-slate-700 pt-3 mb-3">
+                    <${TooltipActionButtons} task=${task} onAction=${onAction} />
+                </div>
+
+                <!-- Session & Dispatch logs -->
+                <${SessionLogPanel} taskId=${taskId} isOpen=${sessionLogOpen}
+                    onToggle=${() => setSessionLogOpen(!sessionLogOpen)} autoRefresh=${autoRefreshLogs} />
+                <${DispatchLogPanel} taskId=${taskId} isOpen=${dispatchLogOpen}
+                    onToggle=${() => setDispatchLogOpen(!dispatchLogOpen)} />
+            </div>
+        </div>
+    `;
+}
