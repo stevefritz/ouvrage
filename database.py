@@ -1692,22 +1692,27 @@ async def update_component(id: str, **fields) -> dict:
 
 async def list_components(project_id: str | None = None) -> list[dict]:
     async with get_db() as db:
+        base_query = """SELECT c.*,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as total_tasks,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status = 'working') as active_tasks,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status = 'completed') as done_tasks,
+                    (SELECT COALESCE(SUM(total_cost_usd), 0) FROM tasks WHERE component_id = c.id) as total_cost,
+                    (SELECT COUNT(*) FROM component_conversations WHERE component_id = c.id) as conversation_count,
+                    (SELECT COUNT(*) FROM punchlist WHERE component_id = c.id AND status != 'done') as open_punchlist
+                   FROM components c"""
         if project_id:
             rows = await db.execute_fetchall(
-                """SELECT c.*,
-                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as task_count
-                   FROM components c WHERE c.project_id = ? ORDER BY c.created_at DESC""",
+                base_query + " WHERE c.project_id = ? ORDER BY c.created_at DESC",
                 (project_id,),
             )
         else:
             rows = await db.execute_fetchall(
-                """SELECT c.*,
-                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as task_count
-                   FROM components c ORDER BY c.created_at DESC"""
+                base_query + " ORDER BY c.created_at DESC"
             )
         results = []
         for r in rows:
             c = dict(r)
+            c["total_cost"] = round(c.get("total_cost", 0), 2)
             if c.get("env_overrides"):
                 c["env_overrides"] = json.loads(c["env_overrides"])
             if c.get("secrets"):
@@ -2173,6 +2178,39 @@ async def resolve_punchlist_items_for_task(task_id: str) -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+# Aliases used by dashboard_api.py
+async def create_punchlist_item(component_id: str, item: str) -> dict:
+    """Alias for add_punchlist_item (used by dashboard API)."""
+    return await add_punchlist_item(component_id, item)
+
+
+async def update_punchlist_item(item_id: int, **fields) -> dict:
+    """Update arbitrary fields on a punchlist item."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        if not rows:
+            raise ValueError(f"Punchlist item {item_id} not found")
+        allowed = {"status", "claimed_by", "resolved_by", "resolved_at", "item"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            await db.execute(
+                f"UPDATE punchlist SET {set_clause} WHERE id = ?",
+                (*updates.values(), item_id),
+            )
+            await db.commit()
+        rows = await db.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        return dict(rows[0])
+
+
+async def delete_punchlist_item(item_id: int) -> bool:
+    """Delete a punchlist item by ID."""
+    async with get_db() as db:
+        cursor = await db.execute("DELETE FROM punchlist WHERE id = ?", (item_id,))
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def revert_punchlist_items_for_task(task_id: str) -> int:
