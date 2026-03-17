@@ -542,15 +542,6 @@ async def _get_review_subtask(task_id: str) -> dict | None:
     }
 
 
-async def _handle_get_attempts(send, task_id):
-    """Return messages grouped by attempt number with outcome summaries."""
-    task = await db.get_task(task_id)
-    if not task:
-        return await _error(send, f"Task '{task_id}' not found", 404)
-    attempts = await db.get_task_attempts(task_id)
-    await _json_response(send, attempts)
-
-
 async def _handle_post_message(receive, send, task_id):
     body = await _read_body(receive)
     if not body:

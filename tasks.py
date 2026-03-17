@@ -2691,17 +2691,3 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup}
 
 
-async def release_worktree(task_id: str) -> dict:
-    """Detach worktree without closing the task. Frees the branch for new work."""
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    if not task.get("worktree_path"):
-        return {"task_id": task_id, "released": False, "reason": "no worktree attached"}
-
-    project = await db.get_project(task["project_id"])
-    if project:
-        await cleanup_worktree(project, task, force_delete_branch=False)
-
-    await db.update_task(task_id, worktree_path=None)
-    return {"task_id": task_id, "released": True}

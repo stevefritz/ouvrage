@@ -441,7 +441,7 @@ class TestDashboardApiAttempts:
     """_handle_get_attempts returns attempts via REST."""
 
     async def test_attempts_endpoint(self, db, sample_project):
-        """Dashboard API returns attempts for a task."""
+        """Dashboard API returns attempts for a task (from disk archives)."""
         import dashboard_api
 
         task = await db.create_task(
@@ -449,7 +449,6 @@ class TestDashboardApiAttempts:
             project_id="test-project",
             goal="API attempts",
         )
-        await db.post_task_message(task_id=task["id"], author="cc-worker", content="Working")
 
         send_calls = []
 
@@ -467,10 +466,10 @@ class TestDashboardApiAttempts:
         body_event = next((e for e in send_calls if e.get("type") == "http.response.body"), None)
         assert body_event is not None
         data = json.loads(body_event["body"])
-        assert isinstance(data, list)
-        assert len(data) == 1
-        assert data[0]["attempt_number"] == 1
-        assert data[0]["outcome"] == "in-progress"
+        assert "attempts" in data
+        assert isinstance(data["attempts"], list)
+        # No disk archives exist yet, so attempts list is empty
+        assert data["task_id"] == "test-project/api-attempts"
 
     async def test_task_detail_includes_review_subtask_field(self, db, sample_project):
         """GET /api/tasks/{id} includes review_subtask in response."""
