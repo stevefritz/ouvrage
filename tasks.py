@@ -108,20 +108,42 @@ async def _classify_with_dependents(task: dict) -> tuple[int, str]:
     return (priority, method)
 
 
-def _verify_worktree(task: dict) -> bool:
-    """Check if a task's worktree exists and looks valid."""
+async def _verify_worktree(task: dict) -> bool:
+    """Check if a task's worktree exists, looks valid, and is clean."""
     worktree = task.get("worktree_path")
     if not worktree or not os.path.exists(worktree):
         return False
     # Check for .git file/dir (worktree marker)
-    return os.path.exists(os.path.join(worktree, ".git"))
+    if not os.path.exists(os.path.join(worktree, ".git")):
+        return False
+    # Verify worktree is clean and not corrupted
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=worktree,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return False  # corrupted worktree
+        if stdout.strip():
+            return False  # dirty worktree
+        return True
+    except Exception:
+        return False
 
 
-def _build_recovery_message(task: dict, method: str, position: int, total: int,
-                             recovery_count: int) -> str:
+async def _build_recovery_message(task: dict, method: str, position: int, total: int,
+                                   recovery_count: int) -> str:
     """Build a status message for a recovered task."""
     session_id = task.get("session_id") or "(none)"
     phase = task.get("phase") or "unknown"
+
+    # Get checklist progress
+    checklist = await db.get_checklist(task["id"])
+    done = sum(1 for item in checklist if item.get("done"))
+    checklist_total = len(checklist)
 
     method_label = {
         "resume": "resume (session preserved)",
@@ -131,7 +153,7 @@ def _build_recovery_message(task: dict, method: str, position: int, total: int,
 
     return (
         f"⚡ Service restart detected — auto-recovering task\n"
-        f"  Previous state: working (phase: {phase})\n"
+        f"  Previous state: working (phase: {phase}, {done}/{checklist_total} checklist)\n"
         f"  Session: {session_id}\n"
         f"  Recovery method: {method_label}\n"
         f"  Recovery attempt: {recovery_count}\n"
@@ -209,14 +231,14 @@ async def recover_orphaned_tasks():
         recovery_count = (task.get("recovery_count") or 0) + 1
 
         # Flap detection
-        if recovery_count > MAX_RECOVERY_ATTEMPTS:
-            log.warning(f"Recovery limit reached for {task_id} ({recovery_count - 1} attempts)")
+        if recovery_count >= MAX_RECOVERY_ATTEMPTS:
+            log.warning(f"Recovery limit reached for {task_id} ({recovery_count} attempts)")
             await db.update_task(task_id, status="needs-review",
-                                 recovery_count=recovery_count - 1)
+                                 recovery_count=recovery_count)
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Recovery limit reached",
-                content=f"Recovery limit reached ({recovery_count - 1} attempts). "
+                content=f"Recovery limit reached ({recovery_count} attempts). "
                         "Manual intervention required.",
             )
             continue
@@ -227,7 +249,7 @@ async def recover_orphaned_tasks():
                              last_recovery_at=db.now_iso())
 
         # Post recovery status message
-        msg = _build_recovery_message(task, method, position, total, recovery_count)
+        msg = await _build_recovery_message(task, method, position, total, recovery_count)
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="Auto-recovery initiated", content=msg,
@@ -251,7 +273,7 @@ async def recover_orphaned_tasks():
         try:
             await _recover_task(task_id, task, method)
         except Exception as e:
-            log.error(f"Recovery failed for {task_id}: {e}")
+            log.error(f"Recovery failed for {task_id}: {e}", exc_info=True)
             await db.update_task(task_id, status="needs-review")
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
@@ -291,10 +313,10 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
     gate = parent.get("gate_status")
     if gate in ("testing", "test-failed") and parent.get("auto_test") and project.get("test_command"):
         log.info(f"Recovery: re-triggering test gate for parent {parent_id}")
-        asyncio.create_task(_run_test_gate(parent_id, project, parent))
+        await _run_test_gate(parent_id, project, parent)
     elif gate in ("reviewing", "review-failed") and parent.get("auto_review"):
         log.info(f"Recovery: re-triggering review for parent {parent_id}")
-        asyncio.create_task(_dispatch_review(parent_id, project, parent))
+        await _dispatch_review(parent_id, project, parent)
     else:
         log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} gate_status={gate}, cannot re-trigger")
         await db.update_task(task_id, status="needs-review")
@@ -303,7 +325,7 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
 async def _recover_with_resume(task_id: str, task: dict) -> None:
     """Resume a task with existing session_id. Falls back to retry on failure."""
     # Verify worktree before resume
-    if not _verify_worktree(task):
+    if not await _verify_worktree(task):
         log.warning(f"Recovery: worktree missing/corrupt for {task_id}, falling back to retry")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",

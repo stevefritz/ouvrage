@@ -1,7 +1,8 @@
 """Tests for crash recovery: auto-resume, retry, gate re-trigger, stagger, flap detection."""
 
-from unittest.mock import AsyncMock, patch, MagicMock
 import asyncio
+import os
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
@@ -79,7 +80,7 @@ class TestRecoverWithResume:
         self.mock_setup_worktree = AsyncMock(return_value="/tmp/fake-worktree")
         self.mock_run_setup = AsyncMock()
         self.mock_run_sdk = AsyncMock()
-        self.mock_verify = patch("tasks._verify_worktree", return_value=True)
+        self.mock_verify = patch("tasks._verify_worktree", AsyncMock(return_value=True))
 
         patches = [
             patch("tasks.setup_worktree", self.mock_setup_worktree),
@@ -114,7 +115,7 @@ class TestRecoverWithResume:
         import tasks
 
         # Override worktree check to return False
-        with patch("tasks._verify_worktree", return_value=False):
+        with patch("tasks._verify_worktree", AsyncMock(return_value=False)):
             orphan = await _create_orphan(db, session_id="sess-123")
             await tasks.recover_orphaned_tasks()
 
@@ -202,9 +203,7 @@ class TestRecoverGateSubtask:
         sub = await db.get_task("test-project/review-sub")
         assert sub["status"] == "cancelled"
 
-        # Parent gate should be re-triggered (test gate runs via create_task)
-        # Give the asyncio.create_task a chance to run
-        await asyncio.sleep(0.01)
+        # Parent gate should be re-triggered (awaited directly)
         self.mock_run_test_gate.assert_called_once()
 
     async def test_gate_subtask_retriggers_review(self, db, sample_project):
@@ -222,7 +221,6 @@ class TestRecoverGateSubtask:
 
         await tasks.recover_orphaned_tasks()
 
-        await asyncio.sleep(0.01)
         self.mock_dispatch_review.assert_called_once()
 
 
@@ -240,7 +238,7 @@ class TestStaggerRecovery:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", return_value=True),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -333,7 +331,7 @@ class TestRecoveryPriority:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", return_value=True),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
             patch("tasks._run_test_gate", AsyncMock()),
             patch("tasks._dispatch_review", AsyncMock()),
             patch("tasks._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
@@ -413,7 +411,7 @@ class TestConcurrencyDuringRecovery:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", return_value=True),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -473,21 +471,52 @@ class TestRecoveryQueuePriority:
 # ---------------------------------------------------------------------------
 
 class TestWorktreeVerification:
-    """_verify_worktree checks worktree existence."""
+    """_verify_worktree checks worktree existence and cleanliness."""
 
-    def test_missing_worktree(self):
+    async def test_missing_worktree(self):
         from tasks import _verify_worktree
-        assert _verify_worktree({"worktree_path": "/nonexistent/path"}) is False
+        assert await _verify_worktree({"worktree_path": "/nonexistent/path"}) is False
 
-    def test_no_worktree_path(self):
+    async def test_no_worktree_path(self):
         from tasks import _verify_worktree
-        assert _verify_worktree({}) is False
-        assert _verify_worktree({"worktree_path": None}) is False
+        assert await _verify_worktree({}) is False
+        assert await _verify_worktree({"worktree_path": None}) is False
 
-    def test_valid_worktree(self, tmp_path):
+    async def test_valid_clean_worktree(self, tmp_path):
+        """Worktree with .git and clean git status passes verification."""
         from tasks import _verify_worktree
-        (tmp_path / ".git").mkdir()
-        assert _verify_worktree({"worktree_path": str(tmp_path)}) is True
+        (tmp_path / ".git").touch()  # worktrees have a .git file, not dir
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+            assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
+
+    async def test_dirty_worktree_fails(self, tmp_path):
+        """Worktree with uncommitted changes fails verification."""
+        from tasks import _verify_worktree
+        (tmp_path / ".git").touch()
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b" M tasks.py\n", b""))
+
+        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+            assert await _verify_worktree({"worktree_path": str(tmp_path)}) is False
+
+    async def test_corrupted_worktree_fails(self, tmp_path):
+        """Worktree where git status returns non-zero fails verification."""
+        from tasks import _verify_worktree
+        (tmp_path / ".git").touch()
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 128
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: not a git repository"))
+
+        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+            assert await _verify_worktree({"worktree_path": str(tmp_path)}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +533,7 @@ class TestResumeFailureFallback:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", return_value=True),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -554,7 +583,7 @@ class TestRecoveryStatusMessages:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", return_value=True),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -563,10 +592,17 @@ class TestRecoveryStatusMessages:
             p.stop()
 
     async def test_recovery_message_posted(self, db, sample_project):
-        """Recovery posts a status message with details."""
+        """Recovery posts a status message with details including checklist progress."""
         import tasks
 
         await _create_orphan(db, session_id="sess-abc", phase="implementing")
+
+        # Add checklist items so the message includes progress
+        await db.create_checklist_items("test-project/orphan-1", [
+            "Step one", "Step two", "Step three",
+        ])
+        items = await db.get_checklist("test-project/orphan-1")
+        await db.update_checklist_item(items[0]["id"], done=True)
 
         await tasks.recover_orphaned_tasks()
 
@@ -579,7 +615,6 @@ class TestRecoveryStatusMessages:
         assert "Service restart" in msg
         assert "implementing" in msg
         assert "sess-abc" in msg
+        # Should include checklist progress (1/3)
+        assert "1/3 checklist" in msg
 
-
-# Need os for getpid in concurrency test
-import os
