@@ -228,6 +228,19 @@ async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
     return stdout, stderr, proc.returncode
 
 
+async def _find_branch_holder(branch: str) -> dict | None:
+    """Find a task that holds a worktree on the given branch."""
+    async with db.get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT id, status, worktree_path FROM tasks WHERE branch = ? AND worktree_path IS NOT NULL",
+            (branch,),
+        )
+        if rows:
+            r = rows[0]
+            return {"task_id": r["id"], "status": r["status"], "worktree_path": r["worktree_path"]}
+    return None
+
+
 async def setup_worktree(project: dict, dir_name: str, branch: str,
                          depends_on: str | None = None) -> str:
     """Create git worktree for a task. Returns worktree path.
@@ -303,7 +316,18 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
             worktree_path, branch,
         )
         if rc != 0:
-            raise RuntimeError(f"git worktree add failed: {stderr.decode()}")
+            error_msg = stderr.decode()
+            # Check if branch is already checked out by another worktree
+            if "already checked out" in error_msg or "is already used by worktree" in error_msg:
+                blocking_info = await _find_branch_holder(branch)
+                if blocking_info:
+                    raise RuntimeError(
+                        f"Cannot create worktree for branch '{branch}':\n"
+                        f"  Branch held by task {blocking_info['task_id']}\n"
+                        f"  Status: {blocking_info['status']} | Worktree: {blocking_info['worktree_path']}\n"
+                        f"  Action: release_worktree('{blocking_info['task_id']}') to free it"
+                    )
+            raise RuntimeError(f"git worktree add failed: {error_msg}")
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
 
@@ -877,6 +901,8 @@ async def _run_sdk_session(
                     turns=result_msg.num_turns,
                     cost_usd=result_msg.total_cost_usd or 0,
                 )
+                # Slot freed — drain FIFO queue
+                await _drain_queue()
             else:
                 await db.update_task(task_id, status="completed")
                 await db.post_task_message(
@@ -951,6 +977,8 @@ async def _run_sdk_session(
         await notify.task_failed(task_id=task_id, error=str(e))
         with _open_shared(log_dir / "dispatch.log") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
+        # Slot freed — drain FIFO queue
+        await _drain_queue()
     finally:
         stderr_log.close()
 
@@ -1382,10 +1410,20 @@ async def _maybe_create_pr(task_id: str) -> None:
 
 
 async def _check_and_dispatch_dependents(task_id: str) -> None:
-    """If any tasks depend on this one and it's gate-passed, dispatch them."""
+    """Gate-pass post-processing: auto-merge, auto-release, chain advancement, queue drain."""
     task = await db.get_task(task_id)
     if not task or not task.get("gate_passed_at"):
         return
+
+    # Auto-merge if enabled (before chain advancement)
+    if task.get("auto_merge"):
+        merge_ok = await _perform_auto_merge(task_id)
+        if not merge_ok:
+            return  # Conflict or error — don't advance chain
+
+    # Auto-release worktree after gate pass + merge/PR
+    # (do this after merge but before chain dispatch so the worktree is freed)
+    await _auto_release_worktree(task_id)
 
     dependents = await db.get_dependents(task_id)
     dispatched_any = False
@@ -1414,6 +1452,9 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     # If no dependents to dispatch, this might be the chain tail — try auto-PR
     if not dispatched_any:
         await _maybe_create_pr(task_id)
+
+    # Drain FIFO queue — a slot may have opened up
+    await _drain_queue()
 
 
 async def _invalidate_chain(task_id: str) -> None:
@@ -1530,6 +1571,221 @@ async def _update_usage(task_id: str, result: ResultMessage):
 
 
 # ---------------------------------------------------------------------------
+# FIFO Queue Drain
+# ---------------------------------------------------------------------------
+
+async def _drain_queue() -> None:
+    """Dispatch the oldest eligible queued task if a concurrency slot is available."""
+    active = await db.count_active_tasks()
+    if active >= db.DEFAULT_MAX_CONCURRENT:
+        return
+
+    queued = await db.get_queued_tasks()
+    if not queued:
+        return
+
+    task = queued[0]  # FIFO — oldest first
+    log.info(f"Queue drain: dispatching {task['id']} (queued_at={task['queued_at']})")
+    try:
+        await dispatch_task(
+            project_id=task["project_id"],
+            task_id=task["id"],
+            goal=task["goal"],
+            auto_test=task.get("auto_test", True),
+        )
+    except Exception as e:
+        log.error(f"Queue drain failed for {task['id']}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Branch Resolution + Auto-Merge
+# ---------------------------------------------------------------------------
+
+async def resolve_branch_target(task: dict) -> str:
+    """Resolve the merge target branch using config inheritance.
+
+    Priority: depends_on parent branch → task.base_branch → component.base_branch
+              → project.default_branch
+    """
+    # 1. Parent branch (chain branching)
+    if task.get("depends_on"):
+        parent = await db.get_task(task["depends_on"])
+        if parent and parent.get("branch"):
+            return parent["branch"]
+
+    # 2. Task-level override
+    if task.get("base_branch"):
+        return task["base_branch"]
+
+    # 3. Component-level
+    if task.get("component_id"):
+        component = await db.get_component(task["component_id"])
+        if component and component.get("base_branch"):
+            return component["base_branch"]
+
+    # 4. Project default
+    project = await db.get_project(task["project_id"])
+    return project["default_branch"] if project else "main"
+
+
+async def _perform_auto_merge(task_id: str) -> bool:
+    """Merge task branch into branch_target and push. Returns True on success."""
+    task = await db.get_task(task_id)
+    if not task:
+        return False
+
+    branch_target = await resolve_branch_target(task)
+    await db.update_task(task_id, branch_target=branch_target)
+
+    worktree = task.get("worktree_path")
+    task_branch = task.get("branch")
+    if not worktree or not task_branch:
+        log.error(f"Auto-merge {task_id}: missing worktree or branch")
+        await db.update_task(task_id, pr_status="error", pr_error="Missing worktree or branch")
+        return False
+
+    project = await db.get_project(task["project_id"])
+    bare_path = os.path.join(project["working_dir"], ".bare") if project else None
+
+    # Fetch latest
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    # Checkout the target branch in the worktree
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "checkout", branch_target,
+    )
+    if rc != 0:
+        # Target branch may not exist locally — try creating from origin
+        _, stderr, rc = await _run_as_worker(
+            "git", "-C", worktree, "checkout", "-b", branch_target, f"origin/{branch_target}",
+        )
+        if rc != 0:
+            log.error(f"Auto-merge {task_id}: cannot checkout {branch_target}: {stderr.decode()}")
+            await db.update_task(task_id, status="needs-review",
+                                 pr_status="error", pr_error=f"Cannot checkout {branch_target}")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Auto-merge failed",
+                content=f"Cannot checkout target branch `{branch_target}`:\n```\n{stderr.decode()[:1000]}\n```",
+            )
+            return False
+
+    # Pull latest on target
+    await _run_as_worker("git", "-C", worktree, "pull", "--ff-only", "origin", branch_target)
+
+    # Merge the task branch
+    stdout, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "merge", task_branch, "--no-edit",
+    )
+
+    if rc != 0:
+        # Merge conflict — get list of conflicting files
+        conflict_stdout, _, _ = await _run_as_worker(
+            "git", "-C", worktree, "diff", "--name-only", "--diff-filter=U",
+        )
+        conflict_files = conflict_stdout.decode().strip()
+
+        # Abort the merge
+        await _run_as_worker("git", "-C", worktree, "merge", "--abort")
+
+        # Switch back to task branch
+        await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
+
+        await db.update_task(task_id, status="needs-review",
+                             pr_status="conflict", pr_error=conflict_files)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-merge conflict",
+            content=f"Merge of `{task_branch}` into `{branch_target}` has conflicts:\n\n"
+                    f"```\n{conflict_files or '(unknown)'}\n```\n\n"
+                    f"Resolve manually and retry.",
+        )
+        log.warning(f"Auto-merge {task_id}: conflict merging {task_branch} → {branch_target}")
+        return False
+
+    # Push the merged target branch
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "push", "origin", branch_target,
+    )
+    if rc != 0:
+        log.error(f"Auto-merge {task_id}: push failed: {stderr.decode()}")
+        await db.update_task(task_id, status="needs-review",
+                             pr_status="push-failed", pr_error=stderr.decode()[:500])
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-merge push failed",
+            content=f"Merge succeeded but push to `{branch_target}` failed:\n```\n{stderr.decode()[:1000]}\n```",
+        )
+        # Switch back to task branch
+        await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
+        return False
+
+    # Switch back to task branch for worktree consistency
+    await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
+
+    await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged")
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Auto-merged",
+        content=f"Branch `{task_branch}` merged into `{branch_target}` and pushed.",
+    )
+    log.info(f"Auto-merge {task_id}: {task_branch} → {branch_target} success")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Worktree Lifecycle
+# ---------------------------------------------------------------------------
+
+async def release_worktree(task_id: str) -> dict:
+    """Detach worktree without closing the task. Branch stays on origin."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+
+    worktree = task.get("worktree_path")
+    if not worktree:
+        return {"task_id": task_id, "released": False, "reason": "No worktree attached"}
+
+    project = await db.get_project(task["project_id"])
+    if project:
+        bare_path = os.path.join(project["working_dir"], ".bare")
+        if os.path.exists(bare_path) and os.path.exists(worktree):
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", bare_path, "worktree", "remove", "--force", worktree,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                log.warning(f"Worktree remove failed for {task_id}: {stderr.decode()}")
+            else:
+                log.info(f"Released worktree for {task_id}: {worktree}")
+
+    await db.update_task(task_id, worktree_path=None)
+    return {"task_id": task_id, "released": True, "worktree_path": worktree}
+
+
+async def _auto_release_worktree(task_id: str) -> None:
+    """Release worktree after gate pass if auto_release_worktree is enabled."""
+    task = await db.get_task(task_id)
+    if not task:
+        return
+
+    # Resolve effective auto_release_worktree (default True)
+    auto_release = task.get("auto_release_worktree")
+    if auto_release is None:
+        auto_release = True
+    if not auto_release:
+        return
+
+    if not task.get("worktree_path"):
+        return
+
+    log.info(f"Auto-releasing worktree for {task_id}")
+    await release_worktree(task_id)
+
+
+# ---------------------------------------------------------------------------
 # Public Task Operations
 # ---------------------------------------------------------------------------
 
@@ -1552,16 +1808,19 @@ async def dispatch_task(
     auto_pr: bool = False,
     component_id: str | None = None,
     claude_chat_url: str | None = None,
+    auto_merge: bool = False,
+    auto_release_worktree: bool = True,
+    base_branch: str | None = None,
 ) -> dict:
-    """Create task (if needed), setup worktree, launch CC via Agent SDK."""
+    """Create task (if needed), setup worktree, launch CC via Agent SDK.
 
-    # Check concurrency limit
-    active = await db.count_active_tasks()
-    if active >= db.DEFAULT_MAX_CONCURRENT:
-        raise RuntimeError(
-            f"Concurrency limit reached ({active}/{db.DEFAULT_MAX_CONCURRENT} active tasks). "
-            "Cancel or wait for a task to finish."
-        )
+    If concurrency limit is reached, the task is queued (FIFO) and dispatched
+    automatically when a slot opens up.
+    """
+
+    # Validate mutual exclusion: auto_merge and auto_pr
+    if auto_merge and auto_pr:
+        raise ValueError("auto_merge and auto_pr are mutually exclusive. Set only one.")
 
     # Get project
     project = await db.get_project(project_id)
@@ -1582,6 +1841,8 @@ async def dispatch_task(
             auto_review=auto_review, review_model=review_model,
             parent_task_id=parent_task_id, auto_pr=auto_pr,
             component_id=component_id, claude_chat_url=claude_chat_url,
+            auto_merge=auto_merge, auto_release_worktree=auto_release_worktree,
+            base_branch=base_branch,
         )
         if spec:
             await db.post_task_message(
@@ -1600,8 +1861,9 @@ async def dispatch_task(
                     "task_id": task_id, "status": "ready",
                     "waiting_on": depends_on,
                     "branch": task["branch"],
+                    "queued": False,
                 }
-    elif task["status"] in ("needs-review", "turns-exhausted", "completed"):
+    elif task["status"] in ("needs-review", "turns-exhausted", "completed", "merged"):
         is_resume = True
         # Update depends_on if caller provided a new value (fixes stale prefix issue)
         if depends_on and task.get("depends_on") != depends_on:
@@ -1609,6 +1871,19 @@ async def dispatch_task(
             task["depends_on"] = depends_on
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
+
+    # Check concurrency limit — queue if full (FIFO)
+    active = await db.count_active_tasks()
+    if active >= db.DEFAULT_MAX_CONCURRENT and not is_resume:
+        queued_at = db.now_iso()
+        await db.update_task(task_id, queued_at=queued_at)
+        log.info(f"Task {task_id} queued (concurrency full: {active}/{db.DEFAULT_MAX_CONCURRENT})")
+        return {
+            "task_id": task_id, "status": "ready",
+            "branch": task["branch"],
+            "queued": True,
+            "queued_at": queued_at,
+        }
 
     # Setup worktree — dir_name is always filesystem-safe (no slashes)
     # Branch may contain slashes (e.g. feature/foo)
@@ -1696,6 +1971,10 @@ async def dispatch_task(
         resumed=is_resume,
     )
 
+    # Clear queued_at since we've dispatched
+    if task.get("queued_at"):
+        await db.update_task(task_id, queued_at=None)
+
     return {
         "task_id": task_id,
         "status": "working",
@@ -1708,16 +1987,22 @@ async def dispatch_task(
         "max_wall_clock": effective_max_wall_clock,
         "model": effective_model,
         "resumed": is_resume,
+        "queued": False,
     }
 
 
 async def resume_task(task_id: str) -> dict:
-    """Resume a paused task with the same session ID."""
+    """Resume a paused task with the same session ID.
+
+    If worktree was auto-released, it will be re-attached automatically
+    by setup_worktree() in dispatch_task().
+    """
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    if task["status"] not in ("needs-review", "turns-exhausted", "completed"):
-        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected 'needs-review', 'turns-exhausted', or 'completed'")
+    resumable = ("needs-review", "turns-exhausted", "completed", "merged")
+    if task["status"] not in resumable:
+        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
 
     return await dispatch_task(
         project_id=task["project_id"],
@@ -1800,6 +2085,10 @@ async def cancel_task(task_id: str) -> dict:
         log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
 
     await db.update_task(task_id, status="cancelled")
+
+    # A slot freed up — drain the FIFO queue
+    await _drain_queue()
+
     return {"task_id": task_id, "status": "cancelled", "async_task_cancelled": cancelled_async}
 
 

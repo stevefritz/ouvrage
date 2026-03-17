@@ -228,11 +228,25 @@ TASK_TOOLS = [
                 "auto_review": {"type": "boolean", "description": "Dispatch a self-review session after tests pass. Default: true", "default": True},
                 "review_model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Model for self-review task. Default: opus"},
                 "auto_pr": {"type": "boolean", "description": "Auto-create PR when chain tail passes all gates. Default: false", "default": False},
+                "auto_merge": {"type": "boolean", "description": "Auto-merge task branch into target on gate pass. Mutually exclusive with auto_pr. Default: false", "default": False},
+                "auto_release_worktree": {"type": "boolean", "description": "Auto-detach worktree after gate pass. Default: true", "default": True},
+                "base_branch": {"type": "string", "description": "Override merge target branch (defaults to project default_branch)"},
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
                 "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
                 "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
             },
             "required": ["project_id", "id", "goal"],
+        },
+    ),
+    Tool(
+        name="release_worktree",
+        description="Detach a task's worktree without closing the task. Branch stays on origin. Frees the concurrency slot for queued tasks.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task whose worktree to release"},
+            },
+            "required": ["task_id"],
         },
     ),
     Tool(
@@ -718,6 +732,9 @@ async def _handle_dispatch_task(arguments):
         auto_review=arguments.get("auto_review", True),
         review_model=arguments.get("review_model"),
         auto_pr=arguments.get("auto_pr", False),
+        auto_merge=arguments.get("auto_merge", False),
+        auto_release_worktree=arguments.get("auto_release_worktree", True),
+        base_branch=arguments.get("base_branch"),
         component_id=arguments.get("component_id"),
         claude_chat_url=arguments.get("claude_chat_url"),
         depends_on=(f"{project_id}/{arguments['depends_on']}"
@@ -730,6 +747,9 @@ async def _handle_dispatch_task(arguments):
         await db.set_task_tags(task_id, tags)
         result["tags"] = tags
     return result
+
+async def _handle_release_worktree(arguments):
+    return await tasks.release_worktree(arguments["task_id"])
 
 async def _handle_resume_task(arguments):
     return await tasks.resume_task(arguments["task_id"])
@@ -1144,6 +1164,7 @@ TOOL_HANDLERS = {
     "list_projects": _handle_list_projects,
     # Task tools
     "dispatch_task": _handle_dispatch_task,
+    "release_worktree": _handle_release_worktree,
     "resume_task": _handle_resume_task,
     "retry_task": _handle_retry_task,
     "cancel_task": _handle_cancel_task,
