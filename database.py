@@ -6,6 +6,21 @@ from datetime import datetime, timezone
 
 DB_PATH = os.environ.get("SWITCHBOARD_DB", "./data/switchboard.db")
 
+# Core state definitions — hardcoded defaults for the dashboard
+CORE_STATE_DEFINITIONS = {
+    "ready":         {"color": "#6b7280", "label": "Ready",        "pulse": False},
+    "blocked":       {"color": "#f59e0b", "label": "Blocked",      "pulse": False},
+    "working":       {"color": "#3b82f6", "label": "Working",      "pulse": True},
+    "testing":       {"color": "#8b5cf6", "label": "Testing",      "pulse": True},
+    "reviewing":     {"color": "#8b5cf6", "label": "Reviewing",    "pulse": True},
+    "needs-review":  {"color": "#f59e0b", "label": "Needs Review", "pulse": False},
+    "turns-exhausted": {"color": "#f59e0b", "label": "Turns Exhausted", "pulse": False},
+    "completed":     {"color": "#10b981", "label": "Completed",    "pulse": False},
+    "merged":        {"color": "#10b981", "label": "Merged",       "pulse": False},
+    "failed":        {"color": "#ef4444", "label": "Failed",       "pulse": False},
+    "cancelled":     {"color": "#6b7280", "label": "Cancelled",    "pulse": False},
+}
+
 # Global defaults for task resource limits
 DEFAULT_MAX_TURNS = 200
 DEFAULT_MAX_WALL_CLOCK = 60  # minutes
@@ -252,6 +267,14 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN auto_pr BOOLEAN DEFAULT FALSE")
         if "component_id" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN component_id TEXT")
+        if "claude_chat_url" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN claude_chat_url TEXT")
+
+        # Migrate conversations table: add claude_chat_url if missing
+        conv_columns = await conn.execute_fetchall("PRAGMA table_info(conversations)")
+        conv_col_names = [c["name"] for c in conv_columns]
+        if "claude_chat_url" not in conv_col_names:
+            await conn.execute("ALTER TABLE conversations ADD COLUMN claude_chat_url TEXT")
 
         # Migrate projects table: add model column if missing
         project_columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
@@ -260,6 +283,8 @@ async def init_db():
             await conn.execute("ALTER TABLE projects ADD COLUMN model TEXT")
         if "connectors" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN connectors TEXT")
+        if "state_definitions" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN state_definitions TEXT")
 
         # Create/recreate indexes
         await conn.executescript("""
@@ -381,15 +406,16 @@ async def _list_with_aggregates(
 # Conversations
 # ---------------------------------------------------------------------------
 
-async def create_conversation(id: str, project: str, goal: str) -> dict:
+async def create_conversation(id: str, project: str, goal: str, claude_chat_url: str | None = None) -> dict:
     async with get_db() as db:
         ts = now_iso()
         await db.execute(
-            "INSERT INTO conversations (id, project, goal, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (id, project, goal, ts, ts),
+            "INSERT INTO conversations (id, project, goal, claude_chat_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (id, project, goal, claude_chat_url, ts, ts),
         )
         await db.commit()
-        return {"id": id, "project": project, "goal": goal, "archived": False, "created_at": ts, "updated_at": ts}
+        return {"id": id, "project": project, "goal": goal, "archived": False,
+                "claude_chat_url": claude_chat_url, "created_at": ts, "updated_at": ts}
 
 
 async def post_message(conversation_id: str, author: str, content: str, type: str | None = None, title: str | None = None, pinned: bool = False) -> dict:
@@ -515,17 +541,21 @@ async def create_project(
     test_command: str | None = None, env_overrides: dict | None = None,
     max_turns: int | None = None, max_wall_clock: int | None = None,
     claude_md_path: str | None = None, model: str | None = None,
+    state_definitions: dict | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
         env_json = json.dumps(env_overrides) if env_overrides else None
+        state_json = json.dumps(state_definitions) if state_definitions else None
         await db.execute(
             """INSERT INTO projects
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
-                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
+                state_definitions, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
-             test_command, env_json, max_turns, max_wall_clock, claude_md_path, model, ts),
+             test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
+             state_json, ts),
         )
         await db.commit()
         return {
@@ -534,7 +564,8 @@ async def create_project(
             "teardown_command": teardown_command, "test_command": test_command,
             "env_overrides": env_overrides, "max_turns": max_turns,
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
-            "model": model, "created_at": ts,
+            "model": model, "state_definitions": state_definitions,
+            "created_at": ts,
         }
 
 
@@ -546,6 +577,8 @@ async def get_project(id: str) -> dict | None:
         p = dict(rows[0])
         if p.get("env_overrides"):
             p["env_overrides"] = json.loads(p["env_overrides"])
+        if p.get("state_definitions"):
+            p["state_definitions"] = json.loads(p["state_definitions"])
         return p
 
 
@@ -557,6 +590,8 @@ async def update_project(project_id: str, **fields) -> dict:
 
         if "env_overrides" in fields and isinstance(fields["env_overrides"], dict):
             fields["env_overrides"] = json.dumps(fields["env_overrides"])
+        if "state_definitions" in fields and isinstance(fields["state_definitions"], dict):
+            fields["state_definitions"] = json.dumps(fields["state_definitions"])
 
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [project_id]
@@ -567,6 +602,8 @@ async def update_project(project_id: str, **fields) -> dict:
         p = dict(rows[0])
         if p.get("env_overrides"):
             p["env_overrides"] = json.loads(p["env_overrides"])
+        if p.get("state_definitions"):
+            p["state_definitions"] = json.loads(p["state_definitions"])
         return p
 
 
@@ -578,6 +615,8 @@ async def list_projects() -> list[dict]:
             p = dict(r)
             if p.get("env_overrides"):
                 p["env_overrides"] = json.loads(p["env_overrides"])
+            if p.get("state_definitions"):
+                p["state_definitions"] = json.loads(p["state_definitions"])
             projects.append(p)
         return projects
 
@@ -595,6 +634,7 @@ async def create_task(
     auto_review: bool = True, review_model: str | None = None,
     parent_task_id: str | None = None, auto_pr: bool = False,
     component_id: str | None = None,
+    claude_chat_url: str | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -611,11 +651,12 @@ async def create_task(
                (id, project_id, goal, status, branch, max_turns, max_wall_clock,
                 jira_ticket, conversation_id, model, auto_test, depends_on,
                 auto_review, review_model, parent_task_id, auto_pr, component_id,
-                created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                claude_chat_url, created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
              jira_ticket, conversation_id, model, auto_test, depends_on,
-             auto_review, review_model, parent_task_id, auto_pr, component_id, ts, ts),
+             auto_review, review_model, parent_task_id, auto_pr, component_id,
+             claude_chat_url, ts, ts),
         )
         await db.commit()
         return {
@@ -626,7 +667,7 @@ async def create_task(
             "model": model, "auto_test": auto_test, "depends_on": depends_on,
             "auto_review": auto_review, "review_model": review_model,
             "parent_task_id": parent_task_id, "auto_pr": auto_pr,
-            "component_id": component_id,
+            "component_id": component_id, "claude_chat_url": claude_chat_url,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -647,7 +688,7 @@ TASK_MUTABLE_FIELDS = {
     "jira_ticket", "conversation_id",
     "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
     "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
-    "component_id",
+    "component_id", "claude_chat_url",
 }
 
 
@@ -1003,6 +1044,26 @@ async def get_task_status(task_id: str) -> dict:
         task["tags"] = [r["tag"] for r in tag_rows]
 
         return task
+
+
+def get_merged_state_definitions(project: dict | None = None) -> dict:
+    """Merge core state definitions with project-level custom states."""
+    merged = dict(CORE_STATE_DEFINITIONS)
+    if project and project.get("state_definitions"):
+        custom = project["state_definitions"]
+        if isinstance(custom, str):
+            custom = json.loads(custom)
+        merged.update(custom)
+    return merged
+
+
+def get_state_definition(state: str, project: dict | None = None) -> dict:
+    """Get the definition for a single state, with fallback."""
+    merged = get_merged_state_definitions(project)
+    if state in merged:
+        return merged[state]
+    # Unknown state — return a sensible default
+    return {"color": "#6b7280", "label": state.replace("-", " ").title(), "pulse": False}
 
 
 # ---------------------------------------------------------------------------
