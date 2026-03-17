@@ -25,11 +25,19 @@ function Toggle({ checked, onChange, disabled = false }) {
 
 async function getPushState() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        return { supported: false, subscribed: false };
+        return { supported: false, serverConfigured: true, subscribed: false };
+    }
+    // Check if server has VAPID keys configured
+    let serverConfigured = true;
+    try {
+        const keyResp = await api.getVapidPublicKey();
+        serverConfigured = !!keyResp.vapid_public_key;
+    } catch {
+        serverConfigured = false;
     }
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
-    return { supported: true, subscribed: !!sub, subscription: sub };
+    return { supported: true, serverConfigured, subscribed: !!sub, subscription: sub };
 }
 
 async function subscribePush() {
@@ -146,7 +154,13 @@ export function Settings() {
                     </p>
                 `}
 
-                ${push.supported && html`
+                ${push.supported && !push.serverConfigured && html`
+                    <p class="text-sm text-amber-400">
+                        Push notifications require server configuration (VAPID keys not set).
+                    </p>
+                `}
+
+                ${push.supported && push.serverConfigured && html`
                     <div class="flex items-center justify-between">
                         <div>
                             <div class="text-sm text-slate-200 font-medium">Enable push notifications</div>

@@ -1595,7 +1595,7 @@ async def get_component(id: str) -> dict | None:
         if c.get("secrets"):
             c["secrets"] = json.loads(c["secrets"])
 
-        # Task summary
+        # Task summary + full task list
         task_rows = await db.execute_fetchall(
             """SELECT status, COUNT(*) as cnt, COALESCE(SUM(total_cost_usd), 0) as cost
                FROM tasks WHERE component_id = ? GROUP BY status""",
@@ -1605,25 +1605,44 @@ async def get_component(id: str) -> dict | None:
         total_tasks = 0
         total_cost = 0.0
         active_tasks = 0
+        done_tasks = 0
         for r in task_rows:
             task_summary[r["status"]] = r["cnt"]
             total_tasks += r["cnt"]
             total_cost += r["cost"]
             if r["status"] == "working":
                 active_tasks = r["cnt"]
+            if r["status"] == "completed":
+                done_tasks = r["cnt"]
         c["task_summary"] = {
             "by_status": task_summary,
             "total": total_tasks,
             "active": active_tasks,
             "total_cost": round(total_cost, 2),
         }
+        # Flat fields for frontend progress bar
+        c["total_tasks"] = total_tasks
+        c["done_tasks"] = done_tasks
+        c["active_tasks"] = active_tasks
+        c["total_cost"] = round(total_cost, 2)
 
-        # Linked conversations
-        conv_rows = await db.execute_fetchall(
-            "SELECT conversation_id FROM component_conversations WHERE component_id = ?",
+        # Full task list for component detail view
+        all_tasks = await db.execute_fetchall(
+            """SELECT id, goal, status, model, total_cost_usd, last_activity, created_at
+               FROM tasks WHERE component_id = ? ORDER BY created_at DESC""",
             (id,),
         )
-        c["conversations"] = [r["conversation_id"] for r in conv_rows]
+        c["tasks"] = [dict(t) for t in all_tasks]
+
+        # Linked conversations (return objects with id + goal)
+        conv_rows = await db.execute_fetchall(
+            """SELECT cc.conversation_id AS id, conv.goal
+               FROM component_conversations cc
+               LEFT JOIN conversations conv ON conv.id = cc.conversation_id
+               WHERE cc.component_id = ?""",
+            (id,),
+        )
+        c["conversations"] = [dict(r) for r in conv_rows]
 
         return c
 
@@ -1850,6 +1869,39 @@ async def get_activity(
             params,
         )
         return [dict(r) for r in rows]
+
+
+async def get_component_activity(
+    component_id: str, limit: int = 50
+) -> list[dict]:
+    """Get recent significant task messages for tasks belonging to a component."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            """
+            SELECT
+                m.id, m.task_id, m.type, m.type AS event_type,
+                m.content, m.title, m.created_at,
+                t.goal AS task_goal, t.status AS task_status,
+                t.total_cost_usd
+            FROM messages m
+            JOIN tasks t ON m.task_id = t.id
+            WHERE t.component_id = ?
+              AND m.type IN ('result', 'status', 'test-result', 'review', 'handoff')
+            ORDER BY m.created_at DESC
+            LIMIT ?
+            """,
+            (component_id, limit),
+        )
+        results = []
+        for r in rows:
+            ev = dict(r)
+            # Add a brief summary for the timeline
+            content = ev.get("content") or ""
+            first_line = next((l.strip() for l in content.split("\n") if l.strip()), "")
+            clean = first_line.lstrip("#").strip().replace("**", "")
+            ev["summary"] = clean[:120] + "…" if len(clean) > 120 else clean
+            results.append(ev)
+        return results
 
 
 async def search_task_messages(query: str, project_id: str | None = None, limit: int = 20) -> list[dict]:
