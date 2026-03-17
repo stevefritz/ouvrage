@@ -183,9 +183,11 @@ export function DispatchLogPanel({ taskId, isOpen, onToggle }) {
 
     useEffect(() => {
         if (!isOpen || !taskId || loaded) return;
+        let cancelled = false;
         api.getDispatchLog(taskId)
-            .then(data => { setText(data); setLoaded(true); })
-            .catch(e => { setText(`Error: ${e.message}`); setLoaded(true); });
+            .then(data => { if (!cancelled) { setText(data); setLoaded(true); } })
+            .catch(e => { if (!cancelled) { setText(`Error: ${e.message}`); setLoaded(true); } });
+        return () => { cancelled = true; };
     }, [isOpen, taskId, loaded]);
 
     return html`

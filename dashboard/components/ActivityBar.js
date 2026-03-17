@@ -66,6 +66,9 @@ function eventDotClass(ev) {
     return 'text-slate-400';
 }
 
+const MAX_EVENTS = 20;
+const POLL_INTERVAL_MS = 10000;
+
 export function ActivityBar() {
     const [tasks, setTasks] = useState([]);
     const [events, setEvents] = useState([]);
@@ -86,9 +89,29 @@ export function ActivityBar() {
             const newEvents = [];
             const now = new Date().toISOString();
 
+            const isFirstLoad = prevMapRef.current.size === 0;
+
             for (const t of all) {
                 const prev = prevMapRef.current.get(t.id);
-                if (!prev) continue;
+                if (!prev) {
+                    // First load: seed events for tasks already in actionable states
+                    // so the bar isn't empty when the user opens the dashboard mid-activity.
+                    // Skip working (shown as spinners) and completed/failed (stale history).
+                    if (isFirstLoad && (t.status === 'needs-review' || t.status === 'turns-exhausted')) {
+                        newEvents.push({
+                            id: `${t.id}:init:${Date.now()}`,
+                            source: 'diff',
+                            type: t.status,
+                            taskId: t.id,
+                            taskGoal: t.goal,
+                            from: null,
+                            to: t.status,
+                            cost: t.total_cost_usd,
+                            ts: t.last_activity || t.updated_at || now,
+                        });
+                    }
+                    continue;
+                }
 
                 if (prev.status !== t.status) {
                     const type = t.status === 'completed' ? 'completed'
@@ -125,7 +148,7 @@ export function ActivityBar() {
             setTasks(all);
 
             if (newEvents.length > 0) {
-                setEvents(prev => [...newEvents, ...prev].slice(0, 20));
+                setEvents(prev => [...newEvents, ...prev].slice(0, MAX_EVENTS));
             }
         } catch (e) {
             console.warn('ActivityBar load error:', e);
@@ -134,7 +157,7 @@ export function ActivityBar() {
 
     useEffect(() => {
         load();
-        const timer = setInterval(load, 10000);
+        const timer = setInterval(load, POLL_INTERVAL_MS);
         return () => clearInterval(timer);
     }, [load]);
 

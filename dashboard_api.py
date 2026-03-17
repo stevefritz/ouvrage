@@ -207,8 +207,14 @@ async def _handle_get_project(send, project_id):
 async def _handle_activity(scope, send):
     params = _parse_qs(scope)
     project_id = params.get("project_id")
-    limit = min(int(params.get("limit", 30)), 100)
-    offset = int(params.get("offset", 0))
+    try:
+        limit = int(params.get("limit", 30))
+        offset = int(params.get("offset", 0))
+    except (ValueError, TypeError):
+        return await _error(send, "limit and offset must be integers", 400)
+    if limit < 0 or offset < 0:
+        return await _error(send, "limit and offset must be non-negative", 400)
+    limit = min(limit, 100)
     events = await db.get_activity(project_id=project_id, limit=limit, offset=offset)
     await _json_response(send, events)
 
