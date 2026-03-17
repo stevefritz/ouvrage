@@ -334,19 +334,68 @@ function PunchlistSection({ componentId }) {
     `;
 }
 
+// ── Linked conversation pills ─────────────────────────────────────────────
+
+function LinkedConversationPills({ conversations }) {
+    if (!conversations || conversations.length === 0) return null;
+    return html`
+        <div class="flex flex-wrap gap-2 mb-6">
+            ${conversations.map(conv => html`
+                <button key=${conv.id}
+                    onClick=${() => navigate(`#/conversations/${encodeURIComponent(conv.id)}`)}
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/25 hover:bg-indigo-500/25 hover:border-indigo-400/50 transition-colors"
+                    title=${conv.goal || conv.id}>
+                    <span>\u{1F4AC}</span>
+                    <span>${conv.id}</span>
+                </button>
+            `)}
+        </div>
+    `;
+}
+
 // ── Activity timeline ─────────────────────────────────────────────────────
 
 const EVENT_ICONS = {
-    result:   { icon: '\u2713', bg: 'bg-blue-500/20', text: 'text-blue-400' },
-    question: { icon: '\u003F', bg: 'bg-amber-500/20', text: 'text-amber-400' },
-    handoff:  { icon: '\u27A1', bg: 'bg-purple-500/20', text: 'text-purple-400' },
-    plan:     { icon: '\u2318', bg: 'bg-indigo-500/20', text: 'text-indigo-400' },
-    note:     { icon: '\u2022', bg: 'bg-slate-500/20', text: 'text-slate-400' },
-    progress: { icon: '\u25B6', bg: 'bg-slate-500/20', text: 'text-slate-400' },
+    result:         { icon: '\u2713', bg: 'bg-blue-500/20',   text: 'text-blue-400' },
+    question:       { icon: '?',      bg: 'bg-amber-500/20',  text: 'text-amber-400' },
+    handoff:        { icon: '\u27A1', bg: 'bg-purple-500/20', text: 'text-purple-400' },
+    plan:           { icon: '\u2318', bg: 'bg-indigo-500/20', text: 'text-indigo-400' },
+    note:           { icon: '\u2022', bg: 'bg-slate-500/20',  text: 'text-slate-400' },
+    progress:       { icon: '\u25B6', bg: 'bg-slate-500/20',  text: 'text-slate-400' },
+    review:         { icon: '\uD83D\uDC41', bg: 'bg-pink-500/20',   text: 'text-pink-400' },
+    'test-result':  { icon: '\u2699', bg: 'bg-violet-500/20', text: 'text-violet-400' },
+    status:         { icon: '\u25CF', bg: 'bg-slate-500/20',  text: 'text-slate-400' },
 };
+
+// Filter pill definitions — order determines display order
+const TIMELINE_FILTERS = [
+    { key: 'completions', label: 'Completions', defaultOn: true,  cls: 'text-blue-400',   onCls: 'bg-blue-500/20 border-blue-500/40' },
+    { key: 'failures',    label: 'Failures',    defaultOn: true,  cls: 'text-red-400',    onCls: 'bg-red-500/20 border-red-500/40' },
+    { key: 'reviews',     label: 'Reviews',     defaultOn: true,  cls: 'text-pink-400',   onCls: 'bg-pink-500/20 border-pink-500/40' },
+    { key: 'questions',   label: 'Questions',   defaultOn: true,  cls: 'text-amber-400',  onCls: 'bg-amber-500/20 border-amber-500/40' },
+    { key: 'handoffs',    label: 'Handoffs',    defaultOn: false, cls: 'text-purple-400', onCls: 'bg-purple-500/20 border-purple-500/40' },
+    { key: 'status',      label: 'Status',      defaultOn: false, cls: 'text-slate-400',  onCls: 'bg-slate-500/20 border-slate-500/40' },
+];
+
+const DEFAULT_TIMELINE_FILTERS = new Set(
+    TIMELINE_FILTERS.filter(f => f.defaultOn).map(f => f.key)
+);
+
+function eventCategory(ev) {
+    const type = ev.type;
+    if (type === 'result') return ev.task_status === 'completed' ? 'completions' : 'failures';
+    if (type === 'test-result') return 'failures';
+    if (type === 'review') return 'reviews';
+    if (type === 'question') return 'questions';
+    if (type === 'handoff') return 'handoffs';
+    if (type === 'status') return 'status';
+    return null;
+}
 
 function ActivityTimeline({ componentId }) {
     const [events, setEvents] = useState(null);
+    const [expanded, setExpanded] = useState(false);
+    const [activeFilters, setActiveFilters] = useState(DEFAULT_TIMELINE_FILTERS);
 
     useEffect(() => {
         api.getComponentActivity(componentId)
@@ -354,37 +403,101 @@ function ActivityTimeline({ componentId }) {
             .catch(e => console.warn('Activity error:', e));
     }, [componentId]);
 
-    if (events === null) return html`<p class="text-slate-500 text-sm">Loading...</p>`;
-    if (events.length === 0) return html`<p class="text-slate-500 text-sm">No activity yet.</p>`;
+    const toggleFilter = useCallback((key) => {
+        setActiveFilters(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+        });
+    }, []);
+
+    const totalCount = events ? events.length : 0;
+    const recentCount = useMemo(() => {
+        if (!events) return 0;
+        const hourAgo = Date.now() - 3600000;
+        return events.filter(ev => new Date(ev.created_at + (ev.created_at.endsWith('Z') ? '' : 'Z')).getTime() > hourAgo).length;
+    }, [events]);
+
+    const filteredEvents = useMemo(() => {
+        if (!events) return [];
+        return events.filter(ev => {
+            const cat = eventCategory(ev);
+            return cat && activeFilters.has(cat);
+        });
+    }, [events, activeFilters]);
+
+    const summaryText = events === null
+        ? 'Loading...'
+        : `${totalCount} events${recentCount > 0 ? ` \u00B7 ${recentCount} in last hour` : ''}`;
 
     return html`
-        <div class="space-y-2">
-            ${events.map(ev => {
-                const s = EVENT_ICONS[ev.type] || EVENT_ICONS.note;
-                const taskSlug = ev.task_id ? ev.task_id.split('/').pop() : '';
-                return html`
-                    <div key=${ev.id} class="flex gap-3 items-start">
-                        <div class="shrink-0 mt-0.5 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${s.bg} ${s.text}">
-                            ${s.icon}
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-baseline gap-2 mb-0.5">
-                                <span class="text-xs font-medium uppercase tracking-wide ${s.text}">${ev.type}</span>
-                                ${ev.task_id && html`
-                                    <a href=${`#/tasks/${encodeURIComponent(ev.task_id)}`}
-                                        class="text-xs text-slate-500 hover:text-slate-300 font-mono truncate"
-                                        title=${ev.task_id}>
-                                        ${taskSlug}
-                                    </a>
-                                `}
-                                <span class="text-xs text-slate-600 ml-auto shrink-0">${relativeTime(ev.created_at)}</span>
-                            </div>
-                            ${ev.title && html`<p class="text-sm font-medium text-slate-300 mb-0.5">${ev.title}</p>`}
-                            <p class="text-sm text-slate-400 line-clamp-3">${ev.summary}</p>
-                        </div>
+        <div class="border border-slate-700 rounded-lg overflow-hidden">
+            <button class="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/50 text-left"
+                onClick=${() => setExpanded(e => !e)}>
+                <span class="text-sm font-medium text-slate-300">Activity Timeline</span>
+                <span class="flex items-center gap-2 text-xs text-slate-500">
+                    <span>${summaryText}</span>
+                    <span>${expanded ? '\u25B2' : '\u25BC'}</span>
+                </span>
+            </button>
+
+            ${expanded && html`
+                <div class="bg-slate-900/50 border-t border-slate-800">
+                    <!-- Type filter pills -->
+                    <div class="flex flex-wrap gap-1.5 px-4 pt-3 pb-2 border-b border-slate-800">
+                        ${TIMELINE_FILTERS.map(f => {
+                            const on = activeFilters.has(f.key);
+                            return html`
+                                <button key=${f.key}
+                                    onClick=${() => toggleFilter(f.key)}
+                                    class="px-2 py-0.5 text-xs rounded border transition-colors ${
+                                        on
+                                            ? `${f.onCls} ${f.cls}`
+                                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-400'
+                                    }">
+                                    ${f.label}
+                                </button>
+                            `;
+                        })}
                     </div>
-                `;
-            })}
+                    <!-- Scrollable event list -->
+                    <div class="px-4 pb-4" style="max-height: 500px; overflow-y: auto;">
+                        ${filteredEvents.length === 0
+                            ? html`<p class="text-slate-500 text-sm py-4">No events match the current filters.</p>`
+                            : html`
+                                <div class="space-y-2 pt-3">
+                                    ${filteredEvents.map(ev => {
+                                        const s = EVENT_ICONS[ev.type] || EVENT_ICONS.note;
+                                        const taskSlug = ev.task_id ? ev.task_id.split('/').pop() : '';
+                                        return html`
+                                            <div key=${ev.id} class="flex gap-3 items-start">
+                                                <div class="shrink-0 mt-0.5 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${s.bg} ${s.text}">
+                                                    ${s.icon}
+                                                </div>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="flex items-baseline gap-2 mb-0.5">
+                                                        <span class="text-xs font-medium uppercase tracking-wide ${s.text}">${ev.type}</span>
+                                                        ${ev.task_id && html`
+                                                            <a href=${`#/tasks/${encodeURIComponent(ev.task_id)}`}
+                                                                class="text-xs text-slate-500 hover:text-slate-300 font-mono truncate"
+                                                                title=${ev.task_id}>
+                                                                ${taskSlug}
+                                                            </a>
+                                                        `}
+                                                        <span class="text-xs text-slate-600 ml-auto shrink-0">${relativeTime(ev.created_at)}</span>
+                                                    </div>
+                                                    ${ev.title && html`<p class="text-sm font-medium text-slate-300 mb-0.5">${ev.title}</p>`}
+                                                    <p class="text-sm text-slate-400 line-clamp-3">${ev.summary}</p>
+                                                </div>
+                                            </div>
+                                        `;
+                                    })}
+                                </div>
+                            `
+                        }
+                    </div>
+                </div>
+            `}
         </div>
     `;
 }
@@ -458,6 +571,9 @@ export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
                 </div>
             </div>
 
+            <!-- Linked conversations (compact pills) — design context for this component -->
+            <${LinkedConversationPills} conversations=${comp.conversations} />
+
             <!-- Tasks -->
             <section class="mb-6">
                 <div class="flex items-center justify-between mb-3">
@@ -483,39 +599,15 @@ export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
                 }
             </section>
 
-            <!-- Punchlist + Activity side-by-side on wide screens -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <section>
-                    <${PunchlistSection} componentId=${componentId} />
-                </section>
+            <!-- Punchlist -->
+            <section class="mb-6">
+                <${PunchlistSection} componentId=${componentId} />
+            </section>
 
-                <section>
-                    <div class="border border-slate-700 rounded-lg overflow-hidden">
-                        <div class="px-4 py-3 bg-slate-900 border-b border-slate-800">
-                            <span class="text-sm font-medium text-slate-300">Activity Timeline</span>
-                        </div>
-                        <div class="bg-slate-900/50 px-4 py-4">
-                            <${ActivityTimeline} componentId=${componentId} />
-                        </div>
-                    </div>
-                </section>
-            </div>
-
-            <!-- Linked conversations -->
-            ${comp.conversations && comp.conversations.length > 0 && html`
-                <section>
-                    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">Linked Conversations</h3>
-                    <div class="bg-slate-900 border border-slate-700 rounded-lg divide-y divide-slate-800">
-                        ${comp.conversations.map(conv => html`
-                            <div key=${conv.id} class="px-4 py-3 flex items-center gap-3 hover:bg-slate-800/50 cursor-pointer"
-                                onClick=${() => navigate(`#/conversations/${encodeURIComponent(conv.id)}`)}>
-                                <span class="text-sm text-slate-300 flex-1">${conv.goal || conv.id}</span>
-                                <span class="text-xs text-slate-500 font-mono">${conv.id}</span>
-                            </div>
-                        `)}
-                    </div>
-                </section>
-            `}
+            <!-- Activity Timeline — collapsed by default, stays at bottom -->
+            <section class="mb-6">
+                <${ActivityTimeline} componentId=${componentId} />
+            </section>
         </div>
     `;
 }
