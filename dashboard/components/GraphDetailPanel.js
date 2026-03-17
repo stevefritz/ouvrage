@@ -65,7 +65,7 @@ function TooltipActionButtons({ task, onAction }) {
         btns.push(btn('resume', 'Resume', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30', 'Continue the session with existing context'));
         btns.push(btn('retry', 'Retry', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30', 'Dispatch a clean new session'));
     }
-    if (task.status === 'completed') {
+    if (task.status === 'completed' && !task.worktree_path) {
         btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30', 'Clean up worktree and branch'));
     }
     if (task.status === 'needs-review' || task.status === 'turns-exhausted') {

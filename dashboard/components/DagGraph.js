@@ -87,7 +87,8 @@ function computeLayout(tasks, stateColors) {
         if (!ranks.has(id)) ranks.set(id, 0);
     }
 
-    // BFS: assign ranks
+    // BFS: assign ranks (use Set for O(1) visited checks)
+    const queued = new Set(queue);
     let i = 0;
     while (i < queue.length) {
         const id = queue[i++];
@@ -97,7 +98,10 @@ function computeLayout(tasks, stateColors) {
             if (!ranks.has(childId) || ranks.get(childId) < newRank) {
                 ranks.set(childId, newRank);
             }
-            if (!queue.includes(childId)) queue.push(childId);
+            if (!queued.has(childId)) {
+                queued.add(childId);
+                queue.push(childId);
+            }
         }
     }
 
