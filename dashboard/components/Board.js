@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, progressBar, navigate, StatusBadge, GateBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, EmptyState, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, progressBar, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, EmptyState, jiraUrl, jiraLabel } from './utils.js';
 
 export function Board({ params = {}, jiraBaseUrl, onAction }) {
     const [tasks, setTasks] = useState(null);
@@ -115,9 +115,7 @@ export function Board({ params = {}, jiraBaseUrl, onAction }) {
                                         <div class="flex items-center gap-2">
                                             <span class="font-mono text-sm text-slate-200">${t.id}</span>
                                             <${WorktreeIndicator} task=${t} />
-                                            ${t.pr_url ? html`<a href=${t.pr_url} target="_blank" rel="noopener"
-                                                onClick=${(e) => e.stopPropagation()}
-                                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30" title="View PR">PR</a>` : null}
+                                            <span onClick=${(e) => e.stopPropagation()}><${PrUrlBadge} task=${t} /></span>
                                             ${t.jira_ticket ? html`<a href=${jiraUrl(t.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                                                 onClick=${(e) => e.stopPropagation()}
                                                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30" title="Jira">${jiraLabel(t.jira_ticket)}</a>` : null}

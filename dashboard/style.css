@@ -18,7 +18,7 @@
     --text-primary: #f1f5f9;
     --text-secondary: #e2e8f0;
     --text-muted: #94a3b8;
-    --text-faint: #718096;
+    --text-faint: #8494a7;
     --text-disabled: #576a82;
 
     --scrollbar-track: #0f172a;
@@ -200,6 +200,7 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     border: 1px solid #334155;
 }
+/* Intentional: tooltips stay dark in both themes for contrast and consistency */
 .theme-light .tip-text {
     background: #1e293b;
     color: #e2e8f0;

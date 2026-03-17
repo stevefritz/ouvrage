@@ -57,7 +57,7 @@ const CONFIRM_CONFIGS = {
     },
     retry: {
         title: 'Retry Task',
-        message: (taskId) => `Start a new CC session for "${taskId}"? Previous session context will be lost. Review feedback from the last attempt will be injected as instructions.`,
+        message: (taskId) => `Start a new CC session for "${taskId}"? Previous session context will be lost. Review feedback from the last attempt will be injected.`,
         confirmLabel: 'Retry',
         btnClass: 'confirm-btn-primary',
     },
@@ -90,6 +90,12 @@ const CONFIRM_CONFIGS = {
         message: (taskId) => `Cancel "${taskId}" and ALL dependent tasks in the chain? This cannot be undone.`,
         confirmLabel: 'Cancel Chain',
         btnClass: 'confirm-btn-danger',
+    },
+    'release-worktree': {
+        title: 'Release Worktree',
+        message: (taskId) => `Detach the worktree from "${taskId}" without closing the task? The branch will be freed for new work. Code changes in the worktree will be removed.`,
+        confirmLabel: 'Release Worktree',
+        btnClass: 'confirm-btn-primary',
     },
 };
 
@@ -277,9 +283,9 @@ export function ClaudeChatLink({ url }) {
 }
 
 // ── Action Buttons with tooltips ─────────────────────────────
-const BUTTON_TOOLTIPS = {
+export const BUTTON_TOOLTIPS = {
     cancel: 'Kill the running CC process. Code changes are preserved in the worktree.',
-    retry: 'Start a fresh CC session. Previous review feedback will be injected as instructions.',
+    retry: 'Start a fresh CC session. Previous review feedback will be injected.',
     resume: 'Continue the existing CC session with full conversation history.',
     close: 'Clean up worktree, delete branch, archive task.',
     'skip-gate': 'Bypass automated tests/review. Mark gate as passed manually.',
@@ -320,6 +326,9 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
     }
     if (task.depends_on || task.gate_status) {
         btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20'));
+    }
+    if (task.worktree_path) {
+        btns.push(btn('release-worktree', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'));
     }
     return html`<span class="flex gap-2 flex-wrap">${btns}</span>`;
 }

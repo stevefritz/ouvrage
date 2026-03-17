@@ -1,7 +1,7 @@
 // Graph Detail Panel — slide-in task detail for DAG graph view
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
+import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel, BUTTON_TOOLTIPS } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 
@@ -31,50 +31,40 @@ function groupMessagesByAttempt(messages) {
 
 // ── Action buttons with tooltips (panel version) ─────────────
 function TooltipActionButtons({ task, onAction }) {
-    const btn = (action, label, colorClass, tip) => html`
-        <${Tip} text=${tip}>
+    const btn = (action, label, colorClass) => html`
+        <${Tip} text=${BUTTON_TOOLTIPS[action] || action}>
             <button onClick=${() => onAction(action, task.id)}
                 class="px-2 py-1 text-xs rounded ${colorClass}">${label}</button>
         <//>`;
 
     const btns = [];
     if (task.status === 'working') {
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
-            'Kill the running CC process. Code changes are preserved in the worktree.'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
     if (task.status === 'failed' || task.status === 'cancelled') {
-        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30',
-            'Start a fresh CC session. Previous review feedback will be injected.'));
+        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
     }
     if (task.status === 'completed' || task.status === 'needs-review' || task.status === 'turns-exhausted') {
-        btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30',
-            'Continue the existing CC session with full conversation history.'));
-        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30',
-            'Start a fresh CC session. Previous review feedback will be injected.'));
+        btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
+        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
     }
     if (task.status === 'completed' && !task.worktree_path) {
-        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30',
-            'Clean up worktree, delete branch, archive task.'));
+        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30'));
     }
     if (task.status === 'needs-review' || task.status === 'turns-exhausted') {
-        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
-            'Kill the running CC process. Code changes are preserved.'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
-        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30',
-            'Bypass automated tests/review. Mark gate as passed manually.'));
+        btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30'));
     }
     if (task.status === 'completed' && task.gate_status === 'passed') {
-        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30',
-            'Dispatch the next dependent task in the chain.'));
+        btns.push(btn('advance-chain', 'Advance Chain', 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30'));
     }
     if (task.depends_on || task.gate_status) {
-        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20',
-            'Cancel this task and all dependent tasks in the chain.'));
+        btns.push(btn('cancel-chain', 'Cancel Chain', 'bg-red-500/10 text-red-400/70 hover:bg-red-500/20'));
     }
     if (task.worktree_path) {
-        btns.push(btn('close', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30',
-            'Detach worktree without closing the task. Frees the branch for new work.'));
+        btns.push(btn('release-worktree', 'Release Worktree', 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'));
     }
 
     return html`<div class="flex gap-2 flex-wrap">${btns}</div>`;

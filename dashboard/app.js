@@ -110,6 +110,7 @@ function App() {
             else if (action === 'skip-gate') await api.skipGate(taskId);
             else if (action === 'advance-chain') await api.advanceChain(taskId);
             else if (action === 'cancel-chain') await api.cancelChain(taskId);
+            else if (action === 'release-worktree') await api.releaseWorktree(taskId);
             // Force re-route to refresh the view
             setRoute({ ...getRoute() });
         } catch (e) {
