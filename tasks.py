@@ -1219,20 +1219,124 @@ async def _get_branch_diff(task: dict) -> str:
     return f"{stat}\n\n{full_diff}"
 
 
+_DEFAULT_REVIEW_IGNORE_PATTERNS = [
+    ".switchboard/",
+    ".lock",
+    "package-lock.json",
+    "composer.lock",
+    ".gitignore",
+]
+
+_TAG_REVIEW_GUIDANCE = {
+    "backend": (
+        "Focus on: error handling and edge cases, test coverage for failure paths, "
+        "security (input validation, SQL injection, auth checks), API contract correctness."
+    ),
+    "frontend": (
+        "Focus on: UX and user-facing correctness, accessibility (ARIA, keyboard nav), "
+        "responsive behavior across screen sizes, render performance."
+    ),
+    "testing": (
+        "Focus on: test quality and assertion correctness (assertions match spec, not just code output), "
+        "coverage of edge cases and failure modes, test isolation and fixture design."
+    ),
+}
+
+_DEFAULT_REVIEW_GUIDANCE = (
+    "Balanced review: correctness vs spec, test quality, edge cases, code clarity."
+)
+
+
+def _filter_diff_by_ignore_patterns(diff: str, patterns: list[str]) -> str:
+    """Strip file sections from a unified diff whose paths match any ignore pattern."""
+    if not patterns:
+        return diff
+
+    lines = diff.splitlines(keepends=True)
+    result = []
+    skip_section = False
+
+    for line in lines:
+        # New file section: lines starting with "diff --git"
+        if line.startswith("diff --git "):
+            # Check if this file path matches any ignore pattern
+            skip_section = any(pat in line for pat in patterns)
+        if not skip_section:
+            result.append(line)
+
+    return "".join(result)
+
+
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     """Run a lightweight review subtask in the parent's worktree."""
     await db.update_task(task_id, gate_status="reviewing")
 
     diff_output = await _get_branch_diff(task)
 
-    # Get spec content
+    # --- Component context ---
+    component = None
+    if task.get("component_id"):
+        component = await db.get_component(task["component_id"])
+
+    component_section = "No component assigned."
+    if component:
+        component_section = (
+            f"**Name:** {component['name']}\n"
+            f"**Description:** {component.get('description') or '(none)'}\n"
+            f"**Phase:** {component.get('phase') or 'unknown'}"
+        )
+
+    # --- Ignore patterns ---
+    ignore_patterns = _DEFAULT_REVIEW_IGNORE_PATTERNS[:]
+    # Component-level patterns override/extend defaults
+    if component and component.get("review_ignore_patterns"):
+        raw = component["review_ignore_patterns"]
+        if isinstance(raw, str):
+            import json as _json
+            raw = _json.loads(raw)
+        if isinstance(raw, list):
+            ignore_patterns = raw
+    elif project.get("review_ignore_patterns"):
+        raw = project["review_ignore_patterns"]
+        if isinstance(raw, str):
+            import json as _json
+            raw = _json.loads(raw)
+        if isinstance(raw, list):
+            ignore_patterns = raw
+
+    filtered_diff = _filter_diff_by_ignore_patterns(diff_output, ignore_patterns)
+    ignore_section = "\n".join(f"- `{p}`" for p in ignore_patterns)
+
+    # --- Punchlist claims ---
+    punchlist_section = "None."
+    if component:
+        claimed_items = await db.list_punchlist(
+            component["id"], include_done=False, claimed_by=task_id
+        )
+        if claimed_items:
+            lines = [
+                "This task claims to fix the following punchlist items. "
+                "Verify they are actually addressed:"
+            ]
+            for it in claimed_items:
+                lines.append(f"- #{it['id']}: {it['item']}")
+            punchlist_section = "\n".join(lines)
+
+    # --- Tag-based review focus ---
+    tags = await db.get_task_tags(task_id)
+    review_focus = _DEFAULT_REVIEW_GUIDANCE
+    for tag in tags:
+        if tag in _TAG_REVIEW_GUIDANCE:
+            review_focus = _TAG_REVIEW_GUIDANCE[tag]
+            break  # first matching tag wins
+
+    # --- Spec content ---
     pinned = await db.get_task_pinned(task_id)
     spec_content = pinned["content"] if pinned else "(no spec)"
 
-    # Include message thread so reviewer sees course corrections
+    # --- Thread context (course corrections) ---
     thread = await db.read_task_messages(task_id)
     thread_msgs = thread.get("messages", [])
-    # Filter to human-authored messages (notes, review feedback, answers) — skip dispatcher status
     human_msgs = [m for m in thread_msgs if m.get("author") not in ("dispatcher", "cc-worker")]
     thread_context = ""
     if human_msgs:
@@ -1253,13 +1357,26 @@ the original spec — treat them as authoritative when they conflict with the sp
 
     review_prompt = f"""# Code Review: {task['goal']}
 
+## Component Context
+{component_section}
+
+## Ignore These Files
+The following patterns were excluded from the diff below:
+{ignore_section}
+
+## Punchlist Items Claimed
+{punchlist_section}
+
 ## Original Spec
 {spec_content}
 {thread_context}
 ## Changes to Review
 ```
-{diff_output[:10000]}
+{filtered_diff[:10000]}
 ```
+
+## Review Focus
+{review_focus}
 
 ## Review Criteria
 - Do changes match the spec AND any course corrections above? Every requirement addressed?

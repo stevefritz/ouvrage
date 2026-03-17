@@ -186,6 +186,19 @@ async def init_db():
                 PRIMARY KEY (component_id, conversation_id),
                 FOREIGN KEY (component_id) REFERENCES components(id)
             );
+
+            CREATE TABLE IF NOT EXISTS punchlist (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                component_id    TEXT NOT NULL,
+                item            TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'open',
+                claimed_by      TEXT,
+                resolved_by     TEXT,
+                resolved_at     TEXT,
+                author          TEXT,
+                created_at      TEXT NOT NULL,
+                FOREIGN KEY (component_id) REFERENCES components(id)
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
@@ -308,6 +321,18 @@ async def init_db():
             await conn.execute("ALTER TABLE projects ADD COLUMN connectors TEXT")
         if "state_definitions" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN state_definitions TEXT")
+        if "review_ignore_patterns" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN review_ignore_patterns TEXT")
+
+        # Migrate components table
+        comp_table = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='components'"
+        )
+        if comp_table:
+            comp_columns = await conn.execute_fetchall("PRAGMA table_info(components)")
+            comp_col_names = [c["name"] for c in comp_columns]
+            if "review_ignore_patterns" not in comp_col_names:
+                await conn.execute("ALTER TABLE components ADD COLUMN review_ignore_patterns TEXT")
 
         # Create/recreate indexes
         await conn.executescript("""
@@ -325,6 +350,8 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
             CREATE INDEX IF NOT EXISTS idx_component_project ON components(project_id);
             CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
+            CREATE INDEX IF NOT EXISTS idx_punchlist_component ON punchlist(component_id);
+            CREATE INDEX IF NOT EXISTS idx_punchlist_claimed_by ON punchlist(claimed_by);
         """)
 
         await conn.commit()
@@ -1732,3 +1759,107 @@ async def search_component(
         "total": len(all_results) + len(graphiti_results),
         "graphiti_error": graphiti_error,
     }
+
+
+# ---------------------------------------------------------------------------
+# Punchlist
+# ---------------------------------------------------------------------------
+
+async def add_punchlist_item(component_id: str, item: str, author: str | None = None) -> dict:
+    """Add a punchlist item for a component. Raises ValueError if component not found."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM components WHERE id = ?", (component_id,))
+        if not rows:
+            raise ValueError(f"Component '{component_id}' not found")
+        ts = now_iso()
+        cursor = await db.execute(
+            """INSERT INTO punchlist (component_id, item, status, author, created_at)
+               VALUES (?, ?, 'open', ?, ?)""",
+            (component_id, item, author, ts),
+        )
+        await db.commit()
+        return {
+            "id": cursor.lastrowid,
+            "component_id": component_id,
+            "item": item,
+            "status": "open",
+            "claimed_by": None,
+            "resolved_by": None,
+            "resolved_at": None,
+            "author": author,
+            "created_at": ts,
+        }
+
+
+async def get_punchlist_item(item_id: int) -> dict | None:
+    """Get a single punchlist item by ID."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        if not rows:
+            return None
+        return dict(rows[0])
+
+
+async def list_punchlist(
+    component_id: str,
+    include_done: bool = False,
+    claimed_by: str | None = None,
+) -> list[dict]:
+    """List punchlist items for a component. Excludes 'done' by default."""
+    async with get_db() as db:
+        conditions = ["component_id = ?"]
+        params: list = [component_id]
+        if not include_done:
+            conditions.append("status != 'done'")
+        if claimed_by is not None:
+            conditions.append("claimed_by = ?")
+            params.append(claimed_by)
+        where = " AND ".join(conditions)
+        rows = await db.execute_fetchall(
+            f"SELECT * FROM punchlist WHERE {where} ORDER BY id ASC", params
+        )
+        return [dict(r) for r in rows]
+
+
+async def claim_punchlist_item(item_id: int, task_id: str) -> dict:
+    """Claim a punchlist item for a task. Raises ValueError if not found or already done."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT * FROM punchlist WHERE id = ?", (item_id,))
+        if not rows:
+            raise ValueError(f"Punchlist item {item_id} not found")
+        item = dict(rows[0])
+        if item["status"] == "done":
+            raise ValueError(f"Punchlist item {item_id} is already done")
+        await db.execute(
+            "UPDATE punchlist SET status = 'claimed', claimed_by = ? WHERE id = ?",
+            (task_id, item_id),
+        )
+        await db.commit()
+        item["status"] = "claimed"
+        item["claimed_by"] = task_id
+        return item
+
+
+async def resolve_punchlist_items_for_task(task_id: str) -> int:
+    """Mark all 'claimed' items for this task as 'done'. Returns count resolved."""
+    async with get_db() as db:
+        ts = now_iso()
+        cursor = await db.execute(
+            """UPDATE punchlist SET status = 'done', resolved_by = ?, resolved_at = ?
+               WHERE claimed_by = ? AND status = 'claimed'""",
+            (task_id, ts, task_id),
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
+async def revert_punchlist_items_for_task(task_id: str) -> int:
+    """Revert 'claimed' items for this task back to 'open'. Returns count reverted."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """UPDATE punchlist SET status = 'open', claimed_by = NULL
+               WHERE claimed_by = ? AND status = 'claimed'""",
+            (task_id,),
+        )
+        await db.commit()
+        return cursor.rowcount
