@@ -152,6 +152,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/review-task"):
                     task_id = rest[:-len("/review-task")]
                     return await _handle_get_review_task(send, task_id)
+                if rest.endswith("/attempts"):
+                    task_id = rest[:-len("/attempts")]
+                    return await _handle_get_attempts(send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -246,6 +249,16 @@ async def _handle_get_task(send, task_id):
     # Check if PID is alive
     pid = task.get("pid")
     task["alive"] = bool(pid and tasks._is_pid_alive(pid))
+
+    # Parse last_test_output JSON if stored as string
+    if task.get("last_test_output") and isinstance(task["last_test_output"], str):
+        try:
+            task["last_test_output"] = json.loads(task["last_test_output"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Add review_subtask from subtasks table
+    task["review_subtask"] = await _get_review_subtask(task_id)
 
     await _json_response(send, task)
 
@@ -422,6 +435,44 @@ async def _handle_get_review_task(send, task_id):
     review_msgs = [m for m in msgs.get("messages", []) if m.get("type") == "review"]
     review_task["review_message"] = review_msgs[-1] if review_msgs else None
     await _json_response(send, review_task)
+
+
+async def _get_review_subtask(task_id: str) -> dict | None:
+    """Get the most recent review subtask for a task."""
+    from datetime import datetime, timezone
+    async with db.get_db() as conn:
+        rows = await conn.execute_fetchall(
+            """SELECT id, status, model, created_at, completed_at
+               FROM subtasks WHERE task_id = ? AND type = 'review'
+               ORDER BY rowid DESC LIMIT 1""",
+            (task_id,),
+        )
+    if not rows:
+        return None
+    rs = dict(rows[0])
+    now_dt = datetime.now(timezone.utc)
+    created_dt = datetime.fromisoformat(rs["created_at"].replace("Z", "+00:00"))
+    if rs["status"] == "working" or not rs["completed_at"]:
+        elapsed_s = int((now_dt - created_dt).total_seconds())
+    else:
+        completed_dt = datetime.fromisoformat(rs["completed_at"].replace("Z", "+00:00"))
+        elapsed_s = int((completed_dt - created_dt).total_seconds())
+    return {
+        "task_id": rs["id"],
+        "status": rs["status"],
+        "session_id": None,
+        "elapsed": f"{elapsed_s}s",
+        "model": rs["model"],
+    }
+
+
+async def _handle_get_attempts(send, task_id):
+    """Return messages grouped by attempt number with outcome summaries."""
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+    attempts = await db.get_task_attempts(task_id)
+    await _json_response(send, attempts)
 
 
 async def _handle_post_message(receive, send, task_id):
