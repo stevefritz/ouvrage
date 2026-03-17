@@ -40,6 +40,7 @@ export function GraphView({ projectId, jiraBaseUrl, onAction }) {
                 </div>
 
                 ${selectedTaskId ? html`
+                    <div class="panel-backdrop" onClick=${handleClose}></div>
                     <${GraphDetailPanel}
                         key=${selectedTaskId}
                         taskId=${selectedTaskId}

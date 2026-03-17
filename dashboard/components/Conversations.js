@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, navigate } from './utils.js';
+import { html, relativeTime, navigate, LoadingState, ErrorState, EmptyState } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 
 export function ConversationsList() {
@@ -14,18 +14,18 @@ export function ConversationsList() {
     }, []);
 
     if (error) {
-        return html`<div class="p-6"><p class="text-red-400 p-4">Error: ${error}</p></div>`;
+        return html`<div class="p-6"><${ErrorState} message="Failed to load conversations: ${error}" onRetry=${() => { setError(null); api.getConversations().then(setConversations).catch(e => setError(e.message)); }} /></div>`;
     }
 
     if (conversations === null) {
-        return html`<div class="p-6"><p class="text-slate-500">Loading...</p></div>`;
+        return html`<div class="p-6"><${LoadingState} message="Loading conversations..." /></div>`;
     }
 
     return html`
         <div class="p-6">
             <h2 class="text-lg font-medium text-slate-200 mb-4">Conversations</h2>
             ${conversations.length === 0
-                ? html`<p class="text-slate-500 text-center p-8">No conversations</p>`
+                ? html`<${EmptyState} message="No conversations yet" />`
                 : html`
                     <div class="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
                         <table class="w-full">
@@ -75,14 +75,14 @@ export function ConversationDetail({ convId }) {
     if (error) {
         return html`<div class="p-6">
             <div class="mb-4"><a href="#/conversations" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Conversations</a></div>
-            <p class="text-red-400 p-4">Error: ${error}</p>
+            <${ErrorState} message="Failed to load conversation: ${error}" onRetry=${() => { setError(null); api.getConversation(convId).then(setThread).catch(e => setError(e.message)); }} />
         </div>`;
     }
 
     if (!thread) {
         return html`<div class="p-6">
             <div class="mb-4"><a href="#/conversations" class="text-sm text-slate-400 hover:text-slate-200">\u2190 Conversations</a></div>
-            <p class="text-slate-500">Loading...</p>
+            <${LoadingState} message="Loading conversation..." />
         </div>`;
     }
 
