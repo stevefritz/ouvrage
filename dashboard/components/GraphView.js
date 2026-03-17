@@ -5,16 +5,14 @@ import { html, navigate } from './utils.js';
 import { DagGraph } from './DagGraph.js';
 import { GraphDetailPanel } from './GraphDetailPanel.js';
 
-export function GraphView({ projectId, onAction }) {
+export function GraphView({ projectId, jiraBaseUrl, onAction }) {
     const [selectedTaskId, setSelectedTaskId] = useState(null);
     const [allTasks, setAllTasks] = useState(null);
 
-    // Fetch all tasks for cross-reference in detail panel (blockers, etc.)
-    useEffect(() => {
-        api.getTasks({ project_id: projectId })
-            .then(setAllTasks)
-            .catch(() => {});
-    }, [projectId]);
+    // Receive task data from DagGraph's polling cycle (avoids double-fetching)
+    const handleTasksUpdate = useCallback((tasks) => {
+        setAllTasks(tasks);
+    }, []);
 
     const handleSelect = useCallback((taskId) => {
         setSelectedTaskId(taskId);
@@ -36,6 +34,7 @@ export function GraphView({ projectId, onAction }) {
                 <div class="graph-main">
                     <${DagGraph} projectId=${projectId}
                         onSelectTask=${handleSelect}
+                        onTasksUpdate=${handleTasksUpdate}
                         selectedTaskId=${selectedTaskId} />
                 </div>
 
@@ -44,6 +43,7 @@ export function GraphView({ projectId, onAction }) {
                         key=${selectedTaskId}
                         taskId=${selectedTaskId}
                         allTasks=${allTasks}
+                        jiraBaseUrl=${jiraBaseUrl}
                         onClose=${handleClose}
                         onAction=${onAction} />
                 ` : null}

@@ -69,7 +69,7 @@ function App() {
     if (route.view === 'board') {
         view = html`<${Board} key=${JSON.stringify(route.params)} params=${route.params || {}} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'graph') {
-        view = html`<${GraphView} key=${route.projectId} projectId=${route.projectId} onAction=${handleAction} />`;
+        view = html`<${GraphView} key=${route.projectId} projectId=${route.projectId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'detail') {
         view = html`<${TaskDetail} key=${route.taskId} taskId=${route.taskId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'projects') {

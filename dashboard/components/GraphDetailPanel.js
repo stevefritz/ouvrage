@@ -5,6 +5,39 @@ import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge,
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 
+// ── Attempt grouping for messages ────────────────────────────
+// Groups messages by dispatch/retry cycle. Boundaries are dispatcher "status"
+// messages (which signal end of a CC session). Each cycle = one "attempt".
+function groupMessagesByAttempt(messages) {
+    if (!messages || messages.length === 0) return [];
+    const attempts = [];
+    let current = { messages: [], outcome: null, startTime: null, endTime: null };
+
+    for (const msg of messages) {
+        // Skip plan messages (shown separately)
+        if (msg.type === 'plan') continue;
+
+        if (!current.startTime) current.startTime = msg.created_at;
+        current.endTime = msg.created_at;
+        current.messages.push(msg);
+
+        // Dispatcher status messages mark the end of an attempt
+        if (msg.author === 'dispatcher' && msg.type === 'status') {
+            current.outcome = msg.title || msg.content?.slice(0, 80) || 'Completed';
+            attempts.push(current);
+            current = { messages: [], outcome: null, startTime: null, endTime: null };
+        }
+    }
+
+    // Remaining messages form the current (in-progress) attempt
+    if (current.messages.length > 0) {
+        current.outcome = 'In Progress';
+        attempts.push(current);
+    }
+
+    return attempts;
+}
+
 // ── Tooltip wrapper ─────────────────────────────────────────
 function Tip({ text, children }) {
     return html`<span class="relative group inline-flex">
@@ -149,6 +182,7 @@ function ReviewSection({ subtasks }) {
                         ${latest.status === 'completed' ? 'PASSED' : latest.status === 'failed' ? 'FAILED' : latest.status.toUpperCase()}
                     </span>
                     ${latest.model ? html`<span class="text-xs text-slate-500">${latest.model}</span>` : null}
+                    <a href="#/tasks/${latest.id}" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="View reviewer session log">Session Log ↗</a>
                 </span>
             </summary>
             ${latest.result ? html`
@@ -295,7 +329,7 @@ function ProofOfLife({ task }) {
 }
 
 // ── Main Panel ──────────────────────────────────────────────
-export function GraphDetailPanel({ taskId, allTasks, onClose, onAction }) {
+export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAction }) {
     const [task, setTask] = useState(null);
     const [error, setError] = useState(null);
     const [sessionLogOpen, setSessionLogOpen] = useState(false);
@@ -373,10 +407,11 @@ export function GraphDetailPanel({ taskId, allTasks, onClose, onAction }) {
                     ${task.branch ? html`<span>Branch: <span class="font-mono text-slate-400">${task.branch}</span></span>` : null}
                     ${task.model ? html`<span>Model: <span class="text-slate-400">${task.model}</span></span>` : null}
                     <span>Cost: <span class="text-slate-400">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                    <span>Tokens: <span class="text-slate-400">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
                     <span>Dispatches: <span class="text-slate-400">${task.dispatch_count || 0}</span></span>
                     ${task.phase ? html`<span>Phase: <span class="text-slate-400">${task.phase}</span></span>` : null}
                     <${PrUrlBadge} task=${task} />
-                    ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket)} target="_blank" rel="noopener"
+                    ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                         class="px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
                 </div>
 
@@ -402,16 +437,49 @@ export function GraphDetailPanel({ taskId, allTasks, onClose, onAction }) {
                 <${Checklist} task=${task} />
                 <${PlanSection} messages=${task.messages} />
 
-                <!-- Messages -->
-                <details class="mb-3" open>
-                    <summary class="text-sm font-medium text-slate-400 cursor-pointer hover:text-slate-300 mb-2">
-                        Messages (${(task.messages || []).filter(m => m.type !== 'plan').length})
-                    </summary>
-                    <div class="max-h-96 overflow-y-auto">
-                        <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="panel-msg" />
-                    </div>
-                    <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
-                </details>
+                <!-- Messages grouped by attempt -->
+                ${(() => {
+                    const attempts = groupMessagesByAttempt(task.messages);
+                    const nonPlanCount = (task.messages || []).filter(m => m.type !== 'plan').length;
+                    if (attempts.length <= 1) {
+                        // Single attempt or no messages — show flat like before
+                        return html`
+                            <details class="mb-3" open>
+                                <summary class="text-sm font-medium text-slate-400 cursor-pointer hover:text-slate-300 mb-2">
+                                    Messages (${nonPlanCount})
+                                </summary>
+                                <div class="max-h-96 overflow-y-auto">
+                                    <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="panel-msg" />
+                                </div>
+                                <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
+                            </details>`;
+                    }
+                    // Multiple attempts — group with collapsible sections
+                    return html`
+                        <div class="mb-3">
+                            <div class="text-sm font-medium text-slate-400 mb-2">
+                                Messages (${nonPlanCount}) · ${attempts.length} attempts
+                            </div>
+                            ${attempts.map((attempt, idx) => {
+                                const isLast = idx === attempts.length - 1;
+                                const outcomeColor = attempt.outcome === 'In Progress' ? 'text-blue-400' :
+                                    attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? 'text-red-400' :
+                                    'text-emerald-400';
+                                return html`
+                                    <details key=${idx} class="border border-slate-700 rounded mb-2" open=${isLast}>
+                                        <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                                            <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
+                                            <span class="${outcomeColor}">${attempt.outcome}</span>
+                                            <span class="text-slate-600 ml-auto">${attempt.messages.length} msgs</span>
+                                        </summary>
+                                        <div class="px-2 pb-2 max-h-64 overflow-y-auto">
+                                            <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
+                                        </div>
+                                    </details>`;
+                            })}
+                            <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
+                        </div>`;
+                })()}
 
                 <!-- Actions -->
                 <div class="border-t border-slate-700 pt-3 mb-3">

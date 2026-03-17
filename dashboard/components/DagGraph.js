@@ -3,8 +3,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.s
 import { api } from '../api.js';
 import { html, relativeTime, StatusBadge, GateBadge, navigate } from './utils.js';
 
-// ── State colors ──────────────────────────────────────────────
-const STATE_COLORS = {
+// ── Default state colors (can be overridden by project config) ──
+const DEFAULT_STATE_COLORS = {
     ready:          { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Ready' },
     blocked:        { bg: '#33415520', border: '#475569', text: '#94a3b8', dot: '#475569', label: 'Blocked' },
     working:        { bg: '#f59e0b20', border: '#f59e0b', text: '#fbbf24', dot: '#f59e0b', label: 'Working', pulse: true },
@@ -42,7 +42,8 @@ function deriveComponent(task) {
     return match ? match[1] : short;
 }
 
-function computeLayout(tasks) {
+function computeLayout(tasks, stateColors) {
+    const STATE_COLORS = stateColors;
     if (!tasks || tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
     // Filter out subtasks (parent_task_id = review/test subtasks)
@@ -133,7 +134,6 @@ function computeLayout(tasks) {
             return (a.created_at || '').localeCompare(b.created_at || '');
         });
 
-        const totalWidth = group.length * NODE_W + (group.length - 1) * GAP_X;
         const startX = PADDING;
 
         for (let j = 0; j < group.length; j++) {
@@ -310,7 +310,8 @@ function TagFilterBar({ tags, activeTags, onToggleTag, onClear, componentColors 
 }
 
 // ── State Legend ─────────────────────────────────────────────
-function StateLegend({ tasks }) {
+function StateLegend({ tasks, stateColors }) {
+    const STATE_COLORS = stateColors;
     const counts = {};
     for (const t of tasks) {
         const s = t.status || 'ready';
@@ -332,13 +333,24 @@ function StateLegend({ tasks }) {
 }
 
 // ── Main DagGraph component ─────────────────────────────────
-export function DagGraph({ projectId, onSelectTask, selectedTaskId }) {
+export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskId }) {
     const [tasks, setTasks] = useState(null);
     const [error, setError] = useState(null);
     const [hoveredId, setHoveredId] = useState(null);
     const [activeTags, setActiveTags] = useState(new Set());
+    const [stateColors, setStateColors] = useState(DEFAULT_STATE_COLORS);
     const mountedRef = useRef(true);
     const containerRef = useRef(null);
+
+    // Attempt to load custom state definitions from project config
+    useEffect(() => {
+        api.getProject(projectId).then(proj => {
+            if (proj && proj.state_definitions && typeof proj.state_definitions === 'object') {
+                // Merge custom definitions over defaults
+                setStateColors(prev => ({ ...prev, ...proj.state_definitions }));
+            }
+        }).catch(() => {}); // Fallback to defaults silently
+    }, [projectId]);
 
     // Fetch tasks for project
     const loadTasks = useCallback(async () => {
@@ -346,6 +358,7 @@ export function DagGraph({ projectId, onSelectTask, selectedTaskId }) {
             const data = await api.getTasks({ project_id: projectId });
             if (mountedRef.current) {
                 setTasks(data);
+                if (onTasksUpdate) onTasksUpdate(data);
                 if (!error) setError(null);
             }
         } catch (e) {
@@ -363,8 +376,8 @@ export function DagGraph({ projectId, onSelectTask, selectedTaskId }) {
     // Compute layout
     const layout = useMemo(() => {
         if (!tasks) return null;
-        return computeLayout(tasks);
-    }, [tasks]);
+        return computeLayout(tasks, stateColors);
+    }, [tasks, stateColors]);
 
     // Collect all unique tags
     const allTags = useMemo(() => {
@@ -465,7 +478,7 @@ export function DagGraph({ projectId, onSelectTask, selectedTaskId }) {
                 </div>
             </div>
 
-            <${StateLegend} tasks=${tasks.filter(t => !t.parent_task_id)} />
+            <${StateLegend} tasks=${tasks.filter(t => !t.parent_task_id)} stateColors=${stateColors} />
         </div>
     `;
 }
