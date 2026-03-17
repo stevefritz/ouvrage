@@ -10,6 +10,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anyio
+
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -22,6 +24,31 @@ from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
 import database as db
 import notifications as notify
+
+# ---------------------------------------------------------------------------
+# Process group isolation — patch anyio.open_process at module load time
+# ---------------------------------------------------------------------------
+# CC workers run via the Agent SDK, which uses anyio.open_process internally.
+# Without start_new_session=True, CC and Switchboard share a process group.
+# If CC runs `kill -PGID` (e.g., trying to clean up hung tests), the signal
+# can propagate up and terminate the Switchboard process itself. This has
+# happened multiple times in production.
+#
+# By forcing start_new_session=True on every SDK subprocess spawn, CC gets
+# its own session and process group — signals within CC's group can't escape
+# upward to Switchboard.
+#
+# Both tasks.py and the SDK transport module reference the same anyio module
+# object, so patching anyio.open_process here affects all SDK subprocess spawns.
+_orig_anyio_open_process = anyio.open_process
+
+
+async def _isolated_open_process(command, *, start_new_session: bool = False, **kwargs):
+    """Wrapper that forces start_new_session=True for all subprocess spawns."""
+    return await _orig_anyio_open_process(command, start_new_session=True, **kwargs)
+
+
+anyio.open_process = _isolated_open_process
 
 log = logging.getLogger("switchboard.tasks")
 
@@ -495,6 +522,14 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- **Always push your branch before finishing.** Your work is headless — unpushed code has no value.")
     parts.append("- Before finishing, post a handoff message with key decisions, gotchas, and notes for the next task:")
     parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='handoff', content='...')`")
+    parts.append("")
+
+    parts.append("## SAFETY: Running tests and processes")
+    parts.append("- Use `timeout 60 pytest ...` for targeted test runs — always wrap with timeout")
+    parts.append("- NEVER use kill, pkill, or killall directly — you WILL terminate yourself")
+    parts.append("- If a process hangs, let the timeout handle it or escalate to needs-review")
+    parts.append("- Run targeted tests (specific files/functions) during development, the gate handles the full suite")
+    parts.append("- If you need to stop a background process, use `timeout` on the original command instead")
     parts.append("")
 
     # Grounding phase instructions (skip for revision retries — they already know the code)
