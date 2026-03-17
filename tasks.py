@@ -486,7 +486,7 @@ def _tail_lines(text: str, max_chars: int) -> str:
 # Git Worktree Management
 # ---------------------------------------------------------------------------
 
-WORKER_USER = "switchboard"
+WORKER_USER = os.environ.get("WORKER_USER", "switchboard")
 
 
 def _get_worker_ids() -> tuple[int, int]:
@@ -933,7 +933,11 @@ async def _run_sdk_session(
     mcp_servers = {
         "switchboard": {
             "type": "http",
-            "url": "http://localhost:8100/mcp",
+            "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp",
+        },
+        "graphiti": {
+            "type": "http",
+            "url": "http://localhost:8002/mcp",
         },
     }
     try:
@@ -1329,7 +1333,10 @@ async def _run_subtask(
 
     # Build SDK options — same as _run_sdk_session but simpler
     worker_home = pwd.getpwnam(WORKER_USER).pw_dir
-    mcp_servers = {"switchboard": {"type": "http", "url": "http://localhost:8100/mcp"}}
+    mcp_servers = {
+        "switchboard": {"type": "http", "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp"},
+        "graphiti": {"type": "http", "url": "http://localhost:8002/mcp"},
+    }
     try:
         with open(os.path.join(worker_home, ".claude.json")) as f:
             for name, cfg in json.load(f).get("mcpServers", {}).items():

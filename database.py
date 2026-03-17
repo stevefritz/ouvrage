@@ -25,7 +25,7 @@ CORE_STATE_DEFINITIONS = {
 # Global defaults for task resource limits
 DEFAULT_MAX_TURNS = 200
 DEFAULT_MAX_WALL_CLOCK = 60  # minutes
-DEFAULT_MAX_CONCURRENT = 3
+DEFAULT_MAX_CONCURRENT = 6
 
 # ---------------------------------------------------------------------------
 # Connection Management — singleton with async context manager
