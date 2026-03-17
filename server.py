@@ -48,6 +48,7 @@ CONVERSATION_TOOLS = [
                 "content": {"type": "string", "description": "Content for optional initial message"},
                 "type": {"type": "string", "description": "Type for optional initial message"},
                 "title": {"type": "string", "description": "Title for optional initial message"},
+                "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this conversation"},
             },
             "required": ["id", "project", "goal"],
         },
@@ -153,6 +154,7 @@ PROJECT_TOOLS = [
                 "max_wall_clock": {"type": "integer", "description": "Default max wall clock minutes per dispatch"},
                 "claude_md_path": {"type": "string", "description": "Path to CLAUDE.md relative to repo root"},
                 "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Default Claude model for tasks in this project. Default: sonnet"},
+                "state_definitions": {"type": "object", "description": "Custom state definitions for dashboard rendering, e.g. {\"custom:indexing\": {\"color\": \"#8b5cf6\", \"label\": \"Indexing\", \"pulse\": true}}"},
             },
             "required": ["id", "repo", "working_dir"],
         },
@@ -185,6 +187,7 @@ PROJECT_TOOLS = [
                 "max_turns": {"type": ["integer", "null"], "description": "Project-level turn limit"},
                 "max_wall_clock": {"type": ["integer", "null"], "description": "Project-level wall clock limit (minutes)"},
                 "claude_md_path": {"type": ["string", "null"], "description": "Path to CLAUDE.md relative to repo root"},
+                "state_definitions": {"type": ["object", "null"], "description": "Custom state definitions for dashboard rendering"},
             },
             "required": ["id"],
         },
@@ -227,6 +230,7 @@ TASK_TOOLS = [
                 "auto_pr": {"type": "boolean", "description": "Auto-create PR when chain tail passes all gates. Default: false", "default": False},
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
                 "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
+                "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -557,7 +561,19 @@ COMPONENT_TOOLS = [
     ),
 ]
 
-TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS
+# ---------------------------------------------------------------------------
+# Ops Tools
+# ---------------------------------------------------------------------------
+
+OPS_TOOLS = [
+    Tool(
+        name="get_guide",
+        description="Get a structured guide explaining how to use Switchboard. Includes mental model, available tools by workflow, common patterns, anti-patterns, and a live system summary.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+]
+
+TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + OPS_TOOLS
 
 
 @server.list_tools()
@@ -591,6 +607,7 @@ async def _handle_create_conversation(arguments):
         id=arguments["id"],
         project=arguments["project"],
         goal=arguments["goal"],
+        claude_chat_url=arguments.get("claude_chat_url"),
     )
     if arguments.get("content"):
         msg = await db.post_message(
@@ -666,6 +683,7 @@ async def _handle_create_project(arguments):
         max_wall_clock=arguments.get("max_wall_clock"),
         claude_md_path=arguments.get("claude_md_path"),
         model=arguments.get("model"),
+        state_definitions=arguments.get("state_definitions"),
     )
 
 async def _handle_get_project(arguments):
@@ -701,6 +719,7 @@ async def _handle_dispatch_task(arguments):
         review_model=arguments.get("review_model"),
         auto_pr=arguments.get("auto_pr", False),
         component_id=arguments.get("component_id"),
+        claude_chat_url=arguments.get("claude_chat_url"),
         depends_on=(f"{project_id}/{arguments['depends_on']}"
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
                     else arguments.get("depends_on")),
@@ -744,17 +763,24 @@ async def _handle_get_task_status(arguments):
         pass
     # Liveness detection based on status + last_activity
     result["alive"] = result.get("status") == "working"
+    stale_seconds = 0
     if result["alive"] and result.get("last_activity"):
         last = datetime.fromisoformat(result["last_activity"].replace("Z", "+00:00"))
         age = (datetime.now(timezone.utc) - last).total_seconds()
+        stale_seconds = round(age)
         result["stale"] = age > 900  # 15 minutes with no activity
         result["idle_minutes"] = round(age / 60, 1)
     else:
         result["stale"] = False
+    result["stale_seconds"] = stale_seconds
 
     # Fallback PID check for legacy/CLI tasks
     if result.get("pid"):
         result["pid_alive"] = tasks._is_pid_alive(result["pid"])
+
+    # State definition for dashboard rendering
+    project = await db.get_project(result.get("project_id", ""))
+    result["state_definition"] = db.get_state_definition(result.get("status", ""), project)
 
     # Optional log tail
     if arguments.get("include_log_tail") and result.get("worktree_path"):
@@ -765,12 +791,20 @@ async def _handle_get_task_status(arguments):
 
 
 async def _handle_list_tasks(arguments):
-    return await db.list_tasks(
+    task_list = await db.list_tasks(
         project_id=arguments.get("project_id"),
         status=arguments.get("status"),
         tag=arguments.get("tag"),
         component_id=arguments.get("component_id"),
     )
+    # Cache project lookups for state definitions
+    project_cache: dict[str, dict | None] = {}
+    for task in task_list:
+        pid = task.get("project_id", "")
+        if pid not in project_cache:
+            project_cache[pid] = await db.get_project(pid)
+        task["state_definition"] = db.get_state_definition(task.get("status", ""), project_cache[pid])
+    return task_list
 
 
 async def _handle_update_task_checklist(arguments):
@@ -990,6 +1024,109 @@ async def _handle_unlink_conversation(arguments):
     )
 
 
+GUIDE_STATIC = """# Switchboard Guide
+
+## What is Switchboard?
+
+Switchboard is an async task orchestration system for Claude Code sessions. Think of it as a **PM/tech lead layer** that dispatches work to autonomous CC agents, monitors their progress, and manages a quality gate pipeline (test → review → PR).
+
+### Mental Model
+- **You** (PM/tech lead) define specs, create tasks, and monitor progress
+- **CC workers** execute tasks in isolated git worktrees with full autonomy
+- **Gate pipeline** automatically runs tests, dispatches reviews, and creates PRs
+- **Components** group related tasks and provide config inheritance
+
+## Available Tools by Workflow
+
+### Planning & Setup
+| Tool | Purpose |
+|---|---|
+| `create_project` | Register a repo with working dir, setup commands, test commands |
+| `create_component` | Group tasks under a feature/epic with config inheritance |
+| `create_conversation` | Start a design conversation (specs, plans, Q&A) |
+
+### Dispatching Work
+| Tool | Purpose |
+|---|---|
+| `dispatch_task` | Create a task and launch a CC session (non-blocking) |
+| `resume_task` | Resume a paused task with the same session (preserves context) |
+| `retry_task` | Start a fresh session (injects review feedback if posted) |
+
+### Monitoring
+| Tool | Purpose |
+|---|---|
+| `get_task_status` | Full task status: checklist, messages, artifacts, liveness |
+| `list_tasks` | List tasks with filters (project, status, tag, component) |
+| `get_session_log` | CC's tool calls and text output (JSONL) |
+| `get_dispatch_log` | Dispatch metadata, cost, timing |
+| `get_pipeline` | View the full dependency chain for a task |
+
+### Communication
+| Tool | Purpose |
+|---|---|
+| `post_task_message` | Post to a task's message thread |
+| `read_task_messages` | Read messages (cursor-based polling) |
+| `search_task_messages` | Full-text search across all task messages |
+
+### Conversations (async message board)
+| Tool | Purpose |
+|---|---|
+| `board` | Dashboard of active conversations |
+| `post` | Post to a conversation |
+| `read` | Read messages (cursor-based) |
+| `get_pinned` | Get the source-of-truth pinned message |
+
+## Common Patterns
+
+1. **Starting a feature**: `create_component` → `dispatch_task` with `component_id` and `depends_on`
+2. **Task chains**: Use `depends_on` to create sequential pipelines — next task auto-dispatches when gate passes
+3. **Review workflow**: Post feedback with `post_task_message(type='review')`, then `retry_task` — feedback is auto-injected
+4. **Resuming work**: Use `resume_task` to continue with the same session context (preserves CC's memory)
+5. **Config inheritance**: Project → Component → Task. Set `model`, `auto_test`, etc. at any level
+
+## Anti-Patterns
+
+- **Don't write the implementation plan** — CC does that during its grounding phase
+- **Don't micromanage** — give clear specs and let CC work autonomously
+- **Don't use retry when you mean resume** — retry clears the session and starts fresh; resume continues
+- **Don't skip the spec** — tasks without specs produce worse results
+- **Don't set auto_test=false** unless you have a good reason — the gate catches most issues
+"""
+
+
+async def _handle_get_guide(arguments):
+    """Return the Switchboard guide with live system summary appended."""
+    parts = [GUIDE_STATIC]
+
+    # Live system summary
+    projects = await db.list_projects()
+    task_counts = await db.get_project_task_counts()
+    active_count = await db.count_active_tasks()
+
+    # Count components
+    component_count = 0
+    for p in projects:
+        components = await db.list_components(project_id=p["id"])
+        component_count += len(components)
+
+    parts.append("## Live System Summary\n")
+    parts.append(f"- **Projects**: {len(projects)}")
+    parts.append(f"- **Active tasks**: {active_count}")
+    parts.append(f"- **Components**: {component_count}")
+    parts.append("")
+
+    if projects:
+        parts.append("### Projects")
+        for p in projects:
+            counts = task_counts.get(p["id"], {})
+            total = counts.get("total_tasks", 0)
+            active = counts.get("active_task_count", 0)
+            cost = counts.get("total_cost", 0)
+            parts.append(f"- **{p['id']}**: {total} tasks ({active} active), ${cost:.2f} total cost")
+
+    return {"guide": "\n".join(parts)}
+
+
 TOOL_HANDLERS = {
     # Conversation tools
     "board": _handle_board,
@@ -1031,6 +1168,8 @@ TOOL_HANDLERS = {
     "list_components": _handle_list_components,
     "link_conversation": _handle_link_conversation,
     "unlink_conversation": _handle_unlink_conversation,
+    # Ops tools
+    "get_guide": _handle_get_guide,
 }
 
 
@@ -1108,6 +1247,8 @@ async def main():
                 await send({"type": "lifespan.startup.complete"})
                 # Recover tasks orphaned by previous shutdown
                 asyncio.create_task(tasks.recover_orphaned_tasks())
+                # Start stall detection background loop
+                asyncio.create_task(tasks.check_stalled_tasks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     await ctx.__aexit__(None, None, None)

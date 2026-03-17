@@ -7,6 +7,7 @@ import os
 import pwd
 import shlex
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -96,6 +97,50 @@ async def recover_orphaned_tasks():
                 asyncio.create_task(_run_test_gate(task["id"], project, task))
             elif gate == "review-failed" and task.get("auto_review"):
                 asyncio.create_task(_dispatch_review(task["id"], project, task))
+
+
+STALL_THRESHOLD_SECONDS = 300  # 5 minutes
+STALL_CHECK_INTERVAL = 60  # check every minute
+
+
+async def check_stalled_tasks():
+    """Background loop: check for working tasks with no recent activity."""
+    while True:
+        try:
+            await asyncio.sleep(STALL_CHECK_INTERVAL)
+            working_tasks = await db.list_tasks(status="working")
+            now = datetime.now(timezone.utc)
+            for task in working_tasks:
+                last_activity = task.get("last_activity")
+                if not last_activity:
+                    continue
+                last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                stale_seconds = (now - last).total_seconds()
+                if stale_seconds >= STALL_THRESHOLD_SECONDS:
+                    # Check if we already posted a stall warning recently
+                    thread = await db.read_task_messages(task["id"], last_n=5)
+                    recent = thread.get("messages", [])
+                    already_warned = any(
+                        m.get("type") == "stall-warning" and m.get("author") == "dispatcher"
+                        for m in recent
+                    )
+                    if not already_warned:
+                        minutes = round(stale_seconds / 60, 1)
+                        await db.post_task_message(
+                            task_id=task["id"], author="dispatcher",
+                            type="stall-warning",
+                            title=f"No activity for {minutes}m",
+                            content=f"Task has had no activity for {minutes} minutes. "
+                                    "The CC session may be stuck or waiting for input.",
+                        )
+                        await notify.task_heartbeat(
+                            task_id=task["id"], turns=0,
+                            elapsed_s=stale_seconds,
+                            last_tool=f"[STALL WARNING: {minutes}m idle]",
+                        )
+                        log.warning(f"Stall detected: task {task['id']} idle for {minutes}m")
+        except Exception as e:
+            log.warning(f"Stall check error: {e}")
 
 
 async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
@@ -1506,6 +1551,7 @@ async def dispatch_task(
     parent_task_id: str | None = None,
     auto_pr: bool = False,
     component_id: str | None = None,
+    claude_chat_url: str | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK."""
 
@@ -1535,7 +1581,7 @@ async def dispatch_task(
             model=model, auto_test=auto_test, depends_on=depends_on,
             auto_review=auto_review, review_model=review_model,
             parent_task_id=parent_task_id, auto_pr=auto_pr,
-            component_id=component_id,
+            component_id=component_id, claude_chat_url=claude_chat_url,
         )
         if spec:
             await db.post_task_message(
