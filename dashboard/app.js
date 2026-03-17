@@ -130,7 +130,7 @@ function App() {
     } else if (route.view === 'projects') {
         view = html`<${Projects} />`;
     } else if (route.view === 'project-detail') {
-        view = html`<${ProjectDetail} key=${route.projectId} projectId=${route.projectId} />`;
+        view = html`<${ProjectDetail} key=${route.projectId} projectId=${route.projectId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'component-detail') {
         view = html`<${ComponentDetail} key=${route.componentId} componentId=${route.componentId} />`;
     } else if (route.view === 'conversations') {

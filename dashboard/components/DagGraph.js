@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorState, EmptyState, navigate } from './utils.js';
 
 // ── Default state colors (can be overridden by project config) ──
-const DEFAULT_STATE_COLORS = {
+export const DEFAULT_STATE_COLORS = {
     ready:          { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Ready' },
     blocked:        { bg: '#33415520', border: '#475569', text: '#94a3b8', dot: '#475569', label: 'Blocked' },
     working:        { bg: '#f59e0b20', border: '#f59e0b', text: '#fbbf24', dot: '#f59e0b', label: 'Working', pulse: true },
@@ -26,8 +26,8 @@ const COMPONENT_PALETTE = [
 ];
 
 // ── Layout constants ─────────────────────────────────────────
-const NODE_W = 280;
-const NODE_H = 120;
+export const NODE_W = 280;
+export const NODE_H = 120;
 const GAP_X = 50;
 const GAP_Y = 70;
 const PADDING = 40;
@@ -42,7 +42,7 @@ function deriveComponent(task) {
     return match ? match[1] : short;
 }
 
-function computeLayout(tasks, stateColors) {
+export function computeLayout(tasks, stateColors) {
     const STATE_COLORS = stateColors;
     if (!tasks || tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
@@ -206,7 +206,7 @@ function heartbeatLabel(cls) {
 }
 
 // ── SVG Edge component ──────────────────────────────────────
-function EdgePath({ edge, highlighted, dimmed }) {
+export function EdgePath({ edge, highlighted, dimmed }) {
     const { x1, y1, x2, y2, crossComponent } = edge;
     const midY = (y1 + y2) / 2;
     const d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
@@ -229,7 +229,7 @@ function EdgePath({ edge, highlighted, dimmed }) {
 }
 
 // ── Task Node component ─────────────────────────────────────
-function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhover, allNodes }) {
+export function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhover, allNodes }) {
     const { task, x, y, status, componentColor, stateColor } = node;
     const shortId = task.id.includes('/') ? task.id.split('/').pop() : task.id;
     const hb = heartbeatClass(task);
@@ -282,7 +282,7 @@ function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhove
 }
 
 // ── Tag Filter Bar ──────────────────────────────────────────
-function TagFilterBar({ tags, activeTags, onToggleTag, onClear, componentColors }) {
+export function TagFilterBar({ tags, activeTags, onToggleTag, onClear, componentColors }) {
     return html`
         <div class="flex flex-wrap items-center gap-2 mb-4 px-2">
             <span class="text-xs text-slate-500 mr-1">Filter:</span>
@@ -314,7 +314,7 @@ function TagFilterBar({ tags, activeTags, onToggleTag, onClear, componentColors 
 }
 
 // ── State Legend ─────────────────────────────────────────────
-function StateLegend({ tasks, stateColors }) {
+export function StateLegend({ tasks, stateColors }) {
     const STATE_COLORS = stateColors;
     const counts = {};
     for (const t of tasks) {
