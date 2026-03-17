@@ -132,7 +132,7 @@ function App() {
     } else if (route.view === 'project-detail') {
         view = html`<${ProjectDetail} key=${route.projectId} projectId=${route.projectId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'component-detail') {
-        view = html`<${ComponentDetail} key=${route.componentId} componentId=${route.componentId} />`;
+        view = html`<${ComponentDetail} key=${route.componentId} componentId=${route.componentId} jiraBaseUrl=${jiraBaseUrl} onAction=${handleAction} />`;
     } else if (route.view === 'conversations') {
         view = html`<${ConversationsList} />`;
     } else if (route.view === 'conversation-detail') {

@@ -1,6 +1,10 @@
-import { useState, useEffect, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
 import { html, navigate, StatusBadge, relativeTime } from './utils.js';
+import {
+    computeLayout, TaskNode, EdgePath, TagFilterBar, StateLegend, DEFAULT_STATE_COLORS,
+} from './DagGraph.js';
+import { GraphDetailPanel } from './GraphDetailPanel.js';
 
 // ── Component status badge ────────────────────────────────────────────────
 
@@ -28,6 +32,121 @@ function ProgressBar({ done, total }) {
                 <div class="bg-emerald-500 h-1.5 rounded-full" style="width: ${pct}%"></div>
             </div>
             <span class="text-xs text-slate-400 tabular-nums">${done}/${total}</span>
+        </div>
+    `;
+}
+
+// ── DAG graph section ─────────────────────────────────────────────────────
+
+function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
+    const [selectedTaskId, setSelectedTaskId] = useState(null);
+    const [hoveredId, setHoveredId] = useState(null);
+    const [activeTags, setActiveTags] = useState(new Set());
+
+    const layout = useMemo(() => {
+        if (!tasks || tasks.length === 0) return null;
+        return computeLayout(tasks, DEFAULT_STATE_COLORS);
+    }, [tasks]);
+
+    const allTags = useMemo(() => {
+        if (!tasks) return [];
+        const s = new Set();
+        tasks.forEach(t => (t.tags || []).forEach(tag => s.add(tag)));
+        return [...s].sort();
+    }, [tasks]);
+
+    const toggleTag = useCallback((tag) => {
+        setActiveTags(prev => {
+            const next = new Set(prev);
+            if (next.has(tag)) next.delete(tag); else next.add(tag);
+            return next;
+        });
+    }, []);
+
+    const clearTags = useCallback(() => setActiveTags(new Set()), []);
+
+    const visibleIds = useMemo(() => {
+        if (!layout || activeTags.size === 0) return null;
+        const ids = new Set();
+        for (const node of layout.nodes) {
+            if ((node.task.tags || []).some(t => activeTags.has(t))) ids.add(node.id);
+        }
+        return ids;
+    }, [layout, activeTags]);
+
+    const connectedIds = useMemo(() => {
+        if (!hoveredId || !layout) return null;
+        const ids = new Set([hoveredId]);
+        for (const edge of layout.edges) {
+            if (edge.fromId === hoveredId) ids.add(edge.toId);
+            if (edge.toId === hoveredId) ids.add(edge.fromId);
+        }
+        return ids;
+    }, [hoveredId, layout]);
+
+    const handleSelect = useCallback((id) => setSelectedTaskId(id), []);
+    const handleClose = useCallback(() => setSelectedTaskId(null), []);
+
+    if (!layout || layout.nodes.length === 0) {
+        return html`<p class="text-slate-500 text-sm py-4">No tasks in this component yet.</p>`;
+    }
+
+    return html`
+        <div class="${selectedTaskId ? 'graph-layout graph-layout-split' : 'graph-layout'}"
+            style="min-height: 0;">
+            <div class="graph-main">
+                <div class="dag-container" style="border-radius: 8px;">
+
+                    ${allTags.length > 0 && html`
+                        <${TagFilterBar} tags=${allTags} activeTags=${activeTags}
+                            onToggleTag=${toggleTag} onClear=${clearTags}
+                            componentColors=${layout.componentColors} />
+                    `}
+
+                    <div class="dag-scroll" onClick=${() => handleSelect(null)}>
+                        <div class="dag-canvas"
+                            style="width:${layout.width}px; height:${layout.height}px; position:relative;">
+
+                            <svg class="dag-edges" width=${layout.width} height=${layout.height}
+                                style="position:absolute; top:0; left:0; pointer-events:none; z-index:1;">
+                                ${layout.edges.map(edge => {
+                                    const isHighlighted = connectedIds && (connectedIds.has(edge.fromId) && connectedIds.has(edge.toId));
+                                    const isDimmed = (connectedIds && !isHighlighted) ||
+                                        (visibleIds && (!visibleIds.has(edge.fromId) || !visibleIds.has(edge.toId)));
+                                    return html`<${EdgePath} key=${edge.fromId + '-' + edge.toId}
+                                        edge=${edge} highlighted=${isHighlighted} dimmed=${isDimmed} />`;
+                                })}
+                            </svg>
+
+                            ${layout.nodes.map(node => {
+                                const isSelected = selectedTaskId === node.id;
+                                const isHovered = hoveredId === node.id;
+                                const isDimmed = (connectedIds && !connectedIds.has(node.id)) ||
+                                    (visibleIds && !visibleIds.has(node.id));
+                                return html`<${TaskNode} key=${node.id} node=${node}
+                                    selected=${isSelected} hovered=${isHovered} dimmed=${isDimmed}
+                                    onSelect=${handleSelect}
+                                    onHover=${setHoveredId}
+                                    onUnhover=${() => setHoveredId(null)}
+                                    allNodes=${layout.nodes} />`;
+                            })}
+                        </div>
+                    </div>
+
+                    <${StateLegend} tasks=${tasks.filter(t => !t.parent_task_id)} stateColors=${DEFAULT_STATE_COLORS} />
+                </div>
+            </div>
+
+            ${selectedTaskId ? html`
+                <div class="panel-backdrop" onClick=${handleClose}></div>
+                <${GraphDetailPanel}
+                    key=${selectedTaskId}
+                    taskId=${selectedTaskId}
+                    allTasks=${tasks}
+                    jiraBaseUrl=${jiraBaseUrl}
+                    onClose=${handleClose}
+                    onAction=${onAction} />
+            ` : null}
         </div>
     `;
 }
@@ -272,9 +391,10 @@ function ActivityTimeline({ componentId }) {
 
 // ── Main component ────────────────────────────────────────────────────────
 
-export function ComponentDetail({ componentId }) {
+export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
     const [comp, setComp] = useState(null);
     const [error, setError] = useState(null);
+    const [taskView, setTaskView] = useState('dag'); // 'dag' | 'list'
 
     useEffect(() => {
         api.getComponent(componentId)
@@ -340,8 +460,27 @@ export function ComponentDetail({ componentId }) {
 
             <!-- Tasks -->
             <section class="mb-6">
-                <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">Tasks</h3>
-                <${TaskArea} tasks=${comp.tasks} />
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">Tasks</h3>
+                    <div class="flex gap-1">
+                        <button onClick=${() => setTaskView('dag')}
+                            class="px-2 py-1 text-xs rounded transition-colors ${taskView === 'dag'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
+                            Graph
+                        </button>
+                        <button onClick=${() => setTaskView('list')}
+                            class="px-2 py-1 text-xs rounded transition-colors ${taskView === 'list'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
+                            List
+                        </button>
+                    </div>
+                </div>
+                ${taskView === 'dag'
+                    ? html`<${ComponentDagSection} tasks=${comp.tasks} onAction=${onAction} jiraBaseUrl=${jiraBaseUrl} />`
+                    : html`<${TaskArea} tasks=${comp.tasks} />`
+                }
             </section>
 
             <!-- Punchlist + Activity side-by-side on wide screens -->
