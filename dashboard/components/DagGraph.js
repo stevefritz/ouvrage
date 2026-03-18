@@ -28,7 +28,7 @@ const COMPONENT_PALETTE = [
 
 // ── Layout constants ─────────────────────────────────────────
 export const NODE_W = 280;
-export const NODE_H = 120;
+export const NODE_H = 150;
 const GAP_X = 60;               // horizontal gap between nodes in same rank
 const GAP_Y = 140;              // vertical gap between ranks — more room for edges to route
 const PADDING = 40;
@@ -386,22 +386,35 @@ export function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, o
                    border-color: ${selected ? stateColor.border : 'transparent'};
                    border-left-color: ${componentColor};
                    opacity: ${opacity};
-                   transition: opacity 0.2s, box-shadow 0.2s;"
+                   transition: opacity 0.2s, box-shadow 0.2s;
+                   display: flex; flex-direction: column; overflow: hidden;"
             onClick=${(e) => { e.stopPropagation(); onSelect(node.id); }}
             onMouseEnter=${() => onHover(node.id)}
             onMouseLeave=${onUnhover}>
 
-            <div class="flex items-center gap-2 mb-1">
-                <span class="inline-block w-2.5 h-2.5 rounded-full ${stateColor.pulse ? 'status-dot-working' : ''}"
+            <div class="flex items-center gap-2 mb-1 shrink-0">
+                <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0 ${stateColor.pulse ? 'status-dot-working' : ''}"
                     style="background: ${stateColor.dot}"></span>
                 <span class="text-xs font-medium truncate" style="color: ${stateColor.text}">${(stateColor.label || status).toUpperCase()}</span>
                 ${hb ? html`<${Tip} text=${heartbeatLabel(hb)}><span class="w-2 h-2 rounded-full ${hb}"></span><//>` : null}
             </div>
 
-            <div class="text-sm font-mono text-slate-200 truncate mb-0.5" title=${task.id}>${shortId}</div>
-            <div class="text-xs text-slate-400 truncate mb-1" title=${task.goal}>${(task.goal || '').slice(0, 60)}</div>
+            <div class="text-sm font-mono text-slate-200 truncate mb-0.5 shrink-0" title=${task.id}>${shortId}</div>
+            <div class="text-xs text-slate-400 truncate mb-1 shrink-0" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title=${task.goal}>${task.goal || ''}</div>
 
-            <div class="flex items-center gap-2 text-xs text-slate-500 mt-auto">
+            ${task.checklist_total > 0 ? html`
+                <div class="shrink-0 mb-1">
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                            <div class="h-full rounded-full bg-emerald-500 transition-all"
+                                style="width: ${Math.round((task.checklist_done / task.checklist_total) * 100)}%"></div>
+                        </div>
+                        <span class="text-xs text-slate-500 shrink-0">${task.checklist_done}/${task.checklist_total}</span>
+                    </div>
+                </div>
+            ` : null}
+
+            <div class="flex items-center gap-2 text-xs text-slate-500 mt-auto shrink-0">
                 ${task.model ? html`<span>${task.model}</span>` : null}
                 ${task.total_cost_usd ? html`<${Tip} text="Total API cost across all dispatches"><span>$${task.total_cost_usd.toFixed(2)}</span><//>` : null}
                 ${task.last_activity ? html`<span>${relativeTime(task.last_activity)}</span>` : null}
@@ -479,8 +492,39 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
     const [hoveredId, setHoveredId] = useState(null);
     const [activeTags, setActiveTags] = useState(new Set());
     const [stateColors, setStateColors] = useState(DEFAULT_STATE_COLORS);
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState(false);
+    const dragStart = useRef(null);
     const mountedRef = useRef(true);
     const containerRef = useRef(null);
+
+    const handleWheel = useCallback((e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
+    }, []);
+
+    const handleMouseDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+        setDragging(true);
+    }, [pan]);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!dragging || !dragStart.current) return;
+        setPan({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });
+    }, [dragging]);
+
+    const handleMouseUp = useCallback(() => {
+        setDragging(false);
+        dragStart.current = null;
+    }, []);
+
+    const resetView = useCallback(() => {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+    }, []);
 
     // Attempt to load custom state definitions from project config
     useEffect(() => {
@@ -580,8 +624,18 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
                 componentColors=${layout.componentColors} />
 
             <div class="dag-scroll" ref=${containerRef}
-                onClick=${() => onSelectTask(null)}>
-                <div class="dag-canvas" style="width:${layout.width}px; height:${layout.height}px; position:relative;">
+                onWheel=${handleWheel}
+                onMouseDown=${handleMouseDown}
+                onMouseMove=${handleMouseMove}
+                onMouseUp=${handleMouseUp}
+                onMouseLeave=${handleMouseUp}
+                onClick=${(e) => { if (!dragging) onSelectTask(null); }}
+                style="cursor: ${dragging ? 'grabbing' : 'grab'};">
+                <div class="flex items-center gap-2 px-2 py-1 text-xs text-slate-500">
+                    <button onClick=${resetView} class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400">Reset</button>
+                    <span>${Math.round(zoom * 100)}%</span>
+                </div>
+                <div class="dag-canvas" style="width:${layout.width * zoom}px; height:${layout.height * zoom}px; position:relative; transform: scale(${zoom}); transform-origin: 0 0; translate: ${pan.x}px ${pan.y}px;">
                     <!-- SVG edges layer -->
                     <svg class="dag-edges" width=${layout.width} height=${layout.height}
                         style="position:absolute; top:0; left:0; pointer-events:none; z-index:1;">
