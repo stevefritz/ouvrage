@@ -539,6 +539,19 @@ export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
                         <span class="text-sm text-slate-400 tabular-nums">${comp.done_tasks}/${comp.total_tasks} tasks</span>
                     </div>
                 </div>
+                <!-- Control buttons -->
+                <div class="mt-3 pt-3 border-t border-slate-700 flex gap-2">
+                    ${comp.paused ? html`
+                        <button onClick=${async () => { await api.resumeComponent(componentId); loadComponent(); }}
+                            class="px-3 py-1.5 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">\u25B6 Resume</button>
+                    ` : html`
+                        <button onClick=${async () => { await api.pauseComponent(componentId); loadComponent(); }}
+                            class="px-3 py-1.5 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">\u23F8 Pause</button>
+                    `}
+                    <button onClick=${async () => { if (confirm('Stop component? This will cancel all running tasks.')) { await api.stopComponent(componentId); loadComponent(); } }}
+                        class="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">\u23F9 Stop</button>
+                    ${comp.paused && html`<span class="text-xs text-amber-400 flex items-center gap-1 ml-2">\u26A0 Paused — no new tasks will be dispatched</span>`}
+                </div>
             </div>
 
             <!-- Tasks -->

@@ -341,10 +341,22 @@ export function ProjectDetail({ projectId, jiraBaseUrl, onAction }) {
                         branch: <span class="font-mono">${project.default_branch}</span>
                     </div>
                 </div>
-                <a href=${`#/?project_id=${encodeURIComponent(projectId)}`}
-                    class="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
-                    View All Tasks
-                </a>
+                <div class="flex items-center gap-2">
+                    ${project.paused ? html`
+                        <button onClick=${async () => { await api.resumeProject(projectId); location.reload(); }}
+                            class="px-3 py-1.5 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">\u25B6 Resume</button>
+                    ` : html`
+                        <button onClick=${async () => { await api.pauseProject(projectId); location.reload(); }}
+                            class="px-3 py-1.5 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">\u23F8 Pause</button>
+                    `}
+                    <button onClick=${async () => { if (confirm('Stop project? This will cancel all running tasks.')) { await api.stopProject(projectId); location.reload(); } }}
+                        class="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">\u23F9 Stop</button>
+                    <a href=${`#/?project_id=${encodeURIComponent(projectId)}`}
+                        class="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
+                        View All Tasks
+                    </a>
+                    ${project.paused && html`<span class="text-xs text-amber-400 flex items-center gap-1">\u26A0 Paused</span>`}
+                </div>
             </div>
 
             <!-- Component cards -->
