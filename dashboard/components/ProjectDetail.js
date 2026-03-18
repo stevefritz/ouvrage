@@ -32,7 +32,12 @@ function ProgressBar({ done, total, failed, active }) {
                 <div class="bg-amber-500 h-1.5 transition-all" style="width: ${activePct}%"></div>
                 <div class="bg-red-500 h-1.5 transition-all" style="width: ${failedPct}%"></div>
             </div>
-            <span class="text-xs text-slate-400 tabular-nums">${done}/${total}${(failed || 0) > 0 ? html` <span class="text-red-400">${failed}\u2715</span>` : null}</span>
+            <span class="text-xs tabular-nums flex items-center gap-1.5">
+                ${done > 0 ? html`<span class="text-emerald-400">${done}\u2713</span>` : null}
+                ${(active || 0) > 0 ? html`<span class="text-amber-400">${active}\u25CF</span>` : null}
+                ${(failed || 0) > 0 ? html`<span class="text-red-400">${failed}\u2715</span>` : null}
+                <span class="text-slate-500">/ ${total}</span>
+            </span>
         </div>
     `;
 }
