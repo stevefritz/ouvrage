@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, navigate } from './utils.js';
+import { html, navigate, Tip } from './utils.js';
 import {
     computeLayout, TaskNode, EdgePath, TagFilterBar, StateLegend,
     DEFAULT_STATE_COLORS, NODE_W, NODE_H,
@@ -22,23 +22,28 @@ function ComponentStatusBadge({ status }) {
 }
 
 function ProgressBar({ done, total, failed, active }) {
-    const donePct = total > 0 ? (done / total * 100) : 0;
-    const failedPct = total > 0 ? ((failed || 0) / total * 100) : 0;
-    const activePct = total > 0 ? ((active || 0) / total * 100) : 0;
+    const f = failed || 0;
+    const a = active || 0;
+    const waiting = Math.max(0, total - done - f - a);
+    const pct = (n) => total > 0 ? (n / total * 100) : 0;
+
+    const segments = [
+        { n: done, color: 'bg-emerald-500', label: `${done} done` },
+        { n: a, color: 'bg-amber-500', label: `${a} working` },
+        { n: f, color: 'bg-red-500', label: `${f} failed` },
+        { n: waiting, color: 'bg-slate-600', label: `${waiting} waiting` },
+    ].filter(s => s.n > 0);
+
+    const tooltip = segments.map(s => s.label).join(' · ');
+
     return html`
-        <div class="flex items-center gap-2">
-            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden flex">
-                <div class="bg-emerald-500 h-1.5 transition-all" style="width: ${donePct}%"></div>
-                <div class="bg-amber-500 h-1.5 transition-all" style="width: ${activePct}%"></div>
-                <div class="bg-red-500 h-1.5 transition-all" style="width: ${failedPct}%"></div>
+        <${Tip} text=${tooltip}>
+            <div class="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden flex cursor-default">
+                ${segments.map(s => html`
+                    <div class="${s.color} h-2 transition-all" style="width: ${pct(s.n)}%"></div>
+                `)}
             </div>
-            <span class="text-xs tabular-nums flex items-center gap-1.5">
-                ${done > 0 ? html`<span class="text-emerald-400">${done}\u2713</span>` : null}
-                ${(active || 0) > 0 ? html`<span class="text-amber-400">${active}\u25CF</span>` : null}
-                ${(failed || 0) > 0 ? html`<span class="text-red-400">${failed}\u2715</span>` : null}
-                <span class="text-slate-500">/ ${total}</span>
-            </span>
-        </div>
+        <//>
     `;
 }
 
