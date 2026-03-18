@@ -396,11 +396,17 @@ export function ComponentDetail({ componentId, jiraBaseUrl, onAction }) {
     const [error, setError] = useState(null);
     const [taskView, setTaskView] = useState('dag'); // 'dag' | 'list'
 
-    useEffect(() => {
+    const loadComponent = useCallback(() => {
         api.getComponent(componentId)
             .then(setComp)
             .catch(e => setError(e.message));
     }, [componentId]);
+
+    useEffect(() => {
+        loadComponent();
+        const timer = setInterval(loadComponent, 5000);
+        return () => clearInterval(timer);
+    }, [loadComponent]);
 
     if (error) {
         return html`<div class="p-6"><p class="text-red-400">Error: ${error}</p></div>`;
