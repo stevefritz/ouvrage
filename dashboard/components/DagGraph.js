@@ -289,7 +289,7 @@ export function computeLayout(tasks, stateColors) {
     let totalWidth = 0, totalHeight = 0;
     for (const n of allNodes) {
         totalWidth = Math.max(totalWidth, n.x + NODE_W + PADDING);
-        totalHeight = Math.max(totalHeight, n.y + NODE_H + PADDING);
+        totalHeight = Math.max(totalHeight, n.y + NODE_H + PADDING + 20);
     }
     totalWidth = Math.max(totalWidth, 600);
 
@@ -499,10 +499,17 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
     const mountedRef = useRef(true);
     const containerRef = useRef(null);
 
-    const handleWheel = useCallback((e) => {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.05 : 0.05;
-        setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
+    // Attach wheel listener with passive:false so preventDefault works
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const onWheel = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.05 : 0.05;
+            setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
     }, []);
 
     const handleMouseDown = useCallback((e) => {
@@ -624,7 +631,6 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
                 componentColors=${layout.componentColors} />
 
             <div class="dag-scroll" ref=${containerRef}
-                onWheel=${handleWheel}
                 onMouseDown=${handleMouseDown}
                 onMouseMove=${handleMouseMove}
                 onMouseUp=${handleMouseUp}
