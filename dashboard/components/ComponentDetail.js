@@ -42,6 +42,35 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
     const [selectedTaskId, setSelectedTaskId] = useState(null);
     const [hoveredId, setHoveredId] = useState(null);
     const [activeTags, setActiveTags] = useState(new Set());
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState(false);
+    const dragStart = useRef(null);
+    const scrollRef = useRef(null);
+
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const onWheel = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.05 : 0.05;
+            setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, []);
+
+    const onMouseDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+        setDragging(true);
+    }, [pan]);
+    const onMouseMove = useCallback((e) => {
+        if (!dragging || !dragStart.current) return;
+        setPan({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });
+    }, [dragging]);
+    const onMouseUp = useCallback(() => { setDragging(false); dragStart.current = null; }, []);
+    const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
     const layout = useMemo(() => {
         if (!tasks || tasks.length === 0) return null;
@@ -103,9 +132,17 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
                             componentColors=${layout.componentColors} />
                     `}
 
-                    <div class="dag-scroll" onClick=${() => handleSelect(null)}>
+                    <div class="dag-scroll" ref=${scrollRef}
+                        onMouseDown=${onMouseDown} onMouseMove=${onMouseMove}
+                        onMouseUp=${onMouseUp} onMouseLeave=${onMouseUp}
+                        onClick=${(e) => { if (!dragging) handleSelect(null); }}
+                        style="cursor: ${dragging ? 'grabbing' : 'grab'};">
+                        <div class="flex items-center gap-2 px-2 py-1 text-xs text-slate-500">
+                            <button onClick=${resetView} class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400">Reset</button>
+                            <span>${Math.round(zoom * 100)}%</span>
+                        </div>
                         <div class="dag-canvas"
-                            style="width:${layout.width}px; height:${layout.height}px; position:relative;">
+                            style="width:${layout.width * zoom}px; height:${layout.height * zoom}px; position:relative; transform: scale(${zoom}); transform-origin: 0 0; translate: ${pan.x}px ${pan.y}px;">
 
                             <svg class="dag-edges" width=${layout.width} height=${layout.height}
                                 style="position:absolute; top:0; left:0; pointer-events:none; z-index:1;">

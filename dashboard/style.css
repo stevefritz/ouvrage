@@ -428,7 +428,8 @@ body { background: var(--bg-primary); color: var(--text-primary); }
 }
 .dag-scroll {
     overflow: auto;
-    max-height: calc(100vh - 180px);
+    min-height: 300px;
+    max-height: calc(100vh - 160px);
     position: relative;
 }
 .dag-canvas {
