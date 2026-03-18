@@ -37,13 +37,15 @@ function ProgressBar({ done, total, failed, active }) {
     const tooltip = segments.map(s => s.label).join(' · ');
 
     return html`
-        <${Tip} text=${tooltip}>
-            <div class="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden flex cursor-default">
-                ${segments.map(s => html`
-                    <div class="${s.color} h-2 transition-all" style="width: ${pct(s.n)}%"></div>
-                `)}
-            </div>
-        <//>
+        <div class="w-full">
+            <${Tip} text=${tooltip}>
+                <div class="bg-slate-700 rounded-full h-2 overflow-hidden flex cursor-default">
+                    ${segments.map(s => html`
+                        <div class="${s.color} h-2 transition-all" style="width: ${pct(s.n)}%"></div>
+                    `)}
+                </div>
+            <//>
+        </div>
     `;
 }
 
@@ -62,11 +64,6 @@ function ComponentCard({ comp }) {
             <div class="text-xs font-mono text-slate-500 mb-3">${comp.base_branch || '\u2014'}</div>
             <${ProgressBar} done=${comp.done_tasks} total=${comp.total_tasks} failed=${comp.failed_tasks} active=${comp.active_tasks} />
             <div class="flex flex-wrap gap-3 mt-3 text-xs text-slate-400">
-                <span class=${hasActive ? 'text-emerald-400 flex items-center gap-1' : ''}>
-                    ${hasActive && html`<span class="status-dot-working">\u25CF</span>`}
-                    ${comp.active_tasks} active
-                </span>
-                ${comp.failed_tasks > 0 && html`<span class="text-red-400">${comp.failed_tasks} failed</span>`}
                 <span>$${(comp.total_cost || 0).toFixed(2)}</span>
                 ${comp.conversation_count > 0 && html`
                     <span>${comp.conversation_count} conv${comp.conversation_count !== 1 ? 's' : ''}</span>
