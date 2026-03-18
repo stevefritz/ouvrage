@@ -503,6 +503,7 @@ export function DagGraph({ projectId, onSelectTask, onTasksUpdate, selectedTaskI
         const el = containerRef.current;
         if (!el) return;
         const onWheel = (e) => {
+            if (!e.ctrlKey && !e.metaKey) return; // Ctrl+scroll to zoom
             e.preventDefault();
             const delta = e.deltaY > 0 ? -0.05 : 0.05;
             setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
