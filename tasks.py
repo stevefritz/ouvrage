@@ -2804,6 +2804,9 @@ async def resume_task(task_id: str) -> dict:
 
     If worktree was auto-released, it will be re-attached automatically
     by setup_worktree() in dispatch_task().
+
+    If the task already passed the gate, re-triggers the post-gate pipeline
+    (auto-merge, chain advancement) instead of launching a new CC session.
     """
     task = await db.get_task(task_id)
     if not task:
@@ -2811,6 +2814,12 @@ async def resume_task(task_id: str) -> dict:
     resumable = ("needs-review", "turns-exhausted", "completed", "merged")
     if task["status"] not in resumable:
         raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
+
+    # If gate already passed, re-trigger post-gate pipeline instead of CC session
+    if task.get("gate_passed_at"):
+        log.info(f"Resume {task_id}: gate already passed, re-triggering post-gate pipeline")
+        await _check_and_dispatch_dependents(task_id)
+        return await db.get_task(task_id)
 
     return await dispatch_task(
         project_id=task["project_id"],
