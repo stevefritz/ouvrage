@@ -2561,6 +2561,19 @@ async def release_worktree(task_id: str, reason: str = "detach") -> dict:
             else:
                 log.info(f"Released worktree for {task_id}: {worktree}")
 
+            # Clean up local branch ref so it doesn't block checkout from other worktrees
+            branch = task.get("branch")
+            if branch:
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", bare_path, "branch", "-D", branch,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    log.info(f"Deleted local branch ref {branch} for {task_id}")
+                else:
+                    log.warning(f"Failed to delete branch ref {branch}: {stderr.decode().strip()}")
+
     await db.update_task(task_id, worktree_path=None)
     return {"task_id": task_id, "released": True, "worktree_path": worktree}
 
