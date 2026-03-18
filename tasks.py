@@ -241,12 +241,15 @@ async def recover_orphaned_tasks():
     for task in failed_tasks:
         thread = await db.read_task_messages(task["id"])
         messages = thread.get("messages", [])
-        # Check if any messages came from the CC worker
-        has_worker_output = any(
-            m.get("author") == "cc-worker" for m in messages
-        )
-        if not has_worker_output:
-            log.warning(f"Startup recovery: task {task['id']} failed silently (no worker output), treating as orphan")
+        # Check if the task died from a signal (SIGTERM/SIGKILL) or silently
+        last_msg = messages[-1] if messages else {}
+        last_content = last_msg.get("content", "")
+        killed_by_signal = "exit code -15" in last_content or "exit code -9" in last_content
+        has_worker_output = any(m.get("author") == "cc-worker" for m in messages)
+
+        if killed_by_signal or not has_worker_output:
+            reason = "killed by signal" if killed_by_signal else "no worker output"
+            log.warning(f"Startup recovery: task {task['id']} failed ({reason}), treating as orphan")
             await db.update_task(task["id"], status="working")
             orphans.append(task)
 
