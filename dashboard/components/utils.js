@@ -136,7 +136,25 @@ const STATUS_MAP = {
     ready:            { bg: 'bg-slate-500/20', text: 'text-slate-300', icon: '\u25CB', explain: 'Task is ready to be dispatched' },
 };
 
-export function StatusBadge({ status }) {
+export function StatusBadge({ status, task }) {
+    // When gate is active on a completed task, show the gate stage instead
+    if (task && status === 'completed' && task.gate_status && task.gate_status !== 'passed') {
+        const g = GATE_MAP[task.gate_status];
+        if (g) {
+            const label = task.gate_status === 'testing' ? 'TESTING'
+                : task.gate_status === 'test-passed' ? 'TESTS PASSED'
+                : task.gate_status === 'reviewing' ? 'REVIEWING'
+                : task.gate_status === 'test-failed' ? 'TESTS FAILED'
+                : task.gate_status === 'review-failed' ? 'REVIEW FAILED'
+                : task.gate_status.toUpperCase();
+            const dotClass = g.pulse ? 'status-dot-working' : '';
+            return html`<${Tip} text="${label} — ${g.explain}">
+                <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${g.bg} ${g.text}">
+                    <span class=${dotClass}>${g.icon}</span> ${label}
+                </span>
+            <//>`;
+        }
+    }
     const s = STATUS_MAP[status] || STATUS_MAP.ready;
     const dotClass = s.dot ? 'status-dot-working' : '';
     const label = (status || 'ready').toUpperCase();

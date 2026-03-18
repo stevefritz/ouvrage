@@ -106,8 +106,7 @@ export function Board({ params = {}, jiraBaseUrl, onAction }) {
                                     onClick=${() => navigate(`#/tasks/${t.id}`)}>
                                     <td class="p-3">
                                         <div class="flex items-center gap-1.5">
-                                            <${StatusBadge} status=${t.status} />
-                                            <${GateBadge} task=${t} />
+                                            <${StatusBadge} status=${t.status} task=${t} />
                                             <${HeartbeatIndicator} task=${t} />
                                         </div>
                                     </td>

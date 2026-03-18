@@ -37,8 +37,7 @@ function DetailHeader({ task, onAction, jiraBaseUrl }) {
             <div class="flex items-start justify-between">
                 <div class="flex-1">
                     <div class="flex items-center gap-3 mb-2 flex-wrap">
-                        <${StatusBadge} status=${task.status} />
-                        <${GateBadge} task=${task} />
+                        <${StatusBadge} status=${task.status} task=${task} />
                         <${ReviewVerdictBadge} subtasks=${task.subtasks} />
                         <${HeartbeatIndicator} task=${task} />
                         <span class="font-mono text-lg text-slate-200">${task.id}</span>
@@ -160,8 +159,7 @@ function ChainVisualization({ taskId }) {
                     return html`
                         <a key=${t.id} href="#/tasks/${t.id}" class="shrink-0 block p-2 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[120px] max-w-[180px]">
                             <div class="flex items-center gap-1 mb-1">
-                                <${StatusBadge} status=${t.status} />
-                                <${GateBadge} task=${t} />
+                                <${StatusBadge} status=${t.status} task=${t} />
                             </div>
                             <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
                             <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>

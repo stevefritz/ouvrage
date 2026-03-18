@@ -162,7 +162,7 @@ function TaskGroup({ title, tasks, colorClass }) {
                 ${tasks.map(t => html`
                     <div key=${t.id} class="px-4 py-3 flex items-center gap-3 hover:bg-slate-800/50 cursor-pointer"
                         onClick=${() => navigate(`#/tasks/${encodeURIComponent(t.id)}`)}>
-                        <${StatusBadge} status=${t.status} />
+                        <${StatusBadge} status=${t.status} task=${t} />
                         <span class="flex-1 text-sm text-slate-300 truncate" title=${t.goal}>${t.goal}</span>
                         <div class="flex items-center gap-3 text-xs text-slate-500 shrink-0">
                             ${t.model && html`<span class="font-mono">${t.model}</span>`}

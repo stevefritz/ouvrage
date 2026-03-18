@@ -354,8 +354,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
             <!-- Header -->
             <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700 sticky top-0 bg-slate-900 z-10">
                 <div class="flex items-center gap-2 min-w-0">
-                    <${StatusBadge} status=${task.status} />
-                    <${GateBadge} task=${task} />
+                    <${StatusBadge} status=${task.status} task=${task} />
                     <${HeartbeatIndicator} task=${task} />
                     <span class="font-mono text-sm text-slate-200 truncate">${shortId}</span>
                     <${Tip} text="Open full task view">
@@ -439,6 +438,9 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                         <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
                                             <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
                                             <span class="${outcomeColor}">${attempt.outcome}</span>
+                                            ${isLast && task.status === 'working' ? html`<span class="text-amber-400 status-dot-working">\u25CF Claude is Working</span>` : null}
+                                            ${isLast && task.gate_status === 'testing' ? html`<span class="text-violet-400 status-dot-working">\u2699 Tests Running</span>` : null}
+                                            ${isLast && task.gate_status === 'reviewing' ? html`<span class="text-pink-400 status-dot-working">\uD83D\uDC41 Claude is Reviewing</span>` : null}
                                             <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
                                         </summary>
                                         <div class="px-2 pb-2 max-h-64 overflow-y-auto">
