@@ -90,6 +90,46 @@ class TestResolveBranchTarget:
         result = await resolve_branch_target(child)
         assert result == "feature/parent"
 
+    async def test_parent_merged_no_worktree_falls_through(self, db, sample_project):
+        """When parent is completed+passed with no worktree, fall through to project default."""
+        from tasks import resolve_branch_target
+
+        parent = await db.create_task(
+            id="test-project/merged-parent", project_id="test-project",
+            goal="Parent", branch="parent-branch",
+        )
+        await db.update_task("test-project/merged-parent",
+            status="merged", gate_status="passed",
+            gate_passed_at=db.now_iso(), worktree_path=None,
+        )
+        child = await db.create_task(
+            id="test-project/orphan-child", project_id="test-project",
+            goal="Child", depends_on="test-project/merged-parent",
+        )
+
+        result = await resolve_branch_target(child)
+        assert result == "main"  # project default, not parent-branch
+
+    async def test_parent_completed_with_worktree_uses_parent_branch(self, db, sample_project):
+        """When parent is completed+passed but worktree still exists, use parent branch."""
+        from tasks import resolve_branch_target
+
+        parent = await db.create_task(
+            id="test-project/wt-parent", project_id="test-project",
+            goal="Parent", branch="wt-parent-branch",
+        )
+        await db.update_task("test-project/wt-parent",
+            status="completed", gate_status="passed",
+            gate_passed_at=db.now_iso(), worktree_path="/work/test/wt-parent",
+        )
+        child = await db.create_task(
+            id="test-project/wt-child", project_id="test-project",
+            goal="Child", depends_on="test-project/wt-parent",
+        )
+
+        result = await resolve_branch_target(child)
+        assert result == "wt-parent-branch"
+
 
 # ---------------------------------------------------------------------------
 # Auto-merge flow
@@ -181,6 +221,53 @@ class TestAutoMerge:
 
         updated = await db.get_task("test-project/target-test")
         assert updated["branch_target"] == "staging"
+
+    async def test_merge_releases_parent_worktree_when_branch_locked(self, db, sample_project):
+        """When target branch is locked by parent's worktree, release it first then merge."""
+        from tasks import _perform_auto_merge
+
+        # Parent task: completed, gate passed, worktree still exists
+        parent = await db.create_task(
+            id="test-project/locked-parent", project_id="test-project",
+            goal="Parent", branch="locked-parent-branch", auto_merge=True,
+        )
+        await db.update_task("test-project/locked-parent",
+            status="completed", gate_status="passed",
+            gate_passed_at=db.now_iso(),
+            worktree_path="/work/test/locked-parent",
+        )
+
+        # Child task: depends on parent, wants to merge into parent's branch
+        child = await db.create_task(
+            id="test-project/locked-child", project_id="test-project",
+            goal="Child", auto_merge=True,
+            depends_on="test-project/locked-parent",
+        )
+        await db.update_task("test-project/locked-child",
+            status="completed", worktree_path="/tmp/fake-child-worktree",
+            branch="locked-child-branch",
+        )
+
+        # First checkout fails (branch locked), second succeeds (after release)
+        checkout_attempts = []
+        async def mock_run(*args, **kwargs):
+            cmd = " ".join(args)
+            if "checkout" in cmd and "locked-parent-branch" in cmd:
+                checkout_attempts.append(cmd)
+                if len(checkout_attempts) == 1:
+                    return (b"", b"a branch named 'locked-parent-branch' already exists", 1)
+                # After release, checkout works
+                return (b"", b"", 0)
+            return (b"", b"", 0)
+
+        self.mock_run.side_effect = mock_run
+
+        with patch("tasks.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
+            result = await _perform_auto_merge("test-project/locked-child")
+
+        # Should have tried to release parent worktree
+        mock_release.assert_awaited_once_with("test-project/locked-parent", reason="auto-merge-needs-branch")
+        assert result is True
 
     async def test_merge_posts_message(self, db, sample_project):
         """Auto-merge posts a status message on success."""

@@ -2321,6 +2321,25 @@ async def _perform_auto_merge(task_id: str) -> bool:
         "git", "-C", worktree, "checkout", branch_target,
     )
     if rc != 0:
+        # Branch might be locked by parent's worktree — try releasing it
+        if task.get("depends_on"):
+            parent_task = await db.get_task(task["depends_on"])
+            if (parent_task
+                and parent_task.get("branch") == branch_target
+                and parent_task.get("worktree_path")
+                and parent_task.get("gate_passed_at")):
+                log.info(f"Auto-merge {task_id}: releasing parent worktree "
+                         f"{parent_task['id']} (branch {branch_target} is locked)")
+                try:
+                    await release_worktree(parent_task["id"], reason="auto-merge-needs-branch")
+                    # Retry checkout after release
+                    _, stderr, rc = await _run_as_worker(
+                        "git", "-C", worktree, "checkout", branch_target,
+                    )
+                except Exception as e:
+                    log.warning(f"Auto-merge {task_id}: failed to release parent worktree: {e}")
+
+    if rc != 0:
         # Target branch may not exist locally — try creating from origin
         _, stderr, rc = await _run_as_worker(
             "git", "-C", worktree, "checkout", "-b", branch_target, f"origin/{branch_target}",
