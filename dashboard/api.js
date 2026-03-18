@@ -59,6 +59,14 @@ export const api = {
     advanceChain: (id) => request(`/tasks/${eid(id)}/advance-chain`, { method: 'POST' }),
     cancelChain: (id) => request(`/tasks/${eid(id)}/cancel-chain`, { method: 'POST' }),
     releaseWorktree: (id) => request(`/tasks/${eid(id)}/release-worktree`, { method: 'POST' }),
+
+    // Component/Project control
+    pauseComponent: (id) => request(`/components/${eid(id)}/pause`, { method: 'POST' }),
+    resumeComponent: (id) => request(`/components/${eid(id)}/resume`, { method: 'POST' }),
+    stopComponent: (id) => request(`/components/${eid(id)}/stop`, { method: 'POST' }),
+    pauseProject: (id) => request(`/projects/${eid(id)}/pause`, { method: 'POST' }),
+    resumeProject: (id) => request(`/projects/${eid(id)}/resume`, { method: 'POST' }),
+    stopProject: (id) => request(`/projects/${eid(id)}/stop`, { method: 'POST' }),
     getChain: (id) => request(`/tasks/${eid(id)}/chain`),
     getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
 

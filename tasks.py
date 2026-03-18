@@ -507,6 +507,14 @@ async def check_stalled_tasks():
                     continue
                 parent = await db.get_task(task["depends_on"])
                 if parent and parent.get("gate_passed_at"):
+                    # Skip if project or component is paused
+                    proj = await db.get_project(task["project_id"])
+                    if proj and proj.get("paused"):
+                        continue
+                    if task.get("component_id"):
+                        comp = await db.get_component(task["component_id"])
+                        if comp and comp.get("paused"):
+                            continue
                     log.warning(f"Health check: ready task {task['id']} has passed parent {parent['id']}, dispatching")
                     await db.post_task_message(
                         task_id=task["id"], author="dispatcher", type="status",
@@ -2543,6 +2551,14 @@ async def dispatch_task(
     if not project:
         raise ValueError(f"Project '{project_id}' not found. Register it with create_project first.")
 
+    # Check if project or component is paused
+    if project.get("paused"):
+        raise ValueError(f"Project '{project_id}' is paused. Resume it before dispatching tasks.")
+    if component_id:
+        comp = await db.get_component(component_id)
+        if comp and comp.get("paused"):
+            raise ValueError(f"Component '{component_id}' is paused. Resume it before dispatching tasks.")
+
     # Create or get task
     task = await db.get_task(task_id)
     is_resume = False
@@ -2912,3 +2928,86 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup}
 
 
+
+
+# ---------------------------------------------------------------------------
+# Component / Project Pause & Stop
+# ---------------------------------------------------------------------------
+
+async def pause_component(component_id: str) -> dict:
+    """Pause a component — no new tasks will be dispatched."""
+    comp = await db.get_component(component_id)
+    if not comp:
+        raise ValueError(f"Component '{component_id}' not found")
+    await db.update_component(component_id, paused=True)
+    log.info(f"Component {component_id} paused")
+    return {"component_id": component_id, "paused": True}
+
+
+async def resume_component(component_id: str) -> dict:
+    """Resume a paused component — tasks can be dispatched again."""
+    comp = await db.get_component(component_id)
+    if not comp:
+        raise ValueError(f"Component '{component_id}' not found")
+    await db.update_component(component_id, paused=False)
+    log.info(f"Component {component_id} resumed")
+    return {"component_id": component_id, "paused": False}
+
+
+async def stop_component(component_id: str) -> dict:
+    """Stop a component — pause + cancel all running tasks."""
+    comp = await db.get_component(component_id)
+    if not comp:
+        raise ValueError(f"Component '{component_id}' not found")
+    await db.update_component(component_id, paused=True)
+    # Cancel all working tasks in this component
+    all_tasks = await db.list_tasks(status="working")
+    cancelled = []
+    for task in all_tasks:
+        if task.get("component_id") == component_id:
+            try:
+                await cancel_task(task["id"])
+                cancelled.append(task["id"])
+            except Exception as e:
+                log.warning(f"Failed to cancel {task['id']} during component stop: {e}")
+    log.info(f"Component {component_id} stopped, cancelled {len(cancelled)} tasks")
+    return {"component_id": component_id, "paused": True, "cancelled": cancelled}
+
+
+async def pause_project(project_id: str) -> dict:
+    """Pause a project — no new tasks will be dispatched."""
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found")
+    await db.update_project(project_id, paused=True)
+    log.info(f"Project {project_id} paused")
+    return {"project_id": project_id, "paused": True}
+
+
+async def resume_project(project_id: str) -> dict:
+    """Resume a paused project — tasks can be dispatched again."""
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found")
+    await db.update_project(project_id, paused=False)
+    log.info(f"Project {project_id} resumed")
+    return {"project_id": project_id, "paused": False}
+
+
+async def stop_project(project_id: str) -> dict:
+    """Stop a project — pause + cancel all running tasks."""
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found")
+    await db.update_project(project_id, paused=True)
+    all_tasks = await db.list_tasks(status="working")
+    cancelled = []
+    for task in all_tasks:
+        if task.get("project_id") == project_id:
+            try:
+                await cancel_task(task["id"])
+                cancelled.append(task["id"])
+            except Exception as e:
+                log.warning(f"Failed to cancel {task['id']} during project stop: {e}")
+    log.info(f"Project {project_id} stopped, cancelled {len(cancelled)} tasks")
+    return {"project_id": project_id, "paused": True, "cancelled": cancelled}

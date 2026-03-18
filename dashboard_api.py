@@ -84,10 +84,23 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/projects" and method == "GET":
             return await _handle_list_projects(send)
 
-        # GET /dashboard/api/projects/{id}
-        if path.startswith("/dashboard/api/projects/") and method == "GET":
-            project_id = path[len("/dashboard/api/projects/"):]
-            return await _handle_get_project(send, project_id)
+        # /dashboard/api/projects/{id}[/pause|resume|stop]
+        if path.startswith("/dashboard/api/projects/"):
+            rest = path[len("/dashboard/api/projects/"):]
+            if method == "GET" and "/" not in rest:
+                return await _handle_get_project(send, rest)
+            if method == "POST" and rest.endswith("/pause"):
+                pid = rest[:-len("/pause")]
+                result = await tasks.pause_project(pid)
+                return await _json_response(send, result)
+            if method == "POST" and rest.endswith("/resume"):
+                pid = rest[:-len("/resume")]
+                result = await tasks.resume_project(pid)
+                return await _json_response(send, result)
+            if method == "POST" and rest.endswith("/stop"):
+                pid = rest[:-len("/stop")]
+                result = await tasks.stop_project(pid)
+                return await _json_response(send, result)
 
         # GET /dashboard/api/components
         if path == "/dashboard/api/components" and method == "GET":
@@ -103,6 +116,18 @@ async def handle_request(scope, receive, send):
                 return await _handle_get_component(send, rest)
             if method == "PATCH" and "/" not in rest:
                 return await _handle_update_component(receive, send, rest)
+            if method == "POST" and rest.endswith("/pause"):
+                cid = rest[:-len("/pause")]
+                result = await tasks.pause_component(cid)
+                return await _json_response(send, result)
+            if method == "POST" and rest.endswith("/resume"):
+                cid = rest[:-len("/resume")]
+                result = await tasks.resume_component(cid)
+                return await _json_response(send, result)
+            if method == "POST" and rest.endswith("/stop"):
+                cid = rest[:-len("/stop")]
+                result = await tasks.stop_component(cid)
+                return await _json_response(send, result)
 
         # Punchlist routes: /dashboard/api/punchlist/{component_id}[/{item_id}[/dispatch]]
         if path.startswith("/dashboard/api/punchlist/"):

@@ -372,6 +372,12 @@ async def init_db():
             comp_col_names = [c["name"] for c in comp_columns]
             if "review_ignore_patterns" not in comp_col_names:
                 await conn.execute("ALTER TABLE components ADD COLUMN review_ignore_patterns TEXT")
+            if "paused" not in comp_col_names:
+                await conn.execute("ALTER TABLE components ADD COLUMN paused BOOLEAN DEFAULT 0")
+
+        # Migrate projects: add paused
+        if "paused" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN paused BOOLEAN DEFAULT 0")
 
         # Create/recreate indexes
         await conn.executescript("""

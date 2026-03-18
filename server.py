@@ -733,7 +733,40 @@ OPS_TOOLS = [
     ),
 ]
 
-TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + PUNCHLIST_TOOLS + OPS_TOOLS
+CONTROL_TOOLS = [
+    Tool(
+        name="pause_component",
+        description="Pause a component — no new tasks will be dispatched. Running tasks finish naturally.",
+        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
+    ),
+    Tool(
+        name="resume_component",
+        description="Resume a paused component — tasks can be dispatched again.",
+        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
+    ),
+    Tool(
+        name="stop_component",
+        description="Stop a component — pause it AND cancel all running tasks immediately.",
+        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
+    ),
+    Tool(
+        name="pause_project",
+        description="Pause a project — no new tasks will be dispatched. Running tasks finish naturally.",
+        inputSchema={"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
+    ),
+    Tool(
+        name="resume_project",
+        description="Resume a paused project — tasks can be dispatched again.",
+        inputSchema={"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
+    ),
+    Tool(
+        name="stop_project",
+        description="Stop a project — pause it AND cancel all running tasks immediately.",
+        inputSchema={"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
+    ),
+]
+
+TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + PUNCHLIST_TOOLS + OPS_TOOLS + CONTROL_TOOLS
 
 
 @server.list_tools()
@@ -1243,6 +1276,25 @@ async def _handle_list_components(arguments):
     return await db.list_components(project_id=arguments.get("project_id"))
 
 
+async def _handle_pause_component(arguments):
+    return await tasks.pause_component(arguments["component_id"])
+
+async def _handle_resume_component(arguments):
+    return await tasks.resume_component(arguments["component_id"])
+
+async def _handle_stop_component(arguments):
+    return await tasks.stop_component(arguments["component_id"])
+
+async def _handle_pause_project(arguments):
+    return await tasks.pause_project(arguments["project_id"])
+
+async def _handle_resume_project(arguments):
+    return await tasks.resume_project(arguments["project_id"])
+
+async def _handle_stop_project(arguments):
+    return await tasks.stop_project(arguments["project_id"])
+
+
 async def _handle_link_conversation(arguments):
     return await db.link_conversation(
         component_id=arguments["component_id"],
@@ -1463,6 +1515,13 @@ TOOL_HANDLERS = {
     "list_punchlist": _handle_list_punchlist,
     "claim_punchlist_item": _handle_claim_punchlist_item,
     "resolve_punchlist_item": _handle_resolve_punchlist_item,
+    # Pause/Stop/Resume
+    "pause_component": _handle_pause_component,
+    "resume_component": _handle_resume_component,
+    "stop_component": _handle_stop_component,
+    "pause_project": _handle_pause_project,
+    "resume_project": _handle_resume_project,
+    "stop_project": _handle_stop_project,
     # Ops tools
     "get_guide": _handle_get_guide,
     "search_component": _handle_search_component,
