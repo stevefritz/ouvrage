@@ -1913,7 +1913,7 @@ async def get_component_activity(
             FROM messages m
             JOIN tasks t ON m.task_id = t.id
             WHERE t.component_id = ?
-              AND m.type IN ('result', 'status', 'test-result', 'review', 'handoff')
+              AND m.type IN ('result', 'status', 'test-result', 'review', 'handoff', 'question')
             ORDER BY m.created_at DESC
             LIMIT ?
             """,
