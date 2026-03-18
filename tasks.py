@@ -423,20 +423,58 @@ STALL_CHECK_INTERVAL = 60  # check every minute
 
 
 async def check_stalled_tasks():
-    """Background loop: check for working tasks with no recent activity."""
+    """Background loop: check for working tasks with no recent activity or dead processes."""
     while True:
         try:
             await asyncio.sleep(STALL_CHECK_INTERVAL)
             working_tasks = await db.list_tasks(status="working")
             now = datetime.now(timezone.utc)
             for task in working_tasks:
+                pid = task.get("pid")
+
+                # Dead process detection — working but PID is gone
+                if pid and not _is_pid_alive(pid):
+                    log.warning(f"Health check: task {task['id']} PID {pid} is dead, auto-recovering")
+                    task_obj = await db.get_task(task["id"])
+                    if task_obj:
+                        await db.update_task(task["id"], recovery_priority=True)
+                        await db.post_task_message(
+                            task_id=task["id"], author="dispatcher", type="status",
+                            title="Process died — auto-recovering",
+                            content=f"CC process (PID {pid}) is no longer alive. "
+                                    "Initiating auto-recovery.",
+                        )
+                        # Re-run recovery for just this task
+                        await _recover_single_task(task_obj)
+                    continue
+
+                # No PID but status=working — orphan from signal kill
+                if not pid:
+                    last_activity = task.get("last_activity")
+                    if last_activity:
+                        last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                        idle = (now - last).total_seconds()
+                        if idle > 120:  # 2 min with no PID = dead
+                            log.warning(f"Health check: task {task['id']} has no PID and idle {idle:.0f}s, auto-recovering")
+                            task_obj = await db.get_task(task["id"])
+                            if task_obj:
+                                await db.update_task(task["id"], recovery_priority=True)
+                                await db.post_task_message(
+                                    task_id=task["id"], author="dispatcher", type="status",
+                                    title="Orphaned task — auto-recovering",
+                                    content=f"Task has no process and has been idle for {idle:.0f}s. "
+                                            "Initiating auto-recovery.",
+                                )
+                                await _recover_single_task(task_obj)
+                            continue
+
+                # Stall detection — PID alive but no activity
                 last_activity = task.get("last_activity")
                 if not last_activity:
                     continue
                 last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
                 stale_seconds = (now - last).total_seconds()
                 if stale_seconds >= STALL_THRESHOLD_SECONDS:
-                    # Check if we already posted a stall warning recently
                     thread = await db.read_task_messages(task["id"], last_n=5)
                     recent = thread.get("messages", [])
                     already_warned = any(
@@ -460,6 +498,42 @@ async def check_stalled_tasks():
                         log.warning(f"Stall detected: task {task['id']} idle for {minutes}m")
         except Exception as e:
             log.warning(f"Stall check error: {e}")
+
+
+async def _recover_single_task(task: dict):
+    """Attempt to recover a single dead/orphaned task."""
+    task_id = task["id"]
+    current_count = task.get("recovery_count") or 0
+
+    if current_count >= MAX_RECOVERY_ATTEMPTS:
+        log.warning(f"Recovery limit reached for {task_id} ({current_count} attempts)")
+        await db.update_task(task_id, status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Recovery limit reached",
+            content=f"Auto-recovery failed {current_count} times. Manual intervention required.",
+        )
+        return
+
+    await db.update_task(task_id,
+                         recovery_count=current_count + 1,
+                         last_recovery_at=db.now_iso())
+
+    try:
+        if task.get("session_id"):
+            log.info(f"Health check recovery: resuming {task_id}")
+            await resume_task(task_id)
+        else:
+            log.info(f"Health check recovery: retrying {task_id}")
+            await retry_task(task_id)
+    except Exception as e:
+        log.warning(f"Health check recovery failed for {task_id}: {e}")
+        await db.update_task(task_id, status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-recovery failed",
+            content=f"Recovery attempt failed: {e}",
+        )
 
 
 async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
