@@ -338,6 +338,8 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN last_test_output TEXT")
         if "current_attempt" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN current_attempt INTEGER DEFAULT 1")
+        if "retry_after" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN retry_after TEXT")
 
         # Migrate messages table: add attempt_number if missing
         msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")

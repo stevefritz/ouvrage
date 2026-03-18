@@ -8,7 +8,8 @@ import pwd
 import shlex
 import shutil
 import time
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import anyio
@@ -525,6 +526,43 @@ async def check_stalled_tasks():
                         await retry_task(task["id"])
                     except Exception as e:
                         log.warning(f"Health check chain dispatch failed for {task['id']}: {e}")
+
+            # Check for rate-limited tasks whose retry_after has passed
+            all_tasks_for_retry = await db.list_tasks(status="rate-limited")
+            for task in all_tasks_for_retry:
+                retry_after = task.get("retry_after")
+                if not retry_after:
+                    continue
+                retry_time = datetime.fromisoformat(retry_after.replace("Z", "+00:00"))
+                if now >= retry_time:
+                    log.info(f"Health check: rate-limited task {task['id']} retry_after has passed, dispatching")
+                    await db.post_task_message(
+                        task_id=task["id"], author="dispatcher", type="status",
+                        title="Rate limit expired — auto-retrying",
+                        content=f"Scheduled retry time ({retry_after}) has passed. Re-dispatching.",
+                    )
+                    await db.update_task(task["id"], retry_after=None)
+                    try:
+                        await retry_task(task["id"])
+                    except Exception as e:
+                        log.warning(f"Health check rate-limit retry failed for {task['id']}: {e}")
+
+            # Also check any task with retry_after set (general purpose)
+            # This lets us use retry_after for any backoff scenario
+            for status in ("needs-review", "failed"):
+                backoff_tasks = await db.list_tasks(status=status)
+                for task in backoff_tasks:
+                    retry_after = task.get("retry_after")
+                    if not retry_after:
+                        continue
+                    retry_time = datetime.fromisoformat(retry_after.replace("Z", "+00:00"))
+                    if now >= retry_time:
+                        log.info(f"Health check: {status} task {task['id']} retry_after has passed, dispatching")
+                        await db.update_task(task["id"], retry_after=None)
+                        try:
+                            await retry_task(task["id"])
+                        except Exception as e:
+                            log.warning(f"Health check retry_after dispatch failed for {task['id']}: {e}")
 
         except Exception as e:
             log.warning(f"Stall check error: {e}")
@@ -1322,21 +1360,37 @@ async def _run_sdk_session(
                         reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
                     )
             elif result_msg.is_error and result_msg.result and "hit your limit" in result_msg.result.lower():
-                # Rate limited — don't retry, just park it
-                # Try to extract reset time from message like "resets 4am (UTC)"
-                import re
-                reset_match = re.search(r'resets?\s+(\d{1,2}(?:am|pm)?(?:\s*\(?\w+\)?)?)', result_msg.result, re.IGNORECASE)
-                reset_info = f" Resets {reset_match.group(1)}." if reset_match else ""
-                await db.update_task(task_id, status="needs-review")
+                # Rate limited — compute retry_after and auto-retry when limits reset
+                reset_match = re.search(r'resets?\s+(\d{1,2})(am|pm)?\s*\(?(\w+)?\)?', result_msg.result, re.IGNORECASE)
+                retry_after_iso = None
+                reset_info = ""
+                if reset_match:
+                    hour = int(reset_match.group(1))
+                    ampm = (reset_match.group(2) or "").lower()
+                    tz_hint = (reset_match.group(3) or "UTC").upper()
+                    if ampm == "pm" and hour < 12:
+                        hour += 12
+                    elif ampm == "am" and hour == 12:
+                        hour = 0
+                    # Compute next occurrence of that hour in UTC
+                    now = datetime.now(timezone.utc)
+                    retry_at = now.replace(hour=hour, minute=5, second=0, microsecond=0)
+                    if retry_at <= now:
+                        retry_at += timedelta(days=1)
+                    retry_after_iso = retry_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    reset_info = f" Will auto-retry at {retry_at.strftime('%H:%M UTC')}."
+
+                await db.update_task(task_id, status="rate-limited",
+                                     retry_after=retry_after_iso)
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Rate limited",
                     content=f"CC hit usage limits.{reset_info}\n\n"
                             f"Turns: {result_msg.num_turns} | "
                             f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
-                            f"Work is preserved. Retry manually after limits reset.",
+                            f"Work is preserved.{' Auto-retry scheduled.' if retry_after_iso else ' Retry manually after limits reset.'}",
                 )
-                log.warning(f"Task {task_id}: rate limited{reset_info}")
+                log.warning(f"Task {task_id}: rate limited, retry_after={retry_after_iso}")
                 await _drain_queue()
             elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
