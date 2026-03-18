@@ -245,7 +245,7 @@ async def recover_orphaned_tasks():
         # Check if the task died from a signal (SIGTERM/SIGKILL) or silently
         last_msg = messages[-1] if messages else {}
         last_content = last_msg.get("content", "")
-        killed_by_signal = "exit code -15" in last_content or "exit code -9" in last_content
+        killed_by_signal = any(s in last_content for s in ("exit code -15", "exit code -9", "exit code 143", "exit code 137"))
         has_worker_output = any(m.get("author") == "cc-worker" for m in messages)
 
         if killed_by_signal or not has_worker_output:
@@ -1467,7 +1467,7 @@ async def _run_sdk_session(
 
     except Exception as e:
         error_str = str(e)
-        is_sigterm = "exit code -15" in error_str or "exit code -9" in error_str
+        is_sigterm = any(s in error_str for s in ("exit code -15", "exit code -9", "exit code 143", "exit code 137"))
 
         if is_sigterm:
             # SIGTERM/SIGKILL — external kill (service restart, OOM), not a real failure.
