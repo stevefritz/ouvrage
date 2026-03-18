@@ -21,14 +21,18 @@ function ComponentStatusBadge({ status }) {
     </span>`;
 }
 
-function ProgressBar({ done, total }) {
-    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+function ProgressBar({ done, total, failed, active }) {
+    const donePct = total > 0 ? (done / total * 100) : 0;
+    const failedPct = total > 0 ? ((failed || 0) / total * 100) : 0;
+    const activePct = total > 0 ? ((active || 0) / total * 100) : 0;
     return html`
         <div class="flex items-center gap-2">
-            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                <div class="bg-emerald-500 h-1.5 rounded-full transition-all" style="width: ${pct}%"></div>
+            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden flex">
+                <div class="bg-emerald-500 h-1.5 transition-all" style="width: ${donePct}%"></div>
+                <div class="bg-amber-500 h-1.5 transition-all" style="width: ${activePct}%"></div>
+                <div class="bg-red-500 h-1.5 transition-all" style="width: ${failedPct}%"></div>
             </div>
-            <span class="text-xs text-slate-400 tabular-nums">${done}/${total}</span>
+            <span class="text-xs text-slate-400 tabular-nums">${done}/${total}${(failed || 0) > 0 ? html` <span class="text-red-400">${failed}\u2715</span>` : null}</span>
         </div>
     `;
 }
@@ -46,7 +50,7 @@ function ComponentCard({ comp }) {
                 <p class="text-sm text-slate-400 mb-3 line-clamp-2">${comp.description}</p>
             `}
             <div class="text-xs font-mono text-slate-500 mb-3">${comp.base_branch || '\u2014'}</div>
-            <${ProgressBar} done=${comp.done_tasks} total=${comp.total_tasks} />
+            <${ProgressBar} done=${comp.done_tasks} total=${comp.total_tasks} failed=${comp.failed_tasks} active=${comp.active_tasks} />
             <div class="flex flex-wrap gap-3 mt-3 text-xs text-slate-400">
                 <span class=${hasActive ? 'text-emerald-400 flex items-center gap-1' : ''}>
                     ${hasActive && html`<span class="status-dot-working">\u25CF</span>`}
