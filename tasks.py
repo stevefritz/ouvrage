@@ -1313,6 +1313,23 @@ async def _run_sdk_session(
                         task_id=task_id,
                         reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
                     )
+            elif result_msg.is_error and result_msg.result and "hit your limit" in result_msg.result.lower():
+                # Rate limited — don't retry, just park it
+                # Try to extract reset time from message like "resets 4am (UTC)"
+                import re
+                reset_match = re.search(r'resets?\s+(\d{1,2}(?:am|pm)?(?:\s*\(?\w+\)?)?)', result_msg.result, re.IGNORECASE)
+                reset_info = f" Resets {reset_match.group(1)}." if reset_match else ""
+                await db.update_task(task_id, status="needs-review")
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Rate limited",
+                    content=f"CC hit usage limits.{reset_info}\n\n"
+                            f"Turns: {result_msg.num_turns} | "
+                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                            f"Work is preserved. Retry manually after limits reset.",
+                )
+                log.warning(f"Task {task_id}: rate limited{reset_info}")
+                await _drain_queue()
             elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
                 await db.post_task_message(
