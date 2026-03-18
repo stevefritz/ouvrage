@@ -48,6 +48,8 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
     const dragStart = useRef(null);
     const scrollRef = useRef(null);
 
+    const lastTouchDist = useRef(null);
+
     useEffect(() => {
         const el = scrollRef.current;
         if (!el) return;
@@ -57,9 +59,46 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
             const delta = e.deltaY > 0 ? -0.05 : 0.05;
             setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
         };
+        const onTouchStart = (e) => {
+            if (e.touches.length === 1) {
+                dragStart.current = { x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y };
+                setDragging(true);
+            } else if (e.touches.length === 2) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
+            }
+        };
+        const onTouchMove = (e) => {
+            if (e.touches.length === 1 && dragStart.current) {
+                setPan({ x: e.touches[0].clientX - dragStart.current.x, y: e.touches[0].clientY - dragStart.current.y });
+            } else if (e.touches.length === 2 && lastTouchDist.current) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const delta = (dist - lastTouchDist.current) * 0.005;
+                lastTouchDist.current = dist;
+                setZoom(z => Math.min(2, Math.max(0.3, z + delta)));
+            }
+        };
+        const onTouchEnd = () => {
+            setDragging(false);
+            dragStart.current = null;
+            lastTouchDist.current = null;
+        };
         el.addEventListener('wheel', onWheel, { passive: false });
-        return () => el.removeEventListener('wheel', onWheel);
-    }, []);
+        el.addEventListener('touchstart', onTouchStart, { passive: false });
+        el.addEventListener('touchmove', onTouchMove, { passive: false });
+        el.addEventListener('touchend', onTouchEnd);
+        return () => {
+            el.removeEventListener('wheel', onWheel);
+            el.removeEventListener('touchstart', onTouchStart);
+            el.removeEventListener('touchmove', onTouchMove);
+            el.removeEventListener('touchend', onTouchEnd);
+        };
+    }, [pan]);
 
     const onMouseDown = useCallback((e) => {
         if (e.button !== 0) return;
