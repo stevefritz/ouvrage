@@ -162,9 +162,12 @@ export function StatusBadge({ status, task }) {
     const retryInfo = task && task.retry_after
         ? ` · retries ${new Date(task.retry_after + (task.retry_after.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', timeZoneName: 'short'})}`
         : '';
+    const retryLabel = task && task.retry_after
+        ? ` · retries ${new Date(task.retry_after + (task.retry_after.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`
+        : '';
     return html`<${Tip} text="${label} — ${s.explain}${retryInfo}">
         <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${s.bg} ${s.text}">
-            <span class=${dotClass}>${s.icon}</span> ${label}
+            <span class=${dotClass}>${s.icon}</span> ${label}${retryLabel}
         </span>
     <//>`;
 }
