@@ -321,9 +321,10 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
     useEffect(() => {
         if (!task) return;
         const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
-        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive;
-        if (!shouldPoll) return;
-        const timer = setInterval(loadTask, 5000);
+        const activePoll = task.status === 'working' || task.status === 'ready' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive;
+        // Active tasks poll fast, idle tasks poll slow (catch post-action updates)
+        const interval = activePoll ? 3000 : 10000;
+        const timer = setInterval(loadTask, interval);
         return () => clearInterval(timer);
     }, [task?.status, task?.gate_status, loadTask]);
 
@@ -362,6 +363,11 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                     <//>
                 </div>
                 <button onClick=${onClose} class="text-slate-400 hover:text-slate-200 text-lg ml-2 shrink-0">\u00D7</button>
+            </div>
+
+            <!-- Action bar -->
+            <div class="px-4 py-2 border-b border-slate-700 bg-slate-900">
+                <${ActionButtons} task=${task} onAction=${onAction} />
             </div>
 
             <!-- Content -->
@@ -443,11 +449,6 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                             <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
                         </div>`;
                 })()}
-
-                <!-- Actions -->
-                <div class="border-t border-slate-700 pt-3 mb-3">
-                    <${ActionButtons} task=${task} onAction=${onAction} />
-                </div>
 
                 <!-- Session & Dispatch logs -->
                 <${SessionLogPanel} taskId=${taskId} isOpen=${sessionLogOpen}

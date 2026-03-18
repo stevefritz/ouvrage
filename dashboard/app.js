@@ -106,6 +106,7 @@ function App() {
         setConfirmState(null);
         try {
             if (action === 'cancel') await api.cancelTask(taskId);
+            else if (action === 'dispatch') await api.retryTask(taskId);
             else if (action === 'retry') await api.retryTask(taskId);
             else if (action === 'resume') await api.resumeTask(taskId);
             else if (action === 'close') await api.closeTask(taskId);

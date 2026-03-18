@@ -286,6 +286,7 @@ export function ClaudeChatLink({ url }) {
 
 // ── Action Buttons with tooltips ─────────────────────────────
 export const BUTTON_TOOLTIPS = {
+    dispatch: 'Start this task — creates worktree and launches CC session.',
     cancel: 'Kill the running CC process. Code changes are preserved in the worktree.',
     retry: 'Start a fresh CC session. Previous review feedback will be injected.',
     resume: 'Continue the existing CC session with full conversation history.',
@@ -304,6 +305,10 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
         <//>`;
 
     const btns = [];
+    if (task.status === 'ready') {
+        btns.push(btn('dispatch', 'Dispatch', 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
+    }
     if (task.status === 'working') {
         btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
