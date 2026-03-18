@@ -438,7 +438,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                         <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
                                             <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
                                             <span class="${outcomeColor}">${attempt.outcome}</span>
-                                            ${isLast && task.status === 'working' ? html`<span class="text-amber-400 status-dot-working">\u25CF Claude is Working</span>` : null}
+                                            ${isLast && task.status === 'working' ? html`<span class="text-amber-400 status-dot-working">\u25CF Claude is Coding</span>` : null}
                                             ${isLast && task.gate_status === 'testing' ? html`<span class="text-violet-400 status-dot-working">\u2699 Tests Running</span>` : null}
                                             ${isLast && task.gate_status === 'reviewing' ? html`<span class="text-pink-400 status-dot-working">\uD83D\uDC41 Claude is Reviewing</span>` : null}
                                             <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>

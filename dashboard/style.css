@@ -466,9 +466,9 @@ body { background: var(--bg-primary); color: var(--text-primary); }
 
 /* Detail panel — slide in from right */
 .graph-detail-panel {
-    width: 45%;
-    min-width: 380px;
-    max-width: 600px;
+    width: 50%;
+    min-width: 480px;
+    max-width: 900px;
     background: var(--bg-card);
     border-left: 1px solid var(--border-primary);
     display: flex;

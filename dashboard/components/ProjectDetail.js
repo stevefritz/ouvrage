@@ -52,6 +52,7 @@ function ComponentCard({ comp }) {
                     ${hasActive && html`<span class="status-dot-working">\u25CF</span>`}
                     ${comp.active_tasks} active
                 </span>
+                ${comp.failed_tasks > 0 && html`<span class="text-red-400">${comp.failed_tasks} failed</span>`}
                 <span>$${(comp.total_cost || 0).toFixed(2)}</span>
                 ${comp.conversation_count > 0 && html`
                     <span>${comp.conversation_count} conv${comp.conversation_count !== 1 ? 's' : ''}</span>

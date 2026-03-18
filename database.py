@@ -1606,14 +1606,17 @@ async def get_component(id: str) -> dict | None:
         total_cost = 0.0
         active_tasks = 0
         done_tasks = 0
+        failed_tasks = 0
         for r in task_rows:
             task_summary[r["status"]] = r["cnt"]
             total_tasks += r["cnt"]
             total_cost += r["cost"]
             if r["status"] == "working":
                 active_tasks = r["cnt"]
-            if r["status"] == "completed":
-                done_tasks = r["cnt"]
+            if r["status"] in ("completed", "merged"):
+                done_tasks += r["cnt"]
+            if r["status"] == "failed":
+                failed_tasks += r["cnt"]
         c["task_summary"] = {
             "by_status": task_summary,
             "total": total_tasks,
@@ -1624,6 +1627,7 @@ async def get_component(id: str) -> dict | None:
         c["total_tasks"] = total_tasks
         c["done_tasks"] = done_tasks
         c["active_tasks"] = active_tasks
+        c["failed_tasks"] = failed_tasks
         c["total_cost"] = round(total_cost, 2)
 
         # Full task list for component detail view
@@ -1695,7 +1699,7 @@ async def list_components(project_id: str | None = None) -> list[dict]:
         base_query = """SELECT c.*,
                     (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as total_tasks,
                     (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status = 'working') as active_tasks,
-                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status = 'completed') as done_tasks,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status IN ('completed', 'merged')) as done_tasks,
                     (SELECT COALESCE(SUM(total_cost_usd), 0) FROM tasks WHERE component_id = c.id) as total_cost,
                     (SELECT COUNT(*) FROM component_conversations WHERE component_id = c.id) as conversation_count,
                     (SELECT COUNT(*) FROM punchlist WHERE component_id = c.id AND status != 'done') as open_punchlist
