@@ -108,6 +108,12 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
     const [selectedTaskId, setSelectedTaskId] = useState(null);
     const [hoveredId, setHoveredId] = useState(null);
     const [activeTags, setActiveTags] = useState(new Set());
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState(false);
+    const dragStart = useRef(null);
+    const lastTouchDist = useRef(null);
+    const scrollRef = useRef(null);
     const mountedRef = useRef(true);
 
     // Fetch all project tasks with polling
@@ -124,6 +130,62 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
         const timer = setInterval(loadTasks, 5000);
         return () => { mountedRef.current = false; clearInterval(timer); };
     }, [loadTasks]);
+
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const onWheel = (e) => {
+            if (!e.ctrlKey && !e.metaKey) return;
+            e.preventDefault();
+            setZoom(z => Math.min(2, Math.max(0.3, z + (e.deltaY > 0 ? -0.05 : 0.05))));
+        };
+        const onTouchStart = (e) => {
+            if (e.touches.length === 1) {
+                dragStart.current = { x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y };
+                setDragging(true);
+            } else if (e.touches.length === 2) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
+            }
+        };
+        const onTouchMove = (e) => {
+            if (e.touches.length === 1 && dragStart.current) {
+                setPan({ x: e.touches[0].clientX - dragStart.current.x, y: e.touches[0].clientY - dragStart.current.y });
+            } else if (e.touches.length === 2 && lastTouchDist.current) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                setZoom(z => Math.min(2, Math.max(0.3, z + (dist - lastTouchDist.current) * 0.005)));
+                lastTouchDist.current = dist;
+            }
+        };
+        const onTouchEnd = () => { setDragging(false); dragStart.current = null; lastTouchDist.current = null; };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        el.addEventListener('touchstart', onTouchStart, { passive: false });
+        el.addEventListener('touchmove', onTouchMove, { passive: false });
+        el.addEventListener('touchend', onTouchEnd);
+        return () => {
+            el.removeEventListener('wheel', onWheel);
+            el.removeEventListener('touchstart', onTouchStart);
+            el.removeEventListener('touchmove', onTouchMove);
+            el.removeEventListener('touchend', onTouchEnd);
+        };
+    }, [pan]);
+
+    const onMouseDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+        setDragging(true);
+    }, [pan]);
+    const onMouseMove = useCallback((e) => {
+        if (!dragging || !dragStart.current) return;
+        setPan({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });
+    }, [dragging]);
+    const onMouseUp = useCallback(() => { setDragging(false); dragStart.current = null; }, []);
+    const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
     // Derive ungrouped tasks and layout tasks (ungrouped + cross-component stubs)
     const { ungroupedTasks, layoutTasks } = useMemo(() => {
@@ -228,9 +290,17 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
                                         onToggleTag=${toggleTag} onClear=${clearTags} />
                                 `}
 
-                                <div class="dag-scroll" onClick=${() => handleSelect(null)}>
+                                <div class="dag-scroll" ref=${scrollRef}
+                                    onMouseDown=${onMouseDown} onMouseMove=${onMouseMove}
+                                    onMouseUp=${onMouseUp} onMouseLeave=${onMouseUp}
+                                    onClick=${(e) => { if (!dragging) handleSelect(null); }}
+                                    style="cursor: ${dragging ? 'grabbing' : 'grab'};">
+                                    <div class="flex items-center gap-2 px-2 py-1 text-xs text-slate-500">
+                                        <button onClick=${resetView} class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400">Reset</button>
+                                        <span>${Math.round(zoom * 100)}%</span>
+                                    </div>
                                     <div class="dag-canvas"
-                                        style="width:${layout.width}px; height:${layout.height}px; position:relative;">
+                                        style="width:${layout.width * zoom}px; height:${layout.height * zoom}px; position:relative; transform: scale(${zoom}); transform-origin: 0 0; translate: ${pan.x}px ${pan.y}px;">
 
                                         <!-- SVG edge layer -->
                                         <svg class="dag-edges" width=${layout.width} height=${layout.height}
