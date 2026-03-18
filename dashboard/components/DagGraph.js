@@ -28,7 +28,7 @@ const COMPONENT_PALETTE = [
 
 // ── Layout constants ─────────────────────────────────────────
 export const NODE_W = 280;
-export const NODE_H = 150;
+export const NODE_H = 170;
 const GAP_X = 60;               // horizontal gap between nodes in same rank
 const GAP_Y = 140;              // vertical gap between ranks — more room for edges to route
 const PADDING = 40;
@@ -421,9 +421,8 @@ export function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, o
             </div>
 
             ${blockers.length > 0 ? html`
-                <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-400 border border-slate-700 whitespace-nowrap"
-                    style="transform: translateX(-50%) translateY(50%); z-index: 5;">
-                    Blocked by: ${blockers.map(b => b.task.id.split('/').pop()).join(', ')}
+                <div class="text-xs text-slate-500 mt-1 shrink-0 truncate" title=${"Blocked by: " + blockers.map(b => b.task.id.split('/').pop()).join(', ')}>
+                    \u26D3 ${blockers.map(b => b.task.id.split('/').pop()).join(', ')}
                 </div>
             ` : null}
         </div>
