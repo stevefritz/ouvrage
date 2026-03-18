@@ -11,20 +11,41 @@ function groupMessagesByAttempt(messages) {
     const attempts = [];
     let current = { messages: [], outcome: null, startTime: null, endTime: null };
 
+    // These dispatcher status messages end an attempt — everything else stays in the current group
+    const ATTEMPT_BOUNDARIES = [
+        'Task completed', 'Task failed', 'Dispatch error', 'Turns exhausted',
+        'Session killed by signal', 'Rate limited', 'Wall clock timeout',
+        'Recovery limit reached',
+    ];
+
     for (const msg of messages) {
         if (msg.type === 'plan') continue;
         if (!current.startTime) current.startTime = msg.created_at;
         current.endTime = msg.created_at;
         current.messages.push(msg);
-        if (msg.author === 'dispatcher' && msg.type === 'status') {
-            current.outcome = msg.title || msg.content?.slice(0, 80) || 'Completed';
+        if (msg.author === 'dispatcher' && msg.type === 'status'
+            && ATTEMPT_BOUNDARIES.some(b => (msg.title || '').includes(b))) {
+            current.outcome = msg.title || 'Completed';
             attempts.push(current);
             current = { messages: [], outcome: null, startTime: null, endTime: null };
         }
     }
     if (current.messages.length > 0) {
-        current.outcome = 'In Progress';
-        attempts.push(current);
+        // Remaining messages after last boundary — could be post-gate events or in-progress
+        if (current.messages.every(m => m.author === 'dispatcher')) {
+            // All dispatcher messages (Auto-merged, Tests passed, etc.) — append to last attempt
+            if (attempts.length > 0) {
+                const last = attempts[attempts.length - 1];
+                last.messages.push(...current.messages);
+                last.endTime = current.endTime;
+            } else {
+                current.outcome = 'Status';
+                attempts.push(current);
+            }
+        } else {
+            current.outcome = 'In Progress';
+            attempts.push(current);
+        }
     }
     return attempts;
 }

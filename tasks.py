@@ -434,48 +434,35 @@ async def check_stalled_tasks():
             working_tasks = await db.list_tasks(status="working")
             now = datetime.now(timezone.utc)
             for task in working_tasks:
-                pid = task.get("pid")
+                task_id = task["id"]
+                has_active_client = task_id in _active_clients
 
-                # Dead process detection — working but PID is gone
-                if pid and not _is_pid_alive(pid):
-                    log.warning(f"Health check: task {task['id']} PID {pid} is dead, auto-recovering")
-                    task_obj = await db.get_task(task["id"])
-                    if task_obj:
-                        await db.update_task(task["id"], recovery_priority=True)
-                        await db.post_task_message(
-                            task_id=task["id"], author="dispatcher", type="status",
-                            title="Process died — auto-recovering",
-                            content=f"CC process (PID {pid}) is no longer alive. "
-                                    "Initiating auto-recovery.",
-                        )
-                        # Re-run recovery for just this task
-                        await _recover_single_task(task_obj)
+                # If we have an active SDK client, task is alive — skip
+                if has_active_client:
                     continue
 
-                # No PID but status=working — orphan from signal kill
-                if not pid:
-                    last_activity = task.get("last_activity")
-                    if last_activity:
-                        last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
-                        idle = (now - last).total_seconds()
-                        if idle > 120:  # 2 min with no PID = dead
-                            log.warning(f"Health check: task {task['id']} has no PID and idle {idle:.0f}s, auto-recovering")
-                            task_obj = await db.get_task(task["id"])
-                            if task_obj:
-                                await db.update_task(task["id"], recovery_priority=True)
-                                await db.post_task_message(
-                                    task_id=task["id"], author="dispatcher", type="status",
-                                    title="Orphaned task — auto-recovering",
-                                    content=f"Task has no process and has been idle for {idle:.0f}s. "
-                                            "Initiating auto-recovery.",
-                                )
-                                await _recover_single_task(task_obj)
-                            continue
-
-                # Stall detection — PID alive but no activity
+                # No active client but status=working — check if it's a real orphan
                 last_activity = task.get("last_activity")
                 if not last_activity:
                     continue
+                last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                idle = (now - last).total_seconds()
+
+                if idle > 120:  # 2 min with no active client = dead
+                    log.warning(f"Health check: task {task_id} has no active SDK client and idle {idle:.0f}s, auto-recovering")
+                    task_obj = await db.get_task(task_id)
+                    if task_obj:
+                        await db.update_task(task_id, recovery_priority=True)
+                        await db.post_task_message(
+                            task_id=task_id, author="dispatcher", type="status",
+                            title="Orphaned task — auto-recovering",
+                            content=f"Task has no active session and has been idle for {idle:.0f}s. "
+                                    "Initiating auto-recovery.",
+                        )
+                        await _recover_single_task(task_obj)
+                    continue
+
+                # Stall detection — active client but no recent activity
                 last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
                 stale_seconds = (now - last).total_seconds()
                 if stale_seconds >= STALL_THRESHOLD_SECONDS:
