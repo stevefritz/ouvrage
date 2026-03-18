@@ -508,6 +508,9 @@ async def check_stalled_tasks():
                     continue
                 parent = await db.get_task(task["depends_on"])
                 if parent and parent.get("gate_passed_at"):
+                    # Skip if parent's auto-merge failed — chain shouldn't advance
+                    if parent.get("auto_merge") and parent.get("pr_status") not in (None, "merged"):
+                        continue
                     # Skip if project or component is paused
                     proj = await db.get_project(task["project_id"])
                     if proj and proj.get("paused"):
