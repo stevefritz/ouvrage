@@ -1700,6 +1700,7 @@ async def list_components(project_id: str | None = None) -> list[dict]:
                     (SELECT COUNT(*) FROM tasks WHERE component_id = c.id) as total_tasks,
                     (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status = 'working') as active_tasks,
                     (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status IN ('completed', 'merged')) as done_tasks,
+                    (SELECT COUNT(*) FROM tasks WHERE component_id = c.id AND status IN ('failed', 'needs-review')) as failed_tasks,
                     (SELECT COALESCE(SUM(total_cost_usd), 0) FROM tasks WHERE component_id = c.id) as total_cost,
                     (SELECT COUNT(*) FROM component_conversations WHERE component_id = c.id) as conversation_count,
                     (SELECT COUNT(*) FROM punchlist WHERE component_id = c.id AND status != 'done') as open_punchlist
