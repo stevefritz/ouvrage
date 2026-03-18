@@ -499,6 +499,25 @@ async def check_stalled_tasks():
                             last_tool=f"[STALL WARNING: {minutes}m idle]",
                         )
                         log.warning(f"Stall detected: task {task['id']} idle for {minutes}m")
+
+            # Check for ready tasks whose parents have passed — missed chain advancement
+            ready_tasks = await db.list_tasks(status="ready")
+            for task in ready_tasks:
+                if not task.get("depends_on"):
+                    continue
+                parent = await db.get_task(task["depends_on"])
+                if parent and parent.get("gate_passed_at"):
+                    log.warning(f"Health check: ready task {task['id']} has passed parent {parent['id']}, dispatching")
+                    await db.post_task_message(
+                        task_id=task["id"], author="dispatcher", type="status",
+                        title="Chain advancement recovered",
+                        content=f"Parent `{parent['id']}` passed but chain dispatch was missed. Auto-dispatching.",
+                    )
+                    try:
+                        await retry_task(task["id"])
+                    except Exception as e:
+                        log.warning(f"Health check chain dispatch failed for {task['id']}: {e}")
+
         except Exception as e:
             log.warning(f"Stall check error: {e}")
 
