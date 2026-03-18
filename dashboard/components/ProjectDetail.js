@@ -37,14 +37,10 @@ function ProgressBar({ done, total, failed, active }) {
     const tooltip = segments.map(s => s.label).join(' · ');
 
     return html`
-        <div class="w-full">
-            <${Tip} text=${tooltip}>
-                <div class="bg-slate-700 rounded-full h-2 overflow-hidden flex cursor-default">
-                    ${segments.map(s => html`
-                        <div class="${s.color} h-2 transition-all" style="width: ${pct(s.n)}%"></div>
-                    `)}
-                </div>
-            <//>
+        <div class="w-full bg-slate-700 rounded-full h-2 overflow-hidden flex cursor-default" title=${tooltip}>
+            ${segments.map(s => html`
+                <div class="${s.color} h-2 transition-all" style="width: ${pct(s.n)}%"></div>
+            `)}
         </div>
     `;
 }
