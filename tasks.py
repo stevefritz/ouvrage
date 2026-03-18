@@ -100,6 +100,19 @@ MAX_RECOVERY_ATTEMPTS = int(os.environ.get("MAX_RECOVERY_ATTEMPTS", "3"))
 RECOVERY_ENABLED = os.environ.get("RECOVERY_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
+async def mark_working_for_recovery():
+    """Called during graceful shutdown — flag all working tasks for auto-recovery.
+
+    Sets recovery_priority so startup recovery knows these were killed by SIGTERM,
+    not by a real failure. This runs in the lifespan.shutdown handler before the
+    event loop dies.
+    """
+    working = await db.list_tasks(status="working")
+    for task in working:
+        await db.update_task(task["id"], recovery_priority=True)
+        log.info(f"Shutdown: marked {task['id']} for recovery")
+
+
 def _classify_orphan(task: dict) -> tuple[int, str]:
     """Classify an orphaned task for recovery priority and method.
 
@@ -221,6 +234,21 @@ async def recover_orphaned_tasks():
         if pid and _is_pid_alive(pid):
             continue  # still running
         orphans.append(task)
+
+    # Layer 3: Find silently killed tasks — failed with no worker messages
+    # (only spec/status messages = CC never got a chance to run)
+    failed_tasks = await db.list_tasks(status="failed")
+    for task in failed_tasks:
+        thread = await db.read_task_messages(task["id"])
+        messages = thread.get("messages", [])
+        # Check if any messages came from the CC worker
+        has_worker_output = any(
+            m.get("author") == "cc-worker" for m in messages
+        )
+        if not has_worker_output:
+            log.warning(f"Startup recovery: task {task['id']} failed silently (no worker output), treating as orphan")
+            await db.update_task(task["id"], status="working")
+            orphans.append(task)
 
     if not orphans:
         return
@@ -1263,13 +1291,28 @@ async def _run_sdk_session(
             )
 
     except Exception as e:
-        log.exception(f"SDK session error for task {task_id}: {e}")
-        await db.update_task(task_id, status="failed")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Dispatch error",
-            content=f"SDK session raised an exception:\n\n```\n{e}\n```",
-        )
+        error_str = str(e)
+        is_sigterm = "exit code -15" in error_str or "exit code -9" in error_str
+
+        if is_sigterm:
+            # SIGTERM/SIGKILL — external kill (service restart, OOM), not a real failure.
+            # Keep as working so startup recovery auto-resumes.
+            log.warning(f"SDK session killed by signal for task {task_id}: {e}")
+            await db.update_task(task_id, recovery_priority=True)
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Session killed by signal",
+                content=f"CC process was killed externally (likely service restart).\n"
+                        f"Task will auto-resume on next startup.\n\n```\n{error_str}\n```",
+            )
+        else:
+            log.exception(f"SDK session error for task {task_id}: {e}")
+            await db.update_task(task_id, status="failed")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Dispatch error",
+                content=f"SDK session raised an exception:\n\n```\n{e}\n```",
+            )
         # If this was a review task, still try to process any review it posted
         task = await db.get_task(task_id)
         if task and task.get("parent_task_id"):

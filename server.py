@@ -1547,6 +1547,8 @@ async def main():
                 asyncio.create_task(tasks.check_stalled_tasks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
+                    # Mark all working tasks for recovery before event loop dies
+                    await tasks.mark_working_for_recovery()
                     await ctx.__aexit__(None, None, None)
                     await send({"type": "lifespan.shutdown.complete"})
             return
