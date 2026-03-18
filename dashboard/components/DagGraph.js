@@ -17,6 +17,7 @@ export const DEFAULT_STATE_COLORS = {
     failed:         { bg: '#ef444420', border: '#ef4444', text: '#f87171', dot: '#ef4444', label: 'Failed' },
     cancelled:      { bg: '#64748b20', border: '#64748b', text: '#94a3b8', dot: '#64748b', label: 'Cancelled' },
     'turns-exhausted': { bg: '#f9731620', border: '#f97316', text: '#fb923c', dot: '#f97316', label: 'Turns Exhausted' },
+    'rate-limited':    { bg: '#f9731620', border: '#f97316', text: '#fb923c', dot: '#f97316', label: 'Rate Limited' },
 };
 
 // ── Component colors (for left border grouping) ──────────────

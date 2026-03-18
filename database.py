@@ -870,6 +870,8 @@ TASK_MUTABLE_FIELDS = {
     "recovery_count", "last_recovery_at", "recovery_priority",
     # v5 realtime-output fields
     "last_test_output", "current_attempt",
+    # retry scheduling
+    "retry_after",
 }
 
 

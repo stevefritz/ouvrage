@@ -134,6 +134,7 @@ const STATUS_MAP = {
     'turns-exhausted':{ bg: 'bg-orange-500/20', text: 'text-orange-400', icon: '\u23F3', explain: 'CC ran out of turns — may need manual resume' },
     cancelled:        { bg: 'bg-slate-500/20', text: 'text-slate-400', icon: '\u2014', explain: 'Task was cancelled by user' },
     ready:            { bg: 'bg-slate-500/20', text: 'text-slate-300', icon: '\u25CB', explain: 'Task is ready to be dispatched' },
+    'rate-limited':   { bg: 'bg-orange-500/20', text: 'text-orange-400', icon: '\u23F1', explain: 'Hit usage limits — will auto-retry when limits reset' },
 };
 
 export function StatusBadge({ status, task }) {
@@ -158,7 +159,10 @@ export function StatusBadge({ status, task }) {
     const s = STATUS_MAP[status] || STATUS_MAP.ready;
     const dotClass = s.dot ? 'status-dot-working' : '';
     const label = (status || 'ready').toUpperCase();
-    return html`<${Tip} text="${label} — ${s.explain}">
+    const retryInfo = task && task.retry_after
+        ? ` · retries ${new Date(task.retry_after + (task.retry_after.endsWith('Z') ? '' : 'Z')).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', timeZoneName: 'short'})}`
+        : '';
+    return html`<${Tip} text="${label} — ${s.explain}${retryInfo}">
         <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${s.bg} ${s.text}">
             <span class=${dotClass}>${s.icon}</span> ${label}
         </span>
