@@ -647,3 +647,134 @@ class TestRecoveryStatusMessages:
         # Should include checklist progress (1/3)
         assert "1/3 checklist" in msg
 
+
+
+# ---------------------------------------------------------------------------
+# _recover_single_task — health-check recovery (Fix 2 + Fix 4)
+# ---------------------------------------------------------------------------
+
+class TestRecoverSingleTask:
+    """_recover_single_task sets status=needs-review before calling resume/retry (Fix 2).
+
+    Before Fix 2, resume_task/retry_task were called while status='working',
+    causing them to reject the task. The exception handler then set needs-review,
+    so recovery only worked on the SECOND health check cycle.
+
+    After Fix 2, status is set to needs-review atomically in the same update_task
+    call as recovery_count increment, so resume/retry always succeed on first attempt.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        patches = [
+            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("tasks.run_setup_command", AsyncMock()),
+            patch("tasks._run_sdk_session", AsyncMock()),
+            patch("tasks.notify", AsyncMock()),
+            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    async def test_status_set_to_needs_review_before_resume(self, db, sample_project):
+        """Fix 2: task status is needs-review when resume_task is called."""
+        import tasks
+
+        task = await _create_orphan(db, session_id="sess-xyz")
+
+        status_at_resume = {}
+
+        async def capturing_resume(task_id):
+            t = await db.get_task(task_id)
+            status_at_resume["status"] = t["status"]
+            # Call real resume (patches are in place for dispatch)
+            await tasks._recover_with_resume(task_id, t)
+
+        with patch("tasks.resume_task", side_effect=capturing_resume):
+            await tasks._recover_single_task(task)
+
+        assert status_at_resume.get("status") == "needs-review", (
+            "Task must be in needs-review status when resume_task is called, "
+            "not 'working' — otherwise resume_task will reject it"
+        )
+
+    async def test_status_set_to_needs_review_before_retry(self, db, sample_project):
+        """Fix 2: task status is needs-review when retry_task is called."""
+        import tasks
+
+        task = await _create_orphan(db, session_id=None)
+
+        status_at_retry = {}
+
+        async def capturing_retry(task_id, clean=False):
+            t = await db.get_task(task_id)
+            status_at_retry["status"] = t["status"]
+            await tasks._recover_with_retry(task_id, t)
+
+        with patch("tasks.retry_task", side_effect=capturing_retry):
+            await tasks._recover_single_task(task)
+
+        assert status_at_retry.get("status") == "needs-review", (
+            "Task must be in needs-review status when retry_task is called"
+        )
+
+    async def test_recovery_count_incremented(self, db, sample_project):
+        """_recover_single_task increments recovery_count before calling resume/retry."""
+        import tasks
+
+        task = await _create_orphan(db, session_id=None, recovery_count=1)
+
+        resume_called = []
+
+        async def capturing_retry(task_id, clean=False):
+            t = await db.get_task(task_id)
+            resume_called.append(t.get("recovery_count"))
+
+        with patch("tasks.retry_task", side_effect=capturing_retry):
+            await tasks._recover_single_task(task)
+
+        assert resume_called == [2]
+
+    async def test_working_task_recovered_on_first_health_check_cycle(self, db, sample_project):
+        """Fix 4: a task left 'working' by SIGTERM is correctly recovered on first cycle.
+
+        This verifies the SIGTERM recovery interaction: with Fix 2 in place, the
+        health check no longer needs two cycles to recover (first sets needs-review
+        via exception, second actually resumes).
+        """
+        import tasks
+
+        # Simulate a task left in 'working' state by SIGTERM
+        task = await _create_orphan(db, session_id="sess-sigterm")
+
+        dispatch_calls = []
+
+        async def capturing_resume(task_id):
+            dispatch_calls.append(task_id)
+            # Simulate successful dispatch by setting status=working
+            await db.update_task(task_id, status="working")
+
+        with patch("tasks.resume_task", side_effect=capturing_resume):
+            await tasks._recover_single_task(task)
+
+        # Must have been called on this first invocation — not deferred
+        assert dispatch_calls == [task["id"]], (
+            "resume_task must be called on the first _recover_single_task invocation"
+        )
+
+    async def test_flap_detection_in_single_recover(self, db, sample_project):
+        """_recover_single_task respects MAX_RECOVERY_ATTEMPTS."""
+        import tasks
+
+        task = await _create_orphan(db, recovery_count=tasks.MAX_RECOVERY_ATTEMPTS)
+
+        resume_called = []
+        with patch("tasks.resume_task", side_effect=lambda _: resume_called.append(True)):
+            await tasks._recover_single_task(task)
+
+        assert resume_called == [], "resume_task must not be called when flap limit reached"
+        result = await db.get_task(task["id"])
+        assert result["status"] == "needs-review"

@@ -437,56 +437,50 @@ async def check_stalled_tasks():
                 task_id = task["id"]
                 has_active_client = task_id in _active_clients
 
-                # If we have an active SDK client, task is alive — skip
-                if has_active_client:
-                    continue
-
-                # No active client but status=working — check if it's a real orphan
                 last_activity = task.get("last_activity")
                 if not last_activity:
                     continue
                 last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
                 idle = (now - last).total_seconds()
 
-                if idle > 120:  # 2 min with no active client = dead
-                    log.warning(f"Health check: task {task_id} has no active SDK client and idle {idle:.0f}s, auto-recovering")
-                    task_obj = await db.get_task(task_id)
-                    if task_obj:
-                        await db.update_task(task_id, recovery_priority=True)
-                        await db.post_task_message(
-                            task_id=task_id, author="dispatcher", type="status",
-                            title="Orphaned task — auto-recovering",
-                            content=f"Task has no active session and has been idle for {idle:.0f}s. "
-                                    "Initiating auto-recovery.",
+                if has_active_client:
+                    # Active SDK client — check for stall (long idle despite live connection)
+                    if idle >= STALL_THRESHOLD_SECONDS:
+                        thread = await db.read_task_messages(task["id"], last_n=5)
+                        recent = thread.get("messages", [])
+                        already_warned = any(
+                            m.get("type") == "stall-warning" and m.get("author") == "dispatcher"
+                            for m in recent
                         )
-                        await _recover_single_task(task_obj)
-                    continue
-
-                # Stall detection — active client but no recent activity
-                last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
-                stale_seconds = (now - last).total_seconds()
-                if stale_seconds >= STALL_THRESHOLD_SECONDS:
-                    thread = await db.read_task_messages(task["id"], last_n=5)
-                    recent = thread.get("messages", [])
-                    already_warned = any(
-                        m.get("type") == "stall-warning" and m.get("author") == "dispatcher"
-                        for m in recent
-                    )
-                    if not already_warned:
-                        minutes = round(stale_seconds / 60, 1)
-                        await db.post_task_message(
-                            task_id=task["id"], author="dispatcher",
-                            type="stall-warning",
-                            title=f"No activity for {minutes}m",
-                            content=f"Task has had no activity for {minutes} minutes. "
-                                    "The CC session may be stuck or waiting for input.",
-                        )
-                        await notify.task_heartbeat(
-                            task_id=task["id"], turns=0,
-                            elapsed_s=stale_seconds,
-                            last_tool=f"[STALL WARNING: {minutes}m idle]",
-                        )
-                        log.warning(f"Stall detected: task {task['id']} idle for {minutes}m")
+                        if not already_warned:
+                            minutes = round(idle / 60, 1)
+                            await db.post_task_message(
+                                task_id=task["id"], author="dispatcher",
+                                type="stall-warning",
+                                title=f"No activity for {minutes}m",
+                                content=f"Task has had no activity for {minutes} minutes. "
+                                        "The CC session may be stuck or waiting for input.",
+                            )
+                            await notify.task_heartbeat(
+                                task_id=task["id"], turns=0,
+                                elapsed_s=idle,
+                                last_tool=f"[STALL WARNING: {minutes}m idle]",
+                            )
+                            log.warning(f"Stall detected: task {task['id']} idle for {minutes}m")
+                else:
+                    # No active client — check if it's a real orphan
+                    if idle > 120:  # 2 min with no active client = dead
+                        log.warning(f"Health check: task {task_id} has no active SDK client and idle {idle:.0f}s, auto-recovering")
+                        task_obj = await db.get_task(task_id)
+                        if task_obj:
+                            await db.update_task(task_id, recovery_priority=True)
+                            await db.post_task_message(
+                                task_id=task_id, author="dispatcher", type="status",
+                                title="Orphaned task — auto-recovering",
+                                content=f"Task has no active session and has been idle for {idle:.0f}s. "
+                                        "Initiating auto-recovery.",
+                            )
+                            await _recover_single_task(task_obj)
 
             # Check for ready tasks whose parents have passed — missed chain advancement
             ready_tasks = await db.list_tasks(status="ready")
@@ -574,6 +568,7 @@ async def _recover_single_task(task: dict):
         return
 
     await db.update_task(task_id,
+                         status="needs-review",
                          recovery_count=current_count + 1,
                          last_recovery_at=db.now_iso())
 
@@ -2109,14 +2104,6 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     for dep in dependents:
         if dep["status"] == "ready" and not dep.get("held"):
             log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
-        elif dep["status"] == "ready" and dep.get("held"):
-            log.info(f"Skipping held task {dep['id']} — requires manual approval")
-            await db.post_task_message(
-                task_id=dep["id"], author="dispatcher", type="status",
-                title="Ready but held",
-                content="Parent task completed and gate passed. This task is held — approve to dispatch.",
-            )
-            continue
             try:
                 await dispatch_task(
                     project_id=dep["project_id"],
@@ -2127,6 +2114,14 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
                 dispatched_any = True
             except Exception as e:
                 log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
+        elif dep["status"] == "ready" and dep.get("held"):
+            log.info(f"Skipping held task {dep['id']} — requires manual approval")
+            await db.post_task_message(
+                task_id=dep["id"], author="dispatcher", type="status",
+                title="Ready but held",
+                content="Parent task completed and gate passed. This task is held — approve to dispatch.",
+            )
+            continue
         elif dep.get("gate_status") == "stale" and dep["status"] in ("completed", "cancelled"):
             # Re-dispatch stale downstream task with rebase
             log.info(f"Re-dispatching stale dependent {dep['id']} (parent {task_id} gate passed)")

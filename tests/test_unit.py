@@ -254,6 +254,7 @@ class TestCheckAndDispatchDependents:
         self.mock_auto_merge = AsyncMock(return_value=True)
         self.mock_auto_release = AsyncMock()
         self.mock_resolve_punchlist = AsyncMock(return_value=0)
+        self.mock_post_msg = AsyncMock()
 
         patches = [
             patch("tasks.db.get_task", self.mock_get_task),
@@ -265,6 +266,7 @@ class TestCheckAndDispatchDependents:
             patch("tasks._perform_auto_merge", self.mock_auto_merge),
             patch("tasks._auto_release_worktree", self.mock_auto_release),
             patch("tasks.db.resolve_punchlist_items_for_task", self.mock_resolve_punchlist),
+            patch("tasks.db.post_task_message", self.mock_post_msg),
         ]
         for p in patches:
             p.start()
@@ -318,6 +320,186 @@ class TestCheckAndDispatchDependents:
         self.mock_get_dependents.return_value = []
         await _check_and_dispatch_dependents("task-a")
         self.mock_pr.assert_awaited_once_with("task-a")
+
+    async def test_held_task_skips_dispatch(self):
+        """Fix 1 regression: held tasks must NOT be dispatched."""
+        from tasks import _check_and_dispatch_dependents
+        self.mock_get_task.return_value = {
+            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
+        }
+        self.mock_get_dependents.return_value = [
+            {"id": "task-b", "status": "ready", "held": True,
+             "project_id": "proj", "goal": "do B"},
+        ]
+        await _check_and_dispatch_dependents("task-a")
+        self.mock_dispatch.assert_not_awaited()
+
+    async def test_non_held_ready_task_actually_dispatches(self):
+        """Fix 1: non-held ready dependent task must actually call dispatch_task."""
+        from tasks import _check_and_dispatch_dependents
+        self.mock_get_task.return_value = {
+            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
+        }
+        self.mock_get_dependents.return_value = [
+            {"id": "task-b", "status": "ready", "held": False,
+             "project_id": "proj", "goal": "do B", "auto_test": True},
+        ]
+        await _check_and_dispatch_dependents("task-a")
+        self.mock_dispatch.assert_awaited_once()
+        assert self.mock_dispatch.await_args.kwargs["task_id"] == "task-b"
+
+    async def test_mixed_held_and_non_held(self):
+        """Fix 1: only the non-held ready task dispatches; held one is skipped."""
+        from tasks import _check_and_dispatch_dependents
+        self.mock_get_task.return_value = {
+            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
+        }
+        self.mock_get_dependents.return_value = [
+            {"id": "task-b", "status": "ready", "held": False,
+             "project_id": "proj", "goal": "do B", "auto_test": True},
+            {"id": "task-c", "status": "ready", "held": True,
+             "project_id": "proj", "goal": "do C"},
+        ]
+        await _check_and_dispatch_dependents("task-a")
+        self.mock_dispatch.assert_awaited_once()
+        assert self.mock_dispatch.await_args.kwargs["task_id"] == "task-b"
+
+
+# ---------------------------------------------------------------------------
+# check_stalled_tasks — stall detection and orphan recovery logic
+# ---------------------------------------------------------------------------
+
+class TestCheckStalledTasksRouting:
+    """Fix 3: stall detection runs for active-client tasks; orphan recovery for no-client tasks."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_list_tasks = AsyncMock(return_value=[])
+        self.mock_get_task = AsyncMock()
+        self.mock_update_task = AsyncMock()
+        self.mock_post_msg = AsyncMock()
+        self.mock_read_msgs = AsyncMock(return_value={"messages": []})
+        self.mock_recover = AsyncMock()
+        self.mock_notify = AsyncMock()
+        self.mock_notify.task_heartbeat = AsyncMock()
+        self.mock_sleep = AsyncMock()
+
+        patches = [
+            patch("tasks.db.list_tasks", self.mock_list_tasks),
+            patch("tasks.db.get_task", self.mock_get_task),
+            patch("tasks.db.update_task", self.mock_update_task),
+            patch("tasks.db.post_task_message", self.mock_post_msg),
+            patch("tasks.db.read_task_messages", self.mock_read_msgs),
+            patch("tasks.db.get_project", AsyncMock(return_value=None)),
+            patch("tasks.db.get_component", AsyncMock(return_value=None)),
+            patch("tasks._recover_single_task", self.mock_recover),
+            patch("tasks.notify", self.mock_notify),
+            patch("tasks.asyncio.sleep", self.mock_sleep),
+            patch("tasks.retry_task", AsyncMock()),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    def _make_task(self, task_id, idle_seconds, has_active_client):
+        from datetime import datetime, timezone, timedelta
+        last = (datetime.now(timezone.utc) - timedelta(seconds=idle_seconds)).isoformat()
+        import tasks
+        if has_active_client:
+            tasks._active_clients[task_id] = object()
+        return {"id": task_id, "status": "working", "last_activity": last}
+
+    def teardown_method(self):
+        import tasks
+        tasks._active_clients.clear()
+
+    async def test_stall_warning_fires_for_active_client_task(self):
+        """Fix 3: stall warning posts when active-client task is idle >=300s."""
+        import tasks
+        task = self._make_task("proj/stalled-1", idle_seconds=310, has_active_client=True)
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [task] if status == "working" else []
+        )
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await tasks.check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+        self.mock_post_msg.assert_awaited()
+        calls = [c for c in self.mock_post_msg.await_args_list
+                 if c.kwargs.get("type") == "stall-warning"]
+        assert len(calls) == 1
+
+    async def test_no_stall_warning_for_active_client_task_below_threshold(self):
+        """Fix 3: no stall warning when active-client task is idle <300s."""
+        import tasks
+        task = self._make_task("proj/fresh-1", idle_seconds=60, has_active_client=True)
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [task] if status == "working" else []
+        )
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await tasks.check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+        stall_calls = [c for c in self.mock_post_msg.await_args_list
+                       if c.kwargs.get("type") == "stall-warning"]
+        assert len(stall_calls) == 0
+
+    async def test_orphan_recovery_for_no_client_task(self):
+        """Fix 3: orphan recovery triggers for no-client task idle >120s."""
+        import tasks
+        task = self._make_task("proj/orphan-1", idle_seconds=200, has_active_client=False)
+        task_obj = dict(task, session_id="s1")
+        self.mock_get_task.return_value = task_obj
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [task] if status == "working" else []
+        )
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await tasks.check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+        self.mock_recover.assert_awaited_once()
+
+    async def test_no_recovery_for_no_client_task_below_orphan_threshold(self):
+        """Fix 3: no recovery for no-client task idle <=120s (not dead yet)."""
+        import tasks
+        task = self._make_task("proj/recent-1", idle_seconds=30, has_active_client=False)
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [task] if status == "working" else []
+        )
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await tasks.check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+        self.mock_recover.assert_not_awaited()
+
+    async def test_stall_not_triggered_for_no_client_task(self):
+        """Fix 3: stall warning does NOT fire for no-client tasks (even if idle >300s)."""
+        import tasks
+        task = self._make_task("proj/orphan-stale", idle_seconds=400, has_active_client=False)
+        task_obj = dict(task, session_id="s1")
+        self.mock_get_task.return_value = task_obj
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [task] if status == "working" else []
+        )
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await tasks.check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+        stall_calls = [c for c in self.mock_post_msg.await_args_list
+                       if c.kwargs.get("type") == "stall-warning"]
+        assert len(stall_calls) == 0
 
 
 # ---------------------------------------------------------------------------
