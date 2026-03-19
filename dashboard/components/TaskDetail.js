@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+import { GitFlowSummary } from './GitFlowSummary.js';
 
 // ── Review Verdict Badge ─────────────────────────────────────
 function ReviewVerdictBadge({ subtasks }) {
@@ -63,6 +64,7 @@ function DetailHeader({ task, onAction, jiraBaseUrl }) {
                         <${ClaudeChatLink} url=${task.claude_chat_url} />
                     </div>
                     ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
+                    <${GitFlowSummary} task=${task} />
                 </div>
                 <div class="flex gap-2 ml-4"><${ActionButtons} task=${task} onAction=${onAction} /></div>
             </div>

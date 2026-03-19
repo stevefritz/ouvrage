@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel, BUTTON_TOOLTIPS } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+import { GitFlowSummary } from './GitFlowSummary.js';
 
 // ── Chain Visualization ─────────────────────────────────────
 function ChainVisualization({ taskId, onSelectTask }) {
@@ -288,6 +289,7 @@ function Checklist({ task }) {
     `;
 }
 
+
 // ── Spec section ─────────────────────────────────────────────
 function SpecSection({ messages }) {
     const specMsg = (messages || []).find(m => m.type === 'spec');
@@ -479,8 +481,9 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
             <div class="overflow-y-auto flex-1 px-4 py-3">
                 <!-- Goal & metadata -->
                 <p class="text-sm text-slate-300 mb-2">${task.goal}</p>
+                ${task.branch ? html`<div class="text-xs text-slate-500 mb-1">Branch: <span class="font-mono text-slate-400">${task.branch}</span></div>` : null}
+                <${GitFlowSummary} task=${task} compact=${true} />
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-3">
-                    ${task.branch ? html`<span>Branch: <span class="font-mono text-slate-400">${task.branch}</span></span>` : null}
                     ${task.model ? html`<span>Model: <span class="text-slate-400">${task.model}</span></span>` : null}
                     <${Tip} text="Total API cost across all dispatches">
                         <span>Cost: <span class="text-slate-400">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
