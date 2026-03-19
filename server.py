@@ -37,7 +37,8 @@ TYPICAL WORKFLOW:
 2. conversations(search="topic") → find prior context
 3. read(conversation_id) → load relevant history
 4. Then: create tasks, dispatch work, post updates
-5. If you need the full tool reference, call get_guide
+5. When tasks complete, use list_task_files + get_task_file to verify output
+6. If you need the full tool reference, call get_guide
 
 KEY CONCEPTS:
 - Projects = git repos registered for task dispatch
@@ -352,6 +353,20 @@ TASK_TOOLS = [
         },
     ),
     Tool(
+        name="approve_task",
+        description=(
+            "Release a held task for dispatch. Held tasks are checkpoints that won't auto-dispatch "
+            "until manually approved. This clears the hold and dispatches the task."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Held task to approve and dispatch"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
         name="cancel_task",
         description="Kill a running task. SIGTERM the CC process, mark as cancelled. Worktree preserved.",
         inputSchema={
@@ -619,10 +634,10 @@ TASK_TOOLS = [
     Tool(
         name="list_task_files",
         description=(
-            "List files committed on a task's branch. Works for active worktrees, released/merged tasks, "
-            "and failed tasks — any state where the branch exists on disk or on origin. "
-            "Only shows committed content (not uncommitted changes). "
-            "Returns a flat list of filenames, or a directory listing when path is specified."
+            "Browse what CC wrote — list files on a task's branch. Use after task completion to see "
+            "what was created or modified before reviewing. Works for any task state (active, completed, "
+            "merged, failed). Start with the root to orient, then drill into specific directories. "
+            "Avoid recursive=true on large repos — use path to scope instead."
         ),
         inputSchema={
             "type": "object",
@@ -644,10 +659,10 @@ TASK_TOOLS = [
     Tool(
         name="get_task_file",
         description=(
-            "Read a file's content from a task's committed branch. "
-            "Binary files are detected automatically and refused (returns an error with file size). "
-            "Large files are truncated at max_bytes. "
-            "Works for any task state where the branch is accessible."
+            "Read a specific file from a task's branch — use to verify CC's implementation, "
+            "check generated schemas, review code changes, or pull content to discuss with the user. "
+            "Binary files are refused. Large files truncated at max_bytes (default 1MB, set lower "
+            "for context efficiency). Works for any task state."
         ),
         inputSchema={
             "type": "object",

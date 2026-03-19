@@ -2929,9 +2929,10 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
 
     # Clear session and gate state to force fresh run through the pipeline
     # Increment current_attempt — this is a new attempt, not a resume
+    # Also clear held flag so retried tasks dispatch normally
     new_attempt = (task.get("current_attempt") or 1) + 1
     await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
-                         current_attempt=new_attempt)
+                         current_attempt=new_attempt, held=False)
 
     # Invalidate downstream chain if this task has dependents
     dependents = await db.get_dependents(task_id)
@@ -2992,7 +2993,7 @@ async def cancel_task(task_id: str) -> dict:
     if not cancelled_async and task.get("status") == "working":
         log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
 
-    await db.update_task(task_id, status="cancelled")
+    await db.update_task(task_id, status="cancelled", held=False)
 
     # Revert any punchlist items claimed by this task back to 'open'
     reverted = await db.revert_punchlist_items_for_task(task_id)
