@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import uvicorn
@@ -1770,14 +1771,28 @@ async def _handle_get_guide(arguments):
 # Worktree File Access — git helpers
 # ---------------------------------------------------------------------------
 
-async def _git_run(args: list[str], git_dir: str) -> tuple[bytes, int]:
-    """Run a git command with -C git_dir. Returns (stdout_bytes, returncode)."""
+# TTL cache for git fetch — maps bare_path -> last fetch monotonic time.
+# Prevents a fetch on every single call for released/merged tasks.
+_fetch_cache: dict[str, float] = {}
+_FETCH_TTL: float = 60.0  # seconds
+
+
+async def _git_run(args: list[str], git_dir: str, timeout: float = 30.0) -> tuple[bytes, int]:
+    """Run a git command with -C git_dir. Returns (stdout_bytes, returncode).
+
+    Raises asyncio.TimeoutError if the command exceeds timeout seconds.
+    """
     proc = await asyncio.create_subprocess_exec(
         "git", "-C", git_dir, *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, _ = await proc.communicate()
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise
     return stdout, proc.returncode
 
 
@@ -1799,7 +1814,10 @@ async def _resolve_git_ref(task: dict, project: dict) -> tuple[str, str] | None:
 
     # Priority 2: branch on origin
     if branch:
-        await _git_run(["fetch", "origin", "--prune", "-q"], bare_path)
+        now = time.monotonic()
+        if now - _fetch_cache.get(bare_path, 0.0) > _FETCH_TTL:
+            await _git_run(["fetch", "origin", "--prune", "-q"], bare_path)
+            _fetch_cache[bare_path] = now
         _, rc = await _git_run(
             ["rev-parse", "--verify", f"origin/{branch}"],
             bare_path,
@@ -1876,7 +1894,6 @@ async def _handle_list_task_files(arguments: dict):
         "files": files,
         "count": len(files),
         "ref_used": ref,
-        "git_dir": git_dir,
     }
 
 
@@ -1911,6 +1928,16 @@ async def _handle_get_task_file(arguments: dict):
 
     git_dir, ref = resolved
 
+    # Check object type — reject directories with a clear message
+    type_out, type_rc = await _git_run(["cat-file", "-t", f"{ref}:{path}"], git_dir)
+    if type_rc != 0:
+        return {"error": f"File not found in task branch: {path!r}", "ref": ref}
+    if type_out.decode().strip() == "tree":
+        return {
+            "error": "Path is a directory, not a file. Use list_task_files instead.",
+            "path": path,
+        }
+
     stdout, rc = await _git_run(["show", f"{ref}:{path}"], git_dir)
     if rc != 0:
         return {"error": f"File not found in task branch: {path!r}", "ref": ref}
@@ -1938,7 +1965,6 @@ async def _handle_get_task_file(arguments: dict):
         "binary": False,
         "truncated": truncated,
         "ref_used": ref,
-        "git_dir": git_dir,
     }
 
 
