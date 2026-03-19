@@ -5,6 +5,54 @@ import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge,
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 
+// ── Chain Visualization ─────────────────────────────────────
+function ChainVisualization({ taskId, onSelectTask }) {
+    const [chain, setChain] = useState(null);
+    const [currentIdx, setCurrentIdx] = useState(-1);
+
+    useEffect(() => {
+        api.getChain(taskId)
+            .then(data => {
+                if (data && data.chain && data.chain.length > 1) {
+                    setChain(data.chain);
+                    setCurrentIdx(data.current_index);
+                } else {
+                    setChain(null);
+                }
+            })
+            .catch(() => setChain(null));
+    }, [taskId]);
+
+    if (!chain) return null;
+
+    return html`
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 mb-3">
+            <h3 class="text-xs font-medium text-slate-400 mb-2">\u26D3 Task Chain</h3>
+            <div class="flex items-center gap-1.5 overflow-x-auto pb-1">
+                ${chain.map((t, i) => {
+                    if (t.parent_task_id) return null;
+                    const isCurrent = i === currentIdx;
+                    const border = isCurrent ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-slate-700';
+                    const shortId = t.id.split('/').pop();
+                    return html`
+                        <a key=${t.id}
+                            href="#/tasks/${t.id}"
+                            onClick=${(e) => { if (onSelectTask) { e.preventDefault(); onSelectTask(t.id); } }}
+                            class="shrink-0 block p-1.5 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[100px] max-w-[150px] cursor-pointer">
+                            <div class="flex items-center gap-1 mb-0.5">
+                                <${StatusBadge} status=${t.status} task=${t} />
+                            </div>
+                            <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
+                            <div class="text-[10px] text-slate-500 truncate">${(t.goal || '').slice(0, 35)}</div>
+                        </a>
+                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-600 shrink-0 text-xs">\u2192</span>` : null}
+                    `;
+                })}
+            </div>
+        </div>
+    `;
+}
+
 // ── Attempt grouping for messages ────────────────────────────
 function groupMessagesByAttempt(messages) {
     if (!messages || messages.length === 0) return [];
@@ -90,7 +138,7 @@ function GatePipeline({ task }) {
     const icons = { done: '\u2713', active: '\u25CF', failed: '\u2715', pending: '\u25CB' };
 
     return html`
-        <div class="flex items-center gap-2 overflow-x-auto mb-3">
+        <div class="flex items-center gap-2 flex-wrap mb-3">
             ${stages.map((st, i) => html`
                 <div key=${i} class="flex items-center gap-2 shrink-0">
                     <${Tip} text=${st.tip || st.label}>
@@ -289,11 +337,10 @@ function ProofOfLife({ task }) {
     const age = la ? (Date.now() - new Date(la + (la.endsWith('Z') ? '' : 'Z')).getTime()) / 1000 : null;
 
     let indicator, label;
-    if (!pid) { indicator = 'bg-slate-500'; label = 'No PID'; }
-    else if (!alive) { indicator = 'bg-red-500'; label = `PID ${pid} (dead)`; }
-    else if (age > 300) { indicator = 'bg-red-500'; label = `PID ${pid} — stale ${Math.floor(age / 60)}m`; }
-    else if (age > 120) { indicator = 'bg-amber-500'; label = `PID ${pid} — ${Math.floor(age)}s ago`; }
-    else { indicator = 'bg-emerald-500 status-dot-working'; label = `PID ${pid} — active`; }
+    if (age === null) { indicator = 'bg-slate-500'; label = 'No activity data'; }
+    else if (age > 300) { indicator = 'bg-red-500'; label = `Stale — last activity ${Math.floor(age / 60)}m ago`; }
+    else if (age > 120) { indicator = 'bg-amber-500'; label = `Idle — ${Math.floor(age)}s ago`; }
+    else { indicator = 'bg-emerald-500 status-dot-working'; label = `Active — ${Math.floor(age)}s ago`; }
 
     return html`
         <div class="flex items-center gap-2 text-xs text-slate-400 mb-2">
@@ -408,6 +455,8 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                     <${PrUrlBadge} task=${task} />
                     ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
                         class="px-1.5 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
+                    ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
+                        class="px-1.5 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">\u{1F4AC} ${task.conversation_id}</a>` : null}
                     <${ClaudeChatLink} url=${task.claude_chat_url} />
                 </div>
 
@@ -420,6 +469,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 <!-- Worktree indicator -->
                 <${WorktreeIndicator} task=${task} />
 
+                <${ChainVisualization} taskId=${task.id} onSelectTask=${(id) => onAction('select-task', id)} />
                 <${ProofOfLife} task=${task} />
                 <${GatePipeline} task=${task} />
                 <${BlockersSection} task=${task} allTasks=${allTasks} />

@@ -59,6 +59,7 @@ export const api = {
     advanceChain: (id) => request(`/tasks/${eid(id)}/advance-chain`, { method: 'POST' }),
     cancelChain: (id) => request(`/tasks/${eid(id)}/cancel-chain`, { method: 'POST' }),
     releaseWorktree: (id) => request(`/tasks/${eid(id)}/release-worktree`, { method: 'POST' }),
+    approveTask: (id) => request(`/tasks/${eid(id)}/approve`, { method: 'POST' }),
 
     // Component/Project control
     pauseComponent: (id) => request(`/components/${eid(id)}/pause`, { method: 'POST' }),

@@ -23,6 +23,14 @@ export function GraphView({ projectId, jiraBaseUrl, onAction }) {
         setSelectedTaskId(null);
     }, []);
 
+    const handleAction = useCallback((action, ...args) => {
+        if (action === 'select-task') {
+            setSelectedTaskId(args[0]);
+        } else if (onAction) {
+            onAction(action, ...args);
+        }
+    }, [onAction]);
+
     return html`
         <div class="p-4">
             <div class="flex items-center gap-3 mb-3">
@@ -47,7 +55,7 @@ export function GraphView({ projectId, jiraBaseUrl, onAction }) {
                         allTasks=${allTasks}
                         jiraBaseUrl=${jiraBaseUrl}
                         onClose=${handleClose}
-                        onAction=${onAction} />
+                        onAction=${handleAction} />
                 ` : null}
             </div>
 

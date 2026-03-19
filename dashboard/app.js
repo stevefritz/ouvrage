@@ -114,6 +114,7 @@ function App() {
             else if (action === 'advance-chain') await api.advanceChain(taskId);
             else if (action === 'cancel-chain') await api.cancelChain(taskId);
             else if (action === 'release-worktree') await api.releaseWorktree(taskId);
+            else if (action === 'approve') await api.approveTask(taskId);
             // Force re-route to refresh the view
             setRoute({ ...getRoute() });
         } catch (e) {

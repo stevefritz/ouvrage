@@ -1,6 +1,6 @@
 // DAG Graph Visualization — dependency graph as primary component view
 import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
-import dagre from 'https://esm.sh/dagre@0.8.5';
+import dagre from 'https://esm.sh/dagre@0.8.5?bundle-deps';
 import { api } from '../api.js';
 import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorState, EmptyState, navigate } from './utils.js';
 
@@ -257,7 +257,9 @@ export function computeLayout(tasks, stateColors) {
 
     // Grid-pack singletons: stack N-high based on chain depth
     if (singletons.length > 0) {
-        const rows = Math.max(1, Math.round(maxChainHeight / (NODE_H + GAP_Y)));
+        const rows = chains.length > 0
+            ? Math.max(1, Math.round(maxChainHeight / (NODE_H + GAP_Y)))
+            : Math.min(4, singletons.length);  // all singletons — stack 4 deep
         // Sort singletons by created_at (oldest first)
         singletons.sort((a, b) => {
             const ta = taskMap.get(a[0]), tb = taskMap.get(b[0]);
@@ -369,8 +371,9 @@ export function EdgePath({ edge, highlighted, dimmed }) {
 export function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, onUnhover, allNodes }) {
     const { task, x, y, status, componentColor, stateColor } = node;
     const shortId = task.id.includes('/') ? task.id.split('/').pop() : task.id;
-    const hb = heartbeatClass(task);
-    const opacity = dimmed ? 0.1 : 1;
+    const isGhost = !!task._ghost;
+    const hb = isGhost ? null : heartbeatClass(task);
+    const opacity = dimmed ? 0.1 : isGhost ? 0.7 : 1;
 
     // Blockers: find what this task depends on that isn't done
     const blockers = [];
@@ -381,17 +384,22 @@ export function TaskNode({ node, selected, hovered, dimmed, onSelect, onHover, o
 
     return html`
         <div class="dag-node ${selected ? 'dag-node-selected' : ''} ${hovered ? 'dag-node-hovered' : ''}"
-            style="left:${x}px; top:${y}px; width:${NODE_W}px; height:${NODE_H}px;
-                   border-left: 4px solid ${componentColor};
-                   background: ${stateColor.bg};
-                   border-color: ${selected ? stateColor.border : 'transparent'};
-                   border-left-color: ${componentColor};
+            style="left:${x}px; top:${y}px; width:${NODE_W}px; height:${isGhost ? NODE_H - 30 : NODE_H}px;
+                   border-left: 4px solid ${isGhost ? '#475569' : componentColor};
+                   background: ${isGhost ? '#1e293b40' : stateColor.bg};
+                   border-color: ${selected ? stateColor.border : isGhost ? '#475569' : 'transparent'};
+                   border-left-color: ${isGhost ? '#475569' : componentColor};
+                   ${isGhost ? 'border-style: dashed; border-width: 1px; border-left-width: 4px;' : ''}
                    opacity: ${opacity};
                    transition: opacity 0.2s, box-shadow 0.2s;
                    display: flex; flex-direction: column; overflow: hidden;"
             onClick=${(e) => { e.stopPropagation(); onSelect(node.id); }}
             onMouseEnter=${() => onHover(node.id)}
             onMouseLeave=${onUnhover}>
+
+            ${isGhost && task.component_name ? html`
+                <div class="text-[10px] text-slate-500 mb-0.5 shrink-0 truncate">\u2197 ${task.component_name}</div>
+            ` : null}
 
             <div class="flex items-center gap-2 mb-1 shrink-0">
                 <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0 ${stateColor.pulse ? 'status-dot-working' : ''}"

@@ -156,6 +156,14 @@ export function StatusBadge({ status, task }) {
             <//>`;
         }
     }
+    // Held tasks show a distinct badge
+    if (task && task.held && status === 'ready') {
+        return html`<${Tip} text="HELD — requires manual approval before dispatch">
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400">
+                \u{1F512} HELD
+            </span>
+        <//>`;
+    }
     const s = STATUS_MAP[status] || STATUS_MAP.ready;
     const dotClass = s.dot ? 'status-dot-working' : '';
     const label = (status || 'ready').toUpperCase();
@@ -330,7 +338,10 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
         <//>`;
 
     const btns = [];
-    if (task.status === 'ready') {
+    if (task.status === 'ready' && task.held) {
+        btns.push(btn('approve', 'Approve & Dispatch', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
+    } else if (task.status === 'ready') {
         btns.push(btn('dispatch', 'Dispatch', 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'));
         btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
@@ -339,6 +350,11 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
     }
     if (task.status === 'failed' || task.status === 'cancelled') {
         btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
+    }
+    if (task.status === 'rate-limited') {
+        btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
+        btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
+        btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
     }
     if (task.status === 'completed') {
         btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));

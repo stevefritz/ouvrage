@@ -17,7 +17,40 @@ import tasks
 
 PR_URL_RE = re.compile(r'https://github\.com/[^\s)]+/pull/\d+')
 
-server = Server("switchboard")
+SERVER_INSTRUCTIONS = """\
+Switchboard is a task orchestration system. It dispatches autonomous Claude Code \
+workers to git repos, manages worktrees, runs test/review gates, and tracks \
+everything through a dashboard.
+
+START HERE: Call `get_context` at the beginning of every conversation. It returns \
+a compact snapshot of active projects, running tasks, and recent events — enough \
+to orient without reading the full guide.
+
+CONVERSATIONS ARE YOUR MEMORY: Switchboard conversations persist across sessions. \
+Use them to store specs, design decisions, research, and ongoing context. When \
+starting work on a topic, search conversations first — prior context likely exists. \
+Pin critical messages (specs, decisions) so they're easy to retrieve later.
+
+TYPICAL WORKFLOW:
+1. get_context → orient to current state
+2. conversations(search="topic") → find prior context
+3. read(conversation_id) → load relevant history
+4. Then: create tasks, dispatch work, post updates
+5. If you need the full tool reference, call get_guide
+
+KEY CONCEPTS:
+- Projects = git repos registered for task dispatch
+- Components = feature groupings within a project (optional)
+- Tasks = units of work dispatched to CC workers in isolated worktrees
+- Conversations = persistent threads for specs, plans, Q&A — your long-term memory
+- Punchlist = tracked items within a component that tasks can claim and resolve
+
+When the user discusses a project or feature, proactively check conversations \
+for existing context before starting fresh. Post summaries and decisions back \
+to conversations so future sessions have continuity.\
+"""
+
+server = Server("switchboard", instructions=SERVER_INSTRUCTIONS)
 
 # ---------------------------------------------------------------------------
 # Conversation Tools (unchanged)
@@ -138,25 +171,70 @@ CONVERSATION_TOOLS = [
 PROJECT_TOOLS = [
     Tool(
         name="create_project",
-        description="Register a project for task dispatch. Configures repo, working directory, setup commands, and resource limits.",
+        description=(
+            "Register a git repo as a Switchboard project. Each project gets its own working directory "
+            "where git worktrees are created for tasks. Only 'id' and 'repo' are required — everything "
+            "else has sensible defaults. The repo must exist on GitHub and have at least one commit."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Project slug, e.g. ym-discount-engine"},
-                "repo": {"type": "string", "description": "Git repo URL, e.g. git@github.com:org/repo.git"},
-                "working_dir": {"type": "string", "description": "Base path on VPS for worktrees, e.g. /work/ym-discount-engine"},
-                "default_branch": {"type": "string", "description": "Main branch name", "default": "main"},
-                "setup_command": {"type": "string", "description": "Run after worktree creation, e.g. 'composer install && php artisan migrate --seed --env=testing'"},
-                "teardown_command": {"type": "string", "description": "Run on task cleanup"},
-                "test_command": {"type": "string", "description": "Hint for CC, e.g. 'php artisan test'"},
-                "env_overrides": {"type": "object", "description": "Key-value env vars written to .env.testing in worktree, e.g. {\"DB_CONNECTION\": \"sqlite\"}"},
-                "max_turns": {"type": "integer", "description": "Default max turns per dispatch for this project"},
-                "max_wall_clock": {"type": "integer", "description": "Default max wall clock minutes per dispatch"},
-                "claude_md_path": {"type": "string", "description": "Path to CLAUDE.md relative to repo root"},
-                "model": {"type": "string", "enum": ["sonnet", "opus"], "description": "Default Claude model for tasks in this project. Default: sonnet"},
-                "state_definitions": {"type": "object", "description": "Custom state definitions for dashboard rendering, e.g. {\"custom:indexing\": {\"color\": \"#8b5cf6\", \"label\": \"Indexing\", \"pulse\": true}}"},
+                "id": {
+                    "type": "string",
+                    "description": "Short unique slug for this project, used in task IDs and URLs. Example: 'my-app', 'api-backend'",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "SSH git clone URL. Example: 'git@github.com:yourorg/your-repo.git'. The server clones this repo and creates worktrees from it.",
+                },
+                "folder_name": {
+                    "type": "string",
+                    "description": "Override the folder name under the worktree base directory. Defaults to the repo name (e.g. 'your-repo'). You do NOT set a full path — just the folder name.",
+                },
+                "default_branch": {
+                    "type": "string",
+                    "description": "The main/trunk branch that tasks branch from and merge into. Default: 'main'",
+                    "default": "main",
+                },
+                "setup_command": {
+                    "type": "string",
+                    "description": "Shell command run in each new worktree after creation. Use for dependency install, DB setup, etc. Example: 'npm install' or 'composer install && php artisan migrate --seed'",
+                },
+                "teardown_command": {
+                    "type": "string",
+                    "description": "Shell command run when a worktree is cleaned up. Rarely needed.",
+                },
+                "test_command": {
+                    "type": "string",
+                    "description": "The command used by the auto-test gate after task completion. Example: 'npm test', 'pytest', 'php artisan test'. If set, tasks with auto_test=true will run this automatically.",
+                },
+                "env_overrides": {
+                    "type": "object",
+                    "description": "Key-value pairs appended to .env.testing in each worktree. Example: {\"DB_CONNECTION\": \"sqlite\", \"APP_ENV\": \"testing\"}",
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Default limit on Claude Code conversation turns per task dispatch. Higher = more autonomy, more cost. Default: 200",
+                },
+                "max_wall_clock": {
+                    "type": "integer",
+                    "description": "Default time limit in minutes per task dispatch. Task is paused when exceeded. Default: 30",
+                },
+                "claude_md_path": {
+                    "type": "string",
+                    "description": "Path to a CLAUDE.md file relative to repo root. Loaded as context for CC workers. Example: 'CLAUDE.md' or 'docs/CLAUDE.md'",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": ["sonnet", "opus"],
+                    "description": "Default Claude model for tasks. 'sonnet' is faster/cheaper, 'opus' is more capable. Default: sonnet",
+                },
+                "state_definitions": {
+                    "type": "object",
+                    "description": "Advanced: custom status colors/labels for dashboard rendering. Most users don't need this.",
+                },
             },
-            "required": ["id", "repo", "working_dir"],
+            "required": ["id", "repo"],
         },
     ),
     Tool(
@@ -179,7 +257,6 @@ PROJECT_TOOLS = [
                 "id": {"type": "string", "description": "Project ID"},
                 "repo": {"type": "string", "description": "Git repo URL"},
                 "default_branch": {"type": "string", "description": "Default branch name"},
-                "working_dir": {"type": "string", "description": "Base path for worktrees"},
                 "setup_command": {"type": ["string", "null"], "description": "Run after worktree creation"},
                 "teardown_command": {"type": ["string", "null"], "description": "Run on cleanup"},
                 "test_command": {"type": ["string", "null"], "description": "Hint for CC"},
@@ -234,6 +311,7 @@ TASK_TOOLS = [
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
                 "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
                 "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
+                "held": {"type": "boolean", "description": "Create task but don't dispatch — requires manual approval first. Use for chain checkpoints. Default: false", "default": False},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -727,8 +805,17 @@ PUNCHLIST_TOOLS = [
 
 OPS_TOOLS = [
     Tool(
+        name="get_context",
+        description=(
+            "START HERE — call this first in every conversation. Returns a compact snapshot of "
+            "current system state: active projects, running/blocked tasks, recent events, and "
+            "pinned conversations. Enough to orient without reading the full guide."
+        ),
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
         name="get_guide",
-        description="Get a structured guide explaining how to use Switchboard. Includes mental model, available tools by workflow, common patterns, anti-patterns, and a live system summary.",
+        description="Full tool reference and workflow guide. Call this when get_context isn't enough — e.g. first time using Switchboard, or need to understand a specific workflow pattern.",
         inputSchema={"type": "object", "properties": {}},
     ),
 ]
@@ -862,11 +949,40 @@ async def _handle_archive(arguments):
     return await db.archive_conversation(arguments["conversation_id"])
 
 
+WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
+
+
+def _resolve_working_dir(repo: str, folder_name: str | None = None) -> str:
+    """Derive working_dir from repo URL and optional folder name override."""
+    if folder_name:
+        name = folder_name
+    else:
+        # Extract repo name from URL: git@github.com:org/repo.git → repo
+        name = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        # Also handle ssh colon syntax: git@github.com:org/repo.git
+        if ":" in name:
+            name = name.rsplit(":", 1)[-1].removesuffix(".git")
+    # Sanitize — no path traversal
+    name = name.replace("/", "").replace("..", "").replace("\\", "")
+    if not name:
+        raise ValueError("Could not derive folder name from repo URL")
+    return os.path.join(WORKTREE_BASE, name)
+
+
 async def _handle_create_project(arguments):
+    working_dir = arguments.get("working_dir") or _resolve_working_dir(
+        arguments["repo"], arguments.get("folder_name")
+    )
+    # Enforce worktree base — no escaping
+    resolved = os.path.realpath(working_dir)
+    base = os.path.realpath(WORKTREE_BASE)
+    if not resolved.startswith(base + "/") and resolved != base:
+        raise ValueError(f"working_dir must be under {WORKTREE_BASE}, got: {working_dir}")
+
     return await db.create_project(
         id=arguments["id"],
         repo=arguments["repo"],
-        working_dir=arguments["working_dir"],
+        working_dir=resolved,
         default_branch=arguments.get("default_branch", "main"),
         setup_command=arguments.get("setup_command"),
         teardown_command=arguments.get("teardown_command"),
@@ -919,6 +1035,7 @@ async def _handle_dispatch_task(arguments):
         depends_on=(f"{project_id}/{arguments['depends_on']}"
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
                     else arguments.get("depends_on")),
+        held=arguments.get("held", False),
     )
     # Set tags if provided
     tags = arguments.get("tags")
@@ -932,6 +1049,9 @@ async def _handle_release_worktree(arguments):
 
 async def _handle_resume_task(arguments):
     return await tasks.resume_task(arguments["task_id"])
+
+async def _handle_approve_task(arguments):
+    return await tasks.approve_task(arguments["task_id"])
 
 
 async def _handle_retry_task(arguments):
@@ -1490,6 +1610,82 @@ async def _handle_resolve_punchlist_item(arguments):
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
+async def _handle_get_context(arguments):
+    """Lightweight orientation snapshot — call first in every conversation."""
+    projects = await db.list_projects()
+    task_counts = await db.get_project_task_counts()
+    active_count = await db.count_active_tasks()
+
+    # Project summaries
+    project_lines = []
+    for p in projects:
+        counts = task_counts.get(p["id"], {})
+        total = counts.get("total_tasks", 0)
+        active = counts.get("active_task_count", 0)
+        cost = counts.get("total_cost", 0)
+        components = await db.list_components(project_id=p["id"])
+        comp_str = f", {len(components)} components" if components else ""
+        project_lines.append(f"  - {p['id']}: {total} tasks ({active} active), ${cost:.2f}{comp_str}")
+
+    # Active/blocked tasks
+    active_tasks = await db.list_tasks(status="working")
+    blocked_tasks = await db.list_tasks(status="needs-review")
+    rate_limited = await db.list_tasks(status="rate-limited")
+
+    task_lines = []
+    for t in (active_tasks or [])[:5]:
+        phase = f" [{t.get('phase', '')}]" if t.get("phase") else ""
+        task_lines.append(f"  - {t['id']}{phase} — {(t.get('goal') or '')[:60]}")
+    for t in (blocked_tasks or [])[:3]:
+        task_lines.append(f"  - {t['id']} [needs-review] — {(t.get('goal') or '')[:60]}")
+    for t in (rate_limited or [])[:3]:
+        task_lines.append(f"  - {t['id']} [rate-limited] — {(t.get('goal') or '')[:60]}")
+
+    # Recent significant events
+    events = await db.get_recent_activity(limit=5)
+    event_lines = []
+    for ev in events:
+        task_short = ev.get("task_id", "").split("/")[-1] if ev.get("task_id") else ""
+        title = ev.get("title") or ev.get("event_type", "")
+        event_lines.append(f"  - [{ev.get('created_at', '')[:16]}] {task_short}: {title}")
+
+    # Pinned conversations
+    convs = await db.list_conversations()
+    pinned_convs = [c for c in convs if c.get("has_pinned")]
+
+    parts = [
+        f"# Switchboard Context",
+        f"",
+        f"**Projects:** {len(projects)} | **Active tasks:** {active_count}",
+        f"",
+    ]
+
+    if project_lines:
+        parts.append("## Projects")
+        parts.extend(project_lines)
+        parts.append("")
+
+    if task_lines:
+        parts.append("## Active / Attention Needed")
+        parts.extend(task_lines)
+        parts.append("")
+
+    if event_lines:
+        parts.append("## Recent Events")
+        parts.extend(event_lines)
+        parts.append("")
+
+    if pinned_convs:
+        parts.append("## Conversations with Pinned Context")
+        for c in pinned_convs[:10]:
+            parts.append(f"  - `{c['id']}`: {c.get('goal', '')[:80]}")
+        parts.append("")
+
+    parts.append("_Call `get_guide` for the full tool reference. Use `conversations(search=...)` to find prior context._")
+
+    return {"context": "\n".join(parts)}
+
+
 async def _handle_get_guide(arguments):
     """Return the Switchboard guide with live system summary appended."""
     parts = [GUIDE_STATIC]
@@ -1544,6 +1740,7 @@ TOOL_HANDLERS = {
     "resume_task": _handle_resume_task,
     "retry_task": _handle_retry_task,
     "cancel_task": _handle_cancel_task,
+    "approve_task": _handle_approve_task,
     "close_task": _handle_close_task,
     "get_task_status": _handle_get_task_status,
     "list_tasks": _handle_list_tasks,
@@ -1582,6 +1779,7 @@ TOOL_HANDLERS = {
     "resume_project": _handle_resume_project,
     "stop_project": _handle_stop_project,
     # Ops tools
+    "get_context": _handle_get_context,
     "get_guide": _handle_get_guide,
     "search_component": _handle_search_component,
 }

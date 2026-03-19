@@ -340,6 +340,8 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN current_attempt INTEGER DEFAULT 1")
         if "retry_after" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN retry_after TEXT")
+        if "held" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN held BOOLEAN DEFAULT 0")
 
         # Migrate messages table: add attempt_number if missing
         msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
@@ -872,6 +874,8 @@ TASK_MUTABLE_FIELDS = {
     "last_test_output", "current_attempt",
     # retry scheduling
     "retry_after",
+    # hold/approval
+    "held",
 }
 
 
@@ -1015,6 +1019,22 @@ async def get_project_task_counts() -> dict[str, dict]:
             }
             for r in rows
         }
+
+
+async def get_recent_activity(limit: int = 5) -> list[dict]:
+    """Get recent significant task messages across all projects."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            """
+            SELECT m.task_id, m.type AS event_type, m.title, m.created_at
+            FROM messages m
+            WHERE m.type IN ('result', 'status', 'review', 'question')
+            ORDER BY m.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(r) for r in rows]
 
 
 async def get_dependents(task_id: str) -> list[dict]:
@@ -1657,6 +1677,25 @@ async def get_component(id: str) -> dict | None:
             )
             task["tags"] = [tr["tag"] for tr in tag_rows]
             all_tasks.append(task)
+        # Find external dependencies — tasks in other components that our tasks depend on
+        component_task_ids = {t["id"] for t in all_tasks}
+        external_dep_ids = set()
+        for t in all_tasks:
+            dep = t.get("depends_on")
+            if dep and dep not in component_task_ids:
+                external_dep_ids.add(dep)
+
+        for ext_id in external_dep_ids:
+            ext_rows = await db.execute_fetchall(
+                "SELECT t.*, c.name as component_name FROM tasks t LEFT JOIN components c ON t.component_id = c.id WHERE t.id = ?",
+                (ext_id,),
+            )
+            if ext_rows:
+                ext_task = dict(ext_rows[0])
+                ext_task["_ghost"] = True  # marker for frontend
+                ext_task["tags"] = []
+                all_tasks.append(ext_task)
+
         c["tasks"] = all_tasks
 
         # Linked conversations (return objects with id + goal)

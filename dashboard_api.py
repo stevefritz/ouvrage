@@ -61,8 +61,9 @@ def _extract_task_id(path: str, prefix: str) -> str:
     rest = unquote(path[len(prefix):])
     # Strip trailing action segments like /cancel, /retry, /resume, /messages, /session-log, /dispatch-log
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
-                    "/advance-chain", "/cancel-chain", "/chain", "/review-task",
-                    "/messages", "/session-log", "/dispatch-log", "/attempts"):
+                    "/advance-chain", "/cancel-chain", "/approve", "/chain",
+                    "/review-task", "/messages", "/session-log", "/dispatch-log",
+                    "/attempts"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -206,6 +207,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/cancel-chain"):
                     task_id = rest[:-len("/cancel-chain")]
                     return await _handle_cancel_chain(send, task_id)
+                if rest.endswith("/approve"):
+                    task_id = rest[:-len("/approve")]
+                    return await _handle_approve(send, task_id)
                 if rest.endswith("/release-worktree"):
                     task_id = rest[:-len("/release-worktree")]
                     return await _handle_release_worktree(send, task_id)
@@ -478,6 +482,11 @@ async def _handle_retry(receive, send, task_id):
 
 async def _handle_resume(send, task_id):
     result = await tasks.resume_task(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_approve(send, task_id):
+    result = await tasks.approve_task(task_id)
     await _json_response(send, result)
 
 

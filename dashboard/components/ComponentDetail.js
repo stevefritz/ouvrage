@@ -40,6 +40,14 @@ function ProgressBar({ done, total }) {
 
 function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
     const [selectedTaskId, setSelectedTaskId] = useState(null);
+
+    const handleAction = useCallback((action, ...args) => {
+        if (action === 'select-task') {
+            setSelectedTaskId(args[0]);
+        } else if (onAction) {
+            onAction(action, ...args);
+        }
+    }, [onAction]);
     const [hoveredId, setHoveredId] = useState(null);
     const [activeTags, setActiveTags] = useState(new Set());
     const [zoom, setZoom] = useState(1);
@@ -222,7 +230,7 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
                     allTasks=${tasks}
                     jiraBaseUrl=${jiraBaseUrl}
                     onClose=${handleClose}
-                    onAction=${onAction} />
+                    onAction=${handleAction} />
             ` : null}
         </div>
     `;

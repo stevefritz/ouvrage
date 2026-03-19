@@ -782,6 +782,11 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
 
+    # Lock git author to the worker's global config — CC workers sometimes
+    # override user.name/email in the repo config, which sticks for all future tasks.
+    await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.name")
+    await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.email")
+
     # Ensure the default branch and all remotes are visible from the worktree.
     # Bare-repo worktrees have a narrow fetch refspec by default, which makes
     # `git merge main` fail because CC can't resolve the branch.
@@ -1430,9 +1435,10 @@ async def _run_sdk_session(
                 if task.get("parent_task_id"):
                     await _process_review_result(task_id, task["parent_task_id"])
                 elif task.get("gate_passed_at"):
-                    # Gate already passed previously — this is a manual resume cycle
-                    # Don't re-run gate or auto-advance chain
-                    log.info(f"Task {task_id}: gate already passed, skipping gate pipeline (manual resume)")
+                    # Gate already passed previously — this is a manual resume (e.g. fixing merge conflicts)
+                    # Re-trigger post-gate pipeline so auto-merge / chain advancement runs again
+                    log.info(f"Task {task_id}: gate already passed, re-triggering post-gate pipeline (manual resume)")
+                    await _check_and_dispatch_dependents(task_id)
                 else:
                     # First-pass completion — run the gate pipeline
                     project = await db.get_project(task["project_id"])
@@ -1929,13 +1935,38 @@ If changes needed: title="CHANGES REQUESTED" and list specific issues
         if subtask.get("status") == "completed":
             await _process_review_result_inline(task_id)
         else:
-            log.warning(f"Review subtask failed for {task_id}, falling back to gate pass")
-            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-            await _check_and_dispatch_dependents(task_id)
+            log.warning(f"Review subtask failed for {task_id}: {subtask.get('error', 'unknown')}")
+            task = await db.get_task(task_id)
+            retries = (task.get("gate_retries") or 0) + 1
+            max_retries = task.get("max_gate_retries") or 3
+            await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title="Review failed",
+                content=f"Review subtask did not complete (attempt {retries}/{max_retries}).\n\n"
+                        f"Error: {subtask.get('error', 'process killed or crashed')}",
+            )
+            if retries < max_retries:
+                log.info(f"Retrying review for {task_id} (attempt {retries + 1})")
+                await _dispatch_review(task_id, await db.get_project(task["project_id"]), task)
+            else:
+                await db.update_task(task_id, status="needs-review")
+                await notify.task_needs_review(task_id, reason="Review failed after max retries.")
     except Exception as e:
         log.error(f"Failed to run review subtask for {task_id}: {e}")
-        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-        await _check_and_dispatch_dependents(task_id)
+        task = await db.get_task(task_id)
+        retries = (task.get("gate_retries") or 0) + 1
+        max_retries = task.get("max_gate_retries") or 3
+        await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
+        if retries < max_retries:
+            try:
+                await _dispatch_review(task_id, await db.get_project(task["project_id"]), task)
+            except Exception:
+                log.exception(f"Review retry also failed for {task_id}")
+                await db.update_task(task_id, status="needs-review")
+        else:
+            await db.update_task(task_id, status="needs-review")
+            await notify.task_needs_review(task_id, reason=f"Review failed: {e}")
 
 
 async def _process_review_result_inline(task_id: str) -> None:
@@ -2076,8 +2107,16 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     dependents = await db.get_dependents(task_id)
     dispatched_any = False
     for dep in dependents:
-        if dep["status"] == "ready":
+        if dep["status"] == "ready" and not dep.get("held"):
             log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
+        elif dep["status"] == "ready" and dep.get("held"):
+            log.info(f"Skipping held task {dep['id']} — requires manual approval")
+            await db.post_task_message(
+                task_id=dep["id"], author="dispatcher", type="status",
+                title="Ready but held",
+                content="Parent task completed and gate passed. This task is held — approve to dispatch.",
+            )
+            continue
             try:
                 await dispatch_task(
                     project_id=dep["project_id"],
@@ -2611,11 +2650,15 @@ async def dispatch_task(
     auto_merge: bool = False,
     auto_release_worktree: bool = True,
     base_branch: str | None = None,
+    held: bool = False,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK.
 
     If concurrency limit is reached, the task is queued (FIFO) and dispatched
     automatically when a slot opens up.
+
+    If held=True, the task is created but NOT dispatched — it stays in 'ready'
+    status until manually approved.
     """
 
     # Validate mutual exclusion: auto_merge and auto_pr
@@ -2679,6 +2722,19 @@ async def dispatch_task(
             task["depends_on"] = depends_on
     elif task["status"] == "working":
         raise RuntimeError(f"Task '{task_id}' is already running")
+
+    # If held, set the flag and return without dispatching
+    if held and not task.get("held"):
+        await db.update_task(task_id, held=True)
+        task["held"] = True
+    if task.get("held") and not is_resume:
+        log.info(f"Task {task_id} is held — requires approval before dispatch")
+        return {
+            "task_id": task_id, "status": "ready",
+            "held": True,
+            "branch": task.get("branch"),
+            "queued": False,
+        }
 
     # Check concurrency limit — queue if full (FIFO)
     active = await db.count_active_tasks()
@@ -2811,15 +2867,29 @@ async def resume_task(task_id: str) -> dict:
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    resumable = ("needs-review", "turns-exhausted", "completed", "merged")
+    resumable = ("needs-review", "turns-exhausted", "completed", "merged", "rate-limited")
     if task["status"] not in resumable:
         raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
 
-    # If gate already passed, re-trigger post-gate pipeline instead of CC session
-    if task.get("gate_passed_at"):
+    # If gate already passed AND task is in a terminal state (not needs-review),
+    # re-trigger post-gate pipeline instead of launching a new CC session.
+    # Exceptions: needs-review or pr_status=conflict mean CC still has work to do.
+    if (task.get("gate_passed_at")
+            and task["status"] in ("completed", "merged")
+            and task.get("pr_status") != "conflict"):
         log.info(f"Resume {task_id}: gate already passed, re-triggering post-gate pipeline")
         await _check_and_dispatch_dependents(task_id)
         return await db.get_task(task_id)
+
+    # Clear stale pr_status and reset recovery_count — manual resume means
+    # the human intervened, so auto-recovery should have fresh budget if it crashes again
+    updates = {}
+    if task.get("pr_status"):
+        updates["pr_status"] = None
+    if task.get("recovery_count"):
+        updates["recovery_count"] = 0
+    if updates:
+        await db.update_task(task_id, **updates)
 
     return await dispatch_task(
         project_id=task["project_id"],
@@ -2988,6 +3058,40 @@ async def cancel_chain(task_id: str) -> dict:
 
     await _cancel_recursive(task_id)
     return {"cancelled": cancelled}
+
+
+async def approve_task(task_id: str) -> dict:
+    """Release a held task for dispatch."""
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if not task.get("held"):
+        raise ValueError(f"Task '{task_id}' is not held")
+
+    await db.update_task(task_id, held=False)
+    log.info(f"Task {task_id} approved — releasing hold")
+
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Approved",
+        content="Task hold released. Dispatching.",
+    )
+
+    # Dispatch if the task is ready (dependencies met)
+    if task["status"] == "ready":
+        if task.get("depends_on"):
+            parent = await db.get_task(task["depends_on"])
+            if parent and not parent.get("gate_passed_at"):
+                return {"task_id": task_id, "status": "ready", "held": False,
+                        "waiting_on": task["depends_on"]}
+
+        return await dispatch_task(
+            project_id=task["project_id"],
+            task_id=task_id,
+            goal=task["goal"],
+        )
+
+    return await db.get_task(task_id)
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:
