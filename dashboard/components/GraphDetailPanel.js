@@ -177,6 +177,26 @@ function BlockersSection({ task, allTasks }) {
     `;
 }
 
+// ── Held task notice ─────────────────────────────────────────
+function HeldSection({ task, allTasks }) {
+    if (!task.held) return null;
+    const parent = allTasks && task.depends_on && allTasks.find(t => t.id === task.depends_on);
+    const isAlsoBlocked = parent && (
+        !['completed', 'merged'].includes(parent.status) ||
+        (parent.gate_status && parent.gate_status !== 'passed')
+    );
+    const parentShortId = parent ? parent.id.split('/').pop() : '';
+    return html`
+        <div class="bg-yellow-900/20 border border-yellow-600/30 rounded p-3 mb-3">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="text-yellow-400 font-medium text-sm">\uD83D\uDD12 HELD</span>
+                ${isAlsoBlocked ? html`<span class="text-slate-400 text-xs">\u2014 waiting on <span class="font-mono text-slate-300">${parentShortId}</span></span>` : null}
+            </div>
+            <p class="text-xs text-slate-400">This task is held. It won't auto-dispatch when dependencies complete. Approve to release it.</p>
+        </div>
+    `;
+}
+
 // ── Review output section ───────────────────────────────────
 function ReviewSection({ subtasks }) {
     const reviews = (subtasks || []).filter(s => s.type === 'review');
@@ -494,6 +514,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 <${ProofOfLife} task=${task} />
                 <${GatePipeline} task=${task} />
                 <${BlockersSection} task=${task} allTasks=${allTasks} />
+                <${HeldSection} task=${task} allTasks=${allTasks} />
                 <${ReviewSection} subtasks=${task.subtasks} />
                 <${TestSection} subtasks=${task.subtasks} />
                 <${Checklist} task=${task} />
