@@ -226,7 +226,7 @@ function Subtasks({ subtasks }) {
                             </summary>
                             ${sub.result && sub.result.trim() ? html`
                                 <div class="px-4 pb-3 border-t border-slate-700/50 mt-2">
-                                    <div class="prose-dark text-sm max-h-64 overflow-y-auto"
+                                    <div class="prose-dark text-sm"
                                         dangerouslySetInnerHTML=${{ __html: renderMarkdown(sub.result) }}>
                                     </div>
                                 </div>
