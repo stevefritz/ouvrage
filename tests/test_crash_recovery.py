@@ -579,7 +579,7 @@ class TestResumeFailureFallback:
         call_count = {"resume": 0, "retry": 0}
         original_retry = tasks.retry_task
 
-        async def failing_resume(task_id):
+        async def failing_resume(task_id, reset_recovery_count=True):
             call_count["resume"] += 1
             raise RuntimeError("Session expired")
 
