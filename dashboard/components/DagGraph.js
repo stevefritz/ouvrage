@@ -7,7 +7,7 @@ import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorSta
 // ── Default state colors (can be overridden by project config) ──
 export const DEFAULT_STATE_COLORS = {
     ready:          { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Ready' },
-    held:           { bg: '#eab30820', border: '#eab308', text: '#fbbf24', dot: '#eab308', label: '\uD83D\uDD12 Held' },
+    held:           { bg: '#a855f720', border: '#a855f7', text: '#c084fc', dot: '#a855f7', label: '\uD83D\uDD12 Held' },
     blocked:        { bg: '#33415520', border: '#475569', text: '#94a3b8', dot: '#475569', label: 'Blocked' },
     working:        { bg: '#f59e0b20', border: '#f59e0b', text: '#fbbf24', dot: '#f59e0b', label: 'Working', pulse: true },
     testing:        { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Testing', pulse: true },

@@ -97,6 +97,12 @@ const CONFIRM_CONFIGS = {
         confirmLabel: 'Release Worktree',
         btnClass: 'confirm-btn-primary',
     },
+    approve: {
+        title: 'Approve & Dispatch',
+        message: (taskId) => `Release the hold on "${taskId}" and dispatch it immediately? This task was held as a human checkpoint.`,
+        confirmLabel: 'Approve & Dispatch',
+        btnClass: 'confirm-btn-primary',
+    },
 };
 
 export function ConfirmDialog({ action, taskId, onConfirm, onCancel }) {
