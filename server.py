@@ -1793,22 +1793,18 @@ _FETCH_TTL: float = 60.0  # seconds
 
 
 async def _git_run(args: list[str], git_dir: str, timeout: float = 30.0) -> tuple[bytes, int]:
-    """Run a git command with -C git_dir. Returns (stdout_bytes, returncode).
+    """Run a git command with -C git_dir as the worker user. Returns (stdout_bytes, returncode).
+
+    Runs as the worker user (via tasks._run_as_worker) so that bare repos owned by that user
+    pass git's safe-directory ownership check.
 
     Raises asyncio.TimeoutError if the command exceeds timeout seconds.
     """
-    proc = await asyncio.create_subprocess_exec(
-        "git", "-C", git_dir, *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    stdout, _, rc = await asyncio.wait_for(
+        tasks._run_as_worker("git", "-C", git_dir, *args),
+        timeout=timeout,
     )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.communicate()
-        raise
-    return stdout, proc.returncode
+    return stdout, rc
 
 
 async def _resolve_git_ref(task: dict, project: dict) -> tuple[str, str] | None:
@@ -1831,8 +1827,9 @@ async def _resolve_git_ref(task: dict, project: dict) -> tuple[str, str] | None:
     if branch:
         now = time.monotonic()
         if now - _fetch_cache.get(bare_path, 0.0) > _FETCH_TTL:
-            await _git_run(["fetch", "origin", "--prune", "-q"], bare_path)
-            _fetch_cache[bare_path] = now
+            _, fetch_rc = await _git_run(["fetch", "origin", "--prune", "-q"], bare_path)
+            if fetch_rc == 0:
+                _fetch_cache[bare_path] = now
         _, rc = await _git_run(
             ["rev-parse", "--verify", f"origin/{branch}"],
             bare_path,
