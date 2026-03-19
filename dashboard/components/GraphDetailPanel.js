@@ -210,7 +210,7 @@ function ReviewSection({ subtasks }) {
                 </span>
             </summary>
             ${latest.result ? html`
-                <div class="px-3 pb-3 border-t border-slate-700/50 prose-dark text-sm max-h-48 overflow-y-auto"
+                <div class="px-3 pb-3 border-t border-slate-700/50 prose-dark text-sm"
                     dangerouslySetInnerHTML=${{ __html: renderMarkdown(latest.result) }}></div>
             ` : null}
         </details>
@@ -241,7 +241,7 @@ function TestSection({ subtasks }) {
             </summary>
             ${latest.result ? html`
                 <div class="px-3 pb-3 border-t border-slate-700/50">
-                    <pre class="text-xs text-slate-400 whitespace-pre-wrap max-h-48 overflow-y-auto">${latest.result}</pre>
+                    <pre class="text-xs text-slate-400 whitespace-pre-wrap">${latest.result}</pre>
                 </div>
             ` : null}
         </details>
@@ -277,7 +277,7 @@ function PlanSection({ messages }) {
             <summary class="px-3 py-2 text-sm text-slate-300 cursor-pointer hover:bg-slate-800">
                 Implementation Plan
             </summary>
-            <div class="px-3 pb-3 prose-dark text-sm border-t border-slate-700/50 max-h-64 overflow-y-auto"
+            <div class="px-3 pb-3 prose-dark text-sm border-t border-slate-700/50"
                 dangerouslySetInnerHTML=${{ __html: renderMarkdown(planMsg.content) }}></div>
         </details>
     `;
@@ -488,7 +488,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                 <summary class="text-sm font-medium text-slate-400 cursor-pointer hover:text-slate-300 mb-2">
                                     Messages (${nonPlanCount})
                                 </summary>
-                                <div class="max-h-96 overflow-y-auto">
+                                <div>
                                     <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="panel-msg" />
                                 </div>
                                 <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onRefresh=${loadTask} />
@@ -514,7 +514,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                                             ${isLast && task.gate_status === 'reviewing' ? html`<span class="text-pink-400 status-dot-working">\uD83D\uDC41 Claude is Reviewing</span>` : null}
                                             <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
                                         </summary>
-                                        <div class="px-2 pb-2 max-h-64 overflow-y-auto">
+                                        <div class="px-2 pb-2">
                                             <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
                                         </div>
                                     </details>`;
