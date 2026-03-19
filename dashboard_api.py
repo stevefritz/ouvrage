@@ -360,6 +360,20 @@ async def _handle_get_task(send, task_id):
     # Add review_subtask from subtasks table
     task["review_subtask"] = await _get_review_subtask(task_id)
 
+    # Add resolved config (inheritance-resolved: task → component → project → defaults)
+    try:
+        task["resolved_config"] = await db.resolve_config(task_id)
+    except Exception:
+        pass
+
+    # Add project default_branch for git flow display
+    try:
+        project = await db.get_project(task["project_id"])
+        if project:
+            task["project_default_branch"] = project.get("default_branch", "main")
+    except Exception:
+        pass
+
     await _json_response(send, task)
 
 
