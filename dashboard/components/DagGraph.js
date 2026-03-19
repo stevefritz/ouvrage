@@ -7,7 +7,7 @@ import { html, relativeTime, StatusBadge, GateBadge, Tip, LoadingState, ErrorSta
 // ── Default state colors (can be overridden by project config) ──
 export const DEFAULT_STATE_COLORS = {
     ready:          { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Ready' },
-    held:           { bg: '#a855f720', border: '#a855f7', text: '#c084fc', dot: '#a855f7', label: '\uD83D\uDD12 Held' },
+    held:           { bg: '#eab30820', border: '#eab308', text: '#fde047', dot: '#eab308', label: '\uD83D\uDD12 Held' },
     blocked:        { bg: '#33415520', border: '#475569', text: '#94a3b8', dot: '#475569', label: 'Blocked' },
     working:        { bg: '#f59e0b20', border: '#f59e0b', text: '#fbbf24', dot: '#f59e0b', label: 'Working', pulse: true },
     testing:        { bg: '#3b82f620', border: '#3b82f6', text: '#93c5fd', dot: '#3b82f6', label: 'Testing', pulse: true },
@@ -105,7 +105,7 @@ export function computeLayout(tasks, stateColors) {
 
     // Determine effective status
     const effectiveStatus = (t) => {
-        if (t.held) return 'held';
+        if (t.held && t.status === 'ready') return 'held';
         if (t.depends_on && taskMap.has(t.depends_on)) {
             const parent = taskMap.get(t.depends_on);
             if (!['completed', 'merged'].includes(parent.status) || (parent.gate_status && parent.gate_status !== 'passed')) {

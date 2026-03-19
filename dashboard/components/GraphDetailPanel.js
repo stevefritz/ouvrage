@@ -181,7 +181,10 @@ function BlockersSection({ task, allTasks }) {
 function HeldSection({ task, allTasks }) {
     if (!task.held) return null;
     const parent = allTasks && task.depends_on && allTasks.find(t => t.id === task.depends_on);
-    const isAlsoBlocked = parent && !['completed', 'merged'].includes(parent.status);
+    const isAlsoBlocked = parent && (
+        !['completed', 'merged'].includes(parent.status) ||
+        (parent.gate_status && parent.gate_status !== 'passed')
+    );
     const parentShortId = parent ? parent.id.split('/').pop() : '';
     return html`
         <div class="bg-yellow-900/20 border border-yellow-600/30 rounded p-3 mb-3">
