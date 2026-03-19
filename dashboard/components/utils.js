@@ -97,6 +97,12 @@ const CONFIRM_CONFIGS = {
         confirmLabel: 'Release Worktree',
         btnClass: 'confirm-btn-primary',
     },
+    approve: {
+        title: 'Approve & Dispatch',
+        message: (taskId) => `Release the hold on "${taskId}" and dispatch it immediately? This task was held as a human checkpoint.`,
+        confirmLabel: 'Approve & Dispatch',
+        btnClass: 'confirm-btn-primary',
+    },
 };
 
 export function ConfirmDialog({ action, taskId, onConfirm, onCancel }) {
@@ -319,6 +325,7 @@ export function ClaudeChatLink({ url }) {
 
 // ── Action Buttons with tooltips ─────────────────────────────
 export const BUTTON_TOOLTIPS = {
+    approve: 'Approve this held task — releases the hold and dispatches it immediately.',
     dispatch: 'Start this task — creates worktree and launches CC session.',
     cancel: 'Kill the running CC process. Code changes are preserved in the worktree.',
     retry: 'Start a fresh CC session. Previous review feedback will be injected.',
