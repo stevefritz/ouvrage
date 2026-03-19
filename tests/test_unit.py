@@ -1305,3 +1305,113 @@ class TestFetchCache:
 
         assert result["files"] == ["README.md"]
         assert self.mock_git_run.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# _resolve_git_ref — direct unit tests for the resolution logic
+# ---------------------------------------------------------------------------
+
+class TestResolveGitRef:
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        import server as _server
+        _server._fetch_cache.clear()
+
+        self.mock_git_run = AsyncMock()
+        self.mock_isdir = patch("os.path.isdir").start()
+        patch("server._git_run", self.mock_git_run).start()
+        yield
+        patch.stopall()
+
+    def _make_task(self, worktree_path=None, branch="feat/my-feature"):
+        return {"worktree_path": worktree_path, "branch": branch}
+
+    def _make_project(self):
+        return {"working_dir": "/work/proj"}
+
+    async def test_active_worktree_returns_head(self):
+        """Priority 1: active worktree on disk → (worktree_path, HEAD)."""
+        from server import _resolve_git_ref
+        self.mock_isdir.return_value = True
+        task = self._make_task(worktree_path="/work/proj/worktrees/my-task")
+
+        result = await _resolve_git_ref(task, self._make_project())
+
+        assert result == ("/work/proj/worktrees/my-task", "HEAD")
+        self.mock_git_run.assert_not_called()
+
+    async def test_branch_on_origin_returns_bare_ref(self):
+        """Priority 2: no worktree, branch exists on origin → (bare_path, origin/branch)."""
+        from server import _resolve_git_ref
+        self.mock_isdir.return_value = False
+        # fetch succeeds, rev-parse finds branch
+        self.mock_git_run.side_effect = [
+            (b"", 0),          # git fetch origin --prune -q
+            (b"abc123\n", 0),  # git rev-parse --verify origin/feat/my-feature
+        ]
+
+        result = await _resolve_git_ref(
+            self._make_task(worktree_path=None, branch="feat/my-feature"),
+            self._make_project(),
+        )
+
+        assert result == ("/work/proj/.bare", "origin/feat/my-feature")
+
+    async def test_branch_not_on_origin_returns_none(self):
+        """Priority 2 fails: branch not found on origin → None."""
+        from server import _resolve_git_ref
+        self.mock_isdir.return_value = False
+        self.mock_git_run.side_effect = [
+            (b"", 0),   # fetch ok
+            (b"", 128), # rev-parse fails — branch not found
+        ]
+
+        result = await _resolve_git_ref(
+            self._make_task(worktree_path=None, branch="feat/gone"),
+            self._make_project(),
+        )
+
+        assert result is None
+
+    async def test_no_branch_returns_none(self):
+        """No worktree and no branch → None without any git calls."""
+        from server import _resolve_git_ref
+        self.mock_isdir.return_value = False
+
+        result = await _resolve_git_ref(
+            self._make_task(worktree_path=None, branch=None),
+            self._make_project(),
+        )
+
+        assert result is None
+        self.mock_git_run.assert_not_called()
+
+    async def test_fetch_failure_does_not_poison_cache(self):
+        """If fetch fails, the cache entry must NOT be set so the next call retries."""
+        import time
+        import server as _server
+        from server import _resolve_git_ref
+
+        self.mock_isdir.return_value = False
+        bare_path = "/work/proj/.bare"
+
+        # First call: fetch fails, rev-parse also fails
+        self.mock_git_run.side_effect = [
+            (b"", 1),   # fetch fails
+            (b"", 128), # rev-parse fails
+            # Second call: fetch succeeds this time, rev-parse succeeds
+            (b"", 0),
+            (b"abc123\n", 0),
+        ]
+
+        task = self._make_task(worktree_path=None, branch="feat/my-feature")
+        project = self._make_project()
+
+        result1 = await _resolve_git_ref(task, project)
+        # Cache should NOT have been set — fetch failed
+        assert bare_path not in _server._fetch_cache
+
+        result2 = await _resolve_git_ref(task, project)
+        assert result2 == (bare_path, "origin/feat/my-feature")
+        # Cache should now be set after successful fetch
+        assert bare_path in _server._fetch_cache
