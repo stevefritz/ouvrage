@@ -756,11 +756,21 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         "-b", branch, worktree_path, base_branch,
     )
     if rc != 0:
-        # Branch might already exist, try without -b
-        stdout, stderr, rc = await _run_as_worker(
-            "git", "-C", bare_path, "worktree", "add",
-            worktree_path, branch,
-        )
+        error_msg = stderr.decode()
+        # Stale local branch ref — delete it and retry with -b (fresh branch from base)
+        if "already exists" in error_msg:
+            log.info(f"Deleting stale branch ref '{branch}' and retrying")
+            await _run_as_worker("git", "-C", bare_path, "branch", "-D", branch)
+            stdout, stderr, rc = await _run_as_worker(
+                "git", "-C", bare_path, "worktree", "add",
+                "-b", branch, worktree_path, base_branch,
+            )
+        # Branch exists on remote but not as stale ref — checkout existing
+        if rc != 0:
+            stdout, stderr, rc = await _run_as_worker(
+                "git", "-C", bare_path, "worktree", "add",
+                worktree_path, branch,
+            )
         if rc != 0:
             error_msg = stderr.decode()
             # Check if branch is already checked out by another worktree
