@@ -268,6 +268,24 @@ function Checklist({ task }) {
     `;
 }
 
+// ── Spec section ─────────────────────────────────────────────
+function SpecSection({ messages }) {
+    const specMsg = (messages || []).find(m => m.type === 'spec');
+    if (!specMsg) return null;
+    return html`
+        <details class="bg-blue-950/30 border border-blue-800/50 rounded mb-3" open>
+            <summary class="px-3 py-2 text-sm cursor-pointer hover:bg-blue-950/50">
+                <span class="inline-flex items-center gap-2">
+                    <span class="text-blue-400 font-medium">Spec</span>
+                    ${specMsg.title ? html`<span class="text-slate-500 text-xs">${specMsg.title}</span>` : null}
+                </span>
+            </summary>
+            <div class="px-3 pb-3 prose-dark text-sm border-t border-blue-800/30"
+                dangerouslySetInnerHTML=${{ __html: renderMarkdown(specMsg.content) }}></div>
+        </details>
+    `;
+}
+
 // ── Plan section ────────────────────────────────────────────
 function PlanSection({ messages }) {
     const planMsg = [...(messages || [])].reverse().find(m => m.type === 'plan');
@@ -465,6 +483,9 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                     ${task.project_id ? html`<span class="px-2 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-400">${task.project_id}</span>` : null}
                     ${(task.tags || []).map(t => html`<span key=${t} class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}
                 </div>
+
+                <!-- Spec — always visible, above attempt timeline -->
+                <${SpecSection} messages=${task.messages} />
 
                 <!-- Worktree indicator -->
                 <${WorktreeIndicator} task=${task} />
