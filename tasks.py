@@ -396,7 +396,7 @@ async def _recover_with_resume(task_id: str, task: dict) -> None:
 
     # Task is already in needs-review status (set at start of recovery)
     try:
-        await resume_task(task_id)
+        await resume_task(task_id, reset_recovery_count=False)
         log.info(f"Recovery: resumed {task_id} with session {task.get('session_id')}")
     except Exception as e:
         log.warning(f"Recovery: resume failed for {task_id}: {e}, falling back to retry")
@@ -2850,7 +2850,7 @@ async def dispatch_task(
     }
 
 
-async def resume_task(task_id: str) -> dict:
+async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
     """Resume a paused task with the same session ID.
 
     If worktree was auto-released, it will be re-attached automatically
@@ -2858,6 +2858,9 @@ async def resume_task(task_id: str) -> dict:
 
     If the task already passed the gate, re-triggers the post-gate pipeline
     (auto-merge, chain advancement) instead of launching a new CC session.
+
+    reset_recovery_count: set False when called from auto-recovery so the
+    recovery_count increment is preserved.
     """
     task = await db.get_task(task_id)
     if not task:
@@ -2876,12 +2879,12 @@ async def resume_task(task_id: str) -> dict:
         await _check_and_dispatch_dependents(task_id)
         return await db.get_task(task_id)
 
-    # Clear stale pr_status and reset recovery_count — manual resume means
-    # the human intervened, so auto-recovery should have fresh budget if it crashes again
+    # Clear stale pr_status; optionally reset recovery_count (skip for auto-recovery
+    # so the increment from recover_orphaned_tasks is preserved for flap detection)
     updates = {}
     if task.get("pr_status"):
         updates["pr_status"] = None
-    if task.get("recovery_count"):
+    if reset_recovery_count and task.get("recovery_count"):
         updates["recovery_count"] = 0
     if updates:
         await db.update_task(task_id, **updates)
