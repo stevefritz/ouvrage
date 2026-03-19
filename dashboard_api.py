@@ -1,6 +1,7 @@
 """Dashboard REST API — JSON endpoints for the Switchboard SPA."""
 
 import json
+import logging
 import os
 import time
 from urllib.parse import parse_qs, unquote
@@ -9,6 +10,7 @@ import database as db
 import tasks
 import web_push
 
+logger = logging.getLogger(__name__)
 _start_time = time.monotonic()
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
 
@@ -364,7 +366,7 @@ async def _handle_get_task(send, task_id):
     try:
         task["resolved_config"] = await db.resolve_config(task_id)
     except Exception:
-        pass
+        logger.debug("Failed to resolve config for task %s", task_id, exc_info=True)
 
     # Add project default_branch for git flow display
     try:
@@ -372,7 +374,7 @@ async def _handle_get_task(send, task_id):
         if project:
             task["project_default_branch"] = project.get("default_branch", "main")
     except Exception:
-        pass
+        logger.debug("Failed to get project default_branch for task %s", task_id, exc_info=True)
 
     await _json_response(send, task)
 

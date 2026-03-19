@@ -3,40 +3,7 @@ import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
-
-// ── Git Flow Summary ─────────────────────────────────────────
-function GitFlowSummary({ task }) {
-    const rc = task.resolved_config;
-    if (!rc) return null;
-
-    const defaultBranch = task.project_default_branch || 'main';
-    const baseBranch = rc.base_branch || defaultBranch;
-    const mergeTarget = task.branch_target || baseBranch;
-    const autoMerge = rc.auto_merge;
-    const autoPr = rc.auto_pr;
-    const isIntegration = mergeTarget !== defaultBranch;
-
-    let flowSuffix, whenDone;
-    if (autoMerge) {
-        flowSuffix = `\u2192 ${mergeTarget} (auto-merge)`;
-        whenDone = isIntegration
-            ? `code lands on ${mergeTarget} automatically. You'll need to merge ${mergeTarget} \u2192 ${defaultBranch} separately.`
-            : `code lands on ${mergeTarget} automatically. Nothing for you to do.`;
-    } else if (autoPr) {
-        flowSuffix = `\u2192 ${mergeTarget} (auto-PR)`;
-        whenDone = `a PR is opened to ${mergeTarget}. Review and merge it on GitHub.`;
-    } else {
-        flowSuffix = `\u2192 manual`;
-        whenDone = `branch is pushed to origin. Open a PR or merge manually.`;
-    }
-
-    return html`
-        <div class="text-sm text-slate-400 mt-2 space-y-0.5">
-            <div>\uD83D\uDD00 branched from <span class="font-mono">${baseBranch}</span> ${flowSuffix}</div>
-            <div class="text-slate-500">When done: ${whenDone}</div>
-        </div>
-    `;
-}
+import { GitFlowSummary } from './GitFlowSummary.js';
 
 // ── Review Verdict Badge ─────────────────────────────────────
 function ReviewVerdictBadge({ subtasks }) {

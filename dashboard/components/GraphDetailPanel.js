@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel, BUTTON_TOOLTIPS } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+import { GitFlowSummary } from './GitFlowSummary.js';
 
 // ── Chain Visualization ─────────────────────────────────────
 function ChainVisualization({ taskId, onSelectTask }) {
@@ -268,39 +269,6 @@ function Checklist({ task }) {
     `;
 }
 
-// ── Git Flow Summary ─────────────────────────────────────────
-function GitFlowSummary({ task }) {
-    const rc = task.resolved_config;
-    if (!rc) return null;
-
-    const defaultBranch = task.project_default_branch || 'main';
-    const baseBranch = rc.base_branch || defaultBranch;
-    const mergeTarget = task.branch_target || baseBranch;
-    const autoMerge = rc.auto_merge;
-    const autoPr = rc.auto_pr;
-    const isIntegration = mergeTarget !== defaultBranch;
-
-    let flowSuffix, whenDone;
-    if (autoMerge) {
-        flowSuffix = `\u2192 ${mergeTarget} (auto-merge)`;
-        whenDone = isIntegration
-            ? `code lands on ${mergeTarget} automatically. You'll need to merge ${mergeTarget} \u2192 ${defaultBranch} separately.`
-            : `code lands on ${mergeTarget} automatically. Nothing for you to do.`;
-    } else if (autoPr) {
-        flowSuffix = `\u2192 ${mergeTarget} (auto-PR)`;
-        whenDone = `a PR is opened to ${mergeTarget}. Review and merge it on GitHub.`;
-    } else {
-        flowSuffix = `\u2192 manual`;
-        whenDone = `branch is pushed to origin. Open a PR or merge manually.`;
-    }
-
-    return html`
-        <div class="text-xs text-slate-500 mt-1 mb-2 space-y-0.5">
-            <div>\uD83D\uDD00 branched from <span class="font-mono text-slate-400">${baseBranch}</span> ${flowSuffix}</div>
-            <div>When done: ${whenDone}</div>
-        </div>
-    `;
-}
 
 // ── Spec section ─────────────────────────────────────────────
 function SpecSection({ messages }) {
@@ -494,7 +462,7 @@ export function GraphDetailPanel({ taskId, allTasks, jiraBaseUrl, onClose, onAct
                 <!-- Goal & metadata -->
                 <p class="text-sm text-slate-300 mb-2">${task.goal}</p>
                 ${task.branch ? html`<div class="text-xs text-slate-500 mb-1">Branch: <span class="font-mono text-slate-400">${task.branch}</span></div>` : null}
-                <${GitFlowSummary} task=${task} />
+                <${GitFlowSummary} task=${task} compact=${true} />
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-3">
                     ${task.model ? html`<span>Model: <span class="text-slate-400">${task.model}</span></span>` : null}
                     <${Tip} text="Total API cost across all dispatches">
