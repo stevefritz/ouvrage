@@ -858,3 +858,292 @@ class TestWebPushDispatch:
     async def test_is_enabled_true_with_keys(self):
         import web_push
         assert web_push.is_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# _is_binary — binary file detection
+# ---------------------------------------------------------------------------
+
+class TestIsBinary:
+    def setup_method(self):
+        from server import _is_binary
+        self.fn = _is_binary
+
+    def test_text_is_not_binary(self):
+        assert self.fn(b"hello world\nsome text\n") is False
+
+    def test_null_byte_is_binary(self):
+        assert self.fn(b"some\x00data") is True
+
+    def test_empty_is_not_binary(self):
+        assert self.fn(b"") is False
+
+    def test_null_beyond_8kb_ignored(self):
+        # Null byte after 8192 bytes should NOT trigger detection
+        data = b"a" * 8192 + b"\x00"
+        assert self.fn(data) is False
+
+    def test_null_at_8kb_boundary(self):
+        # Null byte at exactly position 8191 (within 8KB) triggers detection
+        data = b"a" * 8191 + b"\x00"
+        assert self.fn(data) is True
+
+
+# ---------------------------------------------------------------------------
+# _validate_path — path traversal prevention
+# ---------------------------------------------------------------------------
+
+class TestValidatePath:
+    def setup_method(self):
+        from server import _validate_path
+        self.fn = _validate_path
+
+    def test_normal_path_ok(self):
+        assert self.fn("src/server.py") is None
+
+    def test_root_ok(self):
+        assert self.fn("") is None
+
+    def test_dotdot_rejected(self):
+        assert self.fn("../etc/passwd") is not None
+
+    def test_dotdot_in_middle_rejected(self):
+        assert self.fn("src/../etc/passwd") is not None
+
+    def test_single_dot_ok(self):
+        # "." is a valid path component, not ".."
+        assert self.fn("./src") is None
+
+    def test_filename_with_dots_ok(self):
+        assert self.fn("src/server.py") is None
+
+
+# ---------------------------------------------------------------------------
+# _handle_list_task_files — git ls-tree integration
+# ---------------------------------------------------------------------------
+
+class TestListTaskFiles:
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_get_task = AsyncMock()
+        self.mock_get_project = AsyncMock()
+        self.mock_git_run = AsyncMock()
+        self.mock_isdir = patch("os.path.isdir").start()
+
+        patches = [
+            patch("server.db.get_task", self.mock_get_task),
+            patch("server.db.get_project", self.mock_get_project),
+            patch("server._git_run", self.mock_git_run),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        patch.stopall()
+
+    def _make_task(self, worktree_path=None, branch="feat/my-feature", status="working"):
+        return {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": worktree_path,
+            "branch": branch,
+            "status": status,
+        }
+
+    def _make_project(self):
+        return {"id": "proj", "working_dir": "/work/proj"}
+
+    async def test_active_worktree_uses_head(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        self.mock_git_run.return_value = (b"README.md\nserver.py\n", 0)
+
+        result = await _handle_list_task_files({"task_id": "proj/my-task"})
+
+        assert result["files"] == ["README.md", "server.py"]
+        assert result["ref_used"] == "HEAD"
+        assert result["git_dir"] == "/work/proj/my-task"
+
+    async def test_released_task_uses_origin_branch(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = self._make_task(worktree_path=None, branch="feat/released", status="completed")
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = False
+
+        # fetch returns ok, rev-parse returns ok, ls-tree returns ok
+        self.mock_git_run.side_effect = [
+            (b"", 0),   # git fetch origin --prune
+            (b"abc123\n", 0),  # git rev-parse --verify origin/feat/released
+            (b"README.md\n", 0),  # git ls-tree
+        ]
+
+        result = await _handle_list_task_files({"task_id": "proj/my-task"})
+
+        assert result["ref_used"] == "origin/feat/released"
+        assert result["files"] == ["README.md"]
+
+    async def test_inaccessible_task_returns_error(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = self._make_task(worktree_path=None, branch=None, status="cancelled")
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = False
+
+        result = await _handle_list_task_files({"task_id": "proj/my-task"})
+
+        assert "error" in result
+        assert "not accessible" in result["error"]
+
+    async def test_task_not_found(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = None
+
+        result = await _handle_list_task_files({"task_id": "proj/nonexistent"})
+
+        assert "error" in result
+        assert "not found" in result["error"]
+
+    async def test_path_traversal_rejected(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+
+        result = await _handle_list_task_files({"task_id": "proj/my-task", "path": "../etc"})
+
+        assert "error" in result
+        assert ".." in result["error"]
+
+    async def test_recursive_flag_passed(self):
+        from server import _handle_list_task_files
+        self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        self.mock_git_run.return_value = (b"src/a.py\nsrc/b.py\n", 0)
+
+        result = await _handle_list_task_files({
+            "task_id": "proj/my-task",
+            "recursive": True,
+        })
+
+        assert result["recursive"] is True
+        # Verify -r was in the git command
+        call_args = self.mock_git_run.call_args
+        assert "-r" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# _handle_get_task_file — git show integration
+# ---------------------------------------------------------------------------
+
+class TestGetTaskFile:
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_get_task = AsyncMock()
+        self.mock_get_project = AsyncMock()
+        self.mock_git_run = AsyncMock()
+        self.mock_isdir = patch("os.path.isdir").start()
+
+        patches = [
+            patch("server.db.get_task", self.mock_get_task),
+            patch("server.db.get_project", self.mock_get_project),
+            patch("server._git_run", self.mock_git_run),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        patch.stopall()
+
+    def _make_task(self, worktree_path="/work/proj/my-task", branch="feat/x"):
+        return {
+            "id": "proj/my-task",
+            "project_id": "proj",
+            "worktree_path": worktree_path,
+            "branch": branch,
+            "status": "working",
+        }
+
+    def _make_project(self):
+        return {"id": "proj", "working_dir": "/work/proj"}
+
+    async def test_returns_text_content(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        self.mock_git_run.return_value = (b"def hello():\n    return 'world'\n", 0)
+
+        result = await _handle_get_task_file({"task_id": "proj/my-task", "path": "src/hello.py"})
+
+        assert result["content"] == "def hello():\n    return 'world'\n"
+        assert result["binary"] is False
+        assert result["truncated"] is False
+
+    async def test_binary_file_refused(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        self.mock_git_run.return_value = (b"PNG\x00binary\x00data", 0)
+
+        result = await _handle_get_task_file({"task_id": "proj/my-task", "path": "logo.png"})
+
+        assert "error" in result
+        assert result["binary"] is True
+
+    async def test_large_file_truncated(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        content = b"x" * 2000
+        self.mock_git_run.return_value = (content, 0)
+
+        result = await _handle_get_task_file({
+            "task_id": "proj/my-task",
+            "path": "big.txt",
+            "max_bytes": 100,
+        })
+
+        assert result["truncated"] is True
+        assert len(result["content"]) == 100
+        assert result["size"] == 2000
+
+    async def test_file_not_found(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = True
+        self.mock_git_run.return_value = (b"", 128)
+
+        result = await _handle_get_task_file({"task_id": "proj/my-task", "path": "nonexistent.py"})
+
+        assert "error" in result
+        assert "not found" in result["error"]
+
+    async def test_path_traversal_rejected(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_project.return_value = self._make_project()
+
+        result = await _handle_get_task_file({
+            "task_id": "proj/my-task",
+            "path": "../../etc/shadow",
+        })
+
+        assert "error" in result
+        assert ".." in result["error"]
+
+    async def test_inaccessible_task(self):
+        from server import _handle_get_task_file
+        self.mock_get_task.return_value = {
+            "id": "proj/my-task", "project_id": "proj",
+            "worktree_path": None, "branch": None, "status": "cancelled",
+        }
+        self.mock_get_project.return_value = self._make_project()
+        self.mock_isdir.return_value = False
+
+        result = await _handle_get_task_file({"task_id": "proj/my-task", "path": "foo.py"})
+
+        assert "error" in result
+        assert "not accessible" in result["error"]
