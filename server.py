@@ -313,7 +313,7 @@ TASK_TOOLS = [
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
                 "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
                 "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
-                "held": {"type": "boolean", "description": "Create task but don't dispatch — requires manual approval first. Use for chain checkpoints. Default: false", "default": False},
+                "held": {"type": "boolean", "description": "Create task but don't dispatch — requires manual approval first. Use for chain checkpoints. IMPORTANT: If the spec says to hold/wait/pause before dispatching, you MUST set held=true — the spec text alone does nothing. Default: false", "default": False},
             },
             "required": ["project_id", "id", "goal"],
         },

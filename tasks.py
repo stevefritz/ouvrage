@@ -2719,6 +2719,11 @@ async def dispatch_task(
                     "branch": task["branch"],
                     "queued": False,
                 }
+    elif task["status"] == "cancelled":
+        raise ValueError(
+            f"Task '{task_id}' was previously cancelled. Use a new task ID, "
+            f"or use retry_task to explicitly revive it."
+        )
     elif task["status"] in ("needs-review", "turns-exhausted", "completed", "merged"):
         is_resume = True
         # Update depends_on if caller provided a new value (fixes stale prefix issue)
