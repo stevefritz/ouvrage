@@ -366,6 +366,99 @@ class TestCheckAndDispatchDependents:
 
 
 # ---------------------------------------------------------------------------
+# _maybe_create_pr — auto-PR on chain tail
+# ---------------------------------------------------------------------------
+
+class TestMaybeCreatePr:
+    """_maybe_create_pr must actually fire when task is the chain tail."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_run_as_worker = AsyncMock(return_value=(b"https://github.com/org/repo/pull/42\n", b"", 0))
+        self.mock_add_artifact = AsyncMock()
+        self.mock_post_msg = AsyncMock()
+
+        patches = [
+            patch("tasks._run_as_worker", self.mock_run_as_worker),
+            patch("tasks.db.add_artifact", self.mock_add_artifact),
+            patch("tasks.db.post_task_message", self.mock_post_msg),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    async def test_pr_created_when_worktree_exists(self, db, sample_project):
+        """auto_pr task with worktree should create a PR."""
+        from tasks import _maybe_create_pr
+
+        task = await db.create_task(
+            id="test-project/pr-tail", project_id="test-project",
+            goal="Build the thing", auto_pr=True,
+        )
+        await db.update_task(task["id"],
+            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
+            worktree_path="/tmp/fake-worktree", branch="pr-tail",
+        )
+
+        await _maybe_create_pr("test-project/pr-tail")
+        self.mock_run_as_worker.assert_awaited_once()
+        # Verify gh pr create was called with the right args
+        call_args = self.mock_run_as_worker.await_args
+        assert "gh" in call_args.args
+        assert "pr" in call_args.args
+        assert "create" in call_args.args
+
+    async def test_pr_skipped_when_no_worktree(self, db, sample_project):
+        """auto_pr task WITHOUT worktree should silently skip — this is the bug."""
+        from tasks import _maybe_create_pr
+
+        task = await db.create_task(
+            id="test-project/pr-no-wt", project_id="test-project",
+            goal="Build the thing", auto_pr=True,
+        )
+        await db.update_task(task["id"],
+            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
+            worktree_path=None, branch="pr-no-wt",
+        )
+
+        await _maybe_create_pr("test-project/pr-no-wt")
+        self.mock_run_as_worker.assert_not_awaited()
+
+    async def test_auto_release_before_pr_causes_silent_skip(self, db, sample_project):
+        """Integration: _check_and_dispatch_dependents releases worktree before PR creation.
+
+        This is the actual bug: auto_release clears worktree_path from DB,
+        then _maybe_create_pr sees worktree_path=None and bails.
+        The PR is never created despite auto_pr=true.
+        """
+        from tasks import _check_and_dispatch_dependents
+
+        task = await db.create_task(
+            id="test-project/pr-release-bug", project_id="test-project",
+            goal="Chain tail", auto_pr=True, auto_release_worktree=True,
+        )
+        await db.update_task(task["id"],
+            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
+            worktree_path="/tmp/fake-worktree", branch="pr-release-bug",
+        )
+
+        # Mock release_worktree to simulate what the real one does: clear worktree_path
+        async def fake_release(tid, reason="detach"):
+            await db.update_task(tid, worktree_path=None)
+            return {"released": True}
+
+        with patch("tasks.release_worktree", AsyncMock(side_effect=fake_release)):
+            with patch("tasks._drain_queue", AsyncMock()):
+                with patch("tasks.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
+                    await _check_and_dispatch_dependents("test-project/pr-release-bug")
+
+        # The PR should have been created
+        self.mock_run_as_worker.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # check_stalled_tasks — stall detection and orphan recovery logic
 # ---------------------------------------------------------------------------
 

@@ -2105,10 +2105,6 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
         if not merge_ok:
             return  # Conflict or error — don't advance chain
 
-    # Auto-release worktree after gate pass + merge/PR
-    # (do this after merge but before chain dispatch so the worktree is freed)
-    await _auto_release_worktree(task_id)
-
     dependents = await db.get_dependents(task_id)
     dispatched_any = False
     for dep in dependents:
@@ -2144,6 +2140,9 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     # If no dependents to dispatch, this might be the chain tail — try auto-PR
     if not dispatched_any:
         await _maybe_create_pr(task_id)
+
+    # Auto-release worktree AFTER PR creation so worktree_path is still available
+    await _auto_release_worktree(task_id)
 
     # Drain FIFO queue — a slot may have opened up
     await _drain_queue()
