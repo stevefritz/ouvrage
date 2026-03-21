@@ -330,7 +330,7 @@ export const BUTTON_TOOLTIPS = {
     cancel: 'Kill the running CC process. Code changes are preserved in the worktree.',
     retry: 'Start a fresh CC session. Previous review feedback will be injected.',
     resume: 'Continue the existing CC session with full conversation history.',
-    close: 'Clean up worktree, delete branch, archive task.',
+    close: 'Manually close — no gates or chain actions. Cleans up worktree and branch.',
     'skip-gate': 'Bypass automated tests/review. Mark gate as passed manually.',
     'advance-chain': 'Dispatch the next dependent task in the chain.',
     'cancel-chain': 'Cancel this task and all dependent tasks in the chain.',
@@ -357,6 +357,7 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
     }
     if (task.status === 'failed' || task.status === 'cancelled') {
         btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
+        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30'));
     }
     if (task.status === 'rate-limited') {
         btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
@@ -372,6 +373,7 @@ export function ActionButtons({ task, onAction, stopPropagation }) {
         btns.push(btn('resume', 'Resume session', 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'));
         btns.push(btn('retry', 'Retry (fresh)', 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'));
         btns.push(btn('cancel', 'Cancel', 'bg-red-500/20 text-red-400 hover:bg-red-500/30'));
+        btns.push(btn('close', 'Close', 'bg-slate-500/20 text-slate-400 hover:bg-slate-500/30'));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         btns.push(btn('skip-gate', 'Skip Gate', 'bg-violet-500/20 text-violet-400 hover:bg-violet-500/30'));

@@ -3117,10 +3117,15 @@ async def approve_task(task_id: str) -> dict:
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:
-    """Terminal status + optional worktree cleanup."""
+    """Manually close a task — no gates, no chain advancement, work ends here."""
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
+
+    if task["status"] == "working":
+        raise ValueError(
+            f"Task '{task_id}' is still running. Cancel it first, then close."
+        )
 
     project = await db.get_project(task["project_id"])
 
@@ -3132,11 +3137,22 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
         await cleanup_worktree(project, task, force_delete_branch)
         await db.update_task(
             task_id, status="completed", worktree_path=None,
+            gate_passed_at=None, held=False,
         )
     else:
-        await db.update_task(task_id, status="completed")
+        await db.update_task(
+            task_id, status="completed",
+            gate_passed_at=None, held=False,
+        )
 
-    return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup}
+    # Post status message so it's clear this was a manual close
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Manually closed",
+        content="Task was manually closed — no gates or chain actions triggered.",
+    )
+
+    return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup, "manually_closed": True}
 
 
 
