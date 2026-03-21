@@ -1,8 +1,11 @@
 import asyncio
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
+
+log = logging.getLogger("switchboard.server")
 
 import uvicorn
 from mcp.server import Server
@@ -902,14 +905,45 @@ async def _handle_create_conversation(arguments):
 
 
 async def _handle_post(arguments):
-    return await db.post_message(
-        conversation_id=arguments["conversation_id"],
-        author=arguments["author"],
+    conversation_id = arguments["conversation_id"]
+    author = arguments["author"]
+    msg_type = arguments.get("type")
+
+    result = await db.post_message(
+        conversation_id=conversation_id,
+        author=author,
         content=arguments["content"],
-        type=arguments.get("type"),
+        type=msg_type,
         title=arguments.get("title"),
         pinned=arguments.get("pinned", False),
     )
+
+    # Reactive injection: nudge any working tasks linked to this conversation.
+    # Guard: skip if author is cc-worker (prevent feedback loops) or type is status (reduce noise).
+    if author != "cc-worker" and msg_type != "status":
+        try:
+            task_ids = await db.get_working_tasks_for_conversation(conversation_id)
+            for task_id in task_ids:
+                title = arguments.get("title") or ""
+                content = arguments.get("content", "")
+                preview = title if title else content[:200]
+                nudge = (
+                    f"📌 Linked conversation '{conversation_id}' was just updated.\n"
+                    f"New message from {author}: \"{preview}\"\n"
+                    f"This may be relevant to your current work. "
+                    f"Use read(conversation_id='{conversation_id}', last_n=1) to see the full message if needed."
+                )
+                await db.post_task_message(
+                    task_id=task_id,
+                    author="switchboard",
+                    type="note",
+                    content=nudge,
+                )
+                log.info(f"Injected conversation update for '{conversation_id}' into task {task_id}")
+        except Exception as e:
+            log.warning(f"Reactive injection failed for conversation '{conversation_id}': {e}")
+
+    return result
 
 
 async def _handle_read(arguments):

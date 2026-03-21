@@ -1088,6 +1088,16 @@ async def count_active_tasks() -> int:
         return rows[0]["cnt"]
 
 
+async def get_working_tasks_for_conversation(conversation_id: str) -> list[str]:
+    """Return task IDs that are currently working and linked to the given conversation."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id FROM tasks WHERE status = 'working' AND conversation_id = ?",
+            (conversation_id,),
+        )
+        return [r["id"] for r in rows]
+
+
 async def get_queued_tasks() -> list[dict]:
     """Return ready tasks with queued_at set, ordered FIFO (oldest first).
 
