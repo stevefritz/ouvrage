@@ -459,6 +459,84 @@ class TestMaybeCreatePr:
 
 
 # ---------------------------------------------------------------------------
+# held + depends_on interaction — hold must persist across dependency wait
+# ---------------------------------------------------------------------------
+
+class TestHeldWithDependsOn:
+    """Bug: held=True dropped when depends_on parent hasn't gate-passed yet.
+
+    dispatch_task returns early for pending dependencies BEFORE persisting the
+    held flag.  When the parent later gate-passes, _check_and_dispatch_dependents
+    sees held=False and auto-dispatches — defeating the hold.
+    """
+
+    async def test_held_flag_persisted_despite_pending_dependency(self, db, sample_project):
+        """held=True must be saved to DB even when depends_on causes early return."""
+        from tasks import dispatch_task
+
+        # Create the parent task (not yet gate-passed)
+        await db.create_task(
+            id="test-project/parent-task", project_id="test-project",
+            goal="Parent task",
+        )
+
+        # Dispatch child with held=True + depends_on parent
+        result = await dispatch_task(
+            project_id="test-project",
+            task_id="test-project/held-child",
+            goal="Child that should be held",
+            held=True,
+            depends_on="test-project/parent-task",
+        )
+
+        # Should return early because parent hasn't gate-passed
+        assert result["status"] == "ready"
+        assert "waiting_on" in result or result.get("held") is True
+
+        # The critical check: held flag must be persisted in DB
+        task = await db.get_task("test-project/held-child")
+        assert task["held"], (
+            "held=True was not persisted to DB — it will be ignored when "
+            "dependency resolves and the task will auto-dispatch"
+        )
+
+    async def test_held_task_not_auto_dispatched_on_dependency_resolution(self, db, sample_project):
+        """When parent gate-passes, held dependent must NOT auto-dispatch."""
+        from tasks import _check_and_dispatch_dependents
+
+        # Create parent task that has gate-passed
+        parent = await db.create_task(
+            id="test-project/gated-parent", project_id="test-project",
+            goal="Parent",
+        )
+        await db.update_task(parent["id"],
+            status="completed", gate_status="passed",
+            gate_passed_at=db.now_iso(),
+        )
+
+        # Create child task with held=True and depends_on parent
+        child = await db.create_task(
+            id="test-project/held-dep-child", project_id="test-project",
+            goal="Held child", depends_on="test-project/gated-parent",
+        )
+        await db.update_task(child["id"], held=True)
+
+        # Now run dependency resolution
+        with patch("tasks.release_worktree", AsyncMock()):
+            with patch("tasks._drain_queue", AsyncMock()):
+                with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
+                    with patch("tasks.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
+                        await _check_and_dispatch_dependents("test-project/gated-parent")
+
+        # dispatch_task must NOT have been called for the held child
+        mock_dispatch.assert_not_awaited()
+
+        # Task should still be held
+        task = await db.get_task("test-project/held-dep-child")
+        assert task["held"], "held flag was cleared during dependency resolution"
+
+
+# ---------------------------------------------------------------------------
 # check_stalled_tasks — stall detection and orphan recovery logic
 # ---------------------------------------------------------------------------
 

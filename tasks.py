@@ -2707,17 +2707,26 @@ async def dispatch_task(
         if checklist:
             await db.create_checklist_items(task_id, checklist)
 
+        # Persist held flag BEFORE dependency check — the depends_on branch
+        # returns early, so held must be saved to DB here or it's silently dropped.
+        if held:
+            await db.update_task(task_id, held=True)
+            task["held"] = True
+
         # Backward trigger: if depends_on parent hasn't passed gate yet, don't dispatch
         if depends_on:
             parent = await db.get_task(depends_on)
             if parent and not parent.get("gate_passed_at"):
                 log.info(f"Task {task_id} waiting on parent {depends_on}")
-                return {
+                result = {
                     "task_id": task_id, "status": "ready",
                     "waiting_on": depends_on,
                     "branch": task["branch"],
                     "queued": False,
                 }
+                if task.get("held"):
+                    result["held"] = True
+                return result
     elif task["status"] == "cancelled":
         raise ValueError(
             f"Task '{task_id}' was previously cancelled. Use a new task ID, "
