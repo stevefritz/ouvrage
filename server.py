@@ -939,6 +939,9 @@ async def _handle_create_conversation(arguments):
             title=arguments.get("title"),
         )
         result["initial_message"] = msg
+        asyncio.create_task(
+            _embed_message_async(msg["id"], arguments["content"], arguments.get("type"))
+        )
     return result
 
 

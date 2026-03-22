@@ -43,7 +43,7 @@ TYPE_WEIGHTS: dict[str, float] = {
 PINNED_BOOST = 1.3
 
 
-def should_embed(content: str, msg_type: Optional[str]) -> bool:
+def should_embed(content: Optional[str], msg_type: Optional[str]) -> bool:
     """Return True if this message should get an embedding."""
     if msg_type in SKIP_TYPES:
         return False

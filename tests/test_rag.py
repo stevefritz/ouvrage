@@ -603,3 +603,80 @@ async def test_search_conversations_api_error_returns_error(db):
         assert "error" in result
     finally:
         set_embedding_service(None)
+
+
+@pytest.mark.asyncio
+async def test_search_conversations_ranked_results(db, sample_project):
+    """_handle_search_conversations returns correctly ranked results with expected shape."""
+    from embedding_service import (
+        set_embedding_service, EmbeddingService, encode_vector, decode_vector,
+    )
+
+    # Use a fixed query vector so cosine similarity is identical for all stored messages
+    query_vec = _make_vector(0.5)
+
+    class FakeService(EmbeddingService):
+        async def embed(self, text):
+            return query_vec
+
+    set_embedding_service(FakeService())
+
+    try:
+        import server
+
+        conv = await db.create_conversation(
+            id="ranked-test", project="test-project", goal="Ranking integration test"
+        )
+
+        # Store three messages with equal cosine similarity but different types
+        spec_msg = await db.post_message(
+            conversation_id="ranked-test", author="tester",
+            content="Architecture decision: store embeddings as packed float32 BLOBs in SQLite",
+            type="spec", title="Embedding storage decision",
+        )
+        note_msg = await db.post_message(
+            conversation_id="ranked-test", author="tester",
+            content="Note: cosine similarity works fine at 5K messages without ANN indexing",
+            type="note", title=None,
+        )
+        status_msg = await db.post_message(
+            conversation_id="ranked-test", author="tester",
+            content="Status update: embedding migration complete and backfill script is ready",
+            type="status", title=None,
+        )
+
+        blob = encode_vector(query_vec)
+        await db.set_message_embedding(spec_msg["id"], blob)
+        await db.set_message_embedding(note_msg["id"], blob)
+        await db.set_message_embedding(status_msg["id"], blob)
+
+        result = await server._handle_search_conversations({
+            "query": "embedding storage approach",
+            "conversation_id": "ranked-test",
+            "max_results": 5,
+        })
+
+        assert "results" in result
+        results = result["results"]
+        assert len(results) == 3
+
+        # Verify ranking: spec (1.5x) > note (1.2x) > status (0.5x)
+        types = [r["type"] for r in results]
+        assert types.index("spec") < types.index("note")
+        assert types.index("note") < types.index("status")
+
+        # Verify response shape matches spec
+        for r in results:
+            assert "message_id" in r
+            assert "conversation_id" in r
+            assert "author" in r
+            assert "type" in r
+            assert "title" in r
+            assert "content" in r
+            assert "relevance_score" in r
+            assert "created_at" in r
+            assert len(r["content"]) <= 500
+            assert r["author"] == "tester"
+            assert r["conversation_id"] == "ranked-test"
+    finally:
+        set_embedding_service(None)
