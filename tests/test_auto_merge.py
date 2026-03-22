@@ -248,60 +248,107 @@ class TestAutoMerge:
         updated = await db.get_task("test-project/target-test")
         assert updated["branch_target"] == "staging"
 
-    async def test_merge_releases_parent_worktree_when_branch_locked(self, db, sample_project):
-        """When target branch is locked by parent's worktree, release it first then merge.
-
-        The child explicitly sets base_branch to match the parent's branch (e.g. a
-        chain where the child is configured to land on the parent's integration branch).
-        depends_on no longer drives merge target, but when base_branch matches the
-        parent's branch, the release logic in _perform_auto_merge still applies.
-        """
+    async def test_detached_head_avoids_branch_conflict(self, db, sample_project):
+        """Detached HEAD approach never checks out branch by name — no worktree conflict possible."""
         from tasks import _perform_auto_merge
 
-        # Parent task: completed, gate passed, worktree still exists
-        parent = await db.create_task(
-            id="test-project/locked-parent", project_id="test-project",
-            goal="Parent", branch="locked-parent-branch", auto_merge=True,
+        task = await db.create_task(
+            id="test-project/detach-test", project_id="test-project",
+            goal="Detached HEAD test", auto_merge=True,
         )
-        await db.update_task("test-project/locked-parent",
-            status="completed", gate_status="passed",
-            gate_passed_at=db.now_iso(),
-            worktree_path="/work/test/locked-parent",
+        await db.update_task(task["id"],
+            status="completed", worktree_path="/tmp/fake-worktree",
+            branch="feature/my-branch",
         )
 
-        # Child task: explicitly targets parent's branch via base_branch (not via depends_on).
-        # depends_on controls dispatch ordering; base_branch controls merge target.
-        child = await db.create_task(
-            id="test-project/locked-child", project_id="test-project",
-            goal="Child", auto_merge=True,
-            depends_on="test-project/locked-parent",
-            base_branch="locked-parent-branch",  # explicit merge target = parent's branch
-        )
-        await db.update_task("test-project/locked-child",
-            status="completed", worktree_path="/tmp/fake-child-worktree",
-            branch="locked-child-branch",
-        )
-
-        # First checkout fails (branch locked), second succeeds (after release)
-        checkout_attempts = []
+        cmds_called = []
         async def mock_run(*args, **kwargs):
+            cmds_called.append(list(args))
+            return (b"", b"", 0)
+
+        self.mock_run.side_effect = mock_run
+
+        with patch("tasks.release_worktree", AsyncMock()) as mock_release:
+            result = await _perform_auto_merge("test-project/detach-test")
+
+        assert result is True
+        # Must use --detach, never a plain branch checkout of the target
+        checkout_cmds = [a for a in cmds_called if "checkout" in a]
+        assert any("--detach" in cmd for cmd in checkout_cmds), "Expected --detach in checkout commands"
+        assert not any(
+            "checkout" in " ".join(cmd) and "main" in cmd and "--detach" not in cmd
+            for cmd in checkout_cmds
+        ), "Should never checkout 'main' without --detach"
+        # Push must use HEAD:main refspec, not plain branch name
+        push_cmds = [a for a in cmds_called if "push" in a]
+        assert any("HEAD:main" in " ".join(cmd) for cmd in push_cmds), "Expected HEAD:main push refspec"
+        # release_worktree must never be called
+        mock_release.assert_not_awaited()
+
+    async def test_push_retry_succeeds(self, db, sample_project):
+        """Push retry: fails on first attempt, succeeds on second."""
+        from tasks import _perform_auto_merge
+
+        task = await db.create_task(
+            id="test-project/retry-ok", project_id="test-project",
+            goal="Retry OK", auto_merge=True,
+        )
+        await db.update_task(task["id"],
+            status="completed", worktree_path="/tmp/fake-worktree",
+            branch="feature/retry",
+        )
+
+        push_count = 0
+        async def mock_run(*args, **kwargs):
+            nonlocal push_count
             cmd = " ".join(args)
-            if "checkout" in cmd and "locked-parent-branch" in cmd:
-                checkout_attempts.append(cmd)
-                if len(checkout_attempts) == 1:
-                    return (b"", b"a branch named 'locked-parent-branch' already exists", 1)
-                # After release, checkout works
+            if "push" in cmd and "HEAD:" in cmd:
+                push_count += 1
+                if push_count == 1:
+                    return (b"", b"rejected", 1)
                 return (b"", b"", 0)
             return (b"", b"", 0)
 
         self.mock_run.side_effect = mock_run
 
-        with patch("tasks.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
-            result = await _perform_auto_merge("test-project/locked-child")
-
-        # Should have tried to release parent worktree
-        mock_release.assert_awaited_once_with("test-project/locked-parent", reason="auto-merge-needs-branch")
+        result = await _perform_auto_merge("test-project/retry-ok")
         assert result is True
+        assert push_count == 2
+
+        updated = await db.get_task("test-project/retry-ok")
+        assert updated["status"] == "merged"
+
+    async def test_push_retry_exhausted(self, db, sample_project):
+        """Push retry: fails all 3 attempts → needs-review."""
+        from tasks import _perform_auto_merge
+
+        task = await db.create_task(
+            id="test-project/retry-fail", project_id="test-project",
+            goal="Retry fail", auto_merge=True,
+        )
+        await db.update_task(task["id"],
+            status="completed", worktree_path="/tmp/fake-worktree",
+            branch="feature/retry-fail",
+        )
+
+        push_count = 0
+        async def mock_run(*args, **kwargs):
+            nonlocal push_count
+            cmd = " ".join(args)
+            if "push" in cmd and "HEAD:" in cmd:
+                push_count += 1
+                return (b"", b"rejected", 1)
+            return (b"", b"", 0)
+
+        self.mock_run.side_effect = mock_run
+
+        result = await _perform_auto_merge("test-project/retry-fail")
+        assert result is False
+        assert push_count == 3
+
+        updated = await db.get_task("test-project/retry-fail")
+        assert updated["status"] == "needs-review"
+        assert updated["pr_status"] == "push-failed"
 
     async def test_merge_posts_message(self, db, sample_project):
         """Auto-merge posts a status message on success."""
