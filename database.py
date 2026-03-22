@@ -343,11 +343,13 @@ async def init_db():
         if "held" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN held BOOLEAN DEFAULT 0")
 
-        # Migrate messages table: add attempt_number if missing
+        # Migrate messages table: add attempt_number and embedding if missing
         msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
         msg_col_names = [c["name"] for c in msg_columns]
         if "attempt_number" not in msg_col_names:
             await conn.execute("ALTER TABLE messages ADD COLUMN attempt_number INTEGER DEFAULT 1")
+        if "embedding" not in msg_col_names:
+            await conn.execute("ALTER TABLE messages ADD COLUMN embedding BLOB")
 
         # Migrate conversations table: add claude_chat_url if missing
         conv_columns = await conn.execute_fetchall("PRAGMA table_info(conversations)")
@@ -1170,6 +1172,121 @@ async def get_task_pinned(task_id: str) -> dict | None:
             (task_id,),
         )
         return dict(rows[0]) if rows else None
+
+
+# ---------------------------------------------------------------------------
+# Semantic search / embeddings
+# ---------------------------------------------------------------------------
+
+async def set_message_embedding(message_id: int, embedding_blob: bytes) -> None:
+    """Store a packed float32 embedding blob on a message row."""
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE messages SET embedding = ? WHERE id = ?",
+            (embedding_blob, message_id),
+        )
+        await db.commit()
+
+
+async def search_messages_semantic(
+    query_vector: list[float],
+    conversation_id: str | None = None,
+    project_id: str | None = None,
+    type_filter: list[str] | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Load candidate messages with embeddings and return them with raw similarity scores.
+
+    Filtering by project_id joins through the conversations table.
+    Actual relevance scoring (type weights, pinned boost) is applied by the caller.
+    """
+    from embedding_service import decode_vector, cosine_similarity
+
+    async with get_db() as db:
+        conditions = ["m.embedding IS NOT NULL"]
+        params: list = []
+
+        if conversation_id:
+            conditions.append("m.conversation_id = ?")
+            params.append(conversation_id)
+
+        if project_id:
+            # Join conversations to filter by project
+            conditions.append(
+                "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+            )
+            params.extend([project_id, project_id])
+
+        if type_filter:
+            placeholders = ",".join("?" * len(type_filter))
+            conditions.append(f"m.type IN ({placeholders})")
+            params.extend(type_filter)
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT m.id, m.conversation_id, m.task_id, m.author, m.type, m.title,
+                   m.content, m.pinned, m.created_at, m.embedding
+            FROM messages m
+            WHERE {where}
+        """
+        rows = await db.execute_fetchall(query, params)
+
+    # Compute cosine similarity in Python — fine for ~5K messages
+    results = []
+    for row in rows:
+        blob = row["embedding"]
+        if not blob:
+            continue
+        try:
+            vec = decode_vector(blob)
+        except Exception:
+            continue
+        sim = cosine_similarity(query_vector, vec)
+        results.append({
+            "message_id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "task_id": row["task_id"],
+            "author": row["author"],
+            "type": row["type"],
+            "title": row["title"],
+            "content": row["content"],
+            "pinned": bool(row["pinned"]),
+            "created_at": row["created_at"],
+            "similarity": sim,
+        })
+
+    # Sort by similarity descending before caller applies weights
+    results.sort(key=lambda r: r["similarity"], reverse=True)
+    return results[:limit * 3]  # Return extra so caller has room to re-rank
+
+
+async def get_messages_needing_embedding(batch_size: int = 100) -> list[dict]:
+    """Return messages that need embedding: no embedding, content >= 50 chars, not test-result."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT id, conversation_id, task_id, type, content
+               FROM messages
+               WHERE embedding IS NULL
+                 AND length(content) >= 50
+                 AND (type IS NULL OR type != 'test-result')
+               ORDER BY id ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def count_messages_needing_embedding() -> int:
+    """Count messages that need embedding."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT COUNT(*) as cnt FROM messages
+               WHERE embedding IS NULL
+                 AND length(content) >= 50
+                 AND (type IS NULL OR type != 'test-result')"""
+        )
+        return rows[0]["cnt"] if rows else 0
 
 
 # ---------------------------------------------------------------------------
