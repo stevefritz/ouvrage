@@ -2319,7 +2319,12 @@ async def resolve_branch_target(task: dict) -> str:
 
 
 async def _perform_auto_merge(task_id: str) -> bool:
-    """Merge task branch into branch_target and push. Returns True on success."""
+    """Merge task branch into branch_target using detached HEAD. Returns True on success.
+
+    Uses `git checkout --detach origin/<target>` instead of checking out the target
+    branch by name, which avoids the "fatal: a branch named 'X' already exists"
+    error that occurs when the target branch is checked out in another worktree.
+    """
     task = await db.get_task(task_id)
     if not task:
         return False
@@ -2334,112 +2339,85 @@ async def _perform_auto_merge(task_id: str) -> bool:
         await db.update_task(task_id, pr_status="error", pr_error="Missing worktree or branch")
         return False
 
-    project = await db.get_project(task["project_id"])
-    bare_path = os.path.join(project["working_dir"], ".bare") if project else None
+    try:
+        for attempt in range(1, 4):
+            # Fetch latest target branch
+            await _run_as_worker("git", "-C", worktree, "fetch", "origin", branch_target)
 
-    # Fetch latest
-    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
-
-    # Checkout the target branch in the worktree
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "checkout", branch_target,
-    )
-    if rc != 0:
-        # Branch might be locked by parent's worktree — try releasing it
-        if task.get("depends_on"):
-            parent_task = await db.get_task(task["depends_on"])
-            if (parent_task
-                and parent_task.get("branch") == branch_target
-                and parent_task.get("worktree_path")
-                and parent_task.get("gate_passed_at")):
-                log.info(f"Auto-merge {task_id}: releasing parent worktree "
-                         f"{parent_task['id']} (branch {branch_target} is locked)")
-                try:
-                    await release_worktree(parent_task["id"], reason="auto-merge-needs-branch")
-                    # Retry checkout after release
-                    _, stderr, rc = await _run_as_worker(
-                        "git", "-C", worktree, "checkout", branch_target,
-                    )
-                except Exception as e:
-                    log.warning(f"Auto-merge {task_id}: failed to release parent worktree: {e}")
-
-    if rc != 0:
-        # Target branch may not exist locally — try creating from origin
-        _, stderr, rc = await _run_as_worker(
-            "git", "-C", worktree, "checkout", "-b", branch_target, f"origin/{branch_target}",
-        )
-        if rc != 0:
-            log.error(f"Auto-merge {task_id}: cannot checkout {branch_target}: {stderr.decode()}")
-            await db.update_task(task_id, status="needs-review",
-                                 pr_status="error", pr_error=f"Cannot checkout {branch_target}")
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Auto-merge failed",
-                content=f"Cannot checkout target branch `{branch_target}`:\n```\n{stderr.decode()[:1000]}\n```",
+            # Detach HEAD at origin/branch_target — no local branch name conflict possible
+            _, stderr, rc = await _run_as_worker(
+                "git", "-C", worktree, "checkout", "--detach", f"origin/{branch_target}",
             )
-            return False
+            if rc != 0:
+                log.error(f"Auto-merge {task_id}: cannot detach to origin/{branch_target}: {stderr.decode()}")
+                await db.update_task(task_id, status="needs-review",
+                                     pr_status="error", pr_error=f"Cannot checkout origin/{branch_target}")
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Auto-merge failed",
+                    content=f"Cannot detach HEAD at `origin/{branch_target}`:\n```\n{stderr.decode()[:1000]}\n```",
+                )
+                return False
 
-    # Pull latest on target
-    await _run_as_worker("git", "-C", worktree, "pull", "--ff-only", "origin", branch_target)
+            # Merge the task branch
+            stdout, stderr, rc = await _run_as_worker(
+                "git", "-C", worktree, "merge", task_branch, "--no-edit",
+            )
 
-    # Merge the task branch
-    stdout, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "merge", task_branch, "--no-edit",
-    )
+            if rc != 0:
+                # Merge conflict — get list of conflicting files
+                conflict_stdout, _, _ = await _run_as_worker(
+                    "git", "-C", worktree, "diff", "--name-only", "--diff-filter=U",
+                )
+                conflict_files = conflict_stdout.decode().strip()
 
-    if rc != 0:
-        # Merge conflict — get list of conflicting files
-        conflict_stdout, _, _ = await _run_as_worker(
-            "git", "-C", worktree, "diff", "--name-only", "--diff-filter=U",
-        )
-        conflict_files = conflict_stdout.decode().strip()
+                # Abort the merge
+                await _run_as_worker("git", "-C", worktree, "merge", "--abort")
 
-        # Abort the merge
-        await _run_as_worker("git", "-C", worktree, "merge", "--abort")
+                await db.update_task(task_id, status="needs-review",
+                                     pr_status="conflict", pr_error=conflict_files)
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Auto-merge conflict",
+                    content=f"Merge of `{task_branch}` into `{branch_target}` has conflicts:\n\n"
+                            f"```\n{conflict_files or '(unknown)'}\n```\n\n"
+                            f"Resolve manually and retry.",
+                )
+                log.warning(f"Auto-merge {task_id}: conflict merging {task_branch} → {branch_target}")
+                return False
 
-        # Switch back to task branch
-        await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
+            # Push HEAD to target branch — HEAD:branch_target avoids needing a local branch
+            _, stderr, rc = await _run_as_worker(
+                "git", "-C", worktree, "push", "origin", f"HEAD:{branch_target}",
+            )
+            if rc == 0:
+                break  # push succeeded
 
-        await db.update_task(task_id, status="needs-review",
-                             pr_status="conflict", pr_error=conflict_files)
+            # Push rejected — likely a race with another task; retry
+            log.warning(f"Auto-merge {task_id}: push attempt {attempt} rejected, retrying...")
+            if attempt == 3:
+                log.error(f"Auto-merge {task_id}: push failed after 3 attempts: {stderr.decode()}")
+                await db.update_task(task_id, status="needs-review",
+                                     pr_status="push-failed", pr_error=stderr.decode()[:500])
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Auto-merge push failed",
+                    content=f"Merge succeeded but push to `{branch_target}` failed after 3 attempts:\n```\n{stderr.decode()[:1000]}\n```",
+                )
+                return False
+
+        await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
-            title="Auto-merge conflict",
-            content=f"Merge of `{task_branch}` into `{branch_target}` has conflicts:\n\n"
-                    f"```\n{conflict_files or '(unknown)'}\n```\n\n"
-                    f"Resolve manually and retry.",
+            title="Auto-merged",
+            content=f"Branch `{task_branch}` merged into `{branch_target}` and pushed.",
         )
-        log.warning(f"Auto-merge {task_id}: conflict merging {task_branch} → {branch_target}")
-        return False
+        log.info(f"Auto-merge {task_id}: {task_branch} → {branch_target} success")
+        return True
 
-    # Push the merged target branch
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "push", "origin", branch_target,
-    )
-    if rc != 0:
-        log.error(f"Auto-merge {task_id}: push failed: {stderr.decode()}")
-        await db.update_task(task_id, status="needs-review",
-                             pr_status="push-failed", pr_error=stderr.decode()[:500])
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Auto-merge push failed",
-            content=f"Merge succeeded but push to `{branch_target}` failed:\n```\n{stderr.decode()[:1000]}\n```",
-        )
-        # Switch back to task branch
+    finally:
+        # Always restore worktree to original task branch
         await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
-        return False
-
-    # Switch back to task branch for worktree consistency
-    await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
-
-    await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged")
-    await db.post_task_message(
-        task_id=task_id, author="dispatcher", type="status",
-        title="Auto-merged",
-        content=f"Branch `{task_branch}` merged into `{branch_target}` and pushed.",
-    )
-    log.info(f"Auto-merge {task_id}: {task_branch} → {branch_target} success")
-    return True
 
 
 # ---------------------------------------------------------------------------
