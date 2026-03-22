@@ -10,10 +10,13 @@ import pytest
 # ---------------------------------------------------------------------------
 
 class TestResolveBranchTarget:
-    """Branch target resolution: parent > task > component > project."""
+    """Branch target resolution: task.base_branch > component.base_branch > project default.
 
-    async def test_uses_parent_branch_first(self, db, sample_project):
-        """depends_on parent's branch takes highest priority."""
+    depends_on has NO influence on merge target.
+    """
+
+    async def test_depends_on_does_not_affect_branch_target(self, db, sample_project):
+        """depends_on must NOT affect branch target — task.base_branch wins."""
         from tasks import resolve_branch_target
 
         parent = await db.create_task(
@@ -23,14 +26,33 @@ class TestResolveBranchTarget:
         child = await db.create_task(
             id="test-project/child", project_id="test-project",
             goal="Child", depends_on="test-project/parent",
-            base_branch="staging",  # should be ignored
+            base_branch="staging",
         )
 
         result = await resolve_branch_target(child)
-        assert result == "feature/parent-branch"
+        # Must return task's own base_branch, never the parent's branch
+        assert result == "staging"
+        assert result != "feature/parent-branch"
+
+    async def test_depends_on_resolves_to_project_default(self, db, sample_project):
+        """depends_on with no other config falls back to project.default_branch, not parent branch."""
+        from tasks import resolve_branch_target
+
+        parent = await db.create_task(
+            id="test-project/parent-a", project_id="test-project",
+            goal="Parent A", branch="task-a-branch",
+        )
+        child = await db.create_task(
+            id="test-project/child-b", project_id="test-project",
+            goal="Child B", depends_on="test-project/parent-a",
+        )
+
+        result = await resolve_branch_target(child)
+        assert result == "main"       # project default_branch
+        assert result != "task-a-branch"  # must NOT be parent's branch
 
     async def test_uses_task_base_branch(self, db, sample_project):
-        """task.base_branch used when no depends_on."""
+        """task.base_branch is used when set."""
         from tasks import resolve_branch_target
 
         task = await db.create_task(
@@ -69,8 +91,8 @@ class TestResolveBranchTarget:
         result = await resolve_branch_target(task)
         assert result == "main"  # sample_project default_branch
 
-    async def test_parent_takes_priority_over_component(self, db, sample_project):
-        """depends_on parent branch wins over component.base_branch."""
+    async def test_component_base_branch_wins_over_depends_on(self, db, sample_project):
+        """component.base_branch is used even when depends_on is set."""
         from tasks import resolve_branch_target
 
         comp = await db.create_component(
@@ -88,10 +110,12 @@ class TestResolveBranchTarget:
         )
 
         result = await resolve_branch_target(child)
-        assert result == "feature/parent"
+        # component base_branch wins; depends_on has no influence
+        assert result == "develop"
+        assert result != "feature/parent"
 
-    async def test_parent_merged_no_worktree_falls_through(self, db, sample_project):
-        """When parent is completed+passed with no worktree, fall through to project default."""
+    async def test_depends_on_parent_merged_falls_to_project_default(self, db, sample_project):
+        """depends_on child with no other config returns project default regardless of parent state."""
         from tasks import resolve_branch_target
 
         parent = await db.create_task(
@@ -108,10 +132,10 @@ class TestResolveBranchTarget:
         )
 
         result = await resolve_branch_target(child)
-        assert result == "main"  # project default, not parent-branch
+        assert result == "main"
 
-    async def test_parent_completed_with_worktree_uses_parent_branch(self, db, sample_project):
-        """When parent is completed+passed but worktree still exists, use parent branch."""
+    async def test_depends_on_parent_with_worktree_still_uses_project_default(self, db, sample_project):
+        """depends_on child returns project default even when parent's worktree still exists."""
         from tasks import resolve_branch_target
 
         parent = await db.create_task(
@@ -128,7 +152,9 @@ class TestResolveBranchTarget:
         )
 
         result = await resolve_branch_target(child)
-        assert result == "wt-parent-branch"
+        # depends_on must never pollute merge target
+        assert result == "main"
+        assert result != "wt-parent-branch"
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +249,13 @@ class TestAutoMerge:
         assert updated["branch_target"] == "staging"
 
     async def test_merge_releases_parent_worktree_when_branch_locked(self, db, sample_project):
-        """When target branch is locked by parent's worktree, release it first then merge."""
+        """When target branch is locked by parent's worktree, release it first then merge.
+
+        The child explicitly sets base_branch to match the parent's branch (e.g. a
+        chain where the child is configured to land on the parent's integration branch).
+        depends_on no longer drives merge target, but when base_branch matches the
+        parent's branch, the release logic in _perform_auto_merge still applies.
+        """
         from tasks import _perform_auto_merge
 
         # Parent task: completed, gate passed, worktree still exists
@@ -237,11 +269,13 @@ class TestAutoMerge:
             worktree_path="/work/test/locked-parent",
         )
 
-        # Child task: depends on parent, wants to merge into parent's branch
+        # Child task: explicitly targets parent's branch via base_branch (not via depends_on).
+        # depends_on controls dispatch ordering; base_branch controls merge target.
         child = await db.create_task(
             id="test-project/locked-child", project_id="test-project",
             goal="Child", auto_merge=True,
             depends_on="test-project/locked-parent",
+            base_branch="locked-parent-branch",  # explicit merge target = parent's branch
         )
         await db.update_task("test-project/locked-child",
             status="completed", worktree_path="/tmp/fake-child-worktree",

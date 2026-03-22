@@ -2295,24 +2295,13 @@ async def _drain_queue() -> None:
 async def resolve_branch_target(task: dict) -> str:
     """Resolve the merge target branch using config inheritance.
 
-    Priority: depends_on parent branch → task.base_branch → component.base_branch
-              → project.default_branch
-    """
-    # 1. Parent branch (chain branching)
-    #    If parent has already merged (worktree released), fall through to
-    #    project default — the parent branch no longer exists as a checkout.
-    if task.get("depends_on"):
-        parent = await db.get_task(task["depends_on"])
-        if parent and parent.get("branch"):
-            parent_merged = (
-                parent.get("status") in ("completed", "merged")
-                and parent.get("gate_status") == "passed"
-                and not parent.get("worktree_path")
-            )
-            if not parent_merged:
-                return parent["branch"]
+    Priority: task.branch_target (explicit override) → task.base_branch
+              → component.base_branch → project.default_branch
 
-    # 2. Task-level override
+    NOTE: depends_on has ZERO influence on merge target. It controls dispatch
+    ordering and worktree base (setup_worktree), never where we merge to.
+    """
+    # 1. Task-level override
     if task.get("base_branch"):
         return task["base_branch"]
 
