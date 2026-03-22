@@ -1031,7 +1031,6 @@ class TestWebPushDispatch:
         assert web_push.is_enabled() is True
 
 
-# ---------------------------------------------------------------------------
 # _is_binary — binary file detection
 # ---------------------------------------------------------------------------
 
@@ -1586,3 +1585,99 @@ class TestResolveGitRef:
         assert result2 == (bare_path, "origin/feat/my-feature")
         # Cache should now be set after successful fetch
         assert bare_path in _server._fetch_cache
+
+
+# ---------------------------------------------------------------------------
+# _handle_post — reactive conversation injection
+# ---------------------------------------------------------------------------
+
+class TestReactiveConversationInjection:
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_post_message = AsyncMock(return_value={"id": 1, "conversation_id": "conv-a"})
+        self.mock_get_working_tasks = AsyncMock(return_value=[])
+        self.mock_post_task_message = AsyncMock(return_value={"id": 99})
+
+        patches = [
+            patch("server.db.post_message", self.mock_post_message),
+            patch("server.db.get_working_tasks_for_conversation", self.mock_get_working_tasks),
+            patch("server.db.post_task_message", self.mock_post_task_message),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    async def test_injects_nudge_for_working_tasks(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.return_value = ["proj/task-1", "proj/task-2"]
+        result = await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "stephen",
+            "content": "Here is a new finding",
+        })
+        assert result["id"] == 1
+        assert self.mock_post_task_message.await_count == 2
+        call_kwargs = self.mock_post_task_message.await_args_list[0].kwargs
+        assert call_kwargs["task_id"] == "proj/task-1"
+        assert call_kwargs["author"] == "switchboard"
+        assert "conv-a" in call_kwargs["content"]
+        assert "stephen" in call_kwargs["content"]
+
+    async def test_skips_injection_for_cc_worker_author(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.return_value = ["proj/task-1"]
+        await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "cc-worker",
+            "content": "Task completed successfully",
+        })
+        self.mock_get_working_tasks.assert_not_awaited()
+        self.mock_post_task_message.assert_not_awaited()
+
+    async def test_skips_injection_for_status_type(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.return_value = ["proj/task-1"]
+        await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "stephen",
+            "type": "status",
+            "content": "Still thinking...",
+        })
+        self.mock_get_working_tasks.assert_not_awaited()
+        self.mock_post_task_message.assert_not_awaited()
+
+    async def test_injection_failure_is_non_blocking(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.side_effect = Exception("DB is down")
+        result = await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "stephen",
+            "content": "Some update",
+        })
+        assert result["id"] == 1
+        self.mock_post_task_message.assert_not_awaited()
+
+    async def test_no_working_tasks_no_injection(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.return_value = []
+        await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "stephen",
+            "content": "Update with no active tasks",
+        })
+        self.mock_post_task_message.assert_not_awaited()
+
+    async def test_preview_uses_title_when_present(self):
+        from server import _handle_post
+        self.mock_get_working_tasks.return_value = ["proj/task-1"]
+        await _handle_post({
+            "conversation_id": "conv-a",
+            "author": "stephen",
+            "title": "Important finding",
+            "content": "Long content that should not appear in preview",
+        })
+        call_kwargs = self.mock_post_task_message.await_args_list[0].kwargs
+        assert "Important finding" in call_kwargs["content"]
+        assert "Long content" not in call_kwargs["content"]
