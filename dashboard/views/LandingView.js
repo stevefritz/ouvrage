@@ -4,7 +4,7 @@
 import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { colors, typography, layout, spacing } from '../tokens.js';
+import { colors, typography, layout } from '../tokens.js';
 import { routes } from '../router.js';
 import { api } from '../api.js';
 
@@ -21,6 +21,7 @@ const POLL_INTERVAL_MS = 30_000;
  * Compute attention count for a project's tasks.
  * Counts distinct tasks that need human attention:
  *   - failed or needs-review (status-based)
+ *   - CC questions: pending_questions > 0 (deferred — API field not yet exposed; will count when available)
  *   - stalled: working with no activity > 30min
  *   - repeated failures: gate_retries >= 2
  *   - blocked chains: depends_on a failed task, not yet cancelled/completed
@@ -39,6 +40,13 @@ function computeAttention(projectTasks) {
 
         // Status-based: failed, needs-review
         if (t.status === 'failed' || t.status === 'needs-review') {
+            seen.add(t.id);
+            continue;
+        }
+
+        // CC questions: worker is waiting for human input
+        // NOTE: requires API to expose pending_questions on task rows (not yet implemented)
+        if ((t.pending_questions || 0) > 0) {
             seen.add(t.id);
             continue;
         }
@@ -274,7 +282,6 @@ function EmptyState() {
 
 function CardSkeleton() {
     const cardStyle = {
-        background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: layout.borderRadius.lg,
         padding: '16px 20px',
