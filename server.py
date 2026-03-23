@@ -1882,6 +1882,13 @@ async def main():
             await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)
+        elif path == "/dashboard":
+            # Redirect /dashboard → /dashboard/ so the service worker scope (/dashboard/) matches the page URL.
+            # Without this, navigator.serviceWorker.ready hangs forever on mobile Chrome (fresh install).
+            qs = scope.get("query_string", b"")
+            location = b"/dashboard/?" + qs if qs else b"/dashboard/"
+            await send({"type": "http.response.start", "status": 302, "headers": [[b"location", location]]})
+            await send({"type": "http.response.body", "body": b""})
         elif path.startswith("/dashboard"):
             await _serve_dashboard(scope, send)
         else:

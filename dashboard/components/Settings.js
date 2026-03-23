@@ -23,10 +23,49 @@ function Toggle({ checked, onChange, disabled = false }) {
 
 // ── Subscribe/unsubscribe logic ───────────────────────────────────────────
 
+// Get the active service worker registration without hanging.
+// navigator.serviceWorker.ready hangs forever if no SW controls the current page
+// (e.g. scope /dashboard/ doesn't match page URL /dashboard without trailing slash).
+// getRegistration() returns quickly with undefined instead of hanging.
+async function getServiceWorkerReg() {
+    let reg = await navigator.serviceWorker.getRegistration('/dashboard/');
+    if (!reg) {
+        reg = await navigator.serviceWorker.register('/dashboard/sw.js', { scope: '/dashboard/' });
+        // Wait up to 5s for SW to activate
+        if (reg.installing || reg.waiting) {
+            await new Promise((resolve) => {
+                const sw = reg.installing || reg.waiting;
+                const handler = () => {
+                    if (sw.state === 'activated') {
+                        sw.removeEventListener('statechange', handler);
+                        resolve();
+                    }
+                };
+                sw.addEventListener('statechange', handler);
+                setTimeout(resolve, 5000);
+            });
+            reg = await navigator.serviceWorker.getRegistration('/dashboard/');
+        }
+    }
+    return reg;
+}
+
 async function getPushState() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        return { supported: false, serverConfigured: true, subscribed: false };
+        return { supported: false, reason: 'Push API not available in this browser', serverConfigured: true, subscribed: false };
     }
+
+    let reg;
+    try {
+        reg = await getServiceWorkerReg();
+    } catch (e) {
+        return { supported: false, reason: `Service worker registration failed: ${e.message}`, serverConfigured: true, subscribed: false };
+    }
+
+    if (!reg || !reg.active) {
+        return { supported: false, reason: 'Service worker is not active', serverConfigured: true, subscribed: false };
+    }
+
     // Check if server has VAPID keys configured
     let serverConfigured = true;
     try {
@@ -35,13 +74,13 @@ async function getPushState() {
     } catch {
         serverConfigured = false;
     }
-    const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     return { supported: true, serverConfigured, subscribed: !!sub, subscription: sub };
 }
 
 async function subscribePush() {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await getServiceWorkerReg();
+    if (!reg || !reg.active) throw new Error('Service worker is not active');
     const keyResp = await api.getVapidPublicKey();
     const vapidKey = keyResp.vapid_public_key;
     if (!vapidKey) throw new Error('VAPID public key not configured on server');
@@ -86,7 +125,9 @@ export function Settings() {
 
     // Load push state and notification settings on mount
     useEffect(() => {
-        getPushState().then(setPush);
+        getPushState().then(setPush).catch(e => {
+            setPush({ supported: false, reason: e.message, subscribed: false, serverConfigured: true });
+        });
         api.getNotificationSettings()
             .then(setSettings)
             .catch(e => setSettingsError(e.message));
@@ -151,6 +192,7 @@ export function Settings() {
                 ${!push.supported && html`
                     <p class="text-sm text-amber-400">
                         Push notifications are not supported in this browser.
+                        ${push.reason && html`<br /><span class="text-xs opacity-75">${push.reason}</span>`}
                     </p>
                 `}
 
