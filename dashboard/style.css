@@ -871,6 +871,53 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     table td:nth-child(5) { display: none; } /* Activity */
 }
 
+/* ── Task Detail Panel: mobile responsive layout ─────────── */
+
+/* Ensure top row doesn't overflow on any screen size */
+.task-detail-top { min-width: 0; }
+
+@media (max-width: 768px) {
+    /* Stack status badges and action buttons vertically */
+    .task-detail-top {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    /* Action buttons: full width, flex-wrap for button grid */
+    .task-detail-actions {
+        width: 100%;
+        flex-shrink: unset;
+    }
+
+    /* Subtle divider between status/actions and task info */
+    .task-detail-body {
+        border-top: 1px solid rgba(51, 65, 85, 0.5);
+        padding-top: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    /* Task ID: break long IDs cleanly, reduce font size */
+    .task-id {
+        font-size: 0.875rem !important;
+        word-break: break-all;
+        overflow-wrap: break-word;
+    }
+
+    /* Metadata: stack key-value pairs vertically instead of inline flow */
+    .task-metadata {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+}
+
+@media (max-width: 480px) {
+    /* Even smaller font for task ID on phone */
+    .task-id {
+        font-size: 0.8125rem !important;
+    }
+}
+
 /* ── Responsive: mobile ──────────────────────────────────── */
 @media (max-width: 768px) {
     .activity-bar-left { gap: 0.375rem; }

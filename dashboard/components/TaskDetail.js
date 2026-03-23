@@ -34,37 +34,39 @@ function ReviewVerdictBadge({ subtasks }) {
 function DetailHeader({ task, onAction, jiraBaseUrl }) {
     return html`
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-            <div class="flex items-start justify-between">
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-2 flex-wrap">
-                        <${StatusBadge} status=${task.status} task=${task} />
-                        <${ReviewVerdictBadge} subtasks=${task.subtasks} />
-                        <${HeartbeatIndicator} task=${task} />
-                        <span class="font-mono text-lg text-slate-200">${task.id}</span>
-                    </div>
-                    <p class="text-slate-300 mb-3">${task.goal}</p>
-                    <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
-                        <span>Branch: <span class="font-mono text-slate-300">${task.branch || '\u2014'}</span></span>
-                        <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
-                        <${Tip} text="Total API cost across all dispatches">
-                            <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
-                        <//>
-                        <${Tip} text="Input/output token count across all dispatches">
-                            <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
-                        <//>
-                        ${task.model ? html`<span>Model: <span class="text-slate-300">${task.model}</span></span>` : null}
-                        ${task.phase ? html`<span>Phase: <span class="text-slate-300">${task.phase}</span></span>` : null}
-                        <${WorktreeIndicator} task=${task} />
-                        <${PrUrlBadge} task=${task} />
-                        ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
-                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
-                        ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
-                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${task.conversation_id}</a>` : null}
-                        <${ClaudeChatLink} url=${task.claude_chat_url} />
-                    </div>
-                    ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
+            <div class="task-detail-top flex items-center justify-between gap-3 mb-2">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <${StatusBadge} status=${task.status} task=${task} />
+                    <${ReviewVerdictBadge} subtasks=${task.subtasks} />
+                    <${HeartbeatIndicator} task=${task} />
                 </div>
-                <div class="flex gap-2 ml-4"><${ActionButtons} task=${task} onAction=${onAction} /></div>
+                <div class="task-detail-actions flex gap-2 flex-wrap flex-shrink-0">
+                    <${ActionButtons} task=${task} onAction=${onAction} />
+                </div>
+            </div>
+            <div class="task-detail-body">
+                <span class="task-id font-mono text-lg text-slate-200 block mb-2">${task.id}</span>
+                <p class="text-slate-300 mb-3">${task.goal}</p>
+                <div class="task-metadata flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
+                    <span>Branch: <span class="font-mono text-slate-300">${task.branch || '\u2014'}</span></span>
+                    <span>Dispatches: <span class="text-slate-300">${task.dispatch_count || 0}</span></span>
+                    <${Tip} text="Total API cost across all dispatches">
+                        <span>Cost: <span class="text-slate-300">$${(task.total_cost_usd || 0).toFixed(2)}</span></span>
+                    <//>
+                    <${Tip} text="Input/output token count across all dispatches">
+                        <span>Tokens: <span class="text-slate-300">${((task.total_input_tokens || 0) / 1000).toFixed(0)}K in / ${((task.total_output_tokens || 0) / 1000).toFixed(1)}K out</span></span>
+                    <//>
+                    ${task.model ? html`<span>Model: <span class="text-slate-300">${task.model}</span></span>` : null}
+                    ${task.phase ? html`<span>Phase: <span class="text-slate-300">${task.phase}</span></span>` : null}
+                    <${WorktreeIndicator} task=${task} />
+                    <${PrUrlBadge} task=${task} />
+                    ${task.jira_ticket ? html`<a href=${jiraUrl(task.jira_ticket, jiraBaseUrl)} target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">${jiraLabel(task.jira_ticket)}</a>` : null}
+                    ${task.conversation_id ? html`<a href="#/conversations/${encodeURIComponent(task.conversation_id)}"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30">Conv: ${task.conversation_id}</a>` : null}
+                    <${ClaudeChatLink} url=${task.claude_chat_url} />
+                </div>
+                ${(task.tags || []).length > 0 ? html`<div class="flex gap-1 mt-2 flex-wrap">${task.tags.map(t => html`<span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300">${t}</span>`)}</div>` : null}
             </div>
         </div>
     `;
