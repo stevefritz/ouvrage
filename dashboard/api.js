@@ -30,8 +30,15 @@ export const api = {
         const qs = new URLSearchParams(params).toString();
         return request(`/tasks/${eid(id)}/messages` + (qs ? '?' + qs : ''));
     },
-    getSessionLog: (id) => request(`/tasks/${eid(id)}/session-log`),
-    getDispatchLog: (id) => request(`/tasks/${eid(id)}/dispatch-log`),
+    getSessionLog: (id, params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request(`/tasks/${eid(id)}/session-log` + (qs ? '?' + qs : ''));
+    },
+    getDispatchLog: (id, params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request(`/tasks/${eid(id)}/dispatch-log` + (qs ? '?' + qs : ''));
+    },
+    getAttempts: (id) => request(`/tasks/${eid(id)}/attempts`),
     getProjects: () => request('/projects'),
     getProject: (id) => request(`/projects/${eid(id)}`),
     getSystem: () => request('/system'),

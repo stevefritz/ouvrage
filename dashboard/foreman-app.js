@@ -7,6 +7,7 @@ import { useRouter } from './router.js';
 import { ForemanShell } from './foreman-shell.js';
 import { LandingView } from './views/LandingView.js';
 import { ProjectView } from './views/ProjectView.js';
+import { TaskView } from './views/TaskView.js';
 
 const html = htm.bind(h);
 
@@ -20,13 +21,7 @@ function ForemanApp() {
     } else if (view === 'project') {
         content = html`<${ProjectView} id=${params.id} />`;
     } else if (view === 'task') {
-        content = html`
-            <div style="padding: 40px; text-align: center; color: #5c5e66; font-size: 13px;">
-                Task view for <strong style="color: #9899a1;">${params.id}</strong> — coming soon.
-                <br /><br />
-                <a href="#/" style="color: #7c5af6; text-decoration: none; font-size: 12px;">← Back to projects</a>
-            </div>
-        `;
+        content = html`<${TaskView} id=${params.id} />`;
     } else {
         content = html`<${LandingView} />`;
     }
