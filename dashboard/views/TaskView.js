@@ -16,22 +16,12 @@ import { colors, typography, statusColors, statusBgs, layout } from '../tokens.j
 import { StatusDot } from '../components/StatusDot.js';
 import { GateDots } from '../components/GateDots.js';
 import { Tag } from '../components/Tag.js';
+import { relativeTime } from '../components/utils.js';
 import { routes } from '../router.js';
 
 const html = htm.bind(h);
 
 // ── Helpers ──────────────────────────────────────────────────
-
-function relativeTime(iso) {
-    if (!iso) return '—';
-    const ts = iso.endsWith('Z') ? iso : iso + 'Z';
-    const diff = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
-    if (diff < 5) return 'just now';
-    if (diff < 60) return `${Math.floor(diff)}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function sanitize(dirty) {
     if (typeof DOMPurify?.sanitize === 'function') return DOMPurify.sanitize(dirty);
@@ -1092,7 +1082,7 @@ export function TaskView({ id, mode = 'expanded' }) {
                 'advance-chain': () => api.advanceChain(id),
                 'release-worktree': () => api.releaseWorktree(id),
                 approve: () => api.approveTask(id),
-                dispatch: () => api.retryTask(id),
+                dispatch: () => api.dispatchTask(id),
             };
             const fn = actionMap[action];
             if (fn) await fn();
@@ -1143,7 +1133,7 @@ export function TaskView({ id, mode = 'expanded' }) {
         const latestAttempt = attempts && attempts.length > 0 ? attempts[attempts.length - 1] : null;
 
         return html`
-            <div style=${{ padding: '12px' }}>
+            <div class="foreman-content" style=${{ padding: '12px' }}>
                 <${StatusLine} task=${task} />
                 <${ActionToolbar} task=${task} onAction=${handleAction} />
 
@@ -1172,7 +1162,7 @@ export function TaskView({ id, mode = 'expanded' }) {
     const backLabel = task.project_id ? `← ${shortId(task.project_id)}` : '← Projects';
 
     return html`
-        <div style=${{ padding: '0' }}>
+        <div class="foreman-content" style=${{ padding: '0' }}>
             <a href=${backHref}
                 style=${{
                     color: colors.textTertiary, textDecoration: 'none',
