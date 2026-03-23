@@ -266,7 +266,9 @@ class TestStallDetection:
         await db.update_task("test-project/stale-test", status="working", last_activity=old_time)
 
         import server
-        result = await server._handle_get_task_status({"task_id": "test-project/stale-test"})
+        result = await server._handle_get_task_status(
+            {"task_id": "test-project/stale-test", "include_detail": True}
+        )
         assert result["stale_seconds"] >= 550  # ~10 min, give some slack
         assert result["alive"] is True
         assert result["idle_minutes"] >= 9.0
@@ -279,7 +281,9 @@ class TestStallDetection:
             goal="Ready stale test",
         )
         import server
-        result = await server._handle_get_task_status({"task_id": "test-project/ready-stale"})
+        result = await server._handle_get_task_status(
+            {"task_id": "test-project/ready-stale", "include_detail": True}
+        )
         assert result["stale_seconds"] == 0
         assert result["alive"] is False
 
@@ -305,7 +309,9 @@ class TestStallDetection:
             goal="State definition test",
         )
         import server
-        result = await server._handle_get_task_status({"task_id": "test-project/state-def-test"})
+        result = await server._handle_get_task_status(
+            {"task_id": "test-project/state-def-test", "include_detail": True}
+        )
         assert "state_definition" in result
         assert result["state_definition"]["label"] == "Ready"
 
