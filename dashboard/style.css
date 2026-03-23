@@ -924,3 +924,97 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     border-color: var(--border-secondary) !important;
     color: var(--text-primary) !important;
 }
+
+/* ── Foreman Design System — Base Global Styles ──────────── */
+/* Applied to the #foreman-app root so they don't conflict with the existing dashboard */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+#foreman-app {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    background: #101114;
+    color: #e8e9ea;
+    min-height: 100vh;
+}
+
+#foreman-app ::selection {
+    background: rgba(124, 90, 246, 0.3);
+    color: inherit;
+}
+
+/* Foreman header bar */
+.foreman-header {
+    height: 52px;
+    background: #101114;
+    border-bottom: 1px solid #2a2c32;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    gap: 8px;
+}
+
+.foreman-header-brand {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8e9ea;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+}
+
+.foreman-header-version {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: #5c5e66;
+    background: #18191d;
+    border: 1px solid #2a2c32;
+    border-radius: 4px;
+    padding: 1px 5px;
+    letter-spacing: 0.02em;
+}
+
+.foreman-header-spacer {
+    flex: 1;
+}
+
+/* Foreman content area */
+.foreman-content {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 32px 24px;
+}
+
+/* Foreman CSS custom properties — scoped to #foreman-app */
+#foreman-app {
+    --f-bg:             #101114;
+    --f-surface:        #18191d;
+    --f-surface-hover:  #1e2025;
+    --f-border:         #2a2c32;
+    --f-border-subtle:  rgba(42, 44, 50, 0.6);
+    --f-text:           #e8e9ea;
+    --f-text-secondary: #9899a1;
+    --f-text-tertiary:  #5c5e66;
+    --f-accent:         #7c5af6;
+    --f-green:          #3dd68c;
+    --f-yellow:         #f5a623;
+    --f-red:            #f25c5c;
+    --f-blue:           #4da3ff;
+}
+
+/* Pulse animation for working status (reused from existing, scoped for foreman) */
+@keyframes foreman-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.foreman-status-dot-pulse {
+    animation: foreman-pulse 1.8s ease-in-out infinite;
+}
