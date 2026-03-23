@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foreman</title>
+
+    <!-- Fonts: DM Sans (body) + JetBrains Mono (mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- Foreman + shared dashboard styles -->
+    <link rel="stylesheet" href="/dashboard/style.css" />
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #101114;
+            min-height: 100vh;
+        }
+
+        /* Hover style for project cards — CSS can't do this with inline styles */
+        .foreman-project-card:hover {
+            background: #1e2025 !important;
+        }
+
+        /* Attention badge */
+        .foreman-attention-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 9px;
+            background: rgba(245, 166, 35, 0.18);
+            border: 1px solid rgba(245, 166, 35, 0.4);
+            color: #f5a623;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        /* Skeleton shimmer */
+        .foreman-skeleton {
+            background: linear-gradient(90deg, #18191d 25%, #22242a 50%, #18191d 75%);
+            background-size: 200% 100%;
+            animation: foreman-shimmer 1.5s ease-in-out infinite;
+        }
+        @keyframes foreman-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Responsive: single column on small screens */
+        @media (max-width: 480px) {
+            .foreman-content {
+                padding: 20px 16px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Foreman root mount point. ForemanShell renders #foreman-app inside here. -->
+    <div id="foreman-root"></div>
+
+    <script type="module" src="/dashboard/foreman-app.js"></script>
+</body>
+</html>
