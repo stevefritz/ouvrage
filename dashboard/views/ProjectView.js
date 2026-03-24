@@ -77,7 +77,7 @@ function activityIcon(ev) {
 function RecentActivity({ projectId }) {
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
     const mountedRef = useRef(true);
 
     useEffect(() => {
