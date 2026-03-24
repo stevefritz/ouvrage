@@ -578,18 +578,45 @@ function ConversationsSection({ conversations }) {
 }
 
 // ---------------------------------------------------------------------------
-// Chain pop-out overlay
+// Chain pop-out overlay — vertical mini-DAG
 // ---------------------------------------------------------------------------
 
-function ChainOverlay({ chainIds, tasks, onClose }) {
-    const chainTasks = chainIds
-        .map(id => tasks.find(t => t.id === id))
-        .filter(Boolean);
+function ChainOverlay({ taskId, onClose }) {
+    const [chainData, setChainData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        setLoading(true);
+        setError(null);
+        api.getChain(taskId)
+            .then(data => { setChainData(data); setLoading(false); })
+            .catch(e => { setError(e.message || 'Failed to load chain'); setLoading(false); });
+    }, [taskId]);
+
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    const chain = chainData?.chain || [];
+
+    // Detect multi-component chain (show component tag per node when spans >1 component)
+    const componentIds = new Set(chain.filter(t => t.component_id).map(t => t.component_id));
+    const multiComponent = componentIds.size > 1;
+
+    // Node color by status
+    const nodeColor = (s) => {
+        if (s === 'completed') return colors.green;
+        if (s === 'working' || s === 'rate-limited' || s === 'turns-exhausted') return colors.blue;
+        return colors.textTertiary;
+    };
 
     const overlayStyle = {
         position: 'fixed',
         inset: 0,
-        background: 'rgba(16, 17, 20, 0.7)',
+        background: 'rgba(16, 17, 20, 0.75)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -600,15 +627,21 @@ function ChainOverlay({ chainIds, tasks, onClose }) {
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: layout.borderRadius.lg,
-        padding: '16px',
-        minWidth: '320px',
-        maxWidth: '480px',
+        padding: '20px',
+        minWidth: '340px',
+        maxWidth: '500px',
         width: '90%',
-        maxHeight: '70vh',
+        maxHeight: '80vh',
         overflowY: 'auto',
         display: 'flex',
         flexDirection: 'column',
-        gap: '8px',
+    };
+
+    const headerStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: '20px',
     };
 
     const titleStyle = {
@@ -617,10 +650,9 @@ function ChainOverlay({ chainIds, tasks, onClose }) {
         color: colors.textSecondary,
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
-        marginBottom: '4px',
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
+        gap: '6px',
     };
 
     const closeBtnStyle = {
@@ -628,63 +660,139 @@ function ChainOverlay({ chainIds, tasks, onClose }) {
         border: 'none',
         color: colors.textTertiary,
         cursor: 'pointer',
-        fontSize: '18px',
+        fontSize: '20px',
         lineHeight: 1,
         padding: '0 4px',
+        borderRadius: layout.borderRadius.sm,
     };
-
-    const taskRowStyle = (task, i) => ({
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '8px 10px',
-        borderRadius: layout.borderRadius.md,
-        background: colors.surfaceActive,
-        textDecoration: 'none',
-        color: colors.text,
-        transition: `background ${animation.durationFast}`,
-        position: 'relative',
-    });
 
     return html`
         <div style=${overlayStyle} onClick=${onClose}>
+            <style>${`
+                @keyframes foreman-chain-dot-pulse {
+                    0%, 100% { opacity: 1; transform: scale(1); }
+                    50%       { opacity: 0.5; transform: scale(0.75); }
+                }
+            `}</style>
             <div style=${panelStyle} onClick=${e => e.stopPropagation()}>
-                <div style=${titleStyle}>
-                    <span>⛓ Chain · ${chainTasks.length} tasks</span>
-                    <button style=${closeBtnStyle} onClick=${onClose}>×</button>
+                <div style=${headerStyle}>
+                    <span style=${titleStyle}>⛓ Chain${chain.length ? ` · ${chain.length}` : ''}</span>
+                    <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
                 </div>
 
-                ${chainTasks.map((task, i) => html`
-                    <a key=${task.id}
-                       href=${routes.task(task.id)}
-                       style=${taskRowStyle(task, i)}
-                       class="foreman-chain-task-row"
-                       onClick=${onClose}
-                    >
-                        <span style=${{
-                            fontFamily: typography.fontMono,
-                            fontSize: typography.size.xs,
-                            color: colors.textTertiary,
-                            flexShrink: 0,
-                            width: '16px',
-                            textAlign: 'center',
-                        }}>${i + 1}</span>
-                        <${StatusDot} status=${task.status} />
-                        <span style=${{
-                            flex: 1,
-                            fontSize: typography.size.sm,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                        }}>${task.goal || task.id}</span>
-                        <span style=${{
-                            fontFamily: typography.fontMono,
-                            fontSize: typography.size.xs,
-                            color: statusColors[task.status] || colors.textTertiary,
-                            flexShrink: 0,
-                        }}>${task.status}</span>
-                    </a>
-                `)}
+                ${loading ? html`
+                    <div style=${{ color: colors.textTertiary, fontSize: typography.size.sm, padding: '8px 0' }}>
+                        Loading…
+                    </div>
+                ` : error ? html`
+                    <div style=${{ color: colors.red, fontSize: typography.size.sm }}>${error}</div>
+                ` : html`
+                    <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                        ${chain.map((task, i) => {
+                            const color = nodeColor(task.status);
+                            const isActive = task.status === 'working';
+                            const isCurrent = task.id === taskId;
+                            const goal = task.goal || task.id;
+                            const displayGoal = goal.length > 52 ? goal.slice(0, 51) + '…' : goal;
+                            const compLabel = multiComponent && task.component_id
+                                ? task.component_id.split('/').pop()
+                                : null;
+
+                            return html`
+                                <div key=${task.id} style=${{ display: 'flex', alignItems: 'stretch' }}>
+
+                                    <!-- Left: dot + vertical connector -->
+                                    <div style=${{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        width: '20px',
+                                        flexShrink: 0,
+                                        marginRight: '12px',
+                                    }}>
+                                        <div style=${{
+                                            width: '10px',
+                                            height: '10px',
+                                            borderRadius: '50%',
+                                            background: color,
+                                            flexShrink: 0,
+                                            marginTop: '11px',
+                                            ...(isActive ? {
+                                                animation: 'foreman-chain-dot-pulse 1.4s ease-in-out infinite',
+                                            } : {}),
+                                        }} />
+                                        ${i < chain.length - 1 ? html`
+                                            <div style=${{
+                                                width: '2px',
+                                                flex: 1,
+                                                minHeight: '12px',
+                                                background: colors.border,
+                                                margin: '4px 0',
+                                            }} />
+                                        ` : null}
+                                    </div>
+
+                                    <!-- Right: node card -->
+                                    <a href=${routes.task(task.id)}
+                                       style=${{
+                                           flex: 1,
+                                           display: 'flex',
+                                           flexDirection: 'column',
+                                           gap: '3px',
+                                           padding: '8px 10px',
+                                           marginBottom: i < chain.length - 1 ? '2px' : '0',
+                                           borderRadius: layout.borderRadius.md,
+                                           background: isCurrent ? colors.surfaceActive : colors.bg,
+                                           border: `1px solid ${isCurrent ? color + '55' : colors.border}`,
+                                           textDecoration: 'none',
+                                           transition: `background ${animation.durationFast}`,
+                                           width: '100%',
+                                           boxSizing: 'border-box',
+                                       }}
+                                       class="foreman-chain-node"
+                                       onClick=${onClose}
+                                    >
+                                        <div style=${{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            justifyContent: 'space-between',
+                                        }}>
+                                            <span style=${{
+                                                fontSize: typography.size.sm,
+                                                color: colors.text,
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                flex: 1,
+                                            }}>${displayGoal}</span>
+
+                                            ${compLabel ? html`
+                                                <span style=${{
+                                                    fontSize: typography.size.xs,
+                                                    color: colors.accent,
+                                                    background: colors.accentBg,
+                                                    border: `1px solid rgba(124, 90, 246, 0.25)`,
+                                                    borderRadius: '4px',
+                                                    padding: '1px 6px',
+                                                    whiteSpace: 'nowrap',
+                                                    flexShrink: 0,
+                                                    lineHeight: '16px',
+                                                }}>${compLabel}</span>
+                                            ` : null}
+                                        </div>
+
+                                        <span style=${{
+                                            fontSize: typography.size.xs,
+                                            color,
+                                            fontFamily: typography.fontMono,
+                                        }}>${task.status || 'queued'}</span>
+                                    </a>
+                                </div>
+                            `;
+                        })}
+                    </div>
+                `}
             </div>
         </div>
     `;
@@ -919,8 +1027,7 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect })
                     />
                     ${showChain ? html`
                         <${ChainOverlay}
-                            chainIds=${chain.chainIds}
-                            tasks=${allTasks}
+                            taskId=${task.id}
                             onClose=${() => setShowChain(false)}
                         />
                     ` : null}
