@@ -4,7 +4,6 @@ import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, P
 import { MessageThread } from './MessageThread.js';
 import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
 import { GitFlowSummary } from './GitFlowSummary.js';
-import { ATTEMPT_BOUNDARIES, groupMessagesByAttempt, AttemptSessionLog } from './AttemptUtils.js';
 
 // ── Review Verdict Badge ─────────────────────────────────────
 function ReviewVerdictBadge({ subtasks }) {
@@ -131,7 +130,7 @@ function GatePipeline({ task }) {
     `;
 }
 
-function ChainStrip({ taskId }) {
+function ChainVisualization({ taskId }) {
     const [chain, setChain] = useState(null);
     const [currentIdx, setCurrentIdx] = useState(-1);
 
@@ -139,10 +138,8 @@ function ChainStrip({ taskId }) {
         api.getChain(taskId)
             .then(data => {
                 if (data && data.chain && data.chain.length > 1) {
-                    const filtered = data.chain.filter(t => !t.parent_task_id);
-                    setChain(filtered);
-                    const idx = filtered.findIndex(t => t.id === taskId);
-                    setCurrentIdx(idx >= 0 ? idx : data.current_index);
+                    setChain(data.chain);
+                    setCurrentIdx(data.current_index);
                 } else {
                     setChain(null);
                 }
@@ -150,49 +147,28 @@ function ChainStrip({ taskId }) {
             .catch(() => setChain(null));
     }, [taskId]);
 
-    if (!chain || chain.length <= 1) return null;
-
-    const dotColor = (status) => {
-        if (status === 'completed') return 'var(--color-success-muted)';
-        if (status === 'working') return 'var(--color-warning-muted)';
-        if (status === 'failed') return 'var(--color-error-muted)';
-        if (status === 'needs-review') return 'var(--color-warning-muted)';
-        return 'var(--color-neutral)';
-    };
-
-    // Truncate to max 7 nodes, showing current in middle
-    let displayChain = chain;
-    let truncatedStart = false, truncatedEnd = false;
-    if (chain.length > 7) {
-        const start = Math.max(0, Math.min(currentIdx - 3, chain.length - 7));
-        const end = start + 7;
-        displayChain = chain.slice(start, end);
-        truncatedStart = start > 0;
-        truncatedEnd = end < chain.length;
-    }
+    if (!chain) return null;
 
     return html`
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-            <div class="flex items-center gap-1 overflow-x-auto">
-                ${truncatedStart ? html`<span class="text-xs text-slate-500 shrink-0 px-1">\u2026</span>` : null}
-                ${displayChain.map((t, i) => {
-                    const isCurrent = t.id === taskId;
-                    const shortName = (t.goal || t.id.split('/').pop() || '').slice(0, 20);
-                    const color = dotColor(t.status);
+            <h3 class="text-sm font-medium text-slate-300 mb-3">\u26D3 Task Chain</h3>
+            <div class="flex items-center gap-2 overflow-x-auto pb-2">
+                ${chain.map((t, i) => {
+                    if (t.parent_task_id) return null;
+                    const isCurrent = i === currentIdx;
+                    const border = isCurrent ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-slate-700';
+                    const shortId = t.id.split('/').pop();
                     return html`
-                        <div key=${t.id} class="flex items-center gap-1 shrink-0">
-                            <a href="#/tasks/${t.id}"
-                                class="flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:bg-slate-800/50"
-                                style="cursor: pointer; ${isCurrent ? 'background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3);' : ''}">
-                                <span class="w-2 h-2 rounded-full shrink-0 ${t.status === 'working' ? 'status-dot-working' : ''}"
-                                    style="background: ${color}"></span>
-                                <span class="truncate" style="max-width: 120px; color: ${isCurrent ? '#60a5fa' : 'var(--text-muted)'}">${shortName}</span>
-                            </a>
-                            ${i < displayChain.length - 1 ? html`<span class="text-slate-600 shrink-0">\u2500</span>` : null}
-                        </div>
+                        <a key=${t.id} href="#/tasks/${t.id}" class="shrink-0 block p-2 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[120px] max-w-[180px]">
+                            <div class="flex items-center gap-1 mb-1">
+                                <${StatusBadge} status=${t.status} task=${t} />
+                            </div>
+                            <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
+                            <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
+                        </a>
+                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-500 shrink-0">\u2192</span>` : null}
                     `;
                 })}
-                ${truncatedEnd ? html`<span class="text-xs text-slate-500 shrink-0 px-1">\u2026</span>` : null}
             </div>
         </div>
     `;
@@ -357,6 +333,7 @@ function MessageInput({ taskId, task, onAction, onMessageSent }) {
 export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
     const [task, setTask] = useState(null);
     const [error, setError] = useState(null);
+    const [sessionLogOpen, setSessionLogOpen] = useState(false);
     const [dispatchLogOpen, setDispatchLogOpen] = useState(false);
     const mountedRef = useRef(true);
 
@@ -376,6 +353,7 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
         mountedRef.current = true;
         setTask(null);
         setError(null);
+        setSessionLogOpen(false);
         setDispatchLogOpen(false);
         loadTask();
         return () => { mountedRef.current = false; };
@@ -405,6 +383,8 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
         </div>`;
     }
 
+    const autoRefreshLogs = task.status === 'working';
+
     return html`
         <div class="p-6">
             <div class="mb-4">
@@ -413,54 +393,19 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
 
             <${DetailHeader} task=${task} onAction=${onAction} jiraBaseUrl=${jiraBaseUrl} />
             <${GatePipeline} task=${task} />
-            <${ChainStrip} taskId=${taskId} />
+            <${ChainVisualization} taskId=${taskId} />
             <${Subtasks} subtasks=${task.subtasks} />
             <${Checklist} task=${task} />
             <${PlanSection} messages=${task.messages} />
 
-            ${(() => {
-                const attempts = groupMessagesByAttempt(task.messages);
-                const nonPlanCount = (task.messages || []).filter(m => m.type !== 'plan').length;
-                if (attempts.length <= 1) {
-                    return html`
-                        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-                            <h3 class="text-sm font-medium text-slate-300 mb-3">Messages (${nonPlanCount})</h3>
-                            <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="msg" />
-                            ${attempts.length === 1 ? html`
-                                <${AttemptSessionLog} taskId=${taskId} attemptNumber=${1} autoRefresh=${task.status === 'working'} />
-                            ` : null}
-                            <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
-                        </div>`;
-                }
-                return html`
-                    <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-                        <div class="text-sm font-medium text-slate-300 mb-3">
-                            Messages (${nonPlanCount}) \u00B7 ${attempts.length} attempts
-                        </div>
-                        ${attempts.map((attempt, idx) => {
-                            const isLast = idx === attempts.length - 1;
-                            const outcomeColor = attempt.outcome === 'In Progress' ? 'text-blue-400' :
-                                attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? 'text-red-400' :
-                                'text-emerald-400';
-                            return html`
-                                <details key=${idx} class="border border-slate-700 rounded mb-2" open=${isLast}>
-                                    <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
-                                        <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
-                                        <span class="${outcomeColor}">${attempt.outcome}</span>
-                                        ${isLast && task.status === 'working' ? html`<span class="text-amber-400 status-dot-working">\u25CF Claude is Coding</span>` : null}
-                                        <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
-                                    </summary>
-                                    <div class="px-2 pb-2">
-                                        <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
-                                        <${AttemptSessionLog} taskId=${taskId} attemptNumber=${idx + 1}
-                                            autoRefresh=${isLast && task.status === 'working'} />
-                                    </div>
-                                </details>`;
-                        })}
-                        <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
-                    </div>`;
-            })()}
+            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+                <h3 class="text-sm font-medium text-slate-300 mb-3">Messages</h3>
+                <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="msg" />
+                <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
+            </div>
 
+            <${SessionLogPanel} taskId=${taskId} isOpen=${sessionLogOpen}
+                onToggle=${() => setSessionLogOpen(!sessionLogOpen)} autoRefresh=${autoRefreshLogs} />
             <${DispatchLogPanel} taskId=${taskId} isOpen=${dispatchLogOpen}
                 onToggle=${() => setDispatchLogOpen(!dispatchLogOpen)} />
         </div>

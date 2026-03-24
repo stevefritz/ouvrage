@@ -169,13 +169,11 @@ export function ActivityBar() {
 
     return html`
         <div class="activity-bar">
-            <div class="activity-bar-inner" onClick=${() => events.length > 0 && setExpanded(e => !e)}
-                style="cursor: ${events.length > 0 ? 'pointer' : 'default'}">
+            <div class="activity-bar-inner">
                 <div class="activity-bar-left">
                     ${working.map(t => html`
                         <a href=${'#/tasks/' + encodeURIComponent(t.id)}
-                            class="activity-working-task" title=${t.goal}
-                            onClick=${(e) => e.stopPropagation()}>
+                            class="activity-working-task" title=${t.goal}>
                             <span class="activity-spinner"></span>
                             <span class="activity-task-name">${shortGoal(t.goal, 28)}</span>
                             <span class="activity-elapsed">${relativeTime(t.last_activity || t.updated_at)}</span>
@@ -192,9 +190,11 @@ export function ActivityBar() {
                 </div>
                 <div class="activity-bar-right">
                     ${events.length > 0 ? html`
-                        <span class="activity-expand-btn">
-                            ${expanded ? 'Hide \u25B4' : 'Show \u25BE'}
-                        </span>
+                        <button
+                            class="activity-expand-btn"
+                            onClick=${() => setExpanded(e => !e)}>
+                            Activity${expanded ? ' ▲' : ' ▾'}
+                        </button>
                     ` : null}
                 </div>
             </div>

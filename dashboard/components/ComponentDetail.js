@@ -4,7 +4,7 @@ import { html, navigate, StatusBadge, relativeTime } from './utils.js';
 import {
     computeLayout, TaskNode, EdgePath, TagFilterBar, StateLegend, DEFAULT_STATE_COLORS,
 } from './DagGraph.js';
-import { TaskPanel } from './TaskPanel.js';
+import { GraphDetailPanel } from './GraphDetailPanel.js';
 
 // ── Component status badge ────────────────────────────────────────────────
 
@@ -224,13 +224,13 @@ function ComponentDagSection({ tasks, onAction, jiraBaseUrl }) {
 
             ${selectedTaskId ? html`
                 <div class="panel-backdrop" onClick=${handleClose}></div>
-                <${TaskPanel}
+                <${GraphDetailPanel}
                     key=${selectedTaskId}
                     taskId=${selectedTaskId}
                     allTasks=${tasks}
+                    jiraBaseUrl=${jiraBaseUrl}
                     onClose=${handleClose}
-                    onAction=${handleAction}
-                    onSelectTask=${(id) => handleAction('select-task', id)} />
+                    onAction=${handleAction} />
             ` : null}
         </div>
     `;

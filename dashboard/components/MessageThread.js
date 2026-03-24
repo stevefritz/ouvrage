@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { html, renderMarkdown } from './utils.js';
 
 const BORDER_COLORS = {
@@ -20,7 +20,7 @@ function Message({ msg, index, expandedMessages, onToggle, idPrefix = 'msg' }) {
     const pinIcon = msg.pinned || msg._pinned_marker ? '\uD83D\uDCCC ' : '';
     const type = (msg.type || 'note').toUpperCase();
     const time = msg.created_at ? new Date(msg.created_at + (msg.created_at.endsWith('Z') ? '' : 'Z')).toLocaleTimeString() : '';
-    const contentHtml = useMemo(() => renderMarkdown(msg.content), [msg.content]);
+    const contentHtml = renderMarkdown(msg.content);
     const isLong = (msg.content || '').length > 500;
     const collapseId = `${idPrefix}-${msg.id || index}`;
     const isExpanded = expandedMessages.has(collapseId);
