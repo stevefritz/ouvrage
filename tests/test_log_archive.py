@@ -9,12 +9,29 @@ Covers:
 - missing .switchboard/ is a no-op (not an error)
 """
 
+import asyncio
 import json
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
+
+
+# Mock _run_as_worker to execute commands directly (no setuid in test context)
+async def _fake_run_as_worker(*cmd, **kwargs):
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    return stdout, stderr, proc.returncode
+
+
+@pytest.fixture(autouse=True)
+def _mock_worker(monkeypatch):
+    import tasks
+    monkeypatch.setattr(tasks, "_run_as_worker", _fake_run_as_worker)
 
 
 # ---------------------------------------------------------------------------

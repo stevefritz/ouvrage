@@ -395,25 +395,44 @@ async def _handle_get_messages(scope, send, task_id):
 async def _resolve_dashboard_log_dir(task: dict, attempt: int | None):
     """Return a Path to the .switchboard/ dir to read logs from.
 
-    Priority: specific attempt archive → live worktree → highest archive → None.
+    Priority: specific attempt archive → live worktree (DB path) → orphaned
+    worktree dir (DB cleared but dir still on disk) → highest archive → None.
     """
     from pathlib import Path
 
     project = await db.get_project(task["project_id"])
+
+    def _try_worktree_dir():
+        """Check both DB worktree_path and physical dir on disk."""
+        # DB still has the path
+        wt = task.get("worktree_path")
+        if wt:
+            live = Path(wt) / ".switchboard"
+            if live.exists():
+                return live
+        # DB cleared but dir might still exist (release failed or detach-only)
+        if project:
+            slug = tasks._task_slug(task["id"])
+            orphan = Path(project["working_dir"]) / slug / ".switchboard"
+            if orphan.exists():
+                return orphan
+        return None
 
     if attempt is not None:
         if project:
             archive = tasks._find_archive_path(project, task["id"], attempt)
             if archive:
                 return archive
+        # No archive — fall back to worktree if this is the current attempt
+        current_attempt = task.get("current_attempt") or task.get("dispatch_count") or 1
+        if attempt == current_attempt:
+            return _try_worktree_dir()
         return None
 
-    # Try live worktree first
-    wt = task.get("worktree_path")
-    if wt:
-        live = Path(wt) / ".switchboard"
-        if live.exists():
-            return live
+    # Try worktree first
+    wt_dir = _try_worktree_dir()
+    if wt_dir:
+        return wt_dir
 
     # Fall back to highest-numbered archive
     if project:

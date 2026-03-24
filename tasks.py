@@ -2432,6 +2432,7 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
 
     Dest: {project.working_dir}/.task-history/{task_slug}/attempt-{dispatch_count}/
     Writes metadata.json alongside copied files.
+    Runs as worker user to avoid permission issues (worktree owned by worker).
     No-op if worktree is absent or .switchboard/ doesn't exist.
     """
     worktree = task.get("worktree_path")
@@ -2447,10 +2448,13 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
     dest = Path(project["working_dir"]) / ".task-history" / slug / f"attempt-{dispatch_count}"
 
     try:
-        dest.mkdir(parents=True, exist_ok=True)
+        # Create dest dir as worker user (project working_dir owned by worker)
+        await _run_as_worker("mkdir", "-p", str(dest))
+
+        # Copy each file as worker user
         for src_file in src.iterdir():
             if src_file.is_file():
-                shutil.copy2(src_file, dest / src_file.name)
+                await _run_as_worker("cp", "-p", str(src_file), str(dest / src_file.name))
 
         metadata = {
             "task_id": task["id"],
@@ -2462,7 +2466,13 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
             "output_tokens": task.get("total_output_tokens"),
             "archived_at": db.now_iso(),
         }
-        (dest / "metadata.json").write_text(json.dumps(metadata, indent=2))
+        metadata_json = json.dumps(metadata, indent=2)
+        # Write metadata via temp file + move (avoids stdin piping)
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            tmp.write(metadata_json)
+            tmp_path = tmp.name
+        await _run_as_worker("mv", tmp_path, str(dest / "metadata.json"))
         log.info(f"Archived logs for {task['id']} attempt {dispatch_count} to {dest} (reason={reason})")
         return dest
     except Exception as e:
@@ -2548,12 +2558,10 @@ async def release_worktree(task_id: str, reason: str = "detach") -> dict:
     if project:
         bare_path = os.path.join(project["working_dir"], ".bare")
         if os.path.exists(bare_path) and os.path.exists(worktree):
-            proc = await asyncio.create_subprocess_exec(
+            _, stderr, rc = await _run_as_worker(
                 "git", "-C", bare_path, "worktree", "remove", "--force", worktree,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
+            if rc != 0:
                 log.warning(f"Worktree remove failed for {task_id}: {stderr.decode()}")
             else:
                 log.info(f"Released worktree for {task_id}: {worktree}")
@@ -2561,12 +2569,10 @@ async def release_worktree(task_id: str, reason: str = "detach") -> dict:
             # Clean up local branch ref so it doesn't block checkout from other worktrees
             branch = task.get("branch")
             if branch:
-                proc = await asyncio.create_subprocess_exec(
+                _, stderr, rc = await _run_as_worker(
                     "git", "-C", bare_path, "branch", "-D", branch,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await proc.communicate()
-                if proc.returncode == 0:
+                if rc == 0:
                     log.info(f"Deleted local branch ref {branch} for {task_id}")
                 else:
                     log.warning(f"Failed to delete branch ref {branch}: {stderr.decode().strip()}")
