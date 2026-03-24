@@ -1,16 +1,17 @@
 // TaskPanel — standalone slide-out panel for task detail
 // Used in graph views, project views, and component views
-import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, relativeTime, renderMarkdown, navigate, StatusBadge, ActionButtons, Tip, PrUrlBadge, LoadingState, ErrorState } from './utils.js';
+import { html, relativeTime, navigate, StatusBadge, ActionButtons, Tip, PrUrlBadge, LoadingState, ErrorState } from './utils.js';
 import { MessageThread } from './MessageThread.js';
+import { ATTEMPT_BOUNDARIES, groupMessagesByAttempt, AttemptSessionLog } from './AttemptUtils.js';
 
 // ── Status colors for dots ───────────────────────────────────
 const DOT_COLORS = {
-    done: '#22c55e',
-    active: '#3b82f6',
-    failed: '#ef4444',
-    pending: '#475569',
+    done: 'var(--color-success-muted)',
+    active: 'var(--color-info-muted)',
+    failed: 'var(--color-error-muted)',
+    pending: 'var(--color-neutral-muted)',
 };
 
 // ── Gate Pipeline Dots ───────────────────────────────────────
@@ -66,14 +67,14 @@ function TestResult({ subtasks }) {
     const latest = tests[tests.length - 1];
 
     if (latest.status === 'completed') {
-        return html`<div class="text-sm" style="color: #4ade80">\u2713 Tests passed</div>`;
+        return html`<div class="text-sm" style="color: var(--color-success)">\u2713 Tests passed</div>`;
     }
     if (latest.status === 'failed') {
         const excerpt = (latest.result || '').slice(0, 80);
-        return html`<div class="text-sm" style="color: #f87171">\u2715 Tests failed${excerpt ? ` \u2014 ${excerpt}` : ''}</div>`;
+        return html`<div class="text-sm" style="color: var(--color-error)">\u2715 Tests failed${excerpt ? ` \u2014 ${excerpt}` : ''}</div>`;
     }
     if (latest.status === 'working') {
-        return html`<div class="text-sm" style="color: #fbbf24">\u25CF Tests running...</div>`;
+        return html`<div class="text-sm" style="color: var(--color-warning)">\u25CF Tests running...</div>`;
     }
     return null;
 }
@@ -88,15 +89,15 @@ function ReviewVerdict({ subtasks }) {
         const result = (latest.result || '').toLowerCase();
         if (result.includes('changes requested') || result.includes('changes_requested')) {
             const excerpt = (latest.result || '').slice(0, 80);
-            return html`<div class="text-sm" style="color: #f87171">\u2715 REJECTED${excerpt ? ` \u2014 ${excerpt}` : ''}</div>`;
+            return html`<div class="text-sm" style="color: var(--color-error)">\u2715 REJECTED${excerpt ? ` \u2014 ${excerpt}` : ''}</div>`;
         }
-        return html`<div class="text-sm" style="color: #4ade80">\u2713 APPROVED</div>`;
+        return html`<div class="text-sm" style="color: var(--color-success)">\u2713 APPROVED</div>`;
     }
     if (latest.status === 'failed') {
-        return html`<div class="text-sm" style="color: #f87171">\u2715 REVIEW FAILED</div>`;
+        return html`<div class="text-sm" style="color: var(--color-error)">\u2715 REVIEW FAILED</div>`;
     }
     if (latest.status === 'working') {
-        return html`<div class="text-sm" style="color: #fbbf24">\u25CF Review running...</div>`;
+        return html`<div class="text-sm" style="color: var(--color-warning)">\u25CF Review running...</div>`;
     }
     return null;
 }
@@ -140,120 +141,6 @@ function ChainPosition({ taskId, onSelectTask }) {
                 class="text-xs px-2 py-1 rounded" style="background: var(--bg-secondary); color: var(--text-muted)">\u2192</button>` : null}
         </div>
     `;
-}
-
-// ── Session Log Per Attempt ──────────────────────────────────
-function AttemptSessionLog({ taskId, attemptNumber, autoRefresh }) {
-    const [expanded, setExpanded] = useState(false);
-    const [entries, setEntries] = useState([]);
-    const [loaded, setLoaded] = useState(false);
-    const [showTools, setShowTools] = useState(false);
-    const logRef = useRef(null);
-
-    useEffect(() => {
-        if (!expanded) return;
-        let cancelled = false;
-        const load = () => {
-            api.getSessionLog(taskId, { attempt: attemptNumber })
-                .then(data => {
-                    if (cancelled) return;
-                    setEntries(data);
-                    setLoaded(true);
-                    // Auto-scroll to bottom if near bottom
-                    if (logRef.current) {
-                        const el = logRef.current;
-                        const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-                        if (wasAtBottom) {
-                            requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
-                        }
-                    }
-                })
-                .catch(() => { if (!cancelled) setLoaded(true); });
-        };
-        load();
-        let timer;
-        if (autoRefresh) {
-            timer = setInterval(load, 5000);
-        }
-        return () => { cancelled = true; if (timer) clearInterval(timer); };
-    }, [expanded, taskId, attemptNumber, autoRefresh]);
-
-    return html`
-        <div class="mt-2">
-            <button onClick=${() => setExpanded(!expanded)}
-                class="text-xs flex items-center gap-1" style="color: var(--text-faint); cursor: pointer">
-                ${expanded ? '\u25BE' : '\u25B8'} Session Log
-            </button>
-            ${expanded ? html`
-                <div class="mt-1">
-                    <button onClick=${() => setShowTools(!showTools)}
-                        class="text-xs px-2 py-0.5 rounded mb-1" style="background: var(--bg-secondary); color: var(--text-faint)">
-                        ${showTools ? 'Text only' : 'Show tools'}
-                    </button>
-                    <pre ref=${logRef} class="text-xs overflow-y-auto whitespace-pre-wrap rounded p-2"
-                        style="max-height: 400px; background: var(--bg-primary); color: var(--text-muted)">
-                        ${!loaded ? 'Loading...' : entries.length === 0 ? 'No session log' :
-                            entries.map(e => {
-                                if (e.type === 'AssistantMessage') {
-                                    return (e.content || []).map(b => {
-                                        if (b.type === 'text') return b.text + '\n';
-                                        if (b.type === 'tool_use' && showTools) return `[TOOL] ${b.name}: ${JSON.stringify(b.input).slice(0, 200)}\n`;
-                                        return '';
-                                    }).join('');
-                                }
-                                if (e.type === 'UserMessage' && showTools) {
-                                    return (e.content || []).map(b => {
-                                        if (b.type === 'tool_result') return `[RESULT] ${(b.preview || '').slice(0, 200)}\n`;
-                                        return '';
-                                    }).join('');
-                                }
-                                return '';
-                            }).join('')
-                        }
-                    </pre>
-                </div>
-            ` : null}
-        </div>
-    `;
-}
-
-// ── Attempt Grouping ─────────────────────────────────────────
-const ATTEMPT_BOUNDARIES = [
-    'Task completed', 'Task failed', 'Dispatch error', 'Turns exhausted',
-    'Session killed by signal', 'Rate limited', 'Wall clock timeout',
-    'Recovery limit reached',
-];
-
-function groupMessagesByAttempt(messages) {
-    if (!messages || messages.length === 0) return [];
-    const attempts = [];
-    let current = { messages: [], outcome: null, number: 1 };
-
-    for (const msg of messages) {
-        if (msg.type === 'plan') continue;
-        current.messages.push(msg);
-        if (msg.author === 'dispatcher' && msg.type === 'status'
-            && ATTEMPT_BOUNDARIES.some(b => (msg.title || '').includes(b))) {
-            current.outcome = msg.title || 'Completed';
-            attempts.push(current);
-            current = { messages: [], outcome: null, number: attempts.length + 1 };
-        }
-    }
-    if (current.messages.length > 0) {
-        if (current.messages.every(m => m.author === 'dispatcher')) {
-            if (attempts.length > 0) {
-                const last = attempts[attempts.length - 1];
-                last.messages.push(...current.messages);
-            } else {
-                current.outcome = 'Status';
-                attempts.push(current);
-            }
-        } else {
-            current.outcome = 'In Progress';
-            attempts.push(current);
-        }
-    }
-    return attempts;
 }
 
 // ── Main Panel ──────────────────────────────────────────────
@@ -308,11 +195,11 @@ export function TaskPanel({ taskId, allTasks, onClose, onAction, onSelectTask })
 
     // Derive display values
     const statusLabel = (task.status || 'ready').toUpperCase();
-    const statusDotColor = task.status === 'completed' ? '#3b82f6'
-        : task.status === 'working' ? '#f59e0b'
-        : task.status === 'failed' ? '#ef4444'
-        : task.status === 'needs-review' ? '#f59e0b'
-        : '#64748b';
+    const statusDotColor = task.status === 'completed' ? 'var(--color-info-muted)'
+        : task.status === 'working' ? 'var(--color-warning-muted)'
+        : task.status === 'failed' ? 'var(--color-error-muted)'
+        : task.status === 'needs-review' ? 'var(--color-warning-muted)'
+        : 'var(--color-neutral)';
 
     const attempts = groupMessagesByAttempt(task.messages);
     const attemptCount = Math.max(task.dispatch_count || 1, attempts.length);
@@ -340,21 +227,6 @@ export function TaskPanel({ taskId, allTasks, onClose, onAction, onSelectTask })
     // BlockedBy
     const blockerTask = task.depends_on && allTasks ? allTasks.find(t => t.id === task.depends_on) : null;
     const isActuallyBlocked = blockerTask && !['completed', 'merged', 'cancelled'].includes(blockerTask.status);
-
-    // Action buttons logic
-    const actions = [];
-    if ((task.status === 'failed' || task.status === 'needs-review' || task.status === 'completed') && task.status !== 'cancelled') {
-        actions.push('retry');
-    }
-    if (task.gate_status === 'advance' || (task.status === 'completed' && task.gate_status === 'passed')) {
-        actions.push('advance-chain');
-    }
-    if (task.status === 'completed' || task.status === 'failed') {
-        actions.push('close');
-    }
-    if (task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || task.status === 'completed') {
-        actions.push('resume');
-    }
 
     return html`
         <div class="task-panel">
@@ -429,9 +301,9 @@ export function TaskPanel({ taskId, allTasks, onClose, onAction, onSelectTask })
                         </div>
                         ${attempts.map((attempt, idx) => {
                             const isLast = idx === attempts.length - 1;
-                            const outcomeColor = attempt.outcome === 'In Progress' ? '#3b82f6' :
-                                attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? '#ef4444' :
-                                '#22c55e';
+                            const outcomeColor = attempt.outcome === 'In Progress' ? 'var(--color-info-muted)' :
+                                attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? 'var(--color-error-muted)' :
+                                'var(--color-success-muted)';
                             return html`
                                 <details key=${idx} class="rounded mb-2 overflow-hidden" style="border: 1px solid var(--border-primary)" open=${isLast}>
                                     <summary class="px-3 py-2 text-xs cursor-pointer flex items-center gap-2" style="color: var(--text-secondary)">

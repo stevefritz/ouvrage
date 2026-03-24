@@ -126,7 +126,7 @@ function ComponentPanel({ comp, onClose, onFilterTasks }) {
                             ${displayConvs.map(c => html`
                                 <a key=${c.id} href="#/conversations/${encodeURIComponent(c.id)}"
                                     class="block px-3 py-2 rounded text-xs hover:bg-slate-800/50" style="color: var(--text-secondary)">
-                                    <div class="font-medium">${c.id}</div>
+                                    <div class="font-medium">${c.goal || c.id}</div>
                                     ${c.last_message_at ? html`<div style="color: var(--text-faint)">${relativeTime(c.last_message_at)}</div>` : null}
                                 </a>
                             `)}
@@ -147,17 +147,35 @@ function ComponentPanel({ comp, onClose, onFilterTasks }) {
                         html`<div class="space-y-0.5">
                             ${displayPunchlist.map(item => {
                                 const icon = item.status === 'done' ? '\u2713' : item.status === 'claimed' ? '\u25CF' : '\u25CB';
-                                const color = item.status === 'done' ? '#22c55e' : item.status === 'claimed' ? '#f59e0b' : 'var(--text-muted)';
+                                const color = item.status === 'done' ? 'var(--color-success-muted)' : item.status === 'claimed' ? 'var(--color-warning-muted)' : 'var(--text-muted)';
                                 return html`
                                     <div key=${item.id} class="flex items-center gap-2 text-xs py-1">
                                         <span style="color: ${color}">${icon}</span>
-                                        <span class="truncate" style="color: var(--text-secondary)">${(item.item || '').split('\\n')[0]}</span>
+                                        <span class="truncate" style="color: var(--text-secondary)">${(item.item || '').split('\n')[0]}</span>
                                     </div>
                                 `;
                             })}
                         </div>`
                     }
                 </div>
+
+                <!-- Config overrides (only if any non-default values) -->
+                ${(() => {
+                    const overrides = [];
+                    if (comp.model) overrides.push(['Model', comp.model]);
+                    if (comp.base_branch) overrides.push(['Branch', comp.base_branch]);
+                    if (comp.auto_test === false) overrides.push(['Auto-test', 'off']);
+                    if (comp.auto_review === false) overrides.push(['Auto-review', 'off']);
+                    if (overrides.length === 0) return null;
+                    return html`
+                        <div class="mb-4">
+                            <h4 class="text-xs font-medium uppercase tracking-wide mb-2" style="color: var(--text-faint)">Config Overrides</h4>
+                            <div class="text-xs" style="color: var(--text-muted)">
+                                ${overrides.map(([k, v]) => html`<div key=${k}><span style="color: var(--text-faint)">${k}:</span> <span class="font-mono">${v}</span></div>`)}
+                            </div>
+                        </div>
+                    `;
+                })()}
 
                 <!-- Open full page -->
                 <a href="#/components/${encodeURIComponent(comp.id)}" class="block text-xs py-2 text-center rounded" style="color: var(--link-color)">
@@ -182,7 +200,7 @@ function TaskRow({ task, onSelect, onAction }) {
             <${StatusBadge} status=${task.status} task=${task} />
             <${HeartbeatIndicator} task=${task} />
             <div class="flex-1 min-w-0">
-                <div class="text-sm truncate" style="color: var(--text-secondary); overflow-wrap: break-word">${task.goal || shortId}</div>
+                <div class="text-sm truncate" style="color: var(--text-secondary)">${task.goal || shortId}</div>
                 <div class="flex items-center gap-2 mt-0.5">
                     <span class="text-xs font-mono" style="color: var(--text-faint)">${shortId}</span>
                     ${compName ? html`<span class="text-xs px-1.5 py-0 rounded" style="background: var(--bg-secondary); color: var(--text-faint)">${compName}</span>` : null}

@@ -3,118 +3,7 @@ import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
 import { DispatchLogPanel } from './SessionLog.js';
-
-// ── Attempt grouping ────────────────────────────────────────
-const ATTEMPT_BOUNDARIES = [
-    'Task completed', 'Task failed', 'Dispatch error', 'Turns exhausted',
-    'Session killed by signal', 'Rate limited', 'Wall clock timeout',
-    'Recovery limit reached',
-];
-
-function groupMessagesByAttempt(messages) {
-    if (!messages || messages.length === 0) return [];
-    const attempts = [];
-    let current = { messages: [], outcome: null };
-
-    for (const msg of messages) {
-        if (msg.type === 'plan') continue;
-        current.messages.push(msg);
-        if (msg.author === 'dispatcher' && msg.type === 'status'
-            && ATTEMPT_BOUNDARIES.some(b => (msg.title || '').includes(b))) {
-            current.outcome = msg.title || 'Completed';
-            attempts.push(current);
-            current = { messages: [], outcome: null };
-        }
-    }
-    if (current.messages.length > 0) {
-        if (current.messages.every(m => m.author === 'dispatcher')) {
-            if (attempts.length > 0) {
-                attempts[attempts.length - 1].messages.push(...current.messages);
-            } else {
-                current.outcome = 'Status';
-                attempts.push(current);
-            }
-        } else {
-            current.outcome = 'In Progress';
-            attempts.push(current);
-        }
-    }
-    return attempts;
-}
-
-// ── Per-Attempt Session Log ──────────────────────────────────
-function AttemptSessionLog({ taskId, attemptNumber, autoRefresh }) {
-    const [expanded, setExpanded] = useState(false);
-    const [entries, setEntries] = useState([]);
-    const [loaded, setLoaded] = useState(false);
-    const [showTools, setShowTools] = useState(false);
-    const logRef = useRef(null);
-
-    useEffect(() => {
-        if (!expanded) return;
-        let cancelled = false;
-        const load = () => {
-            api.getSessionLog(taskId, { attempt: attemptNumber })
-                .then(data => {
-                    if (cancelled) return;
-                    setEntries(data);
-                    setLoaded(true);
-                    if (logRef.current) {
-                        const el = logRef.current;
-                        const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-                        if (wasAtBottom) {
-                            requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
-                        }
-                    }
-                })
-                .catch(() => { if (!cancelled) setLoaded(true); });
-        };
-        load();
-        let timer;
-        if (autoRefresh) {
-            timer = setInterval(load, 5000);
-        }
-        return () => { cancelled = true; if (timer) clearInterval(timer); };
-    }, [expanded, taskId, attemptNumber, autoRefresh]);
-
-    return html`
-        <div class="mt-2 border-t border-slate-700/50 pt-2">
-            <button onClick=${() => setExpanded(!expanded)}
-                class="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-300 cursor-pointer">
-                ${expanded ? '\u25BE' : '\u25B8'} Session Log
-            </button>
-            ${expanded ? html`
-                <div class="mt-1">
-                    <button onClick=${() => setShowTools(!showTools)}
-                        class="text-xs px-2 py-0.5 rounded mb-1 bg-slate-800 text-slate-400 hover:bg-slate-700">
-                        ${showTools ? 'Text only' : 'Show tools'}
-                    </button>
-                    <pre ref=${logRef} class="text-xs overflow-y-auto whitespace-pre-wrap rounded p-2 bg-slate-950"
-                        style="max-height: 400px; color: var(--text-muted)">
-                        ${!loaded ? 'Loading...' : entries.length === 0 ? 'No session log' :
-                            entries.map(e => {
-                                if (e.type === 'AssistantMessage') {
-                                    return (e.content || []).map(b => {
-                                        if (b.type === 'text') return b.text + '\n';
-                                        if (b.type === 'tool_use' && showTools) return '[TOOL] ' + b.name + ': ' + JSON.stringify(b.input).slice(0, 200) + '\n';
-                                        return '';
-                                    }).join('');
-                                }
-                                if (e.type === 'UserMessage' && showTools) {
-                                    return (e.content || []).map(b => {
-                                        if (b.type === 'tool_result') return '[RESULT] ' + (b.preview || '').slice(0, 200) + '\n';
-                                        return '';
-                                    }).join('');
-                                }
-                                return '';
-                            }).join('')
-                        }
-                    </pre>
-                </div>
-            ` : null}
-        </div>
-    `;
-}
+import { ATTEMPT_BOUNDARIES, groupMessagesByAttempt, AttemptSessionLog } from './AttemptUtils.js';
 
 // ── Review Verdict Badge ─────────────────────────────────────
 function ReviewVerdictBadge({ subtasks }) {
@@ -262,11 +151,11 @@ function ChainStrip({ taskId }) {
     if (!chain || chain.length <= 1) return null;
 
     const dotColor = (status) => {
-        if (status === 'completed') return '#22c55e';
-        if (status === 'working') return '#f59e0b';
-        if (status === 'failed') return '#ef4444';
-        if (status === 'needs-review') return '#f59e0b';
-        return '#64748b';
+        if (status === 'completed') return 'var(--color-success-muted)';
+        if (status === 'working') return 'var(--color-warning-muted)';
+        if (status === 'failed') return 'var(--color-error-muted)';
+        if (status === 'needs-review') return 'var(--color-warning-muted)';
+        return 'var(--color-neutral)';
     };
 
     // Truncate to max 7 nodes, showing current in middle
