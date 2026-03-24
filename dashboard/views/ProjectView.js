@@ -821,7 +821,7 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
     };
 
     return html`
-        <div style=${overlayStyle} onClick=${onClose}>
+        <div style=${overlayStyle} onClick=${(e) => { e.stopPropagation(); onClose(); }}>
             <style>${`
                 @keyframes foreman-chain-dot-pulse {
                     0%, 100% { opacity: 1; transform: scale(1); }
