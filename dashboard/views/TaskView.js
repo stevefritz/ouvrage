@@ -349,19 +349,19 @@ function ActionToolbar({ task, onAction }) {
     if (task.status === 'working') {
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
-    if (['completed', 'needs-review', 'turns-exhausted'].includes(task.status)) {
+    if (task.status === 'working') {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
     }
-    if (['failed', 'cancelled', 'completed', 'needs-review', 'turns-exhausted'].includes(task.status)) {
+    if (['failed', 'needs-review', 'completed'].includes(task.status)) {
         actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         actions.push(btn('skip-gate', 'Skip Gate', 'rgba(139, 92, 246, 0.12)', '#8b5cf6'));
     }
-    if (task.status === 'completed' && task.gate_status === 'passed') {
+    if (task.gate_status === 'advance') {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
     }
-    if (['failed', 'cancelled', 'completed'].includes(task.status)) {
+    if (['completed', 'failed'].includes(task.status)) {
         actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
@@ -743,7 +743,9 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, 
         'cancelled':         { color: colors.textTertiary, label: 'cancelled' },
     };
 
-    const os = outcomeStyle[outcome] || outcomeStyle['in-progress'];
+    const os = !isLatest
+        ? { color: colors.textTertiary, label: 'retried' }
+        : (outcomeStyle[outcome] || outcomeStyle['in-progress']);
 
     const toggleMsg = useCallback((msgId) => {
         setExpandedMsgs(prev => {
