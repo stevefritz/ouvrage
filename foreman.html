@@ -134,8 +134,51 @@
             margin: 4px 0;
         }
 
-        /* Responsive: single column on small screens */
+        /* Conversation message hover */
+        .foreman-conv-message:hover { background: rgba(255,255,255,0.02); }
+
+        /* Conversation post input textarea focus */
+        .foreman-content textarea:focus {
+            outline: none;
+            border-color: #7c5af6 !important;
+        }
+
+        /* Select focus */
+        .foreman-content select:focus {
+            outline: none;
+            border-color: #7c5af6;
+        }
+
+        /* ── Mobile responsive ── */
+
+        /* Phone: 375px */
         @media (max-width: 480px) {
+            .foreman-content {
+                padding: 20px 12px !important;
+                max-width: 100% !important;
+            }
+
+            .foreman-header {
+                padding: 0 12px !important;
+            }
+
+            /* Task row: stack vertically on narrow */
+            .foreman-task-row {
+                flex-wrap: wrap;
+                gap: 4px !important;
+                padding: 10px 0 !important;
+            }
+
+            /* Chain overlay: full width on mobile */
+            .foreman-chain-overlay-panel {
+                min-width: auto !important;
+                width: 95% !important;
+                max-height: 85vh !important;
+            }
+        }
+
+        /* Tablet: 768px */
+        @media (max-width: 768px) {
             .foreman-content {
                 padding: 20px 16px !important;
             }

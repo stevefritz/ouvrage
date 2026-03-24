@@ -100,6 +100,10 @@ export const api = {
     }),
 
     // Messages
+    postConversationMessage: (convId, content, type = 'note', title = null) => request(`/conversations/${eid(convId)}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content, type, title }),
+    }),
     postMessage: (id, content, type = 'review', title = null) => request(`/tasks/${eid(id)}/messages`, {
         method: 'POST',
         body: JSON.stringify({ content, type, title }),

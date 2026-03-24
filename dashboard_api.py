@@ -151,10 +151,15 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/conversations" and method == "GET":
             return await _handle_list_conversations(scope, send)
 
-        # GET /dashboard/api/conversations/{id}
-        if path.startswith("/dashboard/api/conversations/") and method == "GET":
-            conv_id = unquote(path[len("/dashboard/api/conversations/"):])
-            return await _handle_get_conversation(scope, send, conv_id)
+        # GET/POST /dashboard/api/conversations/{id}[/messages]
+        if path.startswith("/dashboard/api/conversations/"):
+            rest = path[len("/dashboard/api/conversations/"):]
+            if method == "POST" and rest.endswith("/messages"):
+                conv_id = unquote(rest[:-len("/messages")])
+                return await _handle_post_conversation_message(receive, send, conv_id)
+            if method == "GET":
+                conv_id = unquote(rest)
+                return await _handle_get_conversation(scope, send, conv_id)
 
         # GET /dashboard/api/activity
         if path == "/dashboard/api/activity" and method == "GET":
@@ -618,6 +623,28 @@ async def _handle_list_conversations(scope, send):
         search=params.get("search"),
     )
     await _json_response(send, conversations)
+
+
+async def _handle_post_conversation_message(receive, send, conv_id):
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+    content = data.get("content", "").strip()
+    if not content:
+        return await _error(send, "content is required")
+
+    try:
+        result = await db.post_message(
+            conversation_id=conv_id,
+            author="dashboard",
+            content=content,
+            type=data.get("type", "note"),
+            title=data.get("title"),
+        )
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+    await _json_response(send, result)
 
 
 async def _handle_get_conversation(scope, send, conv_id):

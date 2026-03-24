@@ -8,6 +8,7 @@ import { ForemanShell } from './foreman-shell.js';
 import { LandingView } from './views/LandingView.js';
 import { ProjectView } from './views/ProjectView.js';
 import { TaskView } from './views/TaskView.js';
+import { ConversationView } from './views/ConversationView.js';
 
 const html = htm.bind(h);
 
@@ -22,6 +23,8 @@ function ForemanApp() {
         content = html`<${ProjectView} id=${params.id} />`;
     } else if (view === 'task') {
         content = html`<${TaskView} id=${params.id} />`;
+    } else if (view === 'conversation') {
+        content = html`<${ConversationView} id=${params.id} />`;
     } else {
         content = html`<${LandingView} />`;
     }
