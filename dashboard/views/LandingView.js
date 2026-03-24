@@ -432,7 +432,14 @@ export function LandingView() {
                 <${EmptyState} />
             ` : projects ? html`
                 <div style=${gridStyle}>
-                    ${projects.map(p => html`
+                    ${[...projects].sort((a, b) => {
+                        const latestActivity = (proj) => {
+                            const projTasks = tasks.filter(t => t.project_id === proj.id);
+                            if (projTasks.length === 0) return '';
+                            return projTasks.reduce((max, t) => (t.last_activity || t.updated_at || '') > max ? (t.last_activity || t.updated_at || '') : max, '');
+                        };
+                        return latestActivity(b).localeCompare(latestActivity(a));
+                    }).map(p => html`
                         <${ProjectCard}
                             key=${p.id}
                             project=${p}

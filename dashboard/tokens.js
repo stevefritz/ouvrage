@@ -11,11 +11,12 @@ export const colors = {
     // Borders
     border:       '#2a2c32',
     borderSubtle: 'rgba(42, 44, 50, 0.6)',
+    borderHover:  '#30363d',
 
     // Text
     text:          '#e8e9ea',
     textSecondary: '#b0b1ba',
-    textTertiary:  '#787880',
+    textTertiary:  '#8a93a2',
 
     // Accent
     accent:  '#7c5af6',  // purple
