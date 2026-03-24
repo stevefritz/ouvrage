@@ -188,13 +188,12 @@ export function ActivityBar() {
                         </span>
                     `)}
                 </div>
-                <div class="activity-bar-right">
+                <div class="activity-bar-right" onClick=${() => events.length > 0 && setExpanded(e => !e)}
+                    style="cursor: ${events.length > 0 ? 'pointer' : 'default'}">
                     ${events.length > 0 ? html`
-                        <button
-                            class="activity-expand-btn"
-                            onClick=${() => setExpanded(e => !e)}>
-                            Activity${expanded ? ' ▲' : ' ▾'}
-                        </button>
+                        <span class="activity-expand-btn">
+                            ${expanded ? 'Hide \u25B4' : 'Show \u25BE'}
+                        </span>
                     ` : null}
                 </div>
             </div>

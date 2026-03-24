@@ -2,7 +2,119 @@ import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@
 import { api } from '../api.js';
 import { html, relativeTime, renderMarkdown, navigate, StatusBadge, GateBadge, PrUrlBadge, ActionButtons, Tip, WorktreeIndicator, HeartbeatIndicator, ClaudeChatLink, LoadingState, ErrorState, jiraUrl, jiraLabel } from './utils.js';
 import { MessageThread } from './MessageThread.js';
-import { SessionLogPanel, DispatchLogPanel } from './SessionLog.js';
+import { DispatchLogPanel } from './SessionLog.js';
+
+// ── Attempt grouping ────────────────────────────────────────
+const ATTEMPT_BOUNDARIES = [
+    'Task completed', 'Task failed', 'Dispatch error', 'Turns exhausted',
+    'Session killed by signal', 'Rate limited', 'Wall clock timeout',
+    'Recovery limit reached',
+];
+
+function groupMessagesByAttempt(messages) {
+    if (!messages || messages.length === 0) return [];
+    const attempts = [];
+    let current = { messages: [], outcome: null };
+
+    for (const msg of messages) {
+        if (msg.type === 'plan') continue;
+        current.messages.push(msg);
+        if (msg.author === 'dispatcher' && msg.type === 'status'
+            && ATTEMPT_BOUNDARIES.some(b => (msg.title || '').includes(b))) {
+            current.outcome = msg.title || 'Completed';
+            attempts.push(current);
+            current = { messages: [], outcome: null };
+        }
+    }
+    if (current.messages.length > 0) {
+        if (current.messages.every(m => m.author === 'dispatcher')) {
+            if (attempts.length > 0) {
+                attempts[attempts.length - 1].messages.push(...current.messages);
+            } else {
+                current.outcome = 'Status';
+                attempts.push(current);
+            }
+        } else {
+            current.outcome = 'In Progress';
+            attempts.push(current);
+        }
+    }
+    return attempts;
+}
+
+// ── Per-Attempt Session Log ──────────────────────────────────
+function AttemptSessionLog({ taskId, attemptNumber, autoRefresh }) {
+    const [expanded, setExpanded] = useState(false);
+    const [entries, setEntries] = useState([]);
+    const [loaded, setLoaded] = useState(false);
+    const [showTools, setShowTools] = useState(false);
+    const logRef = useRef(null);
+
+    useEffect(() => {
+        if (!expanded) return;
+        let cancelled = false;
+        const load = () => {
+            api.getSessionLog(taskId, { attempt: attemptNumber })
+                .then(data => {
+                    if (cancelled) return;
+                    setEntries(data);
+                    setLoaded(true);
+                    if (logRef.current) {
+                        const el = logRef.current;
+                        const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+                        if (wasAtBottom) {
+                            requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+                        }
+                    }
+                })
+                .catch(() => { if (!cancelled) setLoaded(true); });
+        };
+        load();
+        let timer;
+        if (autoRefresh) {
+            timer = setInterval(load, 5000);
+        }
+        return () => { cancelled = true; if (timer) clearInterval(timer); };
+    }, [expanded, taskId, attemptNumber, autoRefresh]);
+
+    return html`
+        <div class="mt-2 border-t border-slate-700/50 pt-2">
+            <button onClick=${() => setExpanded(!expanded)}
+                class="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-300 cursor-pointer">
+                ${expanded ? '\u25BE' : '\u25B8'} Session Log
+            </button>
+            ${expanded ? html`
+                <div class="mt-1">
+                    <button onClick=${() => setShowTools(!showTools)}
+                        class="text-xs px-2 py-0.5 rounded mb-1 bg-slate-800 text-slate-400 hover:bg-slate-700">
+                        ${showTools ? 'Text only' : 'Show tools'}
+                    </button>
+                    <pre ref=${logRef} class="text-xs overflow-y-auto whitespace-pre-wrap rounded p-2 bg-slate-950"
+                        style="max-height: 400px; color: var(--text-muted)">
+                        ${!loaded ? 'Loading...' : entries.length === 0 ? 'No session log' :
+                            entries.map(e => {
+                                if (e.type === 'AssistantMessage') {
+                                    return (e.content || []).map(b => {
+                                        if (b.type === 'text') return b.text + '\n';
+                                        if (b.type === 'tool_use' && showTools) return '[TOOL] ' + b.name + ': ' + JSON.stringify(b.input).slice(0, 200) + '\n';
+                                        return '';
+                                    }).join('');
+                                }
+                                if (e.type === 'UserMessage' && showTools) {
+                                    return (e.content || []).map(b => {
+                                        if (b.type === 'tool_result') return '[RESULT] ' + (b.preview || '').slice(0, 200) + '\n';
+                                        return '';
+                                    }).join('');
+                                }
+                                return '';
+                            }).join('')
+                        }
+                    </pre>
+                </div>
+            ` : null}
+        </div>
+    `;
+}
 
 // ── Review Verdict Badge ─────────────────────────────────────
 function ReviewVerdictBadge({ subtasks }) {
@@ -128,7 +240,7 @@ function GatePipeline({ task }) {
     `;
 }
 
-function ChainVisualization({ taskId }) {
+function ChainStrip({ taskId }) {
     const [chain, setChain] = useState(null);
     const [currentIdx, setCurrentIdx] = useState(-1);
 
@@ -136,8 +248,10 @@ function ChainVisualization({ taskId }) {
         api.getChain(taskId)
             .then(data => {
                 if (data && data.chain && data.chain.length > 1) {
-                    setChain(data.chain);
-                    setCurrentIdx(data.current_index);
+                    const filtered = data.chain.filter(t => !t.parent_task_id);
+                    setChain(filtered);
+                    const idx = filtered.findIndex(t => t.id === taskId);
+                    setCurrentIdx(idx >= 0 ? idx : data.current_index);
                 } else {
                     setChain(null);
                 }
@@ -145,28 +259,49 @@ function ChainVisualization({ taskId }) {
             .catch(() => setChain(null));
     }, [taskId]);
 
-    if (!chain) return null;
+    if (!chain || chain.length <= 1) return null;
+
+    const dotColor = (status) => {
+        if (status === 'completed') return '#22c55e';
+        if (status === 'working') return '#f59e0b';
+        if (status === 'failed') return '#ef4444';
+        if (status === 'needs-review') return '#f59e0b';
+        return '#64748b';
+    };
+
+    // Truncate to max 7 nodes, showing current in middle
+    let displayChain = chain;
+    let truncatedStart = false, truncatedEnd = false;
+    if (chain.length > 7) {
+        const start = Math.max(0, Math.min(currentIdx - 3, chain.length - 7));
+        const end = start + 7;
+        displayChain = chain.slice(start, end);
+        truncatedStart = start > 0;
+        truncatedEnd = end < chain.length;
+    }
 
     return html`
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-            <h3 class="text-sm font-medium text-slate-300 mb-3">\u26D3 Task Chain</h3>
-            <div class="flex items-center gap-2 overflow-x-auto pb-2">
-                ${chain.map((t, i) => {
-                    if (t.parent_task_id) return null;
-                    const isCurrent = i === currentIdx;
-                    const border = isCurrent ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-slate-700';
-                    const shortId = t.id.split('/').pop();
+            <div class="flex items-center gap-1 overflow-x-auto">
+                ${truncatedStart ? html`<span class="text-xs text-slate-500 shrink-0 px-1">\u2026</span>` : null}
+                ${displayChain.map((t, i) => {
+                    const isCurrent = t.id === taskId;
+                    const shortName = (t.goal || t.id.split('/').pop() || '').slice(0, 20);
+                    const color = dotColor(t.status);
                     return html`
-                        <a key=${t.id} href="#/tasks/${t.id}" class="shrink-0 block p-2 rounded border ${border} bg-slate-800/50 hover:bg-slate-800 min-w-[120px] max-w-[180px]">
-                            <div class="flex items-center gap-1 mb-1">
-                                <${StatusBadge} status=${t.status} task=${t} />
-                            </div>
-                            <div class="text-xs font-mono text-slate-300 truncate">${shortId}</div>
-                            <div class="text-xs text-slate-500 truncate">${(t.goal || '').slice(0, 40)}</div>
-                        </a>
-                        ${i < chain.length - 1 && !chain[i + 1]?.parent_task_id ? html`<span class="text-slate-500 shrink-0">\u2192</span>` : null}
+                        <div key=${t.id} class="flex items-center gap-1 shrink-0">
+                            <a href="#/tasks/${t.id}"
+                                class="flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:bg-slate-800/50"
+                                style="cursor: pointer; ${isCurrent ? 'background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3);' : ''}">
+                                <span class="w-2 h-2 rounded-full shrink-0 ${t.status === 'working' ? 'status-dot-working' : ''}"
+                                    style="background: ${color}"></span>
+                                <span class="truncate" style="max-width: 120px; color: ${isCurrent ? '#60a5fa' : 'var(--text-muted)'}">${shortName}</span>
+                            </a>
+                            ${i < displayChain.length - 1 ? html`<span class="text-slate-600 shrink-0">\u2500</span>` : null}
+                        </div>
                     `;
                 })}
+                ${truncatedEnd ? html`<span class="text-xs text-slate-500 shrink-0 px-1">\u2026</span>` : null}
             </div>
         </div>
     `;
@@ -331,7 +466,6 @@ function MessageInput({ taskId, task, onAction, onMessageSent }) {
 export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
     const [task, setTask] = useState(null);
     const [error, setError] = useState(null);
-    const [sessionLogOpen, setSessionLogOpen] = useState(false);
     const [dispatchLogOpen, setDispatchLogOpen] = useState(false);
     const mountedRef = useRef(true);
 
@@ -351,7 +485,6 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
         mountedRef.current = true;
         setTask(null);
         setError(null);
-        setSessionLogOpen(false);
         setDispatchLogOpen(false);
         loadTask();
         return () => { mountedRef.current = false; };
@@ -381,8 +514,6 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
         </div>`;
     }
 
-    const autoRefreshLogs = task.status === 'working';
-
     return html`
         <div class="p-6">
             <div class="mb-4">
@@ -391,19 +522,54 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
 
             <${DetailHeader} task=${task} onAction=${onAction} jiraBaseUrl=${jiraBaseUrl} />
             <${GatePipeline} task=${task} />
-            <${ChainVisualization} taskId=${taskId} />
+            <${ChainStrip} taskId=${taskId} />
             <${Subtasks} subtasks=${task.subtasks} />
             <${Checklist} task=${task} />
             <${PlanSection} messages=${task.messages} />
 
-            <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
-                <h3 class="text-sm font-medium text-slate-300 mb-3">Messages</h3>
-                <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="msg" />
-                <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
-            </div>
+            ${(() => {
+                const attempts = groupMessagesByAttempt(task.messages);
+                const nonPlanCount = (task.messages || []).filter(m => m.type !== 'plan').length;
+                if (attempts.length <= 1) {
+                    return html`
+                        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+                            <h3 class="text-sm font-medium text-slate-300 mb-3">Messages (${nonPlanCount})</h3>
+                            <${MessageThread} messages=${task.messages} filterPlan=${true} idPrefix="msg" />
+                            ${attempts.length === 1 ? html`
+                                <${AttemptSessionLog} taskId=${taskId} attemptNumber=${1} autoRefresh=${task.status === 'working'} />
+                            ` : null}
+                            <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
+                        </div>`;
+                }
+                return html`
+                    <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-4">
+                        <div class="text-sm font-medium text-slate-300 mb-3">
+                            Messages (${nonPlanCount}) \u00B7 ${attempts.length} attempts
+                        </div>
+                        ${attempts.map((attempt, idx) => {
+                            const isLast = idx === attempts.length - 1;
+                            const outcomeColor = attempt.outcome === 'In Progress' ? 'text-blue-400' :
+                                attempt.outcome?.toLowerCase().includes('fail') || attempt.outcome?.toLowerCase().includes('error') ? 'text-red-400' :
+                                'text-emerald-400';
+                            return html`
+                                <details key=${idx} class="border border-slate-700 rounded mb-2" open=${isLast}>
+                                    <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-slate-800/50 flex items-center gap-2">
+                                        <span class="text-slate-300 font-medium">Attempt ${idx + 1}</span>
+                                        <span class="${outcomeColor}">${attempt.outcome}</span>
+                                        ${isLast && task.status === 'working' ? html`<span class="text-amber-400 status-dot-working">\u25CF Claude is Coding</span>` : null}
+                                        <span class="text-slate-500 ml-auto">${attempt.messages.length} msgs</span>
+                                    </summary>
+                                    <div class="px-2 pb-2">
+                                        <${MessageThread} messages=${attempt.messages} idPrefix=${'attempt-' + idx} />
+                                        <${AttemptSessionLog} taskId=${taskId} attemptNumber=${idx + 1}
+                                            autoRefresh=${isLast && task.status === 'working'} />
+                                    </div>
+                                </details>`;
+                        })}
+                        <${MessageInput} taskId=${taskId} task=${task} onAction=${onAction} onMessageSent=${loadTask} />
+                    </div>`;
+            })()}
 
-            <${SessionLogPanel} taskId=${taskId} isOpen=${sessionLogOpen}
-                onToggle=${() => setSessionLogOpen(!sessionLogOpen)} autoRefresh=${autoRefreshLogs} />
             <${DispatchLogPanel} taskId=${taskId} isOpen=${dispatchLogOpen}
                 onToggle=${() => setDispatchLogOpen(!dispatchLogOpen)} />
         </div>
