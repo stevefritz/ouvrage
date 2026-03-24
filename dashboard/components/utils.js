@@ -23,14 +23,25 @@ export const sanitize = typeof DOMPurify?.sanitize === 'function'
         return escapeHtml(dirty);
     };
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 export function relativeTime(iso) {
     if (!iso) return '\u2014';
-    const diff = Math.max(0, (Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 1000);
-    if (diff < 5) return 'just now';
-    if (diff < 60) return `${Math.floor(diff)}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+    const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'));
+    if (isNaN(d.getTime())) return '\u2014';
+    const now = new Date();
+    const mon = MONTHS[d.getMonth()];
+    const day = d.getDate();
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    const mm = String(m).padStart(2, '0');
+    const time = `${h12}:${mm} ${ampm}`;
+    if (d.getFullYear() !== now.getFullYear()) {
+        return `${mon} ${day} ${d.getFullYear()} \u00B7 ${time}`;
+    }
+    return `${mon} ${day} \u00B7 ${time}`;
 }
 
 export function progressBar(done, total, len = 10) {

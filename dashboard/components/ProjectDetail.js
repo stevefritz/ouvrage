@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { html, navigate, Tip } from './utils.js';
+import { html, navigate, Tip, StatusBadge, relativeTime, ActionButtons, HeartbeatIndicator } from './utils.js';
 import {
     computeLayout, TaskNode, EdgePath, TagFilterBar, StateLegend,
     DEFAULT_STATE_COLORS, NODE_W, NODE_H,
 } from './DagGraph.js';
-import { GraphDetailPanel } from './GraphDetailPanel.js';
+import { TaskPanel } from './TaskPanel.js';
 
 const COMPONENT_STATUS_COLORS = {
     planning:  { bg: 'bg-slate-500/20', text: 'text-slate-400', dot: '\u25CB' },
@@ -45,11 +45,10 @@ function ProgressBar({ done, total, failed, active }) {
     `;
 }
 
-function ComponentCard({ comp }) {
-    const hasActive = comp.active_tasks > 0;
+function ComponentCard({ comp, onSelect }) {
     return html`
         <div class="bg-slate-900 border border-slate-700 rounded-lg p-4 hover:border-slate-500 cursor-pointer transition-colors"
-            onClick=${() => navigate(`#/components/${encodeURIComponent(comp.id)}`)}>
+            onClick=${() => onSelect(comp)}>
             <div class="flex items-start justify-between mb-2">
                 <h3 class="text-base font-medium text-slate-200">${comp.name}</h3>
                 <${ComponentStatusBadge} status=${comp.status} />
@@ -57,17 +56,203 @@ function ComponentCard({ comp }) {
             ${comp.description && html`
                 <p class="text-sm text-slate-400 mb-3 line-clamp-2">${comp.description}</p>
             `}
-            <div class="text-xs font-mono text-slate-500 mb-3">${comp.base_branch || '\u2014'}</div>
             <${ProgressBar} done=${comp.done_tasks} total=${comp.total_tasks} failed=${comp.failed_tasks} active=${comp.active_tasks} />
             <div class="flex flex-wrap gap-3 mt-3 text-xs text-slate-400">
                 <span>$${(comp.total_cost || 0).toFixed(2)}</span>
-                ${comp.conversation_count > 0 && html`
-                    <span>${comp.conversation_count} conv${comp.conversation_count !== 1 ? 's' : ''}</span>
-                `}
                 ${comp.open_punchlist > 0 && html`
-                    <span class="text-amber-400">${comp.open_punchlist} punchlist</span>
+                    <span class="text-amber-400">${comp.open_punchlist} open</span>
                 `}
             </div>
+        </div>
+    `;
+}
+
+// ── Component Slide-Out Panel ────────────────────────────────
+function ComponentPanel({ comp, onClose, onFilterTasks }) {
+    const [punchlist, setPunchlist] = useState(null);
+    const [conversations, setConversations] = useState(null);
+
+    useEffect(() => {
+        api.getPunchlist(comp.id).then(setPunchlist).catch(() => setPunchlist([]));
+        if (comp.conversations) {
+            setConversations(comp.conversations);
+        } else {
+            api.getComponent(comp.id).then(data => {
+                setConversations(data.conversations || []);
+            }).catch(() => setConversations([]));
+        }
+    }, [comp.id]);
+
+    const running = comp.active_tasks || 0;
+    const blocked = comp.blocked_tasks || 0;
+    const done = comp.done_tasks || 0;
+    const summaryParts = [];
+    if (running > 0) summaryParts.push(`${running} running`);
+    if (blocked > 0) summaryParts.push(`${blocked} blocked`);
+    if (done > 0) summaryParts.push(`${done} done`);
+    const summary = summaryParts.join(' \u00B7 ') || 'No tasks';
+
+    const openPunchlist = (punchlist || []).filter(i => i.status !== 'done');
+    const displayPunchlist = openPunchlist.slice(0, 8);
+
+    const displayConvs = (conversations || []).slice(0, 5);
+
+    return html`
+        <div class="component-panel">
+            <!-- Header -->
+            <div class="flex items-center gap-2 px-4 py-3 sticky top-0 z-10" style="background: var(--bg-card); border-bottom: 1px solid var(--border-primary)">
+                <span class="text-sm font-medium" style="color: var(--text-primary)">${comp.name}</span>
+                <${ComponentStatusBadge} status=${comp.status} />
+                <button onClick=${onClose} class="ml-auto text-lg" style="color: var(--text-faint); cursor: pointer">\u00D7</button>
+            </div>
+
+            <div class="overflow-y-auto flex-1 px-4 py-3">
+                <!-- Summary -->
+                <div class="text-sm mb-3" style="color: var(--text-muted)">${summary}</div>
+
+                <!-- Filter tasks button -->
+                <button onClick=${() => { onFilterTasks(comp.id); onClose(); }}
+                    class="w-full px-3 py-2 text-sm rounded mb-4 font-medium"
+                    style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); cursor: pointer">
+                    Filter tasks to this component
+                </button>
+
+                <!-- Linked conversations -->
+                <div class="mb-4">
+                    <h4 class="text-xs font-medium uppercase tracking-wide mb-2" style="color: var(--text-faint)">Linked Conversations</h4>
+                    ${!conversations ? html`<p class="text-xs" style="color: var(--text-faint)">Loading...</p>` :
+                        displayConvs.length === 0 ? html`<p class="text-xs" style="color: var(--text-faint)">No linked conversations</p>` :
+                        html`<div class="space-y-1">
+                            ${displayConvs.map(c => html`
+                                <a key=${c.id} href="#/conversations/${encodeURIComponent(c.id)}"
+                                    class="block px-3 py-2 rounded text-xs hover:bg-slate-800/50" style="color: var(--text-secondary)">
+                                    <div class="font-medium">${c.goal || c.id}</div>
+                                    ${c.last_message_at ? html`<div style="color: var(--text-faint)">${relativeTime(c.last_message_at)}</div>` : null}
+                                </a>
+                            `)}
+                            ${(conversations || []).length > 5 ? html`
+                                <a href="#/components/${encodeURIComponent(comp.id)}" class="text-xs px-3 py-1" style="color: var(--link-color)">View all</a>
+                            ` : null}
+                        </div>`
+                    }
+                </div>
+
+                <!-- Punchlist -->
+                <div class="mb-4">
+                    <h4 class="text-xs font-medium uppercase tracking-wide mb-2" style="color: var(--text-faint)">
+                        Punchlist${openPunchlist.length > 0 ? ` \u00B7 ${openPunchlist.length} open` : ''}
+                    </h4>
+                    ${!punchlist ? html`<p class="text-xs" style="color: var(--text-faint)">Loading...</p>` :
+                        openPunchlist.length === 0 ? html`<p class="text-xs" style="color: var(--text-faint)">No open items</p>` :
+                        html`<div class="space-y-0.5">
+                            ${displayPunchlist.map(item => {
+                                const icon = item.status === 'done' ? '\u2713' : item.status === 'claimed' ? '\u25CF' : '\u25CB';
+                                const color = item.status === 'done' ? 'var(--color-success-muted)' : item.status === 'claimed' ? 'var(--color-warning-muted)' : 'var(--text-muted)';
+                                return html`
+                                    <div key=${item.id} class="flex items-center gap-2 text-xs py-1">
+                                        <span style="color: ${color}">${icon}</span>
+                                        <span class="truncate" style="color: var(--text-secondary)">${(item.item || '').split('\n')[0]}</span>
+                                    </div>
+                                `;
+                            })}
+                        </div>`
+                    }
+                </div>
+
+                <!-- Config overrides (only if any non-default values) -->
+                ${(() => {
+                    const overrides = [];
+                    if (comp.model) overrides.push(['Model', comp.model]);
+                    if (comp.base_branch) overrides.push(['Branch', comp.base_branch]);
+                    if (comp.auto_test === false) overrides.push(['Auto-test', 'off']);
+                    if (comp.auto_review === false) overrides.push(['Auto-review', 'off']);
+                    if (overrides.length === 0) return null;
+                    return html`
+                        <div class="mb-4">
+                            <h4 class="text-xs font-medium uppercase tracking-wide mb-2" style="color: var(--text-faint)">Config Overrides</h4>
+                            <div class="text-xs" style="color: var(--text-muted)">
+                                ${overrides.map(([k, v]) => html`<div key=${k}><span style="color: var(--text-faint)">${k}:</span> <span class="font-mono">${v}</span></div>`)}
+                            </div>
+                        </div>
+                    `;
+                })()}
+
+                <!-- Open full page -->
+                <a href="#/components/${encodeURIComponent(comp.id)}" class="block text-xs py-2 text-center rounded" style="color: var(--link-color)">
+                    Open full page \u2192
+                </a>
+            </div>
+        </div>
+    `;
+}
+
+// ── Flat Task List Row ───────────────────────────────────────
+function TaskRow({ task, onSelect, onAction }) {
+    const shortId = task.id.includes('/') ? task.id.split('/').pop() : task.id;
+    const compName = task.component_id
+        ? (task.component_id.includes('/') ? task.component_id.split('/').pop() : task.component_id)
+        : null;
+
+    return html`
+        <div class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/50 border-b"
+            style="border-color: var(--border-primary)"
+            onClick=${() => onSelect(task.id)}>
+            <${StatusBadge} status=${task.status} task=${task} />
+            <${HeartbeatIndicator} task=${task} />
+            <div class="flex-1 min-w-0">
+                <div class="text-sm truncate" style="color: var(--text-secondary)">${task.goal || shortId}</div>
+                <div class="flex items-center gap-2 mt-0.5">
+                    <span class="text-xs font-mono" style="color: var(--text-faint)">${shortId}</span>
+                    ${compName ? html`<span class="text-xs px-1.5 py-0 rounded" style="background: var(--bg-secondary); color: var(--text-faint)">${compName}</span>` : null}
+                </div>
+            </div>
+            <div class="text-xs shrink-0" style="color: var(--text-faint)">${relativeTime(task.last_activity || task.updated_at)}</div>
+        </div>
+    `;
+}
+
+// ── Conversations Peek Section ───────────────────────────────
+function ConversationsPeek({ projectId }) {
+    const [conversations, setConversations] = useState(null);
+    const [expanded, setExpanded] = useState(false);
+
+    useEffect(() => {
+        api.getConversations({ project: projectId })
+            .then(setConversations)
+            .catch(() => setConversations([]));
+    }, [projectId]);
+
+    if (!conversations || conversations.length === 0) return null;
+
+    const peekItems = conversations.slice(0, 3);
+
+    return html`
+        <div class="mt-6 rounded-lg overflow-hidden" style="border: 1px solid var(--border-primary)">
+            <div class="flex items-center justify-between px-4 py-3 cursor-pointer"
+                style="background: var(--bg-card)"
+                onClick=${() => setExpanded(!expanded)}>
+                <span class="text-sm font-medium" style="color: var(--text-secondary)">Conversations</span>
+                <span class="text-xs" style="color: var(--text-faint)">${expanded ? 'Hide \u25B4' : 'Show \u25BE'}</span>
+            </div>
+            ${!expanded ? html`
+                <div class="px-4 pb-3" style="background: var(--bg-card)">
+                    ${peekItems.map(c => html`
+                        <a key=${c.id} href="#/conversations/${encodeURIComponent(c.id)}"
+                            class="block text-xs py-1 truncate" style="color: var(--text-muted)">${c.id}${c.goal ? ` \u2014 ${c.goal}` : ''}</a>
+                    `)}
+                    ${conversations.length > 3 ? html`<a href="#/conversations" class="text-xs" style="color: var(--link-color)">View all ${conversations.length}</a>` : null}
+                </div>
+            ` : html`
+                <div class="px-4 pb-3" style="background: var(--bg-card)">
+                    ${conversations.map(c => html`
+                        <a key=${c.id} href="#/conversations/${encodeURIComponent(c.id)}"
+                            class="block px-2 py-2 rounded hover:bg-slate-800/50" style="color: var(--text-secondary)">
+                            <div class="text-sm font-mono">${c.id}</div>
+                            <div class="text-xs" style="color: var(--text-faint)">${c.goal || ''} \u00B7 ${c.message_count || 0} msgs \u00B7 ${relativeTime(c.last_message_at || c.updated_at)}</div>
+                        </a>
+                    `)}
+                </div>
+            `}
         </div>
     `;
 }
@@ -344,13 +529,13 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
 
                         ${selectedTaskId ? html`
                             <div class="panel-backdrop" onClick=${handleClose}></div>
-                            <${GraphDetailPanel}
+                            <${TaskPanel}
                                 key=${selectedTaskId}
                                 taskId=${selectedTaskId}
                                 allTasks=${allTasks}
-                                jiraBaseUrl=${jiraBaseUrl}
                                 onClose=${handleClose}
-                                onAction=${onAction} />
+                                onAction=${onAction}
+                                onSelectTask=${handleSelect} />
                         ` : null}
                     </div>
                 </div>
@@ -368,23 +553,56 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
 export function ProjectDetail({ projectId, jiraBaseUrl, onAction }) {
     const [project, setProject] = useState(null);
     const [components, setComponents] = useState(null);
+    const [allTasks, setAllTasks] = useState(null);
     const [error, setError] = useState(null);
+    const [filterComponent, setFilterComponent] = useState('');
+    const [selectedTaskId, setSelectedTaskId] = useState(null);
+    const [selectedComp, setSelectedComp] = useState(null);
+    const mountedRef = useRef(true);
 
-    useEffect(() => {
-        async function load() {
-            try {
-                const [proj, comps] = await Promise.all([
-                    api.getProject(projectId),
-                    api.getComponents(projectId),
-                ]);
+    const load = useCallback(async () => {
+        try {
+            const [proj, comps, tasks] = await Promise.all([
+                api.getProject(projectId),
+                api.getComponents(projectId),
+                api.getTasks({ project_id: projectId }),
+            ]);
+            if (mountedRef.current) {
                 setProject(proj);
                 setComponents(comps);
-            } catch (e) {
-                setError(e.message);
+                setAllTasks(tasks);
             }
+        } catch (e) {
+            if (mountedRef.current) setError(e.message);
         }
-        load();
     }, [projectId]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        load();
+        const timer = setInterval(load, 10000);
+        return () => { mountedRef.current = false; clearInterval(timer); };
+    }, [load]);
+
+    // Flat task list: sorted by last_activity desc, filter by component
+    const flatTasks = useMemo(() => {
+        if (!allTasks) return [];
+        let tasks = allTasks.filter(t => !t.parent_task_id);
+        if (filterComponent) {
+            tasks = tasks.filter(t => t.component_id === filterComponent);
+        }
+        return tasks.sort((a, b) => {
+            const aTime = a.last_activity || a.updated_at || '';
+            const bTime = b.last_activity || b.updated_at || '';
+            return bTime.localeCompare(aTime);
+        });
+    }, [allTasks, filterComponent]);
+
+    // Component names for the filter dropdown
+    const componentNames = useMemo(() => {
+        if (!components) return [];
+        return components.map(c => ({ id: c.id, name: c.name }));
+    }, [components]);
 
     if (error) {
         return html`<div class="p-6"><p class="text-red-400">Error: ${error}</p></div>`;
@@ -394,59 +612,95 @@ export function ProjectDetail({ projectId, jiraBaseUrl, onAction }) {
     }
 
     return html`
-        <div class="p-6">
-            <!-- Breadcrumb -->
-            <div class="flex items-center gap-2 text-sm text-slate-500 mb-4">
-                <a href="#/projects" class="hover:text-slate-300">Projects</a>
-                <span>/</span>
-                <span class="text-slate-300">${projectId}</span>
-            </div>
+        <div class="p-6" style="display: flex; gap: 0;">
+            <div class="flex-1 min-w-0">
+                <!-- Breadcrumb -->
+                <div class="flex items-center gap-2 text-sm text-slate-500 mb-4">
+                    <a href="#/projects" class="hover:text-slate-300">Projects</a>
+                    <span>/</span>
+                    <span class="text-slate-300">${projectId}</span>
+                </div>
 
-            <div class="flex items-center justify-between mb-6">
-                <div>
-                    <h2 class="text-xl font-semibold text-slate-100">${projectId}</h2>
-                    <div class="text-sm text-slate-400 mt-1">
-                        <span class="font-mono">${project.repo}</span>
-                        <span class="mx-2">·</span>
-                        branch: <span class="font-mono">${project.default_branch}</span>
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h2 class="text-xl font-semibold text-slate-100">${projectId}</h2>
+                        <div class="text-sm text-slate-400 mt-1">
+                            <span class="font-mono">${project.repo}</span>
+                            <span class="mx-2">\u00B7</span>
+                            branch: <span class="font-mono">${project.default_branch}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${project.paused ? html`
+                            <button onClick=${async () => { await api.resumeProject(projectId); load(); }}
+                                class="px-3 py-1.5 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">\u25B6 Resume</button>
+                        ` : html`
+                            <button onClick=${async () => { await api.pauseProject(projectId); load(); }}
+                                class="px-3 py-1.5 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">\u23F8 Pause</button>
+                        `}
+                        <button onClick=${async () => { if (confirm('Stop project?')) { await api.stopProject(projectId); load(); } }}
+                            class="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">\u23F9 Stop</button>
+                        ${project.paused && html`<span class="text-xs text-amber-400">\u26A0 Paused</span>`}
                     </div>
                 </div>
-                <div class="flex items-center gap-2">
-                    ${project.paused ? html`
-                        <button onClick=${async () => { await api.resumeProject(projectId); location.reload(); }}
-                            class="px-3 py-1.5 text-xs rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30">\u25B6 Resume</button>
-                    ` : html`
-                        <button onClick=${async () => { await api.pauseProject(projectId); location.reload(); }}
-                            class="px-3 py-1.5 text-xs rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">\u23F8 Pause</button>
-                    `}
-                    <button onClick=${async () => { if (confirm('Stop project? This will cancel all running tasks.')) { await api.stopProject(projectId); location.reload(); } }}
-                        class="px-3 py-1.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">\u23F9 Stop</button>
-                    <a href=${`#/?project_id=${encodeURIComponent(projectId)}`}
-                        class="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
-                        View All Tasks
-                    </a>
-                    ${project.paused && html`<span class="text-xs text-amber-400 flex items-center gap-1">\u26A0 Paused</span>`}
+
+                <!-- Component cards -->
+                ${components.length > 0 ? html`
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                        ${components.map(comp => html`<${ComponentCard} key=${comp.id} comp=${comp}
+                            onSelect=${(c) => setSelectedComp(c)} />`)}
+                    </div>
+                ` : null}
+
+                <!-- Task list header with component filter -->
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">Tasks</h3>
+                    ${componentNames.length > 0 ? html`
+                        <select class="text-xs rounded px-2 py-1" style="background: var(--bg-secondary); color: var(--text-muted); border: 1px solid var(--border-secondary)"
+                            value=${filterComponent}
+                            onChange=${(e) => setFilterComponent(e.target.value)}>
+                            <option value="">All components</option>
+                            ${componentNames.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+                        </select>
+                    ` : null}
                 </div>
+
+                <!-- Flat task list -->
+                <div class="rounded-lg overflow-hidden mb-6" style="border: 1px solid var(--border-primary); background: var(--bg-card)">
+                    ${flatTasks.length === 0 ? html`
+                        <div class="p-8 text-center text-sm" style="color: var(--text-faint)">No tasks found</div>
+                    ` : flatTasks.map(t => html`
+                        <${TaskRow} key=${t.id} task=${t}
+                            onSelect=${(id) => setSelectedTaskId(id)}
+                            onAction=${onAction} />
+                    `)}
+                </div>
+
+                <!-- Conversations section (default collapsed) -->
+                <${ConversationsPeek} projectId=${projectId} />
             </div>
 
-            <!-- Component cards -->
-            ${components.length === 0
-                ? html`<div class="rounded-lg border border-slate-700 border-dashed p-8 text-center">
-                    <p class="text-slate-500 mb-1">No components defined</p>
-                    <p class="text-xs text-slate-600">Create components via the MCP tools to group tasks</p>
-                  </div>`
-                : html`
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-                        ${components.map(comp => html`<${ComponentCard} key=${comp.id} comp=${comp} />`)}
-                    </div>
-                `
-            }
+            <!-- Task slide-out panel -->
+            ${selectedTaskId ? html`
+                <div class="panel-backdrop" onClick=${() => setSelectedTaskId(null)}></div>
+                <${TaskPanel}
+                    key=${selectedTaskId}
+                    taskId=${selectedTaskId}
+                    allTasks=${allTasks}
+                    onClose=${() => setSelectedTaskId(null)}
+                    onAction=${onAction}
+                    onSelectTask=${(id) => setSelectedTaskId(id)} />
+            ` : null}
 
-            <!-- Ungrouped tasks — DAG view -->
-            <${UngroupedDagSection}
-                projectId=${projectId}
-                jiraBaseUrl=${jiraBaseUrl}
-                onAction=${onAction} />
+            <!-- Component slide-out panel -->
+            ${selectedComp && !selectedTaskId ? html`
+                <div class="panel-backdrop" onClick=${() => setSelectedComp(null)}></div>
+                <${ComponentPanel}
+                    key=${selectedComp.id}
+                    comp=${selectedComp}
+                    onClose=${() => setSelectedComp(null)}
+                    onFilterTasks=${(compId) => setFilterComponent(compId)} />
+            ` : null}
         </div>
     `;
 }

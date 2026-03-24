@@ -17,9 +17,15 @@
 
     --text-primary: #f1f5f9;
     --text-secondary: #e2e8f0;
-    --text-muted: #94a3b8;
-    --text-faint: #8494a7;
+    --text-muted: #b0b1ba;
+    --text-faint: #787880;
     --text-disabled: #576a82;
+
+    --font-xs: 12px;
+    --font-sm: 13px;
+    --font-base: 14px;
+    --font-md: 15px;
+    --font-lg: 17px;
 
     --scrollbar-track: #0f172a;
     --scrollbar-thumb: #334155;
@@ -35,6 +41,18 @@
     --blockquote-text: #94a3b8;
     --table-header-bg: #1e293b;
     --table-border: #334155;
+
+    /* Semantic status colors */
+    --color-success: #4ade80;
+    --color-success-muted: #22c55e;
+    --color-error: #f87171;
+    --color-error-muted: #ef4444;
+    --color-warning: #fbbf24;
+    --color-warning-muted: #f59e0b;
+    --color-info: #60a5fa;
+    --color-info-muted: #3b82f6;
+    --color-neutral: #64748b;
+    --color-neutral-muted: #475569;
 }
 
 .theme-light {
@@ -56,6 +74,12 @@
     --text-faint: #64748b;
     --text-disabled: #94a3b8;
 
+    --font-xs: 12px;
+    --font-sm: 13px;
+    --font-base: 14px;
+    --font-md: 15px;
+    --font-lg: 17px;
+
     --scrollbar-track: #f1f5f9;
     --scrollbar-thumb: #cbd5e1;
     --scrollbar-hover: #94a3b8;
@@ -70,10 +94,22 @@
     --blockquote-text: #64748b;
     --table-header-bg: #f1f5f9;
     --table-border: #e2e8f0;
+
+    /* Semantic status colors */
+    --color-success: #16a34a;
+    --color-success-muted: #22c55e;
+    --color-error: #dc2626;
+    --color-error-muted: #ef4444;
+    --color-warning: #d97706;
+    --color-warning-muted: #f59e0b;
+    --color-info: #2563eb;
+    --color-info-muted: #3b82f6;
+    --color-neutral: #64748b;
+    --color-neutral-muted: #475569;
 }
 
 /* Apply theme to body */
-body { background: var(--bg-primary); color: var(--text-primary); }
+body { background: var(--bg-primary); color: var(--text-primary); font-size: var(--font-base); }
 .theme-light body,
 .theme-light #app { background: var(--bg-primary); color: var(--text-primary); }
 
@@ -465,7 +501,29 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     z-index: 1;
 }
 
-/* Detail panel — slide in from right */
+/* Task panel — slide in from right */
+.task-panel {
+    width: clamp(420px, 33vw, 560px);
+    background: var(--bg-card);
+    border-left: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideInRight 0.25s ease;
+}
+
+/* Component panel — slide in from right */
+.component-panel {
+    width: clamp(380px, 30vw, 520px);
+    background: var(--bg-card);
+    border-left: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideInRight 0.25s ease;
+}
+
+/* Legacy detail panel — slide in from right */
 .graph-detail-panel {
     width: 55%;
     min-width: 560px;
@@ -497,7 +555,9 @@ body { background: var(--bg-primary); color: var(--text-primary); }
 
 /* Responsive: narrow screens overlay the panel */
 @media (max-width: 1200px) {
-    .graph-detail-panel {
+    .graph-detail-panel,
+    .task-panel,
+    .component-panel {
         position: fixed;
         right: 0;
         top: 0;
@@ -509,6 +569,38 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     }
     .graph-layout-split .graph-main {
         flex: 1 1 100%;
+    }
+}
+
+/* Mobile: bottom sheet for task/component panels */
+@media (max-width: 768px) {
+    .task-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        width: 100%;
+        height: 65vh;
+        z-index: 50;
+        border-left: none;
+        border-top: 1px solid var(--border-primary);
+        border-radius: 12px 12px 0 0;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+    }
+    .component-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        width: 100%;
+        height: 65vh;
+        z-index: 50;
+        border-left: none;
+        border-top: 1px solid var(--border-primary);
+        border-radius: 12px 12px 0 0;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
     }
 }
 
