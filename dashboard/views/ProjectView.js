@@ -610,6 +610,8 @@ function ChainOverlay({ taskId, onClose }) {
     const nodeColor = (s) => {
         if (s === 'completed') return colors.green;
         if (s === 'working' || s === 'rate-limited' || s === 'turns-exhausted') return colors.blue;
+        if (s === 'failed') return colors.red;
+        if (s === 'needs-review') return colors.yellow;
         return colors.textTertiary;
     };
 
@@ -954,6 +956,7 @@ function PRTag({ task }) {
 
 function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect }) {
     const [showChain, setShowChain] = useState(false);
+    const handleCloseChain = useCallback(() => setShowChain(false), []);
     const chain = chainMap.get(task.id);
 
     const rowStyle = {
@@ -1028,7 +1031,7 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect })
                     ${showChain ? html`
                         <${ChainOverlay}
                             taskId=${task.id}
-                            onClose=${() => setShowChain(false)}
+                            onClose=${handleCloseChain}
                         />
                     ` : null}
                 ` : null}
