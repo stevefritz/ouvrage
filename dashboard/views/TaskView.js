@@ -36,7 +36,11 @@ function sanitize(dirty) {
 
 function renderMarkdown(content) {
     if (!content) return '';
-    return sanitize(marked.parse(content));
+    try {
+        return sanitize(marked.parse(content));
+    } catch {
+        return sanitize(content);
+    }
 }
 
 function normTs(ts) {
@@ -1014,17 +1018,17 @@ export function TaskView({ id }) {
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
     const mountedRef = useRef(true);
+    const loadedRef = useRef(false);
 
     const loadTask = useCallback(async () => {
         try {
             const data = await api.getTask(id);
-            if (mountedRef.current) { setTask(data); setError(null); }
+            if (mountedRef.current) { setTask(data); setError(null); loadedRef.current = true; }
         } catch (e) {
             if (mountedRef.current) {
-                // `task` captures the stale closure value (deps are [id], not [id, task]).
-                // This is intentional: on first load failure (task===null) we show the error,
-                // but on subsequent poll failures we silently log to avoid flashing errors.
-                if (!task) setError(e.message);
+                // Only show error on initial load failure. Once loaded, poll errors
+                // are silently logged to avoid flashing the error screen.
+                if (!loadedRef.current) setError(e.message);
                 else console.warn('Poll error:', e.message);
             }
         }
@@ -1055,6 +1059,7 @@ export function TaskView({ id }) {
     // Initial load
     useEffect(() => {
         mountedRef.current = true;
+        loadedRef.current = false;
         setTask(null);
         setAttempts(null);
         setError(null);
