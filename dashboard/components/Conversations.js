@@ -67,6 +67,7 @@ export function ConversationDetail({ convId }) {
     useEffect(() => {
         setThread(null);
         setError(null);
+        window.scrollTo(0, 0);
         api.getConversation(convId)
             .then(setThread)
             .catch(e => setError(e.message));
