@@ -134,6 +134,24 @@
             margin: 4px 0;
         }
 
+        /* Focus-visible ring for keyboard accessibility */
+        #foreman-app a:focus-visible,
+        #foreman-app button:focus-visible,
+        #foreman-app select:focus-visible {
+            outline: 2px solid #7c5af6;
+            outline-offset: 2px;
+        }
+
+        /* Smooth transitions on all interactive foreman elements */
+        .foreman-project-card,
+        .foreman-task-row,
+        .foreman-conv-row,
+        .foreman-haiku-line,
+        .foreman-action-btn,
+        .foreman-back-link {
+            transition: background 150ms ease, color 150ms ease, opacity 150ms ease;
+        }
+
         /* Conversation message hover */
         .foreman-conv-message:hover { background: rgba(255,255,255,0.02); }
 
@@ -162,7 +180,7 @@
                 padding: 0 12px !important;
             }
 
-            /* Task row: stack vertically on narrow */
+            /* Task row: tighter on narrow */
             .foreman-task-row {
                 flex-wrap: wrap;
                 gap: 4px !important;
@@ -175,12 +193,33 @@
                 width: 95% !important;
                 max-height: 85vh !important;
             }
+
+            /* Conversation messages: reduce padding */
+            .foreman-conv-message {
+                padding: 10px 12px !important;
+                gap: 8px !important;
+            }
+
+            /* Component drawer grid: single column */
+            .foreman-component-card {
+                min-width: 0 !important;
+            }
+
+            /* Pre blocks scroll on mobile */
+            #foreman-app pre {
+                max-width: calc(100vw - 48px);
+            }
         }
 
         /* Tablet: 768px */
         @media (max-width: 768px) {
             .foreman-content {
                 padding: 20px 16px !important;
+            }
+
+            /* Slightly tighter spacing */
+            .foreman-task-row {
+                gap: 6px !important;
             }
         }
     </style>

@@ -1354,7 +1354,25 @@ export function ProjectView({ id }) {
         return html`
             <div style=${pageStyle}>
                 <a href=${routes.landing()} style=${backLinkStyle} class="foreman-back-link">← Projects</a>
-                <div style=${errorStyle}>Error: ${error}</div>
+                <div style=${{
+                    ...errorStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                }}>
+                    <span>Error: ${error}</span>
+                    <button onClick=${load} style=${{
+                        padding: '4px 12px',
+                        borderRadius: layout.borderRadius.sm,
+                        background: `${colors.red}22`,
+                        border: `1px solid ${colors.red}44`,
+                        color: colors.red,
+                        fontSize: typography.size.sm,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                    }}>Retry</button>
+                </div>
             </div>
         `;
     }

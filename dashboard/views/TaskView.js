@@ -187,8 +187,7 @@ function GitFlowBar({ task }) {
             ` : null}
 
             ${task.conversation_id ? html`
-                <a href=${`/dashboard/#/conversations/${encodeURIComponent(task.conversation_id)}`}
-                    target="_blank" rel="noopener"
+                <a href=${routes.conversation(task.conversation_id)}
                     style=${pillStyle('rgba(99, 102, 241, 0.12)', '#818cf8')}
                     class="foreman-task-conv-link">
                     💬 ${task.conversation_id}
