@@ -5,7 +5,7 @@ import {
     computeLayout, TaskNode, EdgePath, TagFilterBar, StateLegend,
     DEFAULT_STATE_COLORS, NODE_W, NODE_H,
 } from './DagGraph.js';
-import { GraphDetailPanel } from './GraphDetailPanel.js';
+import { TaskPanel } from './TaskPanel.js';
 
 const COMPONENT_STATUS_COLORS = {
     planning:  { bg: 'bg-slate-500/20', text: 'text-slate-400', dot: '\u25CB' },
@@ -344,13 +344,13 @@ function UngroupedDagSection({ projectId, jiraBaseUrl, onAction }) {
 
                         ${selectedTaskId ? html`
                             <div class="panel-backdrop" onClick=${handleClose}></div>
-                            <${GraphDetailPanel}
+                            <${TaskPanel}
                                 key=${selectedTaskId}
                                 taskId=${selectedTaskId}
                                 allTasks=${allTasks}
-                                jiraBaseUrl=${jiraBaseUrl}
                                 onClose=${handleClose}
-                                onAction=${onAction} />
+                                onAction=${onAction}
+                                onSelectTask=${handleSelect} />
                         ` : null}
                     </div>
                 </div>
