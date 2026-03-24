@@ -233,7 +233,7 @@ function PunchlistSection({ componentId }) {
     }
 
     const openCount = items.filter(i => i.status !== 'resolved').length;
-    const displayItems = items.slice(0, 8);
+    const displayItems = items;
 
     const statusColor = (s) => {
         if (s === 'resolved') return colors.blue;
@@ -287,12 +287,6 @@ function PunchlistSection({ componentId }) {
                     ` : null}
                 </div>
             `)}
-            ${items.length > 8 ? html`
-                <div style=${{
-                    fontSize: typography.size.xs, color: colors.textTertiary,
-                    fontStyle: 'italic', paddingTop: '2px',
-                }}>+ ${items.length - 8} more</div>
-            ` : null}
         </div>
         </div>
     `;
