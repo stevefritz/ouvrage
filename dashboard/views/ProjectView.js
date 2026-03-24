@@ -745,38 +745,26 @@ function ConversationsSection({ conversations }) {
 // Chain pop-out overlay — vertical mini-DAG
 // ---------------------------------------------------------------------------
 
-function ChainOverlay({ taskId, onClose }) {
-    const [chainData, setChainData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    useEffect(() => {
-        setLoading(true);
-        setError(null);
-        api.getChain(taskId)
-            .then(data => { setChainData(data); setLoading(false); })
-            .catch(e => { setError(e.message || 'Failed to load chain'); setLoading(false); });
-    }, [taskId]);
-
+function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
     useEffect(() => {
         const onKey = (e) => { if (e.key === 'Escape') onClose(); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);
 
-    const chain = chainData?.chain || [];
+    // Build ordered chain from already-loaded tasks — no API call needed
+    const chain = chainIds.map(id => allTasks.find(t => t.id === id)).filter(Boolean);
 
     // Detect multi-component chain (show component tag per node when spans >1 component)
     const componentIds = new Set(chain.filter(t => t.component_id).map(t => t.component_id));
     const multiComponent = componentIds.size > 1;
 
-    // Node color by status
+    // Node color by status — per spec: green=completed/merged, blue=working, yellow=needs-review/failed, grey=ready/cancelled
     const nodeColor = (s) => {
-        if (s === 'completed') return colors.green;
+        if (s === 'completed' || s === 'merged') return colors.green;
         if (s === 'working' || s === 'rate-limited' || s === 'turns-exhausted') return colors.blue;
-        if (s === 'failed') return colors.red;
-        if (s === 'needs-review') return colors.yellow;
-        return colors.textTertiary;
+        if (s === 'needs-review' || s === 'failed') return colors.yellow;
+        return colors.textTertiary; // ready, cancelled, queued
     };
 
     const overlayStyle = {
@@ -846,18 +834,11 @@ function ChainOverlay({ taskId, onClose }) {
                     <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
                 </div>
 
-                ${loading ? html`
-                    <div style=${{ color: colors.textTertiary, fontSize: typography.size.sm, padding: '8px 0' }}>
-                        Loading…
-                    </div>
-                ` : error ? html`
-                    <div style=${{ color: colors.red, fontSize: typography.size.sm }}>${error}</div>
-                ` : html`
-                    <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                <div style=${{ display: 'flex', flexDirection: 'column' }}>
                         ${chain.map((task, i) => {
                             const color = nodeColor(task.status);
                             const isActive = task.status === 'working';
-                            const isCurrent = task.id === taskId;
+                            const isCurrent = task.id === anchorTaskId;
                             const goal = task.goal || task.id;
                             const displayGoal = goal.length > 52 ? goal.slice(0, 51) + '…' : goal;
                             const compLabel = multiComponent && task.component_id
@@ -958,7 +939,6 @@ function ChainOverlay({ taskId, onClose }) {
                             `;
                         })}
                     </div>
-                `}
             </div>
         </div>
     `;
@@ -1206,7 +1186,9 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
                     />
                     ${showChain ? html`
                         <${ChainOverlay}
-                            taskId=${task.id}
+                            chainIds=${chain.chainIds}
+                            anchorTaskId=${task.id}
+                            allTasks=${allTasks}
                             onClose=${handleCloseChain}
                         />
                     ` : null}
