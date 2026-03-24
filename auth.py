@@ -205,7 +205,7 @@ def auth_middleware(inner_app):
 
         # Dashboard paths bypass OAuth — Caddy handles basic auth (htpasswd)
         # for /dashboard routes before requests reach this middleware.
-        if path.startswith("/dashboard"):
+        if path.startswith("/dashboard") or path.startswith("/foreman"):
             return await inner_app(scope, receive, send)
 
         # Skip auth for unprotected paths

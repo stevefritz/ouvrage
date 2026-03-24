@@ -2254,6 +2254,36 @@ async def _serve_dashboard(scope, send):
     await send({"type": "http.response.body", "body": body})
 
 
+async def _serve_foreman(scope, send):
+    """Serve foreman.html and its assets from dashboard/."""
+    path = scope["path"]
+    # /foreman or /foreman.html → foreman.html at app root
+    # /foreman/anything → serve from dashboard/ (shared JS/CSS)
+    if path in ("/foreman", "/foreman.html", "/foreman/"):
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "foreman.html")
+    else:
+        # Strip /foreman prefix, serve from dashboard dir (shared assets)
+        rel = path[len("/foreman"):].lstrip("/")
+        file_path = os.path.join(_DASHBOARD_DIR, rel)
+        file_path = os.path.realpath(file_path)
+        if not file_path.startswith(os.path.realpath(_DASHBOARD_DIR)):
+            await send({"type": "http.response.start", "status": 403, "headers": []})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+            return
+
+    if not os.path.isfile(file_path):
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b"Not Found"})
+        return
+
+    ext = os.path.splitext(file_path)[1]
+    content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+    with open(file_path, "rb") as f:
+        body = f.read()
+    await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", content_type.encode()]]})
+    await send({"type": "http.response.body", "body": body})
+
+
 async def main():
     await db.init_db()
 
@@ -2299,6 +2329,8 @@ async def main():
             await dashboard_api.handle_request(scope, receive, send)
         elif path.startswith("/dashboard"):
             await _serve_dashboard(scope, send)
+        elif path.startswith("/foreman"):
+            await _serve_foreman(scope, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})
