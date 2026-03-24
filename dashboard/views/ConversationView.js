@@ -4,7 +4,7 @@
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
 import { colors, typography, layout, animation } from '../tokens.js';
 import { relativeTime } from '../components/utils.js';
@@ -63,6 +63,7 @@ function ConversationMessage({ msg, isPinned }) {
     const [expanded, setExpanded] = useState(isPinned);
     const meta = getMsgMeta(msg.type);
     const ts = msg.created_at;
+    const renderedContent = useMemo(() => renderMarkdown(msg.content), [msg.content]);
 
     const containerStyle = {
         display: 'flex',
@@ -154,7 +155,7 @@ function ConversationMessage({ msg, isPinned }) {
                         color: colors.textSecondary,
                         lineHeight: typography.lineHeight.relaxed,
                     }}
-                        dangerouslySetInnerHTML=${{ __html: renderMarkdown(msg.content) }}
+                        dangerouslySetInnerHTML=${{ __html: renderedContent }}
                     />
                     ${hasMore && !isPinned ? html`
                         <button onClick=${() => setExpanded(false)} style=${{
@@ -330,6 +331,11 @@ export function ConversationView({ id }) {
         }
     }, [id]);
 
+    // Scroll to top on mount / navigation
+    useEffect(() => {
+        window.scrollTo(0, 0);
+    }, [id]);
+
     // Initial load
     useEffect(() => {
         setThread(null);
@@ -404,9 +410,7 @@ export function ConversationView({ id }) {
         color: colors.text,
         letterSpacing: '-0.02em',
         margin: '0 0 4px',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        wordBreak: 'break-word',
     };
 
     const metaStyle = {

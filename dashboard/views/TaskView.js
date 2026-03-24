@@ -9,7 +9,7 @@
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
 import { colors, typography, statusColors, statusBgs, layout } from '../tokens.js';
 import { StatusDot } from '../components/StatusDot.js';
@@ -135,11 +135,12 @@ function StatusLine({ task }) {
                 </span>
             ` : null}
 
-            <span style=${{ flex: 1 }} />
+            <span style=${{ flex: 1, minWidth: '16px' }} />
 
             <span style=${{
                 fontFamily: typography.fontBody, fontSize: typography.size.base,
                 color: colors.text, fontWeight: typography.weight.medium,
+                wordBreak: 'break-word', textAlign: 'right',
             }}>${task.goal || shortId(task.id)}</span>
         </div>
     `;
@@ -205,12 +206,96 @@ function GitFlowBar({ task }) {
     `;
 }
 
+// ── Chain Strip ─────────────────────────────────────────────
+
+function ChainStrip({ task }) {
+    const [chain, setChain] = useState(null);
+
+    useEffect(() => {
+        if (!task?.id) return;
+        api.getChain(task.id)
+            .then(data => {
+                const list = data?.chain || [];
+                if (list.length > 1) setChain(list);
+            })
+            .catch(() => {});
+    }, [task?.id]);
+
+    if (!chain || chain.length <= 1) return null;
+
+    const MAX_NODES = 7;
+    const truncated = chain.length > MAX_NODES;
+    const displayNodes = truncated ? chain.slice(0, MAX_NODES) : chain;
+
+    const containerStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0',
+        padding: '10px 0',
+        marginBottom: '12px',
+        overflowX: 'auto',
+    };
+
+    return html`
+        <div style=${containerStyle}>
+            ${displayNodes.map((node, i) => {
+                const isCurrent = node.id === task.id;
+                const color = statusColors[node.status] || colors.textTertiary;
+                const name = (node.goal || node.id.split('/').pop() || '').slice(0, 20);
+
+                return html`
+                    ${i > 0 ? html`
+                        <div style=${{
+                            width: '20px', height: '2px',
+                            background: colors.border, flexShrink: 0,
+                        }} />
+                    ` : null}
+                    <a key=${node.id}
+                       href=${routes.task(node.id)}
+                       style=${{
+                           display: 'inline-flex', alignItems: 'center', gap: '5px',
+                           padding: '4px 8px', borderRadius: layout.borderRadius.sm,
+                           border: isCurrent ? '1px solid ' + colors.accent : '1px solid ' + colors.borderSubtle,
+                           background: isCurrent ? colors.accentBg : 'transparent',
+                           textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
+                       }}
+                       class="foreman-chain-node"
+                    >
+                        <span style=${{
+                            width: '6px', height: '6px', borderRadius: '50%',
+                            background: color, flexShrink: 0,
+                        }} />
+                        <span style=${{
+                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                            color: isCurrent ? colors.text : colors.textSecondary,
+                            overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>${name}</span>
+                    </a>
+                `;
+            })}
+            ${truncated ? html`
+                <div style=${{
+                    width: '20px', height: '2px',
+                    background: colors.border, flexShrink: 0,
+                }} />
+                <span style=${{
+                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                    color: colors.textTertiary, padding: '4px 6px',
+                }}>… +${chain.length - MAX_NODES}</span>
+            ` : null}
+        </div>
+    `;
+}
+
 // ── Blocked By ──────────────────────────────────────────────
 
 function BlockedBy({ task, blockerTask }) {
     if (!task.depends_on) return null;
 
     const blockerStatus = blockerTask?.status || 'unknown';
+    // Don't show blocked-by when blocker is resolved
+    if (['completed', 'merged', 'cancelled'].includes(blockerStatus)) return null;
+
     const blockerGoal = blockerTask?.goal || task.depends_on;
 
     return html`
@@ -277,7 +362,7 @@ function ActionToolbar({ task, onAction }) {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
     }
     if (['failed', 'cancelled', 'completed'].includes(task.status)) {
-        actions.push(btn('close', 'Close', 'rgba(92, 94, 102, 0.12)', colors.textTertiary));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
@@ -1014,6 +1099,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [task, setTask] = useState(null);
     const [attempts, setAttempts] = useState(null);
     const [blockerTask, setBlockerTask] = useState(null);
+    const [chain, setChain] = useState(null);
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
     const mountedRef = useRef(true);
@@ -1055,6 +1141,17 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             .catch(() => mountedRef.current && setBlockerTask(null));
     }, [task?.depends_on]);
 
+    // Load chain for compact mode chain position
+    useEffect(() => {
+        if (!id) return;
+        api.getChain(id)
+            .then(data => {
+                const list = data?.chain || [];
+                if (mountedRef.current) setChain(list.length > 1 ? list : null);
+            })
+            .catch(() => mountedRef.current && setChain(null));
+    }, [id]);
+
     // Initial load
     useEffect(() => {
         mountedRef.current = true;
@@ -1063,6 +1160,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         setAttempts(null);
         setError(null);
         setBlockerTask(null);
+        setChain(null);
         loadTask();
         loadAttempts();
         return () => { mountedRef.current = false; };
@@ -1153,26 +1251,9 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
 
     // ── Compact panel mode ──────────────────────────────────
     if (mode === 'compact') {
-        // Get result excerpt from latest attempt
-        let resultExcerpt = null;
-        if (attempts && attempts.length > 0) {
-            const latestAttempt = attempts[attempts.length - 1];
-            const msgs = latestAttempt.messages || [];
-            // Last message of a meaningful type
-            const excerptMsg = [...msgs].reverse().find(m =>
-                ['result', 'handoff', 'progress', 'note'].includes(m.type)
-            );
-            if (excerptMsg) {
-                resultExcerpt = haikuSummary(excerptMsg);
-            }
-        }
-
         const safeUrl = (url) => (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) ? url : null;
         const prUrl = task.pr_url || (task.artifacts || []).find(a => a.type === 'pr_url')?.ref;
         const statusLabel = (task.status || 'ready').toUpperCase();
-        const gateLabel = task.gate_status && task.gate_status !== 'passed' && task.gate_status !== 'stale' && task.gate_status !== 'none'
-            ? task.gate_status.toUpperCase().replace(/-/g, ' ')
-            : null;
 
         const pillStyle = (bg, fg) => ({
             display: 'inline-flex', alignItems: 'center',
@@ -1182,10 +1263,62 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             whiteSpace: 'nowrap',
         });
 
+        // Attempt info
+        const totalAttempts = task.current_attempt || (attempts ? attempts.length : 0);
+        const maxAttempts = task.max_gate_retries ? totalAttempts + task.max_gate_retries - task.gate_retries : null;
+        const showAttemptSummary = totalAttempts > 1;
+        const attemptLabel = showAttemptSummary
+            ? `Attempt ${totalAttempts}${maxAttempts ? ` of ${maxAttempts}` : ''}${task.status === 'working' ? ' — running' : ''}`
+            : null;
+
+        // Extract test result + review verdict from latest attempt
+        let testResult = null;
+        let reviewResult = null;
+        if (attempts && attempts.length > 0) {
+            const latestAttempt = attempts[attempts.length - 1];
+            const msgs = latestAttempt.messages || [];
+
+            // Test result — find last test-result message
+            const testMsg = [...msgs].reverse().find(m => m.type === 'test-result');
+            if (testMsg) {
+                const content = (testMsg.content || '').toLowerCase();
+                const title = (testMsg.title || '').toLowerCase();
+                const passed = title.includes('pass') || content.includes('passed') || content.includes('all tests passed');
+                const countMatch = (testMsg.content || '').match(/(\d+)\s*(passed|tests?\s+passed)/i);
+                const count = countMatch ? countMatch[1] : null;
+                testResult = {
+                    passed,
+                    label: passed
+                        ? `✓ Tests passed${count ? ` — ${count}` : ''}`
+                        : '✕ Tests failed',
+                };
+            }
+
+            // Review verdict — find last review message
+            const reviewMsg = [...msgs].reverse().find(m => m.type === 'review');
+            if (reviewMsg) {
+                const verdict = reviewVerdict(reviewMsg);
+                if (verdict === 'approved') {
+                    reviewResult = { verdict, label: '✓ APPROVED' };
+                } else if (verdict === 'rejected') {
+                    const excerpt = (reviewMsg.content || '').split('\n').find(l => l.trim() && !l.startsWith('#'))?.slice(0, 60) || '';
+                    reviewResult = { verdict, label: `✕ REJECTED${excerpt ? ' — ' + excerpt : ''}` };
+                } else if (task.gate_status === 'reviewing') {
+                    reviewResult = { verdict: 'running', label: '● Review running…' };
+                }
+            } else if (task.gate_status === 'reviewing') {
+                reviewResult = { verdict: 'running', label: '● Review running…' };
+            }
+        }
+
+        // Cost
+        const cost = task.total_cost_usd || 0;
+        const showCost = cost > 0;
+
         return html`
             <div style=${{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-                <!-- Status row -->
+                <!-- Status dot + label + timestamp -->
                 <div style=${{
                     display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
                 }}>
@@ -1196,37 +1329,97 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                         color: statusColors[task.status] || colors.textSecondary,
                         textTransform: 'uppercase', letterSpacing: '0.05em',
                     }}>${statusLabel}</span>
-
-                    ${gateLabel ? html`
-                        <span style=${{
-                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
-                            padding: '1px 6px', borderRadius: '4px',
-                            background: statusBgs[task.status] || 'rgba(92, 94, 102, 0.12)',
-                            color: statusColors[task.status] || colors.textSecondary,
-                        }}>${gateLabel}</span>
-                    ` : null}
-
                     <span style=${{ flex: 1 }} />
                     <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
                         ${relativeTime(task.last_activity || task.updated_at)}
                     </span>
                 </div>
 
-                <!-- Goal -->
+                <!-- Goal (wraps, never truncated) -->
                 <div style=${{
                     fontSize: typography.size.md,
                     fontWeight: typography.weight.medium,
                     color: colors.text,
-                    lineHeight: typography.lineHeight.tight,
+                    lineHeight: typography.lineHeight.normal,
+                    wordBreak: 'break-word',
                 }}>${task.goal || shortId(task.id)}</div>
 
-                <!-- Task ID -->
+                <!-- Task ID monospace -->
                 <div style=${{
                     fontFamily: typography.fontMono, fontSize: typography.size.xs,
                     color: colors.textTertiary,
                 }}>${shortId(task.id)}</div>
 
-                <!-- Git flow compact -->
+                <!-- Attempt summary (only if >1) -->
+                ${attemptLabel ? html`
+                    <div style=${{
+                        fontSize: typography.size.sm,
+                        color: colors.textSecondary,
+                    }}>${attemptLabel}</div>
+                ` : null}
+
+                <!-- Gate dots with labels -->
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <${GateDots}
+                        gateStatus=${task.gate_status}
+                        taskStatus=${task.status}
+                        showLabels=${true}
+                        size=${7}
+                    />
+                </div>
+
+                <!-- Chain position (only if chain > 1) -->
+                ${chain && chain.length > 1 ? (() => {
+                    const idx = chain.findIndex(n => n.id === task.id);
+                    const pos = idx >= 0 ? idx + 1 : null;
+                    const prevId = idx > 0 ? chain[idx - 1].id : null;
+                    const nextId = idx < chain.length - 1 ? chain[idx + 1].id : null;
+                    return pos ? html`
+                        <div style=${{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            fontSize: typography.size.sm, color: colors.textSecondary,
+                        }}>
+                            ${prevId ? html`
+                                <a href=${routes.task(prevId)} style=${{
+                                    color: colors.accent, textDecoration: 'none',
+                                    fontSize: typography.size.sm,
+                                }} class="foreman-chain-nav">←</a>
+                            ` : html`<span style=${{ color: colors.borderSubtle }}>←</span>`}
+                            <span style=${{ fontFamily: typography.fontMono }}>Step ${pos} of ${chain.length}</span>
+                            ${nextId ? html`
+                                <a href=${routes.task(nextId)} style=${{
+                                    color: colors.accent, textDecoration: 'none',
+                                    fontSize: typography.size.sm,
+                                }} class="foreman-chain-nav">→</a>
+                            ` : html`<span style=${{ color: colors.borderSubtle }}>→</span>`}
+                        </div>
+                    ` : null;
+                })() : null}
+
+                <!-- Test result -->
+                ${testResult ? html`
+                    <div style=${{
+                        fontSize: typography.size.sm,
+                        fontFamily: typography.fontMono,
+                        color: testResult.passed ? colors.green : colors.red,
+                    }}>${testResult.label}</div>
+                ` : null}
+
+                <!-- Review verdict -->
+                ${reviewResult ? html`
+                    <div style=${{
+                        fontSize: typography.size.sm,
+                        fontFamily: typography.fontMono,
+                        color: reviewResult.verdict === 'approved' ? colors.green
+                            : reviewResult.verdict === 'rejected' ? colors.red
+                            : colors.yellow,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    }}>${reviewResult.label}</div>
+                ` : null}
+
+                <!-- Git flow pills -->
                 ${(task.branch || prUrl) ? html`
                     <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         ${task.branch ? html`
@@ -1251,34 +1444,13 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                     </div>
                 ` : null}
 
-                <!-- Result excerpt -->
-                ${resultExcerpt ? html`
+                <!-- Cost (only if > $0) -->
+                ${showCost ? html`
                     <div style=${{
-                        fontSize: typography.size.sm,
-                        color: colors.textSecondary,
-                        fontStyle: 'italic',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        padding: '6px 10px',
-                        background: colors.surfaceActive,
-                        borderRadius: layout.borderRadius.sm,
-                        borderLeft: `2px solid ${colors.border}`,
-                    }}>${resultExcerpt}</div>
+                        fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                        color: colors.textTertiary,
+                    }}>$${cost.toFixed(2)}</div>
                 ` : null}
-
-                <!-- Gate dots -->
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style=${{ fontFamily: typography.fontMono, fontSize: typography.size.xs, color: colors.textTertiary }}>
-                        Gate
-                    </span>
-                    <${GateDots}
-                        gateStatus=${task.gate_status}
-                        taskStatus=${task.status}
-                        showLabels=${true}
-                        size=${7}
-                    />
-                </div>
 
                 <!-- Actions -->
                 <${ActionToolbar} task=${task} onAction=${handleAction} />
@@ -1323,6 +1495,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
 
             <${StatusLine} task=${task} />
             <${GitFlowBar} task=${task} />
+            <${ChainStrip} task=${task} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ActionToolbar} task=${task} onAction=${handleAction} />
 
