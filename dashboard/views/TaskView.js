@@ -146,13 +146,82 @@ function StatusLine({ task }) {
     `;
 }
 
-// ── Git Flow Bar ────────────────────────────────────────────
+// ── Git Flow Lineage ─────────────────────────────────────────
 
-function GitFlowBar({ task }) {
-    const prUrl = task.pr_url || (task.artifacts || []).find(a => a.type === 'pr_url')?.ref;
+function GitFlowLineage({ task, chain }) {
     const safeUrl = (url) => (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) ? url : null;
+    const prUrl = task.pr_url || (task.artifacts || []).find(a => a.type === 'pr_url')?.ref;
 
-    const pillStyle = (bg, fg) => ({
+    // Extract PR number from URL like https://github.com/org/repo/pull/123
+    const prNumber = prUrl ? (prUrl.match(/\/pull\/(\d+)/) || [])[1] : null;
+
+    const inChain = chain && chain.length > 1;
+    const idx = inChain ? chain.findIndex(n => n.id === task.id) : -1;
+
+    // Determine left/center/right
+    let leftBranch, leftLabel, leftHref;
+    let rightBranch, rightLabel, rightHref;
+
+    if (inChain && idx >= 0) {
+        if (idx > 0) {
+            leftBranch = chain[idx - 1].branch;
+            leftLabel = 'branched from';
+            leftHref = routes.task(chain[idx - 1].id);
+        } else {
+            leftBranch = task.base_branch || 'main';
+            leftLabel = 'branched from';
+            leftHref = null;
+        }
+        if (idx < chain.length - 1) {
+            rightBranch = chain[idx + 1].branch;
+            rightLabel = 'merges into';
+            rightHref = routes.task(chain[idx + 1].id);
+        } else {
+            rightBranch = task.branch_target || 'main';
+            rightLabel = 'merges into';
+            rightHref = null;
+        }
+    } else {
+        leftBranch = task.base_branch || 'main';
+        leftLabel = 'from';
+        leftHref = null;
+        rightBranch = task.branch_target || 'main';
+        rightLabel = 'into';
+        rightHref = null;
+    }
+
+    const pillBase = {
+        display: 'inline-flex', alignItems: 'center',
+        fontFamily: typography.fontMono, fontSize: typography.size.xs,
+        padding: '4px 10px', borderRadius: layout.borderRadius.sm,
+        whiteSpace: 'nowrap', textDecoration: 'none',
+    };
+
+    const sidePill = (href) => ({
+        ...pillBase,
+        background: colors.surface,
+        color: colors.textSecondary,
+        border: `1px solid ${colors.borderSubtle}`,
+        cursor: href ? 'pointer' : 'default',
+    });
+
+    const centerPill = {
+        ...pillBase,
+        background: colors.accentBg,
+        color: colors.accent,
+        border: `1px solid ${colors.accent}`,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.bold,
+    };
+
+    const labelStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        textAlign: 'center',
+        marginTop: '2px',
+    };
+
+    const linkPillStyle = (bg, fg) => ({
         display: 'inline-flex', alignItems: 'center', gap: '4px',
         fontFamily: typography.fontMono, fontSize: typography.size.xs,
         padding: '2px 8px', borderRadius: '4px',
@@ -162,127 +231,229 @@ function GitFlowBar({ task }) {
 
     return html`
         <div style=${{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            padding: '8px 0', flexWrap: 'wrap',
-            borderBottom: `1px solid ${colors.border}`, marginBottom: '16px',
+            padding: '8px 0', marginBottom: '16px',
+            borderBottom: `1px solid ${colors.border}`,
         }}>
-            ${task.branch ? html`
-                <span style=${pillStyle(colors.surface, colors.textSecondary)}>
-                    ${task.branch}
+            <!-- Three-part lineage -->
+            <div style=${{
+                display: 'flex', alignItems: 'flex-start', gap: '0',
+                justifyContent: 'center',
+            }}>
+                <!-- Left pill -->
+                <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    ${leftHref ? html`
+                        <a href=${leftHref} style=${sidePill(leftHref)} class="foreman-lineage-pill">
+                            ← ${leftBranch}
+                        </a>
+                    ` : html`
+                        <span style=${sidePill(null)}>← ${leftBranch}</span>
+                    `}
+                    <span style=${labelStyle}>${leftLabel}</span>
+                </div>
+
+                <!-- Arrow -->
+                <span style=${{
+                    color: colors.textTertiary, fontSize: typography.size.sm,
+                    padding: '4px 8px', alignSelf: 'center',
+                }}>→</span>
+
+                <!-- Center pill -->
+                <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <span style=${centerPill}>${task.branch || shortId(task.id)}</span>
+                </div>
+
+                <!-- Arrow -->
+                <span style=${{
+                    color: colors.textTertiary, fontSize: typography.size.sm,
+                    padding: '4px 8px', alignSelf: 'center',
+                }}>→</span>
+
+                <!-- Right pill -->
+                <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    ${rightHref ? html`
+                        <a href=${rightHref} style=${sidePill(rightHref)} class="foreman-lineage-pill">
+                            ${rightBranch} →
+                        </a>
+                    ` : html`
+                        <span style=${sidePill(null)}>${rightBranch} →</span>
+                    `}
+                    <span style=${labelStyle}>${rightLabel}</span>
+                </div>
+            </div>
+
+            <!-- Below lineage: PR + auto-merge + links -->
+            <div style=${{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                marginTop: '8px', flexWrap: 'wrap',
+            }}>
+                ${prUrl && safeUrl(prUrl) ? html`
+                    <a href=${safeUrl(prUrl)} target="_blank" rel="noopener"
+                        style=${linkPillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
+                        class="foreman-task-pr-link">
+                        PR ${prNumber ? `#${prNumber}` : ''} ↗
+                    </a>
+                ` : null}
+
+                <span style=${{
+                    fontSize: typography.size.xs, color: colors.textTertiary,
+                    fontFamily: typography.fontMono,
+                }}>
+                    ${task.auto_merge ? 'auto-merge on' : 'manual merge'}
                 </span>
-            ` : null}
 
-            ${task.branch_target ? html`
-                <span style=${{ color: colors.textTertiary, fontSize: typography.size.xs }}>→</span>
-                <span style=${pillStyle(colors.surface, colors.textTertiary)}>
-                    ${task.branch_target}
-                </span>
-            ` : null}
+                ${task.conversation_id ? html`
+                    <a href=${routes.conversation(task.conversation_id)}
+                        style=${linkPillStyle('rgba(99, 102, 241, 0.12)', '#818cf8')}
+                        class="foreman-task-conv-link">
+                        💬 ${task.conversation_id}
+                    </a>
+                ` : null}
 
-            ${prUrl && safeUrl(prUrl) ? html`
-                <a href=${safeUrl(prUrl)} target="_blank" rel="noopener"
-                    style=${pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
-                    class="foreman-task-pr-link">
-                    PR ↗
-                </a>
-            ` : null}
-
-            ${task.conversation_id ? html`
-                <a href=${routes.conversation(task.conversation_id)}
-                    style=${pillStyle('rgba(99, 102, 241, 0.12)', '#818cf8')}
-                    class="foreman-task-conv-link">
-                    💬 ${task.conversation_id}
-                </a>
-            ` : null}
-
-            ${task.claude_chat_url && safeUrl(task.claude_chat_url) ? html`
-                <a href=${safeUrl(task.claude_chat_url)} target="_blank" rel="noopener"
-                    style=${pillStyle('rgba(249, 115, 22, 0.12)', '#fb923c')}
-                    class="foreman-task-claude-link">
-                    Claude ↗
-                </a>
-            ` : null}
+                ${task.claude_chat_url && safeUrl(task.claude_chat_url) ? html`
+                    <a href=${safeUrl(task.claude_chat_url)} target="_blank" rel="noopener"
+                        style=${linkPillStyle('rgba(249, 115, 22, 0.12)', '#fb923c')}
+                        class="foreman-task-claude-link">
+                        Claude ↗
+                    </a>
+                ` : null}
+            </div>
         </div>
     `;
 }
 
 // ── Chain Strip ─────────────────────────────────────────────
 
-function ChainStrip({ task }) {
-    const [chain, setChain] = useState(null);
-
-    useEffect(() => {
-        if (!task?.id) return;
-        api.getChain(task.id)
-            .then(data => {
-                const list = data?.chain || [];
-                if (list.length > 1) setChain(list);
-            })
-            .catch(() => {});
-    }, [task?.id]);
-
+function ChainStrip({ task, chain }) {
     if (!chain || chain.length <= 1) return null;
 
-    const MAX_NODES = 7;
-    const truncated = chain.length > MAX_NODES;
-    const displayNodes = truncated ? chain.slice(0, MAX_NODES) : chain;
+    const idx = chain.findIndex(n => n.id === task.id);
+    if (idx < 0) return null;
 
-    const containerStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0',
-        padding: '10px 0',
-        marginBottom: '12px',
-        overflowX: 'auto',
+    const current = chain[idx];
+    const prev = idx > 0 ? chain[idx - 1] : null;
+    const next = idx < chain.length - 1 ? chain[idx + 1] : null;
+    const total = chain.length;
+    const step = idx + 1;
+
+    // Overflow counts
+    const beforePrev = idx > 1 ? idx - 1 : 0;
+    const afterNext = idx < total - 2 ? total - idx - 2 : 0;
+
+    const truncGoal = (goal, max) => {
+        const text = goal || '';
+        return text.length > max ? text.slice(0, max - 1) + '…' : text;
+    };
+
+    const sideCardStyle = {
+        width: '140px', flexShrink: 0,
+        padding: '8px 10px',
+        borderRadius: layout.borderRadius.md,
+        border: `1px solid ${colors.borderSubtle}`,
+        background: 'transparent',
+        textDecoration: 'none',
+        display: 'flex', alignItems: 'center', gap: '6px',
+        cursor: 'pointer',
+    };
+
+    const currentCardStyle = {
+        flex: 1, maxWidth: '60%', minWidth: 0,
+        padding: '10px 14px',
+        borderRadius: layout.borderRadius.md,
+        border: `2px solid ${colors.accent}`,
+        background: colors.accentBg,
     };
 
     return html`
-        <div style=${containerStyle}>
-            ${displayNodes.map((node, i) => {
-                const isCurrent = node.id === task.id;
-                const color = statusColors[node.status] || colors.textTertiary;
-                const name = (node.goal || node.id.split('/').pop() || '').slice(0, 20);
-
-                return html`
-                    ${i > 0 ? html`
-                        <div style=${{
-                            width: '20px', height: '2px',
-                            background: colors.border, flexShrink: 0,
-                        }} />
-                    ` : null}
-                    <a key=${node.id}
-                       href=${routes.task(node.id)}
-                       style=${{
-                           display: 'inline-flex', alignItems: 'center', gap: '5px',
-                           padding: '4px 8px', borderRadius: layout.borderRadius.sm,
-                           border: isCurrent ? '1px solid ' + colors.accent : '1px solid ' + colors.borderSubtle,
-                           background: isCurrent ? colors.accentBg : 'transparent',
-                           textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
-                       }}
-                       class="foreman-chain-node"
-                    >
+        <div style=${{ marginBottom: '12px' }}>
+            <!-- Three-card row -->
+            <div style=${{
+                display: 'flex', alignItems: 'stretch', gap: '8px',
+            }}>
+                <!-- Prev card -->
+                ${prev ? html`
+                    <a href=${routes.task(prev.id)} style=${sideCardStyle} class="foreman-chain-node">
+                        <span style=${{ color: colors.textTertiary, flexShrink: 0 }}>←</span>
                         <span style=${{
                             width: '6px', height: '6px', borderRadius: '50%',
-                            background: color, flexShrink: 0,
+                            background: statusColors[prev.status] || colors.textTertiary,
+                            flexShrink: 0,
                         }} />
                         <span style=${{
                             fontFamily: typography.fontMono, fontSize: typography.size.xs,
-                            color: isCurrent ? colors.text : colors.textSecondary,
-                            overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}>${name}</span>
+                            color: colors.textTertiary,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>${truncGoal(prev.goal || shortId(prev.id), 20)}</span>
                     </a>
-                `;
-            })}
-            ${truncated ? html`
-                <div style=${{
-                    width: '20px', height: '2px',
-                    background: colors.border, flexShrink: 0,
-                }} />
+                ` : html`<div style=${{ width: '140px', flexShrink: 0 }} />`}
+
+                <!-- Current card (hero) -->
+                <div style=${currentCardStyle}>
+                    <div style=${{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        marginBottom: '4px',
+                    }}>
+                        <span style=${{
+                            width: '8px', height: '8px', borderRadius: '50%',
+                            background: statusColors[current.status] || colors.textTertiary,
+                            flexShrink: 0,
+                        }} />
+                        <span style=${{
+                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                            color: statusColors[current.status] || colors.textSecondary,
+                            textTransform: 'uppercase',
+                        }}>${(current.status || 'ready').toUpperCase()}</span>
+                    </div>
+                    <div style=${{
+                        fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                        color: colors.text, fontWeight: typography.weight.medium,
+                        lineHeight: typography.lineHeight.normal,
+                        wordBreak: 'break-word',
+                    }}>${current.goal || shortId(current.id)}</div>
+                </div>
+
+                <!-- Next card -->
+                ${next ? html`
+                    <a href=${routes.task(next.id)} style=${sideCardStyle} class="foreman-chain-node">
+                        <span style=${{
+                            width: '6px', height: '6px', borderRadius: '50%',
+                            background: statusColors[next.status] || colors.textTertiary,
+                            flexShrink: 0,
+                        }} />
+                        <span style=${{
+                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                            color: colors.textTertiary,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            flex: 1,
+                        }}>${truncGoal(next.goal || shortId(next.id), 20)}</span>
+                        <span style=${{ color: colors.textTertiary, flexShrink: 0 }}>→</span>
+                    </a>
+                ` : html`<div style=${{ width: '140px', flexShrink: 0 }} />`}
+            </div>
+
+            <!-- Step indicator + overflow links -->
+            <div style=${{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: '12px', marginTop: '6px',
+            }}>
+                ${beforePrev > 0 ? html`
+                    <a href=${routes.task(chain[0].id)} style=${{
+                        fontSize: typography.size.xs, color: colors.textTertiary,
+                        textDecoration: 'none', fontFamily: typography.fontMono,
+                    }} class="foreman-chain-nav">← ${beforePrev} more</a>
+                ` : null}
+
                 <span style=${{
-                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
-                    color: colors.textTertiary, padding: '4px 6px',
-                }}>… +${chain.length - MAX_NODES}</span>
-            ` : null}
+                    fontSize: typography.size.xs, color: colors.textTertiary,
+                    fontFamily: typography.fontMono,
+                }}>Step ${step} of ${total}</span>
+
+                ${afterNext > 0 ? html`
+                    <a href=${routes.task(chain[chain.length - 1].id)} style=${{
+                        fontSize: typography.size.xs, color: colors.textTertiary,
+                        textDecoration: 'none', fontFamily: typography.fontMono,
+                    }} class="foreman-chain-nav">${afterNext} more →</a>
+                ` : null}
+            </div>
         </div>
     `;
 }
@@ -957,6 +1128,7 @@ function DetailsDrawer({ task }) {
                     ${row('Phase', task.phase)}
                     ${row('Auto Test', task.auto_test ? 'Yes' : 'No')}
                     ${row('Auto Review', task.auto_review ? 'Yes' : 'No')}
+                    ${task.auto_review ? row('Review model', task.review_model === 'sonnet' ? 'Sonnet' : 'Opus') : null}
                     ${row('Auto PR', task.auto_pr ? 'Yes' : 'No')}
                     ${row('Worktree', task.worktree_path)}
                     ${row('Created', task.created_at ? new Date(normTs(task.created_at)).toLocaleString() : null)}
@@ -1494,8 +1666,8 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             </a>
 
             <${StatusLine} task=${task} />
-            <${GitFlowBar} task=${task} />
-            <${ChainStrip} task=${task} />
+            <${GitFlowLineage} task=${task} chain=${chain} />
+            <${ChainStrip} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ActionToolbar} task=${task} onAction=${handleAction} />
 
