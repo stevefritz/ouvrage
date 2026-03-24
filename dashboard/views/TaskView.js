@@ -4,9 +4,8 @@
 // Layout: Status line → Git flow bar → Blocked-by → Actions + checklist →
 //         ATTEMPT GROUPS (hero) → Gate dots → Details drawer
 //
-// Supports two rendering modes:
-//   expanded (default) — full page with conversation thread
-//   compact            — condensed for slide-out panel triage
+// Full page view with conversation thread.
+// Compact slide-out panel mode will be added by foreman-panel-2 (task 5).
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
@@ -23,8 +22,13 @@ const html = htm.bind(h);
 
 // ── Helpers ──────────────────────────────────────────────────
 
+let _domPurifyWarned = false;
 function sanitize(dirty) {
     if (typeof DOMPurify?.sanitize === 'function') return DOMPurify.sanitize(dirty);
+    if (!_domPurifyWarned) {
+        console.warn('[TaskView] DOMPurify not loaded — markdown will render as escaped text. Check CDN/CSP.');
+        _domPurifyWarned = true;
+    }
     const div = document.createElement('div');
     div.textContent = dirty;
     return div.innerHTML;
@@ -75,12 +79,17 @@ function haikuSummary(msg) {
     return firstLine.slice(0, 77) + '…';
 }
 
-// Determine review verdict from message content
+// Determine review verdict from message title (set by gate), falling back to content
 function reviewVerdict(msg) {
     if (msg.type !== 'review') return null;
-    const c = (msg.content || '').toLowerCase();
-    if (c.includes('approved') || c.includes('lgtm') || c.includes('looks good')) return 'approved';
-    if (c.includes('rejected') || c.includes('changes requested') || c.includes('changes_requested')) return 'rejected';
+    // The gate sets title to "APPROVED" or "CHANGES REQUESTED" — check that first
+    const title = (msg.title || '').toUpperCase();
+    if (title.includes('APPROVED') || title.includes('LGTM')) return 'approved';
+    if (title.includes('CHANGES REQUESTED') || title.includes('REJECTED')) return 'rejected';
+    // Fallback: first line of content only (avoid false positives from body text)
+    const firstLine = (msg.content || '').split('\n')[0].toLowerCase();
+    if (firstLine.includes('approved') || firstLine.includes('lgtm')) return 'approved';
+    if (firstLine.includes('changes requested') || firstLine.includes('rejected')) return 'rejected';
     return null;
 }
 
@@ -174,7 +183,8 @@ function GitFlowBar({ task }) {
             ` : null}
 
             ${task.conversation_id ? html`
-                <a href=${routes.conversation(task.conversation_id)}
+                <a href=${`/dashboard/#/conversations/${encodeURIComponent(task.conversation_id)}`}
+                    target="_blank" rel="noopener"
                     style=${pillStyle('rgba(99, 102, 241, 0.12)', '#818cf8')}
                     class="foreman-task-conv-link">
                     💬 ${task.conversation_id}
@@ -465,7 +475,7 @@ function entryPreview(entry) {
     return '';
 }
 
-function AttemptSessionLog({ taskId, attemptNumber, isLatest }) {
+function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
     const [isOpen, setIsOpen] = useState(false);
     const [entries, setEntries] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -474,7 +484,10 @@ function AttemptSessionLog({ taskId, attemptNumber, isLatest }) {
     const load = useCallback(async () => {
         try {
             setLoading(true);
-            const params = isLatest ? {} : { attempt: attemptNumber };
+            // Only omit attempt param when the task is actively working (live worktree).
+            // Once the task completes, the worktree is cleaned up and we need the
+            // explicit attempt number to resolve the correct archive.
+            const params = isLive ? {} : { attempt: attemptNumber };
             const data = await api.getSessionLog(taskId, params);
             setEntries(Array.isArray(data) ? data : []);
         } catch (e) {
@@ -483,17 +496,17 @@ function AttemptSessionLog({ taskId, attemptNumber, isLatest }) {
         } finally {
             setLoading(false);
         }
-    }, [taskId, attemptNumber, isLatest]);
+    }, [taskId, attemptNumber, isLive]);
 
     useEffect(() => {
         if (!isOpen) return;
         load();
-        // Auto-refresh for latest working attempt
-        if (isLatest) {
+        // Auto-refresh only while task is actively working
+        if (isLive) {
             timerRef.current = setInterval(load, 8000);
         }
         return () => { if (timerRef.current) clearInterval(timerRef.current); };
-    }, [isOpen, load, isLatest]);
+    }, [isOpen, load, isLive]);
 
     // Preview line: last meaningful entry
     const previewEntry = entries && entries.length > 0 ? entries[entries.length - 1] : null;
@@ -626,7 +639,7 @@ function SessionLogEntry({ badge, ts, preview, entry, cls }) {
 
 // ── Attempt Group ───────────────────────────────────────────
 
-function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId }) {
+function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, taskStatus }) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     const [expandedMsgs, setExpandedMsgs] = useState(new Set());
 
@@ -636,7 +649,6 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId }
     const outcomeStyle = {
         'in-progress':       { color: colors.yellow, label: 'in progress' },
         'success':           { color: colors.green,  label: 'completed' },
-        'completed':         { color: colors.green,  label: 'completed' },
         'test-failure':      { color: colors.red,    label: 'tests failed' },
         'review-rejection':  { color: colors.red,    label: 'review rejected' },
         'failed':            { color: colors.red,    label: 'failed' },
@@ -714,7 +726,7 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId }
                     <${AttemptSessionLog}
                         taskId=${taskId}
                         attemptNumber=${attempt.attempt_number}
-                        isLatest=${isLatest}
+                        isLive=${isLatest && taskStatus === 'working'}
                     />
                 </div>
             ` : null}
@@ -995,7 +1007,7 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
 
 // ── Main TaskView Component ─────────────────────────────────
 
-export function TaskView({ id, mode = 'expanded' }) {
+export function TaskView({ id }) {
     const [task, setTask] = useState(null);
     const [attempts, setAttempts] = useState(null);
     const [blockerTask, setBlockerTask] = useState(null);
@@ -1009,6 +1021,9 @@ export function TaskView({ id, mode = 'expanded' }) {
             if (mountedRef.current) { setTask(data); setError(null); }
         } catch (e) {
             if (mountedRef.current) {
+                // `task` captures the stale closure value (deps are [id], not [id, task]).
+                // This is intentional: on first load failure (task===null) we show the error,
+                // but on subsequent poll failures we silently log to avoid flashing errors.
                 if (!task) setError(e.message);
                 else console.warn('Poll error:', e.message);
             }
@@ -1049,18 +1064,22 @@ export function TaskView({ id, mode = 'expanded' }) {
         return () => { mountedRef.current = false; };
     }, [id]);
 
-    // Polling
+    // Polling — task status at 5s when active, attempts at 10s only while working
     useEffect(() => {
         if (!task) return;
         const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
         const shouldPoll = task.status === 'working' || task.status === 'needs-review' || gateActive;
         if (!shouldPoll) return;
 
-        const timer = setInterval(() => {
-            loadTask();
-            loadAttempts();
-        }, 5000);
-        return () => clearInterval(timer);
+        const taskTimer = setInterval(loadTask, 5000);
+        // Only poll attempts while actively working (expensive — re-reads all messages)
+        const attemptTimer = task.status === 'working'
+            ? setInterval(loadAttempts, 10000)
+            : null;
+        return () => {
+            clearInterval(taskTimer);
+            if (attemptTimer) clearInterval(attemptTimer);
+        };
     }, [task?.status, task?.gate_status, loadTask, loadAttempts]);
 
     // Action handler
@@ -1128,35 +1147,7 @@ export function TaskView({ id, mode = 'expanded' }) {
         `;
     }
 
-    // Compact mode: condensed for panel triage
-    if (mode === 'compact') {
-        const latestAttempt = attempts && attempts.length > 0 ? attempts[attempts.length - 1] : null;
-
-        return html`
-            <div class="foreman-content" style=${{ padding: '12px' }}>
-                <${StatusLine} task=${task} />
-                <${ActionToolbar} task=${task} onAction=${handleAction} />
-
-                ${latestAttempt ? html`
-                    <${AttemptGroup}
-                        attempt=${latestAttempt}
-                        isLatest=${true}
-                        isExpanded=${true}
-                        taskId=${id}
-                    />
-                ` : html`
-                    <div style=${{ color: colors.textTertiary, fontSize: typography.size.sm, padding: '12px 0' }}>
-                        No messages yet
-                    </div>
-                `}
-
-                <${GateDotsSection} task=${task} />
-                <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
-            </div>
-        `;
-    }
-
-    // Expanded mode: full page
+    // Full page mode
     // Determine back link — go to project if we know it, otherwise landing
     const backHref = task.project_id ? routes.project(task.project_id) : '#/';
     const backLabel = task.project_id ? `← ${shortId(task.project_id)}` : '← Projects';
@@ -1187,6 +1178,7 @@ export function TaskView({ id, mode = 'expanded' }) {
                         isLatest=${i === attempts.length - 1}
                         isExpanded=${i === attempts.length - 1}
                         taskId=${id}
+                        taskStatus=${task.status}
                     />
                 `) : null}
 
