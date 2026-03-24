@@ -11,6 +11,7 @@ import { api } from '../api.js';
 import { StatusDot } from '../components/StatusDot.js';
 import { ChainBadge } from '../components/ChainBadge.js';
 import { relativeTime } from '../components/utils.js';
+import { TaskView } from './TaskView.js';
 
 const html = htm.bind(h);
 
@@ -690,6 +691,132 @@ function ChainOverlay({ chainIds, tasks, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
+// Task Panel — slide-out triage panel
+// ---------------------------------------------------------------------------
+
+function TaskPanel({ taskId, onClose }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+
+    // Track viewport width for mobile/desktop layout
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 640);
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
+
+    // Escape key to dismiss
+    useEffect(() => {
+        if (!taskId) return;
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [taskId, onClose]);
+
+    if (!taskId) return null;
+
+    // Panel slides in from right on desktop, up from bottom on mobile
+    const panelStyle = isMobile ? {
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '60vh',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
+        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
+        zIndex: 500,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
+    } : {
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: '360px',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderLeft: `1px solid ${colors.border}`,
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.4)',
+        zIndex: 500,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
+    };
+
+    const headerStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '12px 16px',
+        borderBottom: `1px solid ${colors.border}`,
+        flexShrink: 0,
+    };
+
+    const closeBtnStyle = {
+        background: 'none',
+        border: 'none',
+        color: colors.textTertiary,
+        cursor: 'pointer',
+        fontSize: '20px',
+        lineHeight: 1,
+        padding: '2px 6px',
+        borderRadius: layout.borderRadius.sm,
+    };
+
+    const backdropStyle = {
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        zIndex: 499,
+    };
+
+    return html`
+        <div>
+            <!-- Inject keyframe animations once -->
+            <style>${`
+                @keyframes foreman-slide-right {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to   { transform: translateX(0);    opacity: 1; }
+                }
+                @keyframes foreman-slide-up {
+                    from { transform: translateY(100%); opacity: 0; }
+                    to   { transform: translateY(0);    opacity: 1; }
+                }
+            `}</style>
+
+            <!-- Backdrop -->
+            <div style=${backdropStyle} onClick=${onClose} />
+
+            <!-- Panel -->
+            <div style=${panelStyle}>
+                <div style=${headerStyle}>
+                    <span style=${{
+                        fontSize: typography.size.xs,
+                        fontFamily: typography.fontMono,
+                        color: colors.textTertiary,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                    }}>Task Preview</span>
+                    <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
+                </div>
+
+                <div style=${{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '16px',
+                }}>
+                    <${TaskView} id=${taskId} mode="compact" onClose=${onClose} />
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
 // Task row
 // ---------------------------------------------------------------------------
 
@@ -717,13 +844,9 @@ function PRTag({ task }) {
     `;
 }
 
-function TaskRowWithChain({ task, chainMap, allTasks, conversations }) {
+function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect }) {
     const [showChain, setShowChain] = useState(false);
     const chain = chainMap.get(task.id);
-
-    const linkedConv = task.conversation_id
-        ? conversations.find(c => c.id === task.conversation_id)
-        : null;
 
     const rowStyle = {
         display: 'flex',
@@ -732,9 +855,10 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations }) {
         padding: '7px 0',
         borderBottom: `1px solid ${colors.border}22`,
         minWidth: 0,
+        cursor: 'pointer',
     };
 
-    const goalLinkStyle = {
+    const goalStyle = {
         flex: 1,
         fontSize: typography.size.sm,
         color: colors.text,
@@ -742,7 +866,6 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations }) {
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
         minWidth: 0,
-        textDecoration: 'none',
     };
 
     const tagsRowStyle = {
@@ -752,28 +875,35 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations }) {
         flexShrink: 0,
     };
 
-    const shortId = task.id.includes('/') ? task.id.split('/').slice(1).join('/') : task.id;
-    const displayId = shortId.length > 22 ? shortId.slice(0, 21) + '…' : shortId;
+    const taskShortId = task.id.includes('/') ? task.id.split('/').slice(1).join('/') : task.id;
+    const displayId = taskShortId.length > 22 ? taskShortId.slice(0, 21) + '…' : taskShortId;
+
+    const handleRowClick = (e) => {
+        // Don't open panel if clicking a link or button inside the row
+        if (e.target.closest('a') || e.target.closest('button')) return;
+        if (onSelect) onSelect(task.id);
+    };
 
     return html`
-        <div style=${rowStyle} class="foreman-task-row">
+        <div style=${rowStyle} class="foreman-task-row" onClick=${handleRowClick}>
             <${StatusDot} status=${task.status} />
 
-            <a href=${routes.task(task.id)} style=${goalLinkStyle} class="foreman-task-goal-link">
+            <span style=${goalStyle}>
                 ${task.goal || task.id}
-            </a>
+            </span>
 
             <div style=${tagsRowStyle}>
-                <a href=${routes.task(task.id)} style=${{
+                <span style=${{
                     fontFamily: typography.fontMono,
                     fontSize: typography.size.xs,
                     color: colors.textTertiary,
-                    textDecoration: 'none',
                     whiteSpace: 'nowrap',
-                }} title=${task.id}>${displayId}</a>
+                }} title=${task.id}>${displayId}</span>
 
                 ${task.conversation_id ? html`
-                    <a href=${routes.conversation(task.conversation_id)} style=${{
+                    <a href=${routes.conversation(task.conversation_id)}
+                       onClick=${e => e.stopPropagation()}
+                       style=${{
                         fontFamily: typography.fontMono,
                         fontSize: typography.size.xs,
                         color: colors.blue,
@@ -785,7 +915,7 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations }) {
                     <${ChainBadge}
                         position=${chain.position}
                         total=${chain.total}
-                        onClick=${() => setShowChain(true)}
+                        onClick=${(e) => { e.stopPropagation(); setShowChain(true); }}
                     />
                     ${showChain ? html`
                         <${ChainOverlay}
@@ -882,7 +1012,7 @@ function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, 
 }
 
 function TasksSection({ tasks, components, conversations, chainMap, statusFilter, componentFilter,
-    onStatusFilter, onComponentFilter }) {
+    onStatusFilter, onComponentFilter, onTaskSelect }) {
 
     // Filter
     let filtered = tasks;
@@ -981,6 +1111,7 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
                             chainMap=${chainMap}
                             allTasks=${tasks}
                             conversations=${conversations}
+                            onSelect=${onTaskSelect}
                         />
                     `)}
                 </div>
@@ -1000,6 +1131,7 @@ export function ProjectView({ id }) {
     const [conversations, setConversations] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [selectedTaskId, setSelectedTaskId] = useState(null);
 
     const [statusFilter, setStatusFilter] = useState('');
     const [componentFilter, setComponentFilter] = useState('');
@@ -1155,7 +1287,14 @@ export function ProjectView({ id }) {
                 componentFilter=${componentFilter}
                 onStatusFilter=${setStatusFilter}
                 onComponentFilter=${setComponentFilter}
+                onTaskSelect=${setSelectedTaskId}
             />
         </div>
+
+        <!-- Task Panel slide-out -->
+        <${TaskPanel}
+            taskId=${selectedTaskId}
+            onClose=${() => setSelectedTaskId(null)}
+        />
     `;
 }

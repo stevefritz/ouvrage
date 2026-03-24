@@ -1011,7 +1011,7 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
 
 // ── Main TaskView Component ─────────────────────────────────
 
-export function TaskView({ id }) {
+export function TaskView({ id, mode = 'expanded', onClose }) {
     const [task, setTask] = useState(null);
     const [attempts, setAttempts] = useState(null);
     const [blockerTask, setBlockerTask] = useState(null);
@@ -1148,6 +1148,159 @@ export function TaskView({ id }) {
                 <div style=${{ textAlign: 'center', padding: '40px', color: colors.textTertiary }}>
                     Loading task...
                 </div>
+            </div>
+        `;
+    }
+
+    // ── Compact panel mode ──────────────────────────────────
+    if (mode === 'compact') {
+        // Get result excerpt from latest attempt
+        let resultExcerpt = null;
+        if (attempts && attempts.length > 0) {
+            const latestAttempt = attempts[attempts.length - 1];
+            const msgs = latestAttempt.messages || [];
+            // Last message of a meaningful type
+            const excerptMsg = [...msgs].reverse().find(m =>
+                ['result', 'handoff', 'progress', 'note'].includes(m.type)
+            );
+            if (excerptMsg) {
+                resultExcerpt = haikuSummary(excerptMsg);
+            }
+        }
+
+        const safeUrl = (url) => (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) ? url : null;
+        const prUrl = task.pr_url || (task.artifacts || []).find(a => a.type === 'pr_url')?.ref;
+        const statusLabel = (task.status || 'ready').toUpperCase();
+        const gateLabel = task.gate_status && task.gate_status !== 'passed' && task.gate_status !== 'stale' && task.gate_status !== 'none'
+            ? task.gate_status.toUpperCase().replace(/-/g, ' ')
+            : null;
+
+        const pillStyle = (bg, fg) => ({
+            display: 'inline-flex', alignItems: 'center',
+            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+            padding: '2px 7px', borderRadius: '4px',
+            background: bg, color: fg, textDecoration: 'none',
+            whiteSpace: 'nowrap',
+        });
+
+        return html`
+            <div style=${{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+                <!-- Status row -->
+                <div style=${{
+                    display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+                }}>
+                    <${StatusDot} status=${task.status} size=${9} />
+                    <span style=${{
+                        fontFamily: typography.fontMono, fontSize: typography.size.sm,
+                        fontWeight: typography.weight.semibold,
+                        color: statusColors[task.status] || colors.textSecondary,
+                        textTransform: 'uppercase', letterSpacing: '0.05em',
+                    }}>${statusLabel}</span>
+
+                    ${gateLabel ? html`
+                        <span style=${{
+                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                            padding: '1px 6px', borderRadius: '4px',
+                            background: statusBgs[task.status] || 'rgba(92, 94, 102, 0.12)',
+                            color: statusColors[task.status] || colors.textSecondary,
+                        }}>${gateLabel}</span>
+                    ` : null}
+
+                    <span style=${{ flex: 1 }} />
+                    <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
+                        ${relativeTime(task.last_activity || task.updated_at)}
+                    </span>
+                </div>
+
+                <!-- Goal -->
+                <div style=${{
+                    fontSize: typography.size.md,
+                    fontWeight: typography.weight.medium,
+                    color: colors.text,
+                    lineHeight: typography.lineHeight.tight,
+                }}>${task.goal || shortId(task.id)}</div>
+
+                <!-- Task ID -->
+                <div style=${{
+                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                }}>${shortId(task.id)}</div>
+
+                <!-- Git flow compact -->
+                ${(task.branch || prUrl) ? html`
+                    <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        ${task.branch ? html`
+                            <span style=${pillStyle(colors.surface, colors.textSecondary)}>
+                                ${task.branch}
+                            </span>
+                        ` : null}
+                        ${task.branch_target ? html`
+                            <span style=${{ color: colors.textTertiary, fontSize: typography.size.xs }}>→</span>
+                            <span style=${pillStyle(colors.surface, colors.textTertiary)}>
+                                ${task.branch_target}
+                            </span>
+                        ` : null}
+                        ${prUrl && safeUrl(prUrl) ? html`
+                            <a href=${safeUrl(prUrl)} target="_blank" rel="noopener"
+                                style=${pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
+                                class="foreman-task-pr-link"
+                                onClick=${e => e.stopPropagation()}>
+                                PR ↗
+                            </a>
+                        ` : null}
+                    </div>
+                ` : null}
+
+                <!-- Result excerpt -->
+                ${resultExcerpt ? html`
+                    <div style=${{
+                        fontSize: typography.size.sm,
+                        color: colors.textSecondary,
+                        fontStyle: 'italic',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        padding: '6px 10px',
+                        background: colors.surfaceActive,
+                        borderRadius: layout.borderRadius.sm,
+                        borderLeft: `2px solid ${colors.border}`,
+                    }}>${resultExcerpt}</div>
+                ` : null}
+
+                <!-- Gate dots -->
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style=${{ fontFamily: typography.fontMono, fontSize: typography.size.xs, color: colors.textTertiary }}>
+                        Gate
+                    </span>
+                    <${GateDots}
+                        gateStatus=${task.gate_status}
+                        taskStatus=${task.status}
+                        showLabels=${true}
+                        size=${7}
+                    />
+                </div>
+
+                <!-- Actions -->
+                <${ActionToolbar} task=${task} onAction=${handleAction} />
+
+                <!-- Open → full task page -->
+                <a href=${routes.task(id)}
+                    style=${{
+                        display: 'inline-flex', alignItems: 'center',
+                        padding: '6px 16px', borderRadius: layout.borderRadius.sm,
+                        background: colors.accentBg,
+                        color: colors.accent,
+                        fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                        fontWeight: typography.weight.medium,
+                        textDecoration: 'none', whiteSpace: 'nowrap',
+                        alignSelf: 'flex-start',
+                    }}
+                    class="foreman-open-full-link">
+                    Open full page →
+                </a>
+
+                <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
             </div>
         `;
     }
