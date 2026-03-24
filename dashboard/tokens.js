@@ -14,8 +14,8 @@ export const colors = {
 
     // Text
     text:          '#e8e9ea',
-    textSecondary: '#9899a1',
-    textTertiary:  '#5c5e66',
+    textSecondary: '#b0b1ba',
+    textTertiary:  '#787880',
 
     // Accent
     accent:  '#7c5af6',  // purple
@@ -40,9 +40,9 @@ export const typography = {
 
     // Size scale (px values as strings for use in CSS)
     size: {
-        xs:   '11px',
-        sm:   '12px',
-        base: '13px',
+        xs:   '12px',
+        sm:   '13px',
+        base: '14px',
         md:   '14px',
         lg:   '16px',
         xl:   '18px',
@@ -115,8 +115,8 @@ export const statusBgs = {
     completed:       colors.blueBg,
     failed:          colors.redBg,
     'needs-review':  colors.yellowBg,
-    cancelled:       'rgba(92, 94, 102, 0.12)',
-    ready:           'rgba(152, 153, 161, 0.10)',
+    cancelled:       'rgba(120, 120, 128, 0.12)',
+    ready:           'rgba(176, 177, 186, 0.10)',
     'rate-limited':  colors.yellowBg,
     'turns-exhausted': colors.yellowBg,
 };

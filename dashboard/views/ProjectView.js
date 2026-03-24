@@ -135,11 +135,12 @@ function RecentActivity({ projectId }) {
 
     return html`
         <div style=${sectionStyle}>
-            <div style=${headerStyle}>
+            <div style=${{ ...headerStyle, cursor: 'pointer' }}
+                 onClick=${() => setCollapsed(c => !c)}>
                 <span style=${titleStyle}>◷ Recent Activity</span>
-                <button style=${toggleStyle} onClick=${() => setCollapsed(c => !c)}>
+                <span style=${toggleStyle}>
                     ${collapsed ? 'Show ▾' : 'Hide ▴'}
-                </button>
+                </span>
             </div>
 
             ${!collapsed ? html`
@@ -280,13 +281,9 @@ function PunchlistSection({ componentId }) {
     `;
 }
 
-function ComponentDrawer({ component, conversations, allTasks, onFilterByComponent, activeFilter }) {
-    const [expanded, setExpanded] = useState(false);
-
-    const linkedConvs = conversations.filter(c => c.component_id === component.id);
+function ComponentCard({ component, allTasks, onClick }) {
     const componentTasks = allTasks.filter(t => t.component_id === component.id);
     const runningCount = componentTasks.filter(t => t.status === 'working').length;
-    const isFiltered = activeFilter === component.id;
 
     const phaseColor = {
         planning: colors.yellow,
@@ -301,6 +298,7 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
         borderRadius: layout.borderRadius.lg,
         overflow: 'hidden',
         transition: `border-color ${animation.durationNormal}`,
+        cursor: 'pointer',
     };
 
     const headerStyle = {
@@ -308,7 +306,6 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
         alignItems: 'center',
         gap: '10px',
         padding: '12px 16px',
-        cursor: 'pointer',
         userSelect: 'none',
     };
 
@@ -330,46 +327,9 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
         flexShrink: 0,
     };
 
-    const bodyStyle = {
-        padding: '0 16px 16px',
-        borderTop: `1px solid ${colors.border}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '16px',
-    };
-
-    const subheadStyle = {
-        fontSize: typography.size.xs,
-        fontWeight: typography.weight.semibold,
-        color: colors.textTertiary,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        marginBottom: '6px',
-    };
-
-    const filterBtnStyle = {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        fontSize: typography.size.xs,
-        color: isFiltered ? colors.accent : colors.textSecondary,
-        background: isFiltered ? colors.accentBg : colors.surfaceActive,
-        border: `1px solid ${isFiltered ? 'rgba(124, 90, 246, 0.25)' : colors.border}`,
-        borderRadius: layout.borderRadius.sm,
-        padding: '3px 8px',
-        cursor: 'pointer',
-        transition: `background ${animation.durationFast}, color ${animation.durationFast}`,
-    };
-
     return html`
-        <div style=${cardStyle} class="foreman-component-card">
-            <div style=${headerStyle}
-                 onClick=${() => setExpanded(e => !e)}
-                 class="foreman-component-header"
-            >
-                <span style=${{ fontSize: '11px', color: colors.textTertiary, flexShrink: 0 }}>
-                    ${expanded ? '▾' : '▸'}
-                </span>
+        <div style=${cardStyle} class="foreman-component-card" onClick=${() => onClick(component)}>
+            <div style=${headerStyle} class="foreman-component-header">
                 <span style=${nameStyle}>${component.name || component.id}</span>
                 <div style=${metaStyle}>
                     ${component.phase ? html`
@@ -393,9 +353,144 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
                     }}>${componentTasks.length} task${componentTasks.length !== 1 ? 's' : ''}</span>
                 </div>
             </div>
+        </div>
+    `;
+}
 
-            ${expanded ? html`
-                <div style=${bodyStyle}>
+function ComponentPanel({ component, conversations, allTasks, onClose, onFilterByComponent }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 640);
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
+
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    if (!component) return null;
+
+    const linkedConvs = conversations.filter(c => c.component_id === component.id).slice(0, 5);
+    const componentTasks = allTasks.filter(t => t.component_id === component.id);
+    const runningCount = componentTasks.filter(t => t.status === 'working').length;
+    const blockedCount = componentTasks.filter(t => t.status === 'failed' || t.status === 'needs-review').length;
+    const doneCount = componentTasks.filter(t => t.status === 'completed' || t.status === 'merged').length;
+
+    const summaryParts = [];
+    if (runningCount) summaryParts.push(`${runningCount} running`);
+    if (blockedCount) summaryParts.push(`${blockedCount} blocked`);
+    if (doneCount) summaryParts.push(`${doneCount} done`);
+    const summaryText = summaryParts.join(' · ') || 'No tasks';
+
+    const phaseColor = {
+        planning: colors.yellow,
+        building: colors.green,
+        polish: colors.blue,
+        deployed: colors.textSecondary,
+    }[component.phase] || colors.textTertiary;
+
+    const panelStyle = isMobile ? {
+        position: 'fixed', left: 0, right: 0, bottom: 0,
+        height: '65vh', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
+        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)', zIndex: 500,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
+    } : {
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: 'clamp(380px, 30vw, 520px)', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.4)', zIndex: 500,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
+    };
+
+    const closeBtnStyle = {
+        background: 'none', border: 'none', color: colors.textTertiary,
+        cursor: 'pointer', fontSize: '20px', lineHeight: 1,
+        padding: '2px 6px', borderRadius: layout.borderRadius.sm,
+    };
+
+    const subheadStyle = {
+        fontSize: typography.size.xs, fontWeight: typography.weight.semibold,
+        color: colors.textTertiary, letterSpacing: '0.06em',
+        textTransform: 'uppercase', marginBottom: '6px',
+    };
+
+    const filterBtnStyle = {
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+        fontSize: typography.size.sm, fontWeight: typography.weight.medium,
+        color: colors.accent, background: colors.accentBg,
+        border: `1px solid rgba(124, 90, 246, 0.25)`,
+        borderRadius: layout.borderRadius.md,
+        padding: '8px 16px', cursor: 'pointer', width: '100%',
+        justifyContent: 'center',
+    };
+
+    const handleFilter = () => {
+        onFilterByComponent(component.id);
+        onClose();
+    };
+
+    // Config overrides — check for non-default values
+    const config = component.config || {};
+    const hasOverrides = config.model || config.auto_test === false || config.auto_review === false
+        || config.max_turns || config.max_wall_clock || config.test_command || config.setup_command;
+
+    return html`
+        <div>
+            <style>${`
+                @keyframes foreman-slide-right {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to   { transform: translateX(0);    opacity: 1; }
+                }
+                @keyframes foreman-slide-up {
+                    from { transform: translateY(100%); opacity: 0; }
+                    to   { transform: translateY(0);    opacity: 1; }
+                }
+            `}</style>
+            <div style=${{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 499 }}
+                 onClick=${onClose} />
+            <div style=${panelStyle}>
+                <!-- Header -->
+                <div style=${{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '12px 16px', borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
+                }}>
+                    <span style=${{
+                        fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                        fontWeight: typography.weight.semibold, color: colors.text,
+                        flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>${component.name || component.id}</span>
+                    ${component.phase ? html`
+                        <span style=${{
+                            fontSize: typography.size.xs, color: phaseColor,
+                            fontWeight: typography.weight.medium,
+                            padding: '2px 8px', borderRadius: layout.borderRadius.pill,
+                            background: phaseColor + '18',
+                        }}>${component.phase}</span>
+                    ` : null}
+                    <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
+                </div>
+
+                <!-- Body -->
+                <div style=${{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <!-- Summary -->
+                    <div style=${{
+                        fontSize: typography.size.sm, color: colors.textSecondary,
+                    }}>${summaryText}</div>
+
+                    <!-- Filter tasks button -->
+                    <button style=${filterBtnStyle} onClick=${handleFilter}>
+                        ⚡ Filter tasks to ${component.name || component.id}
+                    </button>
+
+                    <!-- Linked conversations -->
                     ${linkedConvs.length > 0 ? html`
                         <div>
                             <div style=${subheadStyle}>Conversations</div>
@@ -404,16 +499,11 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
                                     <a key=${conv.id}
                                        href=${routes.conversation(conv.id)}
                                        style=${{
-                                           display: 'flex',
-                                           alignItems: 'baseline',
-                                           justifyContent: 'space-between',
-                                           gap: '8px',
-                                           padding: '4px 8px',
-                                           borderRadius: layout.borderRadius.sm,
-                                           background: colors.surfaceActive,
-                                           textDecoration: 'none',
-                                           color: colors.text,
-                                           fontSize: typography.size.sm,
+                                           display: 'flex', alignItems: 'baseline',
+                                           justifyContent: 'space-between', gap: '8px',
+                                           padding: '6px 8px', borderRadius: layout.borderRadius.sm,
+                                           background: colors.surfaceActive, textDecoration: 'none',
+                                           color: colors.text, fontSize: typography.size.sm,
                                        }}
                                        class="foreman-conv-row"
                                     >
@@ -421,44 +511,46 @@ function ComponentDrawer({ component, conversations, allTasks, onFilterByCompone
                                             ${conv.goal || conv.id}
                                         </span>
                                         <span style=${{
-                                            fontFamily: typography.fontMono,
-                                            fontSize: typography.size.xs,
-                                            color: colors.textTertiary,
-                                            flexShrink: 0,
+                                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                                            color: colors.textTertiary, flexShrink: 0,
                                         }}>${relativeTime(conv.last_activity || conv.updated_at)}</span>
                                     </a>
                                 `)}
                             </div>
                         </div>
-                    ` : html`
-                        <div>
-                            <div style=${subheadStyle}>Conversations</div>
-                            <div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, fontStyle: 'italic' }}>
-                                No linked conversations
-                            </div>
-                        </div>
-                    `}
+                    ` : null}
 
+                    <!-- Punchlist -->
                     <div>
                         <div style=${subheadStyle}>Punchlist</div>
                         <${PunchlistSection} componentId=${component.id} />
                     </div>
 
-                    <div>
-                        <button
-                            style=${filterBtnStyle}
-                            onClick=${(e) => { e.stopPropagation(); onFilterByComponent(isFiltered ? '' : component.id); }}
-                        >
-                            ${isFiltered ? '✕ Clear filter' : '⚡ Filter tasks'}
-                        </button>
-                    </div>
+                    <!-- Config overrides -->
+                    ${hasOverrides ? html`
+                        <div>
+                            <div style=${subheadStyle}>Config Overrides</div>
+                            <div style=${{
+                                fontSize: typography.size.xs, color: colors.textSecondary,
+                                fontFamily: typography.fontMono, lineHeight: 1.6,
+                            }}>
+                                ${config.model ? html`model: ${config.model}<br />` : null}
+                                ${config.auto_test === false ? html`auto_test: off<br />` : null}
+                                ${config.auto_review === false ? html`auto_review: off<br />` : null}
+                                ${config.max_turns ? html`max_turns: ${config.max_turns}<br />` : null}
+                                ${config.test_command ? html`test: ${config.test_command}<br />` : null}
+                            </div>
+                        </div>
+                    ` : null}
                 </div>
-            ` : null}
+            </div>
         </div>
     `;
 }
 
 function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter }) {
+    const [selectedComponent, setSelectedComponent] = useState(null);
+
     if (components.length === 0) return null;
 
     const sectionStyle = {
@@ -487,17 +579,23 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
             <div style=${headerStyle}>Components</div>
             <div style=${gridStyle}>
                 ${components.map(comp => html`
-                    <${ComponentDrawer}
+                    <${ComponentCard}
                         key=${comp.id}
                         component=${comp}
-                        conversations=${conversations}
                         allTasks=${tasks}
-                        onFilterByComponent=${onComponentFilter}
-                        activeFilter=${componentFilter}
+                        onClick=${setSelectedComponent}
                     />
                 `)}
             </div>
         </div>
+
+        <${ComponentPanel}
+            component=${selectedComponent}
+            conversations=${conversations}
+            allTasks=${tasks}
+            onClose=${() => setSelectedComponent(null)}
+            onFilterByComponent=${onComponentFilter}
+        />
     `;
 }
 
@@ -510,6 +608,8 @@ function ConversationsSection({ conversations }) {
     const projectConvs = conversations.filter(c => !c.component_id);
     if (projectConvs.length === 0) return null;
 
+    const [expanded, setExpanded] = useState(false);
+
     const sectionStyle = {
         display: 'flex',
         flexDirection: 'column',
@@ -517,12 +617,18 @@ function ConversationsSection({ conversations }) {
     };
 
     const headerStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        cursor: 'pointer',
+    };
+
+    const titleStyle = {
         fontSize: typography.size.sm,
         fontWeight: typography.weight.semibold,
         color: colors.textSecondary,
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
-        marginBottom: '4px',
     };
 
     const listStyle = {
@@ -545,34 +651,78 @@ function ConversationsSection({ conversations }) {
         transition: `background ${animation.durationFast}`,
     };
 
+    // Show 3 most recent as peek when collapsed
+    const peekConvs = projectConvs.slice(0, 3);
+    const displayConvs = expanded ? projectConvs : peekConvs;
+    const hasMore = projectConvs.length > 3;
+
     return html`
         <div style=${sectionStyle}>
-            <div style=${headerStyle}>Conversations</div>
-            <div style=${listStyle}>
-                ${projectConvs.map(conv => html`
-                    <a key=${conv.id}
-                       href=${routes.conversation(conv.id)}
-                       style=${rowStyle}
-                       class="foreman-conv-row"
-                    >
+            <div style=${headerStyle} onClick=${() => setExpanded(e => !e)}>
+                <span style=${titleStyle}>Conversations · ${projectConvs.length}</span>
+                <span style=${{
+                    fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                }}>${expanded ? 'Collapse ▴' : 'Expand ▾'}</span>
+            </div>
+            ${!expanded ? html`
+                <div style=${listStyle}>
+                    ${peekConvs.map(conv => html`
+                        <a key=${conv.id}
+                           href=${routes.conversation(conv.id)}
+                           style=${{
+                               display: 'flex',
+                               alignItems: 'baseline',
+                               gap: '8px',
+                               padding: '4px 0',
+                               textDecoration: 'none',
+                               color: colors.textSecondary,
+                               fontSize: typography.size.sm,
+                           }}
+                           class="foreman-conv-row"
+                        >
+                            <span style=${{ color: colors.textTertiary, flexShrink: 0 }}>💬</span>
+                            <span style=${{
+                                flex: 1, overflow: 'hidden',
+                                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>${conv.goal || conv.id}</span>
+                        </a>
+                    `)}
+                    ${hasMore ? html`
                         <span style=${{
-                            flex: 1,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            fontSize: typography.size.sm,
-                        }}>
-                            ${conv.goal || conv.id}
-                        </span>
-                        <span style=${{
-                            fontFamily: typography.fontMono,
                             fontSize: typography.size.xs,
                             color: colors.textTertiary,
-                            flexShrink: 0,
-                        }}>${relativeTime(conv.last_activity || conv.updated_at)}</span>
-                    </a>
-                `)}
-            </div>
+                            paddingLeft: '22px',
+                        }}>+${projectConvs.length - 3} more</span>
+                    ` : null}
+                </div>
+            ` : html`
+                <div style=${listStyle}>
+                    ${projectConvs.map(conv => html`
+                        <a key=${conv.id}
+                           href=${routes.conversation(conv.id)}
+                           style=${rowStyle}
+                           class="foreman-conv-row"
+                        >
+                            <span style=${{
+                                flex: 1,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                fontSize: typography.size.sm,
+                            }}>
+                                ${conv.goal || conv.id}
+                            </span>
+                            <span style=${{
+                                fontFamily: typography.fontMono,
+                                fontSize: typography.size.xs,
+                                color: colors.textTertiary,
+                                flexShrink: 0,
+                            }}>${relativeTime(conv.last_activity || conv.updated_at)}</span>
+                        </a>
+                    `)}
+                </div>
+            `}
         </div>
     `;
 }
@@ -830,7 +980,7 @@ function TaskPanel({ taskId, onClose }) {
         left: 0,
         right: 0,
         bottom: 0,
-        height: '60vh',
+        height: '65vh',
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
@@ -845,7 +995,7 @@ function TaskPanel({ taskId, onClose }) {
         top: 0,
         right: 0,
         bottom: 0,
-        width: '360px',
+        width: 'clamp(420px, 33vw, 560px)',
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderLeft: `1px solid ${colors.border}`,
@@ -904,13 +1054,7 @@ function TaskPanel({ taskId, onClose }) {
             <!-- Panel -->
             <div style=${panelStyle}>
                 <div style=${headerStyle}>
-                    <span style=${{
-                        fontSize: typography.size.xs,
-                        fontFamily: typography.fontMono,
-                        color: colors.textTertiary,
-                        letterSpacing: '0.06em',
-                        textTransform: 'uppercase',
-                    }}>Task Preview</span>
+                    <span style=${{ flex: 1 }} />
                     <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
                 </div>
 
@@ -954,10 +1098,15 @@ function PRTag({ task }) {
     `;
 }
 
-function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect }) {
+function TaskRowWithChain({ task, chainMap, allTasks, conversations, components, onSelect }) {
     const [showChain, setShowChain] = useState(false);
     const handleCloseChain = useCallback(() => setShowChain(false), []);
     const chain = chainMap.get(task.id);
+
+    // Component name for badge
+    const compName = task.component_id
+        ? (components.find(c => c.id === task.component_id)?.name || task.component_id.split('/').pop())
+        : null;
 
     const rowStyle = {
         display: 'flex',
@@ -1010,6 +1159,19 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect })
                     color: colors.textTertiary,
                     whiteSpace: 'nowrap',
                 }} title=${task.id}>${displayId}</span>
+
+                ${compName ? html`
+                    <span style=${{
+                        fontSize: typography.size.xs,
+                        color: colors.textTertiary,
+                        background: colors.surfaceActive,
+                        border: '1px solid ' + colors.borderSubtle,
+                        borderRadius: layout.borderRadius.pill,
+                        padding: '1px 7px',
+                        whiteSpace: 'nowrap',
+                        lineHeight: '16px',
+                    }}>${compName}</span>
+                ` : null}
 
                 ${task.conversation_id ? html`
                     <a href=${routes.conversation(task.conversation_id)}
@@ -1133,33 +1295,12 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
         filtered = filtered.filter(t => t.component_id === componentFilter);
     }
 
-    // Sort by last_activity descending
+    // Sort by last_activity descending — flat list, no grouping
     const ts = (t) => {
         const raw = t.last_activity || t.updated_at || t.created_at || '1970-01-01T00:00:00Z';
         return new Date(raw.endsWith('Z') ? raw : raw + 'Z').getTime();
     };
     filtered = [...filtered].sort((a, b) => ts(b) - ts(a));
-
-    // Group by component
-    const compMap = new Map(components.map(c => [c.id, c]));
-    const groups = new Map(); // compId | null → tasks[]
-
-    for (const task of filtered) {
-        const key = task.component_id && compMap.has(task.component_id) ? task.component_id : null;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(task);
-    }
-
-    // Order groups: components in their original order, then ungrouped
-    const orderedGroups = [];
-    for (const comp of components) {
-        if (groups.has(comp.id) && groups.get(comp.id).length > 0) {
-            orderedGroups.push({ comp, tasks: groups.get(comp.id) });
-        }
-    }
-    if (groups.has(null) && groups.get(null).length > 0) {
-        orderedGroups.push({ comp: null, tasks: groups.get(null) });
-    }
 
     const sectionStyle = {
         display: 'flex',
@@ -1173,17 +1314,6 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
         marginBottom: '8px',
-    };
-
-    const groupLabelStyle = {
-        fontSize: typography.size.xs,
-        fontWeight: typography.weight.semibold,
-        color: colors.textTertiary,
-        letterSpacing: '0.04em',
-        textTransform: 'uppercase',
-        padding: '12px 0 4px',
-        borderTop: `1px solid ${colors.border}`,
-        marginTop: '4px',
     };
 
     const emptyStyle = {
@@ -1207,24 +1337,16 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
 
             ${filtered.length === 0 ? html`
                 <div style=${emptyStyle}>No tasks match the current filters</div>
-            ` : orderedGroups.map(({ comp, tasks: groupTasks }) => html`
-                <div key=${comp ? comp.id : '__none__'}>
-                    ${orderedGroups.length > 1 ? html`
-                        <div style=${groupLabelStyle}>
-                            ${comp ? (comp.name || comp.id) : 'Unassigned'}
-                        </div>
-                    ` : null}
-                    ${groupTasks.map(task => html`
-                        <${TaskRowWithChain}
-                            key=${task.id}
-                            task=${task}
-                            chainMap=${chainMap}
-                            allTasks=${tasks}
-                            conversations=${conversations}
-                            onSelect=${onTaskSelect}
-                        />
-                    `)}
-                </div>
+            ` : filtered.map(task => html`
+                <${TaskRowWithChain}
+                    key=${task.id}
+                    task=${task}
+                    chainMap=${chainMap}
+                    allTasks=${tasks}
+                    conversations=${conversations}
+                    components=${components}
+                    onSelect=${onTaskSelect}
+                />
             `)}
         </div>
     `;
@@ -1312,10 +1434,8 @@ export function ProjectView({ id }) {
         color: colors.text,
         margin: 0,
         letterSpacing: '-0.02em',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
         flex: 1,
+        wordBreak: 'break-word',
     };
 
     const repoTagStyle = {
