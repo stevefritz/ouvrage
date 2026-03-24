@@ -65,7 +65,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
                     "/advance-chain", "/cancel-chain", "/approve", "/chain",
                     "/review-task", "/messages", "/session-log", "/dispatch-log",
-                    "/attempts"):
+                    "/attempts", "/dispatch"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -153,10 +153,15 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/conversations" and method == "GET":
             return await _handle_list_conversations(scope, send)
 
-        # GET /dashboard/api/conversations/{id}
-        if path.startswith("/dashboard/api/conversations/") and method == "GET":
-            conv_id = unquote(path[len("/dashboard/api/conversations/"):])
-            return await _handle_get_conversation(scope, send, conv_id)
+        # GET/POST /dashboard/api/conversations/{id}[/messages]
+        if path.startswith("/dashboard/api/conversations/"):
+            rest = path[len("/dashboard/api/conversations/"):]
+            if method == "POST" and rest.endswith("/messages"):
+                conv_id = unquote(rest[:-len("/messages")])
+                return await _handle_post_conversation_message(receive, send, conv_id)
+            if method == "GET":
+                conv_id = unquote(rest)
+                return await _handle_get_conversation(scope, send, conv_id)
 
         # GET /dashboard/api/activity
         if path == "/dashboard/api/activity" and method == "GET":
@@ -215,6 +220,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/release-worktree"):
                     task_id = rest[:-len("/release-worktree")]
                     return await _handle_release_worktree(send, task_id)
+                if rest.endswith("/dispatch"):
+                    task_id = rest[:-len("/dispatch")]
+                    return await _handle_dispatch(send, task_id)
                 if rest.endswith("/messages"):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
@@ -239,9 +247,6 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/review-task"):
                     task_id = rest[:-len("/review-task")]
                     return await _handle_get_review_task(send, task_id)
-                if rest.endswith("/attempts"):
-                    task_id = rest[:-len("/attempts")]
-                    return await _handle_get_attempts(send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -476,10 +481,10 @@ async def _handle_dispatch_log(scope, send, task_id):
 
 async def _handle_get_attempts(send, task_id):
     try:
-        result = await tasks.list_attempts(task_id)
+        attempts = await db.get_task_attempts(task_id)
     except ValueError as e:
         return await _error(send, str(e), 404)
-    await _json_response(send, result)
+    await _json_response(send, {"task_id": task_id, "attempts": attempts})
 
 
 # ── Actions ───────────────────────────────────────────────────────────────
@@ -503,6 +508,20 @@ async def _handle_resume(send, task_id):
 
 async def _handle_approve(send, task_id):
     result = await tasks.approve_task(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_dispatch(send, task_id):
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+    if task["status"] != "ready":
+        return await _error(send, f"Task is '{task['status']}', expected 'ready'", 400)
+    result = await tasks.dispatch_task(
+        project_id=task["project_id"],
+        task_id=task_id,
+        goal=task["goal"],
+    )
     await _json_response(send, result)
 
 
@@ -620,6 +639,28 @@ async def _handle_list_conversations(scope, send):
         search=params.get("search"),
     )
     await _json_response(send, conversations)
+
+
+async def _handle_post_conversation_message(receive, send, conv_id):
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+    content = data.get("content", "").strip()
+    if not content:
+        return await _error(send, "content is required")
+
+    try:
+        result = await db.post_message(
+            conversation_id=conv_id,
+            author="dashboard",
+            content=content,
+            type=data.get("type", "note"),
+            title=data.get("title"),
+        )
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+    await _json_response(send, result)
 
 
 async def _handle_get_conversation(scope, send, conv_id):
