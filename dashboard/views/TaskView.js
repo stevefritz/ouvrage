@@ -362,7 +362,7 @@ function ActionToolbar({ task, onAction }) {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
     }
     if (['failed', 'cancelled', 'completed'].includes(task.status)) {
-        actions.push(btn('close', 'Close', 'rgba(92, 94, 102, 0.12)', colors.textTertiary));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
@@ -1099,6 +1099,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [task, setTask] = useState(null);
     const [attempts, setAttempts] = useState(null);
     const [blockerTask, setBlockerTask] = useState(null);
+    const [chain, setChain] = useState(null);
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
     const mountedRef = useRef(true);
@@ -1140,6 +1141,17 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             .catch(() => mountedRef.current && setBlockerTask(null));
     }, [task?.depends_on]);
 
+    // Load chain for compact mode chain position
+    useEffect(() => {
+        if (!id) return;
+        api.getChain(id)
+            .then(data => {
+                const list = data?.chain || [];
+                if (mountedRef.current) setChain(list.length > 1 ? list : null);
+            })
+            .catch(() => mountedRef.current && setChain(null));
+    }, [id]);
+
     // Initial load
     useEffect(() => {
         mountedRef.current = true;
@@ -1148,6 +1160,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         setAttempts(null);
         setError(null);
         setBlockerTask(null);
+        setChain(null);
         loadTask();
         loadAttempts();
         return () => { mountedRef.current = false; };
@@ -1354,6 +1367,34 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                         size=${7}
                     />
                 </div>
+
+                <!-- Chain position (only if chain > 1) -->
+                ${chain && chain.length > 1 ? (() => {
+                    const idx = chain.findIndex(n => n.id === task.id);
+                    const pos = idx >= 0 ? idx + 1 : null;
+                    const prevId = idx > 0 ? chain[idx - 1].id : null;
+                    const nextId = idx < chain.length - 1 ? chain[idx + 1].id : null;
+                    return pos ? html`
+                        <div style=${{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            fontSize: typography.size.sm, color: colors.textSecondary,
+                        }}>
+                            ${prevId ? html`
+                                <a href=${routes.task(prevId)} style=${{
+                                    color: colors.accent, textDecoration: 'none',
+                                    fontSize: typography.size.sm,
+                                }} class="foreman-chain-nav">←</a>
+                            ` : html`<span style=${{ color: colors.borderSubtle }}>←</span>`}
+                            <span style=${{ fontFamily: typography.fontMono }}>Step ${pos} of ${chain.length}</span>
+                            ${nextId ? html`
+                                <a href=${routes.task(nextId)} style=${{
+                                    color: colors.accent, textDecoration: 'none',
+                                    fontSize: typography.size.sm,
+                                }} class="foreman-chain-nav">→</a>
+                            ` : html`<span style=${{ color: colors.borderSubtle }}>→</span>`}
+                        </div>
+                    ` : null;
+                })() : null}
 
                 <!-- Test result -->
                 ${testResult ? html`

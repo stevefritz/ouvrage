@@ -232,6 +232,9 @@ function PunchlistSection({ componentId }) {
         return html`<div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, fontStyle: 'italic' }}>No punchlist items</div>`;
     }
 
+    const openCount = items.filter(i => i.status !== 'resolved').length;
+    const displayItems = items.slice(0, 8);
+
     const statusColor = (s) => {
         if (s === 'resolved') return colors.blue;
         if (s === 'claimed') return colors.yellow;
@@ -245,8 +248,15 @@ function PunchlistSection({ componentId }) {
     };
 
     return html`
+        <div>
+            <div style=${{
+                fontSize: typography.size.sm,
+                fontWeight: typography.weight.semibold,
+                color: colors.textSecondary,
+                marginBottom: '8px',
+            }}>Punchlist · ${openCount} open</div>
         <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            ${items.map(item => html`
+            ${displayItems.map(item => html`
                 <div key=${item.id} style=${{
                     display: 'flex',
                     alignItems: 'baseline',
@@ -277,6 +287,13 @@ function PunchlistSection({ componentId }) {
                     ` : null}
                 </div>
             `)}
+            ${items.length > 8 ? html`
+                <div style=${{
+                    fontSize: typography.size.xs, color: colors.textTertiary,
+                    fontStyle: 'italic', paddingTop: '2px',
+                }}>+ ${items.length - 8} more</div>
+            ` : null}
+        </div>
         </div>
     `;
 }
@@ -521,10 +538,7 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
                     ` : null}
 
                     <!-- Punchlist -->
-                    <div>
-                        <div style=${subheadStyle}>Punchlist</div>
-                        <${PunchlistSection} componentId=${component.id} />
-                    </div>
+                    <${PunchlistSection} componentId=${component.id} />
 
                     <!-- Config overrides -->
                     ${hasOverrides ? html`
