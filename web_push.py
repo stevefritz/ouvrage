@@ -78,7 +78,7 @@ async def dispatch_notification(event_type: str, task_id: str, title: str, body:
             "title": title,
             "body": body,
             "tag": f"task-{task_id}",
-            "data": {"url": f"/dashboard#/tasks/{task_id}"},
+            "data": {"url": f"/foreman#/task/{task_id}"},
         }
         count = await send_notification(payload)
         if count:
