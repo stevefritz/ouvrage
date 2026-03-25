@@ -361,7 +361,7 @@ function ActionToolbar({ task, onAction }) {
     if (task.status === 'completed' && task.gate_status === 'passed') {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
     }
-    if (['completed', 'failed'].includes(task.status)) {
+    if (['completed', 'failed', 'cancelled'].includes(task.status)) {
         actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
