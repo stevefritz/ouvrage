@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import time
 from urllib.parse import parse_qs, unquote
 
@@ -880,7 +881,6 @@ async def _handle_update_notification_settings(receive, send):
 
 async def _handle_check_task_slug(scope, send, project_id):
     """GET /dashboard/api/projects/{id}/tasks/check?slug=... — check slug availability."""
-    import re
     params = _parse_qs(scope)
     slug = params.get("slug", "").strip()
     if not slug:
@@ -911,7 +911,6 @@ async def _handle_check_task_slug(scope, send, project_id):
 
 async def _handle_create_task(receive, send, project_id):
     """POST /dashboard/api/projects/{id}/tasks — create and dispatch a new task."""
-    import re
     body = await _read_body(receive)
     if not body:
         return await _error(send, "Request body required")

@@ -1416,7 +1416,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                 </div>
 
                 <form style=${bodyStyle} onSubmit=${handleSubmit}>
-                    <!-- Goal -->
                     <div>
                         <label style=${labelStyle}>Goal *</label>
                         <input
@@ -1429,7 +1428,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                         />
                     </div>
 
-                    <!-- Slug -->
                     <div>
                         <label style=${labelStyle}>Branch / Slug *</label>
                         <input
@@ -1443,7 +1441,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                         ${slugIndicator()}
                     </div>
 
-                    <!-- Spec -->
                     <div>
                         <label style=${labelStyle}>Spec</label>
                         <textarea
@@ -1459,7 +1456,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                         />
                     </div>
 
-                    <!-- Model toggle -->
                     <div>
                         <label style=${labelStyle}>Model</label>
                         <div style=${{
@@ -1474,7 +1470,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                         </div>
                     </div>
 
-                    <!-- Component -->
                     ${components.length > 0 ? html`
                         <div>
                             <label style=${labelStyle}>Component</label>
@@ -1502,7 +1497,6 @@ function NewTaskPanel({ projectId, components, onClose, onCreated }) {
                         </div>
                     ` : null}
 
-                    <!-- Auto Test / Auto Review -->
                     <div style=${{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <label style=${checkboxRowStyle}>
                             <input type="checkbox" checked=${autoTest}
@@ -1711,12 +1705,6 @@ export function ProjectView({ id }) {
 
     const chainMap = buildChainMap(tasks);
 
-    const handleTaskCreated = useCallback((task) => {
-        setShowNewTask(false);
-        load();
-        navigate(`/task/${encodeURIComponent(task.id || task.task_id)}`);
-    }, [load]);
-
     const load = useCallback(async () => {
         try {
             const [proj, taskList, compList, convList] = await Promise.all([
@@ -1736,6 +1724,12 @@ export function ProjectView({ id }) {
             setLoading(false);
         }
     }, [id]);
+
+    const handleTaskCreated = useCallback((task) => {
+        setShowNewTask(false);
+        load();
+        navigate(`/task/${encodeURIComponent(task.id || task.task_id)}`);
+    }, [load]);
 
     useEffect(() => {
         setLoading(true);
