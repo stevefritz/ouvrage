@@ -1050,6 +1050,36 @@ async def _embed_message_async(message_id: int, content: str, msg_type: str | No
     except Exception:
         pass  # Never block — embedding is best-effort
 
+    # Also index message chunks for paragraph-level search
+    try:
+        await db.index_message_chunks(message_id, content)
+    except Exception:
+        pass  # Never block — chunking is best-effort
+
+
+async def _backfill_message_chunks() -> None:
+    """Background task: chunk and embed existing long messages that haven't been chunked yet."""
+    import logging
+    log = logging.getLogger(__name__)
+    total = 0
+    try:
+        while True:
+            batch = await db.get_messages_needing_chunking(batch_size=100)
+            if not batch:
+                break
+            for msg in batch:
+                try:
+                    await db.index_message_chunks(msg["id"], msg["content"])
+                except Exception as e:
+                    log.warning("Chunk backfill failed for message %s: %s", msg["id"], e)
+                total += 1
+                if total % 100 == 0:
+                    log.info("Chunk backfill progress: %d messages processed", total)
+        if total > 0:
+            log.info("Chunk backfill complete: %d messages processed", total)
+    except Exception as e:
+        log.error("Chunk backfill aborted: %s", e)
+
 
 async def _handle_post(arguments):
     conversation_id = arguments["conversation_id"]
@@ -1148,12 +1178,20 @@ async def _handle_search_conversations(arguments):
     if query_vector is None:
         return {"error": "Failed to embed query — check OPENAI_API_KEY and service availability"}
 
-    # Retrieve candidates with raw similarity scores
+    # Retrieve message-level candidates with raw similarity scores
     candidates = await db.search_messages_semantic(
         query_vector=query_vector,
         conversation_id=conversation_id,
         project_id=project_id,
         type_filter=type_filter,
+        limit=max_results,
+    )
+
+    # Also search message chunks for paragraph-level hits
+    chunk_hits = await db.search_message_chunks(
+        query_vector=query_vector,
+        conversation_id=conversation_id,
+        project_id=project_id,
         limit=max_results,
     )
 
@@ -1167,10 +1205,19 @@ async def _handle_search_conversations(arguments):
     candidates.sort(key=lambda r: r["relevance_score"], reverse=True)
     top = candidates[:max_results]
 
+    # Build set of message_ids already in top results for dedup
+    seen_message_ids = {r["message_id"] for r in top}
+
+    # Group chunk hits by message_id, keep best similarity per message
+    chunk_groups: dict[int, list[dict]] = {}
+    for ch in chunk_hits:
+        mid = ch["message_id"]
+        chunk_groups.setdefault(mid, []).append(ch)
+
     # Format output: truncate content to 500 chars
     results = []
     for r in top:
-        results.append({
+        entry = {
             "message_id": r["message_id"],
             "conversation_id": r["conversation_id"],
             "task_id": r["task_id"],
@@ -1180,9 +1227,59 @@ async def _handle_search_conversations(arguments):
             "content": (r["content"] or "")[:500],
             "relevance_score": r["relevance_score"],
             "created_at": r["created_at"],
-        })
+        }
+        # If this message also had chunk hits, attach them
+        if r["message_id"] in chunk_groups:
+            msg_chunks = chunk_groups.pop(r["message_id"])
+            best = max(msg_chunks, key=lambda c: c["similarity"])
+            entry["chunk_heading"] = best["chunk_heading"]
+            entry["context_chunks"] = [
+                {"chunk_index": best["chunk_index"], "heading": best["chunk_heading"],
+                 "content": (best["chunk_content"] or "")[:500]}
+            ] + [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in best.get("context_chunks", [])
+            ]
+        results.append(entry)
 
-    return {"results": results, "total_candidates": len(candidates)}
+    # Add chunk-only hits (messages not already in results)
+    for mid, chunks in chunk_groups.items():
+        if mid in seen_message_ids:
+            continue
+        if len(results) >= max_results:
+            break
+        best = max(chunks, key=lambda c: c["similarity"])
+        relevance = round(
+            emb.compute_relevance_score(best["similarity"], best["type"], best["pinned"]),
+            4,
+        )
+        results.append({
+            "message_id": mid,
+            "conversation_id": best["conversation_id"],
+            "task_id": best["task_id"],
+            "author": best["author"],
+            "type": best["type"],
+            "title": best["title"],
+            "content": (best["chunk_content"] or "")[:500],
+            "relevance_score": relevance,
+            "created_at": best["created_at"],
+            "chunk_heading": best["chunk_heading"],
+            "context_chunks": [
+                {"chunk_index": best["chunk_index"], "heading": best["chunk_heading"],
+                 "content": (best["chunk_content"] or "")[:500]}
+            ] + [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in best.get("context_chunks", [])
+            ],
+        })
+        seen_message_ids.add(mid)
+
+    # Re-sort unified results by relevance
+    results.sort(key=lambda r: r["relevance_score"], reverse=True)
+
+    return {"results": results[:max_results], "total_candidates": len(candidates) + len(chunk_hits)}
 
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
@@ -2372,6 +2469,8 @@ async def main():
                 asyncio.create_task(tasks.recover_orphaned_tasks())
                 # Start stall detection background loop
                 asyncio.create_task(tasks.check_stalled_tasks())
+                # Backfill message chunks for existing long messages
+                asyncio.create_task(_backfill_message_chunks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     # Mark all working tasks for recovery before event loop dies
