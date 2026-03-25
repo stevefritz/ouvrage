@@ -21,12 +21,6 @@ const html = htm.bind(h);
             #foreman-app {
                 zoom: 1.2;
             }
-            /* position:fixed overlays inside #foreman-app — keep them in sync with zoom */
-            #foreman-app .confirm-overlay,
-            #foreman-app .graph-detail-panel,
-            #foreman-app .panel-backdrop {
-                zoom: inherit;
-            }
         }
     `;
     document.head.appendChild(style);
