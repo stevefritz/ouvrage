@@ -12,20 +12,6 @@ import { ConversationView } from './views/ConversationView.js';
 
 const html = htm.bind(h);
 
-// Desktop-only zoom — inject once, scoped to #foreman-app
-(function injectForemanZoom() {
-    const style = document.createElement('style');
-    style.id = 'foreman-desktop-zoom';
-    style.textContent = `
-        @media (min-width: 768px) {
-            #foreman-app {
-                zoom: 1.2;
-            }
-        }
-    `;
-    document.head.appendChild(style);
-}());
-
 function ForemanApp() {
     const { view, params } = useRouter();
 
