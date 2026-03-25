@@ -12,6 +12,26 @@ import { ConversationView } from './views/ConversationView.js';
 
 const html = htm.bind(h);
 
+// Desktop-only zoom — inject once, scoped to #foreman-app
+(function injectForemanZoom() {
+    const style = document.createElement('style');
+    style.id = 'foreman-desktop-zoom';
+    style.textContent = `
+        @media (min-width: 768px) {
+            #foreman-app {
+                zoom: 1.2;
+            }
+            /* position:fixed overlays inside #foreman-app — keep them in sync with zoom */
+            #foreman-app .confirm-overlay,
+            #foreman-app .graph-detail-panel,
+            #foreman-app .panel-backdrop {
+                zoom: inherit;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}());
+
 function ForemanApp() {
     const { view, params } = useRouter();
 
