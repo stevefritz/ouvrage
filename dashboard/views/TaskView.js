@@ -746,10 +746,13 @@ function entryPreview(entry) {
     return '';
 }
 
+const FILTER_TYPES = ['text', 'tool', 'result', 'error'];
+
 function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
     const [isOpen, setIsOpen] = useState(false);
     const [entries, setEntries] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [activeFilters, setActiveFilters] = useState(new Set(FILTER_TYPES));
     const timerRef = useRef(null);
 
     const load = useCallback(async () => {
@@ -783,6 +786,19 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
     const previewEntry = entries && entries.length > 0 ? entries[entries.length - 1] : null;
     const previewText = previewEntry ? entryPreview(previewEntry) : null;
 
+    const toggleFilter = (e, type) => {
+        e.stopPropagation();
+        setActiveFilters(prev => {
+            const next = new Set(prev);
+            if (next.has(type)) { next.delete(type); } else { next.add(type); }
+            return next;
+        });
+    };
+
+    const filteredEntries = entries
+        ? entries.filter(e => activeFilters.has(classifyEntry(e)))
+        : null;
+
     return html`
         <div style=${{ marginTop: '8px', marginLeft: '18px' }}>
             <div
@@ -794,6 +810,7 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
                     background: colors.surface,
                     border: `1px solid ${colors.borderSubtle}`,
                     transition: 'background 120ms',
+                    flexWrap: 'wrap',
                 }}
                 class="foreman-session-log-toggle"
             >
@@ -813,11 +830,41 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
                     }}>${previewText.slice(0, 60)}${previewText.length > 60 ? '…' : ''}</span>
                 ` : null}
 
+                ${isOpen ? html`
+                    <div style=${{ display: 'flex', gap: '4px', marginLeft: '4px' }} onClick=${e => e.stopPropagation()}>
+                        ${FILTER_TYPES.map(type => {
+                            const isActive = activeFilters.has(type);
+                            const badge = TYPE_BADGE[type];
+                            const isError = type === 'error';
+                            return html`
+                                <button
+                                    key=${type}
+                                    onClick=${(e) => toggleFilter(e, type)}
+                                    style=${{
+                                        padding: '1px 6px', borderRadius: '10px',
+                                        fontSize: '10px', fontFamily: typography.fontMono,
+                                        fontWeight: typography.weight.medium,
+                                        cursor: 'pointer', border: 'none',
+                                        background: isActive
+                                            ? (isError ? 'rgba(242, 92, 92, 0.25)' : badge.bg)
+                                            : 'transparent',
+                                        color: isActive ? badge.fg : colors.textTertiary,
+                                        transition: 'background 100ms, color 100ms',
+                                        lineHeight: '18px',
+                                    }}
+                                >${badge.label}</button>
+                            `;
+                        })}
+                    </div>
+                ` : null}
+
                 ${entries !== null ? html`
                     <span style=${{
                         fontFamily: typography.fontMono, fontSize: typography.size.xs,
                         color: colors.textTertiary, marginLeft: 'auto',
-                    }}>${entries.length} entries</span>
+                    }}>${isOpen && filteredEntries && filteredEntries.length !== entries.length
+                        ? `${filteredEntries.length}/${entries.length}`
+                        : entries.length} entries</span>
                 ` : null}
             </div>
 
@@ -835,7 +882,11 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
                         <div style=${{ color: colors.textTertiary, padding: '8px' }}>No session log entries</div>
                     ` : null}
 
-                    ${entries && entries.map((entry, i) => {
+                    ${filteredEntries && filteredEntries.length === 0 && entries && entries.length > 0 ? html`
+                        <div style=${{ color: colors.textTertiary, padding: '8px' }}>All entries filtered — toggle a type above to show</div>
+                    ` : null}
+
+                    ${filteredEntries && filteredEntries.map((entry, i) => {
                         const cls = classifyEntry(entry);
                         const badge = TYPE_BADGE[cls] || TYPE_BADGE.text;
                         const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
@@ -893,17 +944,19 @@ function SessionLogEntry({ badge, ts, preview, entry, cls }) {
             }}>${badge.label}</span>
             <span style=${{
                 color: cls === 'error' ? colors.red : colors.textSecondary,
-                overflow: 'hidden', textOverflow: 'ellipsis',
-                whiteSpace: expanded ? 'pre-wrap' : 'nowrap', flex: 1,
-                wordBreak: expanded ? 'break-word' : 'normal',
+                whiteSpace: expanded ? 'pre-wrap' : 'normal',
+                wordBreak: 'break-all',
+                overflowWrap: 'anywhere',
+                flex: 1,
             }}>
                 ${expanded ? fullContent : (preview.length > 120 ? preview.slice(0, 117) + '…' : preview)}
+                ${isExpandable && !expanded ? html`
+                    <span style=${{ color: colors.textTertiary, fontSize: '9px', marginLeft: '4px' }}>▸ more</span>
+                ` : null}
+                ${isExpandable && expanded ? html`
+                    <span style=${{ color: colors.textTertiary, fontSize: '9px', marginLeft: '4px' }}>▾ less</span>
+                ` : null}
             </span>
-            ${isExpandable ? html`
-                <span style=${{ color: colors.textTertiary, flexShrink: 0, fontSize: '9px' }}>
-                    ${expanded ? '▾' : '▸'}
-                </span>
-            ` : null}
         </div>
     `;
 }
