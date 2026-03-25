@@ -984,6 +984,38 @@ RAG_TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="search_message_chunks",
+        description=(
+            "Semantic search at the paragraph level within Switchboard messages. "
+            "More precise than search_conversations — finds specific sections of long design docs, "
+            "prior decisions, or meeting notes rather than surfacing the whole message. "
+            "Use when you need a particular passage from a conversation, not just the message that contains it."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The semantic search query — describe the specific section you're looking for",
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Optional: scope search to chunks from this specific conversation",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional: scope search to chunks from this project's conversations and tasks",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum chunk results to return (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    ),
 ]
 
 TOOLS = CONVERSATION_TOOLS + PROJECT_TOOLS + TASK_TOOLS + COMPONENT_TOOLS + PUNCHLIST_TOOLS + OPS_TOOLS + CONTROL_TOOLS + RAG_TOOLS
@@ -1281,6 +1313,47 @@ async def _handle_search_conversations(arguments):
     results.sort(key=lambda r: r["relevance_score"], reverse=True)
 
     return {"results": results[:max_results], "total_candidates": len(candidates) + len(chunk_hits)}
+
+
+async def _handle_search_message_chunks(arguments):
+    query = arguments["query"]
+    limit = min(int(arguments.get("limit", 5)), 20)
+    conversation_id = arguments.get("conversation_id")
+    project_id = arguments.get("project_id")
+
+    service = emb.get_embedding_service()
+    query_vector = await service.embed_safe(query)
+    if query_vector is None:
+        return {"error": "Failed to embed query — check OPENAI_API_KEY and service availability"}
+
+    chunk_hits = await db.search_message_chunks(
+        query_vector=query_vector,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        limit=limit,
+    )
+
+    results = []
+    for hit in chunk_hits:
+        results.append({
+            "message_id": hit["message_id"],
+            "conversation_id": hit["conversation_id"],
+            "task_id": hit["task_id"],
+            "author": hit["author"],
+            "type": hit["type"],
+            "title": hit["title"],
+            "created_at": hit["created_at"],
+            "chunk_heading": hit["chunk_heading"],
+            "chunk_content": (hit["chunk_content"] or "")[:500],
+            "similarity": round(hit["similarity"], 4),
+            "context_chunks": [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in hit.get("context_chunks", [])
+            ],
+        })
+
+    return {"results": results}
 
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
@@ -2304,6 +2377,7 @@ TOOL_HANDLERS = {
     "conversations": _handle_conversations,
     "archive": _handle_archive,
     "search_conversations": _handle_search_conversations,
+    "search_message_chunks": _handle_search_message_chunks,
     # Project tools
     "create_project": _handle_create_project,
     "get_project": _handle_get_project,
