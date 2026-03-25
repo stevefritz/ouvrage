@@ -386,7 +386,14 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
     if (!component) return null;
 
     const linkedConvs = conversations.filter(c => c.component_id === component.id).slice(0, 5);
-    const componentTasks = allTasks.filter(t => t.component_id === component.id);
+    const componentTasks = allTasks
+        .filter(t => t.component_id === component.id)
+        .sort((a, b) => {
+            const ta = a.last_activity || a.updated_at || '';
+            const tb = b.last_activity || b.updated_at || '';
+            return tb < ta ? -1 : tb > ta ? 1 : 0;
+        });
+    const chainMap = buildChainMap(allTasks);
     const runningCount = componentTasks.filter(t => t.status === 'working').length;
     const blockedCount = componentTasks.filter(t => t.status === 'failed' || t.status === 'needs-review').length;
     const doneCount = componentTasks.filter(t => t.status === 'completed' || t.status === 'merged').length;
@@ -533,6 +540,75 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
 
                     <!-- Punchlist -->
                     <${PunchlistSection} componentId=${component.id} />
+
+                    <!-- Tasks -->
+                    <div>
+                        <div style=${subheadStyle}>Tasks · ${componentTasks.length}</div>
+                        ${componentTasks.length === 0 ? html`
+                            <div style=${{
+                                fontSize: typography.size.sm,
+                                color: colors.textTertiary,
+                                fontStyle: 'italic',
+                            }}>No tasks yet</div>
+                        ` : html`
+                            <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                                ${componentTasks.map(task => {
+                                    const chain = chainMap.get(task.id);
+                                    const goal = task.goal || task.id;
+                                    const displayGoal = goal.length > 52 ? goal.slice(0, 51) + '…' : goal;
+                                    const taskShortId = task.id.includes('/') ? task.id.split('/').slice(1).join('/') : task.id;
+                                    const displayId = taskShortId.length > 22 ? taskShortId.slice(0, 21) + '…' : taskShortId;
+                                    return html`
+                                        <a key=${task.id}
+                                           href=${routes.task(task.id)}
+                                           style=${{
+                                               display: 'flex',
+                                               alignItems: 'center',
+                                               gap: '8px',
+                                               padding: '7px 0',
+                                               borderBottom: `1px solid ${colors.border}22`,
+                                               minWidth: 0,
+                                               textDecoration: 'none',
+                                               color: 'inherit',
+                                           }}
+                                           class="foreman-task-row"
+                                        >
+                                            <${StatusDot} status=${task.status} />
+                                            <span style=${{
+                                                flex: 1,
+                                                fontSize: typography.size.sm,
+                                                color: colors.text,
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                minWidth: 0,
+                                            }}>${displayGoal}</span>
+                                            <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                                <span style=${{
+                                                    fontFamily: typography.fontMono,
+                                                    fontSize: typography.size.xs,
+                                                    color: colors.textTertiary,
+                                                    whiteSpace: 'nowrap',
+                                                }} title=${task.id}>${displayId}</span>
+                                                ${chain ? html`
+                                                    <${ChainBadge}
+                                                        position=${chain.position}
+                                                        total=${chain.total}
+                                                    />
+                                                ` : null}
+                                                <span style=${{
+                                                    fontFamily: typography.fontMono,
+                                                    fontSize: typography.size.xs,
+                                                    color: colors.textTertiary,
+                                                    whiteSpace: 'nowrap',
+                                                }}>${relativeTime(task.last_activity || task.updated_at)}</span>
+                                            </div>
+                                        </a>
+                                    `;
+                                })}
+                            </div>
+                        `}
+                    </div>
 
                     <!-- Config overrides -->
                     ${hasOverrides ? html`
