@@ -515,6 +515,7 @@ function ActionToolbar({ task, onAction }) {
     if (task.status === 'ready' && task.held) {
         actions.push(btn('approve', 'Approve', colors.greenBg, colors.green));
     } else if (task.status === 'ready') {
+        actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue));
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
     if (task.status === 'working') {
@@ -524,6 +525,9 @@ function ActionToolbar({ task, onAction }) {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
         actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    }
+    if (task.status === 'rate-limited') {
+        actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
     }
     if (task.status === 'completed') {
         actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow));
