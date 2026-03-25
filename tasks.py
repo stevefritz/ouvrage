@@ -958,6 +958,20 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task['id']}', author='cc-worker', type='handoff', content='...')`")
     parts.append("")
 
+    parts.append("## Worktree hygiene — required before handoff")
+    parts.append("")
+    parts.append("Before posting your result, run `git status`. Your worktree MUST be clean.")
+    parts.append("")
+    parts.append("For every file that shows as modified, staged, or untracked:")
+    parts.append("")
+    parts.append("- **If you changed it intentionally as part of this task:** stage and commit it with a meaningful message that describes what changed and why. Do not batch unrelated changes into one commit.")
+    parts.append("- **If it changed but you did NOT intend to change it** (e.g. a file got touched by a side effect, a config was auto-modified): run `git checkout -- <file>` to revert it to its original state.")
+    parts.append("")
+    parts.append("There is no option to leave changes uncommitted. You own this worktree. The next step in the pipeline (tests, reviewer) operates on committed code only. An uncommitted implementation is an incomplete task.")
+    parts.append("")
+    parts.append("Do NOT create garbage commits like \"fix formatting\" or \"clean up\" unless formatting or cleanup was explicitly part of the spec. Commit messages must describe the actual change.")
+    parts.append("")
+
     parts.append("## SAFETY: Running tests and processes")
     parts.append("- Use `timeout 60 pytest ...` for targeted test runs — always wrap with timeout")
     parts.append("- NEVER use kill, pkill, or killall directly — you WILL terminate yourself")
@@ -1707,6 +1721,30 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
 
         # If auto_review is enabled, dispatch a review instead of passing immediately
         if task.get("auto_review"):
+            # Check for uncommitted changes before invoking reviewer
+            worktree = task.get("worktree_path")
+            if worktree:
+                stdout, _stderr, _rc = await _run_as_worker(
+                    "git", "-C", worktree, "status", "--porcelain"
+                )
+                if stdout.decode(errors="replace").strip():
+                    # Dirty worktree — resume CC session with cleanup instruction
+                    await db.post_task_message(
+                        task_id=task_id,
+                        author="switchboard",
+                        type="status",
+                        title="⚠️ Uncommitted changes — cleanup required",
+                        content=(
+                            "Your worktree has uncommitted changes. The reviewer cannot run until the worktree is clean.\n\n"
+                            "Run `git status` and for each changed file:\n"
+                            "- Commit it if the change is intentional and part of this task\n"
+                            "- Revert it with `git checkout -- <file>` if it was unintentional\n\n"
+                            "Post your result again when the worktree is clean."
+                        ),
+                    )
+                    # Resume the same CC session (same attempt) — do NOT increment attempt
+                    await resume_task(task_id)
+                    return  # Do not proceed to reviewer
             await _dispatch_review(task_id, project, task)
         else:
             await notify.task_needs_review(
@@ -1892,9 +1930,39 @@ the original spec — treat them as authoritative when they conflict with the sp
 {chr(10).join(thread_lines)}
 """
 
+    # --- Prior review history ---
+    prior_reviews_thread = await db.read_task_messages(task_id, type="review")
+    prior_review_msgs = [
+        m for m in prior_reviews_thread.get("messages", [])
+        if m.get("author") == "cc-worker"
+    ]
+    # Sort by attempt_number ascending so history is chronological
+    prior_review_msgs.sort(key=lambda m: m.get("attempt_number") or 0)
+    # Exclude reviews from the current attempt (only show prior attempts)
+    current_attempt = task.get("current_attempt") or 1
+    prior_review_msgs = [m for m in prior_review_msgs if (m.get("attempt_number") or 0) < current_attempt]
+
+    prior_review_section = ""
+    if prior_review_msgs:
+        review_history_lines = [
+            "## Prior review history for this task",
+            "",
+            "The following reviews were written for previous attempts. Read them carefully:",
+            "- Check if issues flagged in prior reviews have been resolved",
+            "- Do not re-flag issues that have already been addressed",
+            "- Note any prior concerns that were NOT addressed and treat them as carry-forward requirements",
+            "",
+        ]
+        for m in prior_review_msgs:
+            attempt = m.get("attempt_number") or "?"
+            review_history_lines.append(f"---\n[Attempt {attempt} Review]")
+            review_history_lines.append(m.get("content", ""))
+            review_history_lines.append("")
+        prior_review_section = "\n".join(review_history_lines) + "\n"
+
     review_prompt = f"""# Code Review: {task['goal']}
 
-## Component Context
+{prior_review_section}## Component Context
 {component_section}
 
 ## Ignore These Files
