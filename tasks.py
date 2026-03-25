@@ -726,8 +726,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         if rc != 0:
             raise RuntimeError(f"git clone --bare failed: {stderr.decode()}")
 
-    # Fetch latest from remote
-    await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
+    # Fetch latest from remote — all tracking refs updated (origin/main, etc.)
+    _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
+    if fetch_rc != 0:
+        log.warning(f"git fetch origin failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
 
     # Auto-detect default branch from bare clone HEAD if project config is wrong
     default_branch = project["default_branch"]
@@ -737,14 +739,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
         default_branch = detected
 
-    # Update local default branch ref to match origin BEFORE branching
-    await _run_as_worker(
-        "git", "-C", bare_path, "fetch", "origin",
-        f"{default_branch}:{default_branch}",
-    )
-
-    # Branch chaining: if this task depends on another, branch from parent's branch
-    base_branch = default_branch
+    # Branch chaining: if this task depends on another, branch from parent's branch.
+    # Use origin/ remote tracking ref (always current after fetch) instead of local
+    # branch ref, which can go stale or fail to update when checked out in a worktree.
+    base_branch = f"origin/{default_branch}"
     if depends_on:
         parent_task = await db.get_task(depends_on)
         if parent_task and parent_task.get("branch"):
