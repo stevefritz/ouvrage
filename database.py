@@ -1362,29 +1362,43 @@ def chunk_message(content: str) -> list[dict] | None:
         return None
     sections = re.split(r'(?=^#{1,3} )', content, flags=re.MULTILINE)
     chunks = []
-    for i, section in enumerate(sections):
+    idx = 0
+    for section in sections:
         section = section.strip()
         if not section:
             continue
         heading_match = re.match(r'^#{1,3}\s+(.+?)$', section, re.MULTILINE)
         heading = heading_match.group(1) if heading_match else None
-        chunks.append({"chunk_index": i, "heading": heading, "content": section})
+        chunks.append({"chunk_index": idx, "heading": heading, "content": section})
+        idx += 1
     return chunks if len(chunks) > 1 else None
 
 
 async def index_message_chunks(message_id: int, content: str) -> None:
-    """Chunk a message and embed each chunk. Idempotent — deletes existing chunks first."""
+    """Chunk a message and embed each chunk. Idempotent — deletes existing chunks first.
+
+    If the message doesn't produce chunks (too short, no headers, single section),
+    inserts a sentinel row (chunk_index=-1) so the backfill query skips it next time.
+    """
     chunks = chunk_message(content)
-    if not chunks:
-        return
-
-    from embedding_service import get_embedding_service, encode_vector
-
-    service = get_embedding_service()
 
     async with get_db() as db:
         # Delete existing chunks for idempotency
         await db.execute("DELETE FROM message_chunks WHERE message_id = ?", (message_id,))
+
+        if not chunks:
+            # Insert sentinel so get_messages_needing_chunking() skips this message
+            await db.execute(
+                """INSERT INTO message_chunks (message_id, chunk_index, heading, content, embedding)
+                   VALUES (?, -1, NULL, '', NULL)""",
+                (message_id,),
+            )
+            await db.commit()
+            return
+
+        from embedding_service import get_embedding_service, encode_vector
+
+        service = get_embedding_service()
 
         for chunk in chunks:
             vector = await service.embed_safe(chunk["content"])
@@ -1401,13 +1415,14 @@ async def search_message_chunks(
     query_vector: list[float],
     conversation_id: str | None = None,
     project_id: str | None = None,
+    type_filter: str | None = None,
     limit: int = 5,
 ) -> list[dict]:
     """Search message chunks by cosine similarity, returning hits with adjacent context."""
     from embedding_service import decode_vector, cosine_similarity
 
     async with get_db() as db:
-        conditions = ["mc.embedding IS NOT NULL"]
+        conditions = ["mc.embedding IS NOT NULL", "mc.chunk_index >= 0"]
         params: list = []
 
         if conversation_id:
@@ -1420,6 +1435,10 @@ async def search_message_chunks(
                 "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
             )
             params.extend([project_id, project_id])
+
+        if type_filter:
+            conditions.append("m.type = ?")
+            params.append(type_filter)
 
         where = " AND ".join(conditions)
         query = f"""

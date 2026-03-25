@@ -1192,6 +1192,7 @@ async def _handle_search_conversations(arguments):
         query_vector=query_vector,
         conversation_id=conversation_id,
         project_id=project_id,
+        type_filter=type_filter,
         limit=max_results,
     )
 

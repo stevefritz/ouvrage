@@ -129,10 +129,9 @@ class TestChunkMessageMultipleSections:
         assert len(content) >= 500
         result = chunk_message(content)
         assert result is not None
-        # Indices should be sequential (though may skip 0 if first split is empty)
+        # Indices must be contiguous starting at 0
         for i, chunk in enumerate(result):
-            assert "chunk_index" in chunk
-            assert isinstance(chunk["chunk_index"], int)
+            assert chunk["chunk_index"] == i
 
     def test_empty_sections_stripped(self):
         """Empty sections from splitting should be filtered out."""
@@ -173,6 +172,24 @@ class TestChunkMessageEdgeCases:
         result = chunk_message(content)
         assert result is not None
         assert "The `code` & stuff" in result[0]["heading"]
+
+    def test_chunk_indices_contiguous_with_leading_header(self):
+        """When content starts with ## header, the split produces a leading empty string.
+        chunk_index values must still be contiguous starting at 0."""
+        content = (
+            "## First\n\n"
+            + "Content for first section fills the needed space. " * 5 + "\n\n"
+            "## Second\n\n"
+            + "Content for second section fills the needed space. " * 5 + "\n\n"
+            "## Third\n\n"
+            + "Content for third section fills the needed space. " * 5
+        )
+        assert len(content) >= 500
+        result = chunk_message(content)
+        assert result is not None
+        assert result[0]["chunk_index"] == 0
+        assert result[1]["chunk_index"] == 1
+        assert result[2]["chunk_index"] == 2
 
     def test_min_chunk_length_constant(self):
         assert MIN_CHUNK_LENGTH == 500
