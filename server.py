@@ -357,6 +357,30 @@ TASK_TOOLS = [
         },
     ),
     Tool(
+        name="reopen_task",
+        description="Reopen a completed task for revisions. Increments current_attempt, sets status to 'reopened', clears session/gate state, and posts an awaiting-feedback message. After reopening, post feedback via post_task_message, then call start_reopened_task to dispatch CC.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Completed task to reopen"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="start_reopened_task",
+        description="Start a reopened task. Collects feedback messages posted since reopen, rebases onto base branch, invalidates chain dependents, and dispatches CC with feedback as revision instructions. Only callable on 'reopened' tasks.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Reopened task to start"},
+                "auto_test": {"type": "boolean", "description": "Override test gate for this attempt only"},
+                "auto_review": {"type": "boolean", "description": "Override review gate for this attempt only"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
         name="approve_task",
         description=(
             "Release a held task for dispatch. Held tasks are checkpoints that won't auto-dispatch "
@@ -1273,6 +1297,19 @@ async def _handle_retry_task(arguments):
     )
 
 
+async def _handle_reopen_task(arguments):
+    return await tasks.reopen_task(arguments["task_id"])
+
+
+async def _handle_start_reopened_task(arguments):
+    kwargs = {"task_id": arguments["task_id"]}
+    if "auto_test" in arguments:
+        kwargs["auto_test"] = arguments["auto_test"]
+    if "auto_review" in arguments:
+        kwargs["auto_review"] = arguments["auto_review"]
+    return await tasks.start_reopened_task(**kwargs)
+
+
 async def _handle_cancel_task(arguments):
     return await tasks.cancel_task(arguments["task_id"])
 
@@ -2179,6 +2216,8 @@ TOOL_HANDLERS = {
     "release_worktree": _handle_release_worktree,
     "resume_task": _handle_resume_task,
     "retry_task": _handle_retry_task,
+    "reopen_task": _handle_reopen_task,
+    "start_reopened_task": _handle_start_reopened_task,
     "cancel_task": _handle_cancel_task,
     "approve_task": _handle_approve_task,
     "close_task": _handle_close_task,

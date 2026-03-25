@@ -109,6 +109,7 @@ export const statusColors = {
     ready:           colors.textSecondary,
     'rate-limited':  colors.yellow,
     'turns-exhausted': colors.yellow,
+    reopened:        colors.yellow,
 };
 
 export const statusBgs = {
@@ -120,4 +121,5 @@ export const statusBgs = {
     ready:           'rgba(176, 177, 186, 0.10)',
     'rate-limited':  colors.yellowBg,
     'turns-exhausted': colors.yellowBg,
+    reopened:        colors.yellowBg,
 };

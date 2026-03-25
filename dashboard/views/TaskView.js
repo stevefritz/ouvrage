@@ -516,24 +516,36 @@ function ActionToolbar({ task, onAction }) {
         actions.push(btn('approve', 'Approve', colors.greenBg, colors.green));
     } else if (task.status === 'ready') {
         actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue));
+        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
     if (task.status === 'working') {
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
-    if (['turns-exhausted', 'needs-review', 'rate-limited'].includes(task.status)) {
+    if (['turns-exhausted', 'needs-review'].includes(task.status)) {
+        actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
+        actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
+        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    }
+    if (task.status === 'rate-limited') {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
     }
-    if (['failed', 'needs-review', 'completed'].includes(task.status)) {
+    if (task.status === 'completed') {
+        actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
+    }
+    if (task.status === 'reopened') {
+        actions.push(btn('start', 'Start', colors.greenBg, colors.green));
+        actions.push(btn('cancel-reopen', 'Cancel', colors.redBg, colors.red));
+    }
+    if (['failed', 'cancelled'].includes(task.status)) {
         actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         actions.push(btn('skip-gate', 'Skip Gate', 'rgba(139, 92, 246, 0.12)', '#8b5cf6'));
     }
     if (task.status === 'completed' && task.gate_status === 'passed') {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
-    }
-    if (['completed', 'failed', 'cancelled'].includes(task.status)) {
-        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
@@ -1211,6 +1223,101 @@ function MessageInput({ taskId, onMessageSent }) {
     `;
 }
 
+// ── Start Config Overlay (inline, not modal) ─────────────────
+
+function StartConfigOverlay({ task, onConfirm, onCancel }) {
+    const [autoTest, setAutoTest] = useState(!!task.auto_test);
+    const [autoReview, setAutoReview] = useState(!!task.auto_review);
+
+    const rowStyle = {
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '6px 0',
+    };
+    const labelStyle = {
+        fontFamily: typography.fontBody, fontSize: typography.size.sm,
+        color: colors.text, cursor: 'pointer', flex: 1,
+    };
+
+    return html`
+        <div style=${{
+            margin: '8px 0 12px', padding: '14px 16px',
+            background: colors.surface, border: `1px solid ${colors.border}`,
+            borderRadius: layout.borderRadius.md,
+        }}>
+            <div style=${{
+                fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                fontWeight: typography.weight.medium, color: colors.text,
+                marginBottom: '10px',
+            }}>Start revision — configure this attempt</div>
+
+            <div style=${rowStyle}>
+                <input type="checkbox" id="start-auto-test" checked=${autoTest}
+                    onChange=${e => setAutoTest(e.target.checked)}
+                    style=${{ accentColor: colors.accent, width: '15px', height: '15px', cursor: 'pointer' }} />
+                <label for="start-auto-test" style=${labelStyle}>Run tests after completion</label>
+            </div>
+            <div style=${rowStyle}>
+                <input type="checkbox" id="start-auto-review" checked=${autoReview}
+                    onChange=${e => setAutoReview(e.target.checked)}
+                    style=${{ accentColor: colors.accent, width: '15px', height: '15px', cursor: 'pointer' }} />
+                <label for="start-auto-review" style=${labelStyle}>Run review after completion</label>
+            </div>
+
+            <div style=${{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <button onClick=${onCancel} style=${{
+                    padding: '5px 14px', borderRadius: layout.borderRadius.sm,
+                    background: 'transparent', border: `1px solid ${colors.border}`,
+                    color: colors.textSecondary, cursor: 'pointer',
+                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                }}>Cancel</button>
+                <button onClick=${() => onConfirm({ auto_test: autoTest, auto_review: autoReview })} style=${{
+                    padding: '5px 14px', borderRadius: layout.borderRadius.sm,
+                    background: colors.green, border: 'none',
+                    color: '#fff', cursor: 'pointer',
+                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                    fontWeight: typography.weight.medium,
+                }}>Start Revision</button>
+            </div>
+        </div>
+    `;
+}
+
+
+// ── Chain Invalidation Warning ────────────────────────────────
+
+function ChainInvalidationWarning({ task, chain }) {
+    if (task.status !== 'reopened' || !chain || chain.length <= 1) return null;
+
+    const idx = chain.findIndex(n => n.id === task.id);
+    if (idx < 0) return null;
+
+    const downstream = chain.slice(idx + 1).filter(
+        n => ['completed', 'merged', 'working', 'ready'].includes(n.status)
+    );
+    if (downstream.length === 0) return null;
+
+    const names = downstream.map(n => n.id.split('/').pop()).join(', ');
+    const count = downstream.length;
+
+    return html`
+        <div style=${{
+            display: 'flex', alignItems: 'flex-start', gap: '8px',
+            padding: '8px 12px', marginBottom: '12px',
+            background: 'rgba(245, 166, 35, 0.08)',
+            border: '1px solid rgba(245, 166, 35, 0.25)',
+            borderRadius: layout.borderRadius.md,
+            fontSize: typography.size.sm,
+        }}>
+            <span>⚠️</span>
+            <span style=${{ color: colors.yellow, lineHeight: '1.4' }}>
+                Starting will invalidate ${count} downstream ${count === 1 ? 'task' : 'tasks'}
+                ${' '}(${names}). They will need to be re-run.
+            </span>
+        </div>
+    `;
+}
+
+
 // ── Confirm Dialog ──────────────────────────────────────────
 
 const CONFIRM_TEXT = {
@@ -1218,6 +1325,8 @@ const CONFIRM_TEXT = {
     retry: { title: 'Retry Task', body: 'Start a fresh CC session? Previous context will be lost.' },
     resume: { title: 'Resume Session', body: 'Continue the existing CC session with full history?' },
     close: { title: 'Close Task', body: 'Destroy worktree and delete branch? Cannot be undone.' },
+    reopen: { title: 'Reopen Task', body: 'Reopen for revisions? Post feedback then click Start.' },
+    'cancel-reopen': { title: 'Cancel Re-open', body: 'Discard re-open and return task to completed state?' },
     'skip-gate': { title: 'Skip Gate', body: 'Manually mark gate as passed, bypassing validation?' },
     'advance-chain': { title: 'Advance Chain', body: 'Dispatch the next dependent task in the chain?' },
     'release-worktree': { title: 'Release Worktree', body: 'Detach worktree without closing the task?' },
@@ -1279,6 +1388,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [chain, setChain] = useState(null);
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
+    const [showStartOverlay, setShowStartOverlay] = useState(false);
     const mountedRef = useRef(true);
     const loadedRef = useRef(false);
 
@@ -1347,12 +1457,12 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     useEffect(() => {
         if (!task) return;
         const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
-        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || gateActive;
+        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'reopened' || gateActive;
         if (!shouldPoll) return;
 
         const taskTimer = setInterval(loadTask, 5000);
         // Only poll attempts while actively working (expensive — re-reads all messages)
-        const attemptTimer = task.status === 'working'
+        const attemptTimer = (task.status === 'working' || task.status === 'reopened')
             ? setInterval(loadAttempts, 10000)
             : null;
         return () => {
@@ -1363,7 +1473,11 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
 
     // Action handler
     const handleAction = useCallback((action, taskId) => {
-        setConfirmAction(action);
+        if (action === 'start') {
+            setShowStartOverlay(true);
+        } else {
+            setConfirmAction(action);
+        }
     }, []);
 
     const executeAction = useCallback(async () => {
@@ -1373,6 +1487,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         try {
             const actionMap = {
                 cancel: () => api.cancelTask(id),
+                'cancel-reopen': () => api.cancelReopen(id),
                 retry: () => api.retryTask(id),
                 resume: () => api.resumeTask(id),
                 close: () => api.closeTask(id),
@@ -1381,6 +1496,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 'release-worktree': () => api.releaseWorktree(id),
                 approve: () => api.approveTask(id),
                 dispatch: () => api.dispatchTask(id),
+                reopen: () => api.reopenTask(id),
             };
             const fn = actionMap[action];
             if (fn) await fn();
@@ -1390,6 +1506,16 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             console.error('Action error:', e);
         }
     }, [confirmAction, id, task, loadTask, loadAttempts]);
+
+    const executeStart = useCallback(async (overrides) => {
+        setShowStartOverlay(false);
+        try {
+            await api.startTask(id, overrides);
+            setTimeout(() => { loadTask(); loadAttempts(); }, 500);
+        } catch (e) {
+            console.error('Start action error:', e);
+        }
+    }, [id, loadTask, loadAttempts]);
 
     // Loading state
     if (error) {
@@ -1674,7 +1800,15 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GitFlowLineage} task=${task} chain=${chain} />
             <${ChainStrip} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
+            <${ChainInvalidationWarning} task=${task} chain=${chain} />
             <${ActionToolbar} task=${task} onAction=${handleAction} />
+            ${showStartOverlay ? html`
+                <${StartConfigOverlay}
+                    task=${task}
+                    onConfirm=${executeStart}
+                    onCancel=${() => setShowStartOverlay(false)}
+                />
+            ` : null}
 
             <!-- ATTEMPT GROUPS — the hero -->
             <div style=${{ marginBottom: '16px' }}>
@@ -1708,7 +1842,9 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
             </div>
 
-            <${MessageInput} taskId=${id} onMessageSent=${() => { loadTask(); loadAttempts(); }} />
+            ${task.status !== 'completed' ? html`
+                <${MessageInput} taskId=${id} onMessageSent=${() => { loadTask(); loadAttempts(); }} />
+            ` : null}
 
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />

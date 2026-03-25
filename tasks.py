@@ -2239,6 +2239,58 @@ async def _invalidate_chain(task_id: str) -> None:
         await _invalidate_chain(dep["id"])
 
 
+async def _git_fetch_and_rebase(worktree: str, target_branch: str) -> bool:
+    """Fetch origin and rebase worktree onto origin/{target_branch}.
+
+    Returns True on success. Returns False if rebase failed (rebase is aborted
+    before returning).
+    """
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    _, _stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "rebase", f"origin/{target_branch}",
+    )
+
+    if rc != 0:
+        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+        return False
+
+    return True
+
+
+async def _sync_branch_with_base(task: dict) -> bool:
+    """Fetch origin and rebase task worktree onto the task's base branch.
+
+    Returns True if rebase succeeded (or no worktree to sync).
+    Returns False if rebase failed — in that case gate_status is set to 'needs-review'
+    and an error message is posted to the task thread.
+    """
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        return True  # Nothing to sync
+
+    base_branch = await resolve_branch_target(task)
+    success = await _git_fetch_and_rebase(worktree, base_branch)
+
+    if not success:
+        log.warning(f"Rebase failed for {task['id']} onto origin/{base_branch}")
+        await db.update_task(task["id"], gate_status="needs-review")
+        await db.post_task_message(
+            task_id=task["id"], author="switchboard", type="status",
+            title="Rebase conflict — needs review",
+            content=(
+                f"Automatic rebase onto `origin/{base_branch}` failed due to conflicts.\n\n"
+                f"Resolve manually in the worktree:\n"
+                f"```\ncd {worktree}\ngit rebase origin/{base_branch}\n"
+                f"# resolve conflicts, then:\ngit rebase --continue\n```"
+            ),
+        )
+        return False
+
+    log.info(f"Rebased {task['id']} onto origin/{base_branch} successfully")
+    return True
+
+
 async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
     """Rebase a stale task's branch onto parent's updated branch, then re-dispatch."""
     worktree = dep.get("worktree_path")
@@ -2249,17 +2301,9 @@ async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
         log.warning(f"Cannot rebase {dep['id']}: missing worktree or branch info")
         return
 
-    # Fetch latest
-    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+    success = await _git_fetch_and_rebase(worktree, parent_branch)
 
-    # Attempt rebase
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "rebase", f"origin/{parent_branch}",
-    )
-
-    if rc != 0:
-        # Rebase failed — abort and let CC handle it
-        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+    if not success:
         log.warning(f"Rebase failed for {dep['id']}, CC will handle manually")
         rebase_context = (
             f"WARNING: Automatic rebase onto the updated parent branch `{parent_branch}` failed "
@@ -2988,6 +3032,14 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
                          current_attempt=new_attempt, held=False)
 
+    # Post "Attempt N starting..." so the attempt group appears in Foreman immediately
+    # (before CC posts anything). Must happen after update_task so attempt_number is correct.
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {new_attempt} starting",
+        content=f"Attempt {new_attempt} starting — fresh session launched.",
+    )
+
     # Invalidate downstream chain if this task has dependents
     dependents = await db.get_dependents(task_id)
     if dependents:
@@ -3026,6 +3078,158 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
         phase="revisions" if review_feedback else "analysis",
         review_feedback=review_feedback,
     )
+
+
+async def reopen_task(task_id: str) -> dict:
+    """Reopen a completed task for revisions.
+
+    Increments current_attempt, sets status to 'reopened', clears session/gate state,
+    and posts a status message. Does NOT dispatch or touch git — that's start_reopened_task's job.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "completed":
+        raise ValueError(f"Task '{task_id}' must be 'completed' to reopen (current: {task.get('status')})")
+
+    new_attempt = (task.get("current_attempt") or 1) + 1
+    await db.update_task(
+        task_id,
+        status="reopened",
+        current_attempt=new_attempt,
+        session_id=None,
+        gate_status=None,
+        gate_passed_at=None,
+        reopen_saved_gate_status=task.get("gate_status"),
+        reopen_saved_gate_passed_at=task.get("gate_passed_at"),
+    )
+
+    # Post status message — auto-stamped to new_attempt since current_attempt is now updated
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title="Task reopened — awaiting feedback",
+        content="Task reopened for revisions. Post feedback below, then click Start.",
+    )
+
+    return await db.get_task(task_id)
+
+
+async def cancel_reopen(task_id: str) -> dict:
+    """Cancel a re-open — return the task to 'completed' status.
+
+    Only callable on 'reopened' tasks. Decrements current_attempt back to the
+    previous value and deletes the messages posted during the reopened state
+    (the status message and any feedback notes).
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "reopened":
+        raise ValueError(f"Task '{task_id}' must be 'reopened' to cancel re-open (current: {task.get('status')})")
+
+    current_attempt = task.get("current_attempt") or 1
+    prev_attempt = max(1, current_attempt - 1)
+
+    # Delete messages stamped to the current (reopened) attempt
+    async with db.get_db() as conn:
+        await conn.execute(
+            "DELETE FROM messages WHERE task_id = ? AND attempt_number = ?",
+            (task_id, current_attempt),
+        )
+        await conn.commit()
+
+    await db.update_task(
+        task_id,
+        status="completed",
+        current_attempt=prev_attempt,
+        gate_status=task.get("reopen_saved_gate_status"),
+        gate_passed_at=task.get("reopen_saved_gate_passed_at"),
+        reopen_saved_gate_status=None,
+        reopen_saved_gate_passed_at=None,
+    )
+
+    return await db.get_task(task_id)
+
+
+async def start_reopened_task(
+    task_id: str,
+    auto_test: bool | None = None,
+    auto_review: bool | None = None,
+) -> dict:
+    """Start a reopened task — collect feedback, rebase, and dispatch.
+
+    Only callable on 'reopened' tasks. Collects user messages posted since the
+    reopen status message, posts 'Attempt N starting...', rebases onto base branch,
+    invalidates chain dependents, then dispatches CC with the feedback as review_feedback.
+
+    auto_test / auto_review override the task's defaults for this dispatch only.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "reopened":
+        raise ValueError(f"Task '{task_id}' must be 'reopened' to start (current: {task.get('status')})")
+
+    current_attempt = task.get("current_attempt") or 1
+
+    # Find feedback messages: everything posted by non-switchboard authors after the
+    # reopen status message (first message stamped to current_attempt)
+    thread = await db.read_task_messages(task_id)
+    messages = thread.get("messages", [])
+
+    # Find the index of the first message with the new attempt_number (the reopen status msg)
+    reopen_msg_idx = None
+    for i, msg in enumerate(messages):
+        if (msg.get("attempt_number") or 1) == current_attempt:
+            reopen_msg_idx = i
+            break
+
+    review_feedback = None
+    if reopen_msg_idx is not None:
+        feedback = [
+            m for m in messages[reopen_msg_idx + 1:]
+            if m.get("author") not in ("switchboard", "dispatcher", "cc-worker")
+        ]
+        if feedback:
+            review_feedback = feedback
+
+    # Post "Attempt N starting..." so the group appears in Foreman before CC posts anything
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {current_attempt} starting",
+        content=f"Attempt {current_attempt} starting — revision session launched.",
+    )
+
+    # Rebase onto base branch before dispatch
+    rebase_ok = await _sync_branch_with_base(task)
+    if not rebase_ok:
+        # Rebase conflict posted to thread — stop here so user can resolve
+        return await db.get_task(task_id)
+
+    # Invalidate downstream chain (deferred from reopen to here)
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
+
+    # Build dispatch kwargs, applying per-dispatch overrides if provided
+    dispatch_kwargs: dict = dict(
+        project_id=task["project_id"],
+        task_id=task_id,
+        goal=task["goal"],
+        phase="revisions",
+        review_feedback=review_feedback,
+    )
+    if auto_test is not None:
+        dispatch_kwargs["auto_test"] = auto_test
+    if auto_review is not None:
+        dispatch_kwargs["auto_review"] = auto_review
+
+    result = await dispatch_task(**dispatch_kwargs)
+
+    # Notify that a new attempt is starting
+    await notify.task_attempt_starting(task_id, current_attempt, task["goal"])
+
+    return result
 
 
 async def cancel_task(task_id: str) -> dict:
