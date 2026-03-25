@@ -515,25 +515,33 @@ function ActionToolbar({ task, onAction }) {
     if (task.status === 'ready' && task.held) {
         actions.push(btn('approve', 'Approve', colors.greenBg, colors.green));
     } else if (task.status === 'ready') {
-        actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue));
+        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
     if (task.status === 'working') {
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
-    if (['turns-exhausted', 'needs-review', 'rate-limited'].includes(task.status)) {
+    if (['turns-exhausted', 'needs-review'].includes(task.status)) {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
-    }
-    if (['failed', 'needs-review', 'completed'].includes(task.status)) {
         actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
+        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    }
+    if (task.status === 'completed') {
+        actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
+    }
+    if (task.status === 'reopened') {
+        actions.push(btn('start', 'Start', colors.greenBg, colors.green));
+        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    }
+    if (['failed', 'cancelled'].includes(task.status)) {
+        actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
+        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         actions.push(btn('skip-gate', 'Skip Gate', 'rgba(139, 92, 246, 0.12)', '#8b5cf6'));
     }
     if (task.status === 'completed' && task.gate_status === 'passed') {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
-    }
-    if (['completed', 'failed', 'cancelled'].includes(task.status)) {
-        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
     }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
@@ -1218,6 +1226,8 @@ const CONFIRM_TEXT = {
     retry: { title: 'Retry Task', body: 'Start a fresh CC session? Previous context will be lost.' },
     resume: { title: 'Resume Session', body: 'Continue the existing CC session with full history?' },
     close: { title: 'Close Task', body: 'Destroy worktree and delete branch? Cannot be undone.' },
+    reopen: { title: 'Reopen Task', body: 'Reopen for revisions? Post feedback then click Start.' },
+    start: { title: 'Start Revision', body: 'Launch CC with your feedback as revision instructions?' },
     'skip-gate': { title: 'Skip Gate', body: 'Manually mark gate as passed, bypassing validation?' },
     'advance-chain': { title: 'Advance Chain', body: 'Dispatch the next dependent task in the chain?' },
     'release-worktree': { title: 'Release Worktree', body: 'Detach worktree without closing the task?' },
@@ -1347,12 +1357,12 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     useEffect(() => {
         if (!task) return;
         const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
-        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || gateActive;
+        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'reopened' || gateActive;
         if (!shouldPoll) return;
 
         const taskTimer = setInterval(loadTask, 5000);
         // Only poll attempts while actively working (expensive — re-reads all messages)
-        const attemptTimer = task.status === 'working'
+        const attemptTimer = (task.status === 'working' || task.status === 'reopened')
             ? setInterval(loadAttempts, 10000)
             : null;
         return () => {
@@ -1381,6 +1391,8 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 'release-worktree': () => api.releaseWorktree(id),
                 approve: () => api.approveTask(id),
                 dispatch: () => api.dispatchTask(id),
+                reopen: () => api.reopenTask(id),
+                start: () => api.startTask(id),
             };
             const fn = actionMap[action];
             if (fn) await fn();
@@ -1708,7 +1720,9 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
             </div>
 
-            <${MessageInput} taskId=${id} onMessageSent=${() => { loadTask(); loadAttempts(); }} />
+            ${task.status !== 'completed' ? html`
+                <${MessageInput} taskId=${id} onMessageSent=${() => { loadTask(); loadAttempts(); }} />
+            ` : null}
 
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />

@@ -16,6 +16,7 @@ CORE_STATE_DEFINITIONS = {
     "reviewing":     {"color": "#8b5cf6", "label": "Reviewing",    "pulse": True},
     "needs-review":  {"color": "#f59e0b", "label": "Needs Review", "pulse": False},
     "turns-exhausted": {"color": "#f59e0b", "label": "Turns Exhausted", "pulse": False},
+    "reopened":      {"color": "#f59e0b", "label": "Reopened",     "pulse": False},
     "completed":     {"color": "#10b981", "label": "Completed",    "pulse": False},
     "merged":        {"color": "#10b981", "label": "Merged",       "pulse": False},
     "failed":        {"color": "#ef4444", "label": "Failed",       "pulse": False},

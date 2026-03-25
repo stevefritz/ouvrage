@@ -68,6 +68,8 @@ export const api = {
     releaseWorktree: (id) => request(`/tasks/${eid(id)}/release-worktree`, { method: 'POST' }),
     approveTask: (id) => request(`/tasks/${eid(id)}/approve`, { method: 'POST' }),
     dispatchTask: (id) => request(`/tasks/${eid(id)}/dispatch`, { method: 'POST' }),
+    reopenTask: (id) => request(`/tasks/${eid(id)}/reopen`, { method: 'POST' }),
+    startTask: (id) => request(`/tasks/${eid(id)}/start`, { method: 'POST' }),
 
     // Component/Project control
     pauseComponent: (id) => request(`/components/${eid(id)}/pause`, { method: 'POST' }),

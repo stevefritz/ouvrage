@@ -65,7 +65,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
                     "/advance-chain", "/cancel-chain", "/approve", "/chain",
                     "/review-task", "/messages", "/session-log", "/dispatch-log",
-                    "/attempts", "/dispatch"):
+                    "/attempts", "/dispatch", "/reopen", "/start"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -223,6 +223,12 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/dispatch"):
                     task_id = rest[:-len("/dispatch")]
                     return await _handle_dispatch(send, task_id)
+                if rest.endswith("/reopen"):
+                    task_id = rest[:-len("/reopen")]
+                    return await _handle_reopen(send, task_id)
+                if rest.endswith("/start"):
+                    task_id = rest[:-len("/start")]
+                    return await _handle_start(send, task_id)
                 if rest.endswith("/messages"):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
@@ -573,6 +579,16 @@ async def _handle_advance_chain(send, task_id):
 
 async def _handle_cancel_chain(send, task_id):
     result = await tasks.cancel_chain(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_reopen(send, task_id):
+    result = await tasks.reopen_task(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_start(send, task_id):
+    result = await tasks.start_reopened_task(task_id)
     await _json_response(send, result)
 
 

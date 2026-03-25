@@ -2920,6 +2920,14 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
                          current_attempt=new_attempt, held=False)
 
+    # Post "Attempt N starting..." so the attempt group appears in Foreman immediately
+    # (before CC posts anything). Must happen after update_task so attempt_number is correct.
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {new_attempt} starting",
+        content=f"Attempt {new_attempt} starting — fresh session launched.",
+    )
+
     # Invalidate downstream chain if this task has dependents
     dependents = await db.get_dependents(task_id)
     if dependents:
@@ -2956,6 +2964,112 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
         task_id=task_id,
         goal=task["goal"],
         phase="revisions" if review_feedback else "analysis",
+        review_feedback=review_feedback,
+    )
+
+
+async def reopen_task(task_id: str) -> dict:
+    """Reopen a completed task for revisions.
+
+    Increments current_attempt, sets status to 'reopened', clears session/gate state,
+    and posts a status message. Does NOT dispatch or touch git — that's start_reopened_task's job.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "completed":
+        raise ValueError(f"Task '{task_id}' must be 'completed' to reopen (current: {task.get('status')})")
+
+    new_attempt = (task.get("current_attempt") or 1) + 1
+    await db.update_task(
+        task_id,
+        status="reopened",
+        current_attempt=new_attempt,
+        session_id=None,
+        gate_status=None,
+        gate_passed_at=None,
+    )
+
+    # Post status message — auto-stamped to new_attempt since current_attempt is now updated
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title="Task reopened — awaiting feedback",
+        content="Task reopened for revisions. Post feedback below, then click Start.",
+    )
+
+    return await db.get_task(task_id)
+
+
+async def start_reopened_task(task_id: str) -> dict:
+    """Start a reopened task — collect feedback, pull latest, and dispatch.
+
+    Only callable on 'reopened' tasks. Collects user messages posted since the
+    reopen status message, posts 'Attempt N starting...', does git pull --ff-only,
+    invalidates chain dependents, then dispatches CC with the feedback as review_feedback.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "reopened":
+        raise ValueError(f"Task '{task_id}' must be 'reopened' to start (current: {task.get('status')})")
+
+    current_attempt = task.get("current_attempt") or 1
+
+    # Find feedback messages: everything posted by non-switchboard authors after the
+    # reopen status message (first message stamped to current_attempt)
+    thread = await db.read_task_messages(task_id)
+    messages = thread.get("messages", [])
+
+    # Find the index of the first message with the new attempt_number (the reopen status msg)
+    reopen_msg_idx = None
+    for i, msg in enumerate(messages):
+        if (msg.get("attempt_number") or 1) == current_attempt:
+            reopen_msg_idx = i
+            break
+
+    review_feedback = None
+    if reopen_msg_idx is not None:
+        feedback = [
+            m for m in messages[reopen_msg_idx + 1:]
+            if m.get("author") not in ("switchboard", "dispatcher", "cc-worker")
+        ]
+        if feedback:
+            review_feedback = feedback
+
+    # Post "Attempt N starting..." so the group appears in Foreman before CC posts anything
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {current_attempt} starting",
+        content=f"Attempt {current_attempt} starting — revision session launched.",
+    )
+
+    # Git pull --ff-only if worktree exists
+    worktree = task.get("worktree_path")
+    branch = task.get("branch")
+    if worktree and os.path.exists(worktree) and branch:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", worktree, "pull", "--ff-only", "origin", branch,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            if proc.returncode != 0:
+                log.warning(f"git pull --ff-only failed for {task_id}: {stderr.decode()}")
+        except asyncio.TimeoutError:
+            log.warning(f"git pull --ff-only timed out for {task_id}")
+        except Exception as e:
+            log.warning(f"git pull --ff-only error for {task_id}: {e}")
+
+    # Invalidate downstream chain (deferred from reopen to here)
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
+
+    return await dispatch_task(
+        project_id=task["project_id"],
+        task_id=task_id,
+        goal=task["goal"],
+        phase="revisions",
         review_feedback=review_feedback,
     )
 
