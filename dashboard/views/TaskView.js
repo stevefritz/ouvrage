@@ -796,7 +796,10 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
     };
 
     const filteredEntries = entries
-        ? entries.filter(e => activeFilters.has(classifyEntry(e)))
+        ? entries.filter(e => {
+            const cls = classifyEntry(e);
+            return !FILTER_TYPES.includes(cls) || activeFilters.has(cls);
+        })
         : null;
 
     return html`
