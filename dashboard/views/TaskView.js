@@ -349,7 +349,7 @@ function ActionToolbar({ task, onAction }) {
     if (task.status === 'working') {
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
-    if (task.status === 'working') {
+    if (['turns-exhausted', 'needs-review', 'rate-limited'].includes(task.status)) {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
     }
     if (['failed', 'needs-review', 'completed'].includes(task.status)) {
@@ -358,7 +358,7 @@ function ActionToolbar({ task, onAction }) {
     if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
         actions.push(btn('skip-gate', 'Skip Gate', 'rgba(139, 92, 246, 0.12)', '#8b5cf6'));
     }
-    if (task.gate_status === 'advance') {
+    if (task.status === 'completed' && task.gate_status === 'passed') {
         actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
     }
     if (['completed', 'failed'].includes(task.status)) {
@@ -736,6 +736,7 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, 
 
     const outcomeStyle = {
         'in-progress':       { color: colors.yellow, label: 'in progress' },
+        'retried':           { color: colors.textTertiary, label: 'retried' },
         'success':           { color: colors.green,  label: 'completed' },
         'test-failure':      { color: colors.red,    label: 'tests failed' },
         'review-rejection':  { color: colors.red,    label: 'review rejected' },
@@ -743,9 +744,11 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, 
         'cancelled':         { color: colors.textTertiary, label: 'cancelled' },
     };
 
-    const os = !isLatest
-        ? { color: colors.textTertiary, label: 'retried' }
-        : (outcomeStyle[outcome] || outcomeStyle['in-progress']);
+    // For non-latest attempts: show actual outcome if recorded (failed/success/etc.),
+    // fall back to 'retried' when outcome is missing or still shows in-progress
+    // (meaning the attempt was cut short before outcome could be recorded).
+    const effectiveOutcome = (!isLatest && outcome === 'in-progress') ? 'retried' : outcome;
+    const os = outcomeStyle[effectiveOutcome] || outcomeStyle['in-progress'];
 
     const toggleMsg = useCallback((msgId) => {
         setExpandedMsgs(prev => {
