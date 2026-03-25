@@ -396,19 +396,20 @@ TASK_TOOLS = [
     ),
     Tool(
         name="get_task_status",
-        description="Comprehensive task status — checklist progress, PID liveness, recent messages, artifacts, token usage.",
+        description="Task status. Default returns a slim summary (status, phase, gate, cost, last message excerpt). Pass include_detail=true for the full response including test output, resolved config, and all recent messages.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task to check"},
-                "include_log_tail": {"type": "boolean", "description": "Include last 30 lines of CC stdout", "default": False},
+                "include_detail": {"type": "boolean", "description": "Return full detail: all messages, test output, resolved config. Default false returns slim summary.", "default": False},
+                "include_log_tail": {"type": "boolean", "description": "Include last 30 lines of CC stdout (only meaningful with include_detail=true)", "default": False},
             },
             "required": ["task_id"],
         },
     ),
     Tool(
         name="list_tasks",
-        description="List tasks, optionally filtered by project, status, tag, and/or component.",
+        description="List tasks, optionally filtered by project, status, tag, and/or component. By default excludes cancelled tasks and stale error/conflict tasks (active_only=true).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -416,6 +417,7 @@ TASK_TOOLS = [
                 "status": {"type": "string", "description": "Filter by status: ready, working, needs-review, completed, failed, cancelled"},
                 "tag": {"type": "string", "description": "Filter by tag"},
                 "component_id": {"type": "string", "description": "Filter to one component"},
+                "active_only": {"type": "boolean", "description": "Exclude cancelled tasks and stale error/conflict tasks that exhausted retries. Default true.", "default": True},
             },
         },
     ),
@@ -1285,11 +1287,7 @@ async def _handle_close_task(arguments):
 
 async def _handle_get_task_status(arguments):
     result = await db.get_task_status(arguments["task_id"])
-    # Add resolved config
-    try:
-        result["resolved_config"] = await db.resolve_config(arguments["task_id"])
-    except Exception:
-        pass
+
     # Liveness detection based on status + last_activity
     result["alive"] = result.get("status") == "working"
     stale_seconds = 0
@@ -1303,20 +1301,48 @@ async def _handle_get_task_status(arguments):
         result["stale"] = False
     result["stale_seconds"] = stale_seconds
 
-    # Fallback PID check for legacy/CLI tasks
-    if result.get("pid"):
-        result["pid_alive"] = tasks._is_pid_alive(result["pid"])
+    include_detail = arguments.get("include_detail", False)
 
-    # State definition for dashboard rendering
-    project = await db.get_project(result.get("project_id", ""))
-    result["state_definition"] = db.get_state_definition(result.get("status", ""), project)
+    if include_detail:
+        # Full response — add resolved config, PID check, state definition, optional log tail
+        try:
+            result["resolved_config"] = await db.resolve_config(arguments["task_id"])
+        except Exception:
+            pass
+        if result.get("pid"):
+            result["pid_alive"] = tasks._is_pid_alive(result["pid"])
+        project = await db.get_project(result.get("project_id", ""))
+        result["state_definition"] = db.get_state_definition(result.get("status", ""), project)
+        if arguments.get("include_log_tail") and result.get("worktree_path"):
+            log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
+            result["log_tail"] = tasks._tail_file(log_path, 30)
+        return result
 
-    # Optional log tail
-    if arguments.get("include_log_tail") and result.get("worktree_path"):
-        log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
-        result["log_tail"] = tasks._tail_file(log_path, 30)
+    # Slim summary — only the fields a caller needs for "is this done yet?"
+    recent = result.get("recent_messages") or []
+    last_msg = recent[-1] if recent else None
+    excerpt = None
+    last_message_at = None
+    if last_msg:
+        content = last_msg.get("content") or ""
+        excerpt = content[:120].replace("\n", " ").strip()
+        last_message_at = last_msg.get("created_at")
 
-    return result
+    return {
+        "task_id": result["id"],
+        "status": result.get("status"),
+        "phase": result.get("phase"),
+        "gate_status": result.get("gate_status"),
+        "alive": result["alive"],
+        "stale": result["stale"],
+        "idle_minutes": result.get("idle_minutes"),
+        "checklist_done": result.get("checklist_done", 0),
+        "checklist_total": result.get("checklist_total", 0),
+        "total_cost_usd": result.get("total_cost_usd"),
+        "pr_status": result.get("pr_status"),
+        "last_message_excerpt": excerpt,
+        "last_message_at": last_message_at,
+    }
 
 
 async def _handle_list_tasks(arguments):
@@ -1325,6 +1351,7 @@ async def _handle_list_tasks(arguments):
         status=arguments.get("status"),
         tag=arguments.get("tag"),
         component_id=arguments.get("component_id"),
+        active_only=arguments.get("active_only", True),  # MCP default: active tasks only
     )
     # Cache project lookups for state definitions
     project_cache: dict[str, dict | None] = {}

@@ -483,6 +483,17 @@ async def update_notification_settings(**kwargs) -> dict:
 # Shared helpers — deduplicated read logic
 # ---------------------------------------------------------------------------
 
+def _strip_embedding(msg: dict) -> dict:
+    """Remove the embedding field from a message dict before returning to callers.
+
+    Embeddings are internal-only (semantic search). They're never useful to
+    external callers and can be massive binary blobs. Strip defensively so that
+    adding an embedding column later never leaks into API responses.
+    """
+    msg.pop("embedding", None)
+    return msg
+
+
 async def _read_messages(
     filter_column: str, filter_value: str,
     last_n: int | None = None, since: str | None = None,
@@ -496,7 +507,7 @@ async def _read_messages(
             f"SELECT * FROM messages WHERE {filter_column} = ? AND pinned = TRUE",
             (filter_value,),
         )
-        pinned = [dict(r) for r in pinned_rows]
+        pinned = [_strip_embedding(dict(r)) for r in pinned_rows]
         pinned_ids = {m["id"] for m in pinned}
 
         # Build query for non-pinned messages
@@ -524,7 +535,7 @@ async def _read_messages(
             params.append(last_n)
 
         rows = await db.execute_fetchall(query, params)
-        messages = [dict(r) for r in rows if r["id"] not in pinned_ids]
+        messages = [_strip_embedding(dict(r)) for r in rows if r["id"] not in pinned_ids]
 
         # Mark pinned messages
         for m in pinned:
@@ -634,7 +645,7 @@ async def get_pinned(conversation_id: str) -> dict | None:
             "SELECT * FROM messages WHERE conversation_id = ? AND pinned = TRUE LIMIT 1",
             (conversation_id,),
         )
-        return dict(rows[0]) if rows else None
+        return _strip_embedding(dict(rows[0])) if rows else None
 
 
 async def pin_message(message_id: int) -> dict:
@@ -960,7 +971,7 @@ async def move_task(task_id: str, component_id: str) -> dict:
     return await update_task(task_id, component_id=component_id)
 
 
-async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None, component_id: str | None = None) -> list[dict]:
+async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None, component_id: str | None = None, active_only: bool = False) -> list[dict]:
     async with get_db() as db:
         conditions = []
         params: list = []
@@ -977,6 +988,12 @@ async def list_tasks(project_id: str | None = None, status: str | None = None, t
         if tag:
             conditions.append("EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag = ?)")
             params.append(tag.strip().lower())
+        if active_only:
+            # Exclude cancelled tasks and stale error/conflict tasks that have exhausted retries
+            conditions.append("t.status != 'cancelled'")
+            conditions.append(
+                "NOT (t.pr_status IN ('error', 'conflict') AND t.gate_retries >= t.max_gate_retries)"
+            )
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -1181,7 +1198,7 @@ async def get_task_pinned(task_id: str) -> dict | None:
             "SELECT * FROM messages WHERE task_id = ? AND pinned = TRUE LIMIT 1",
             (task_id,),
         )
-        return dict(rows[0]) if rows else None
+        return _strip_embedding(dict(rows[0])) if rows else None
 
 
 # ---------------------------------------------------------------------------
@@ -1443,7 +1460,7 @@ async def get_task_status(task_id: str) -> dict:
                ORDER BY created_at DESC LIMIT 5""",
             (task_id,),
         )
-        task["recent_messages"] = [dict(r) for r in reversed(msg_rows)]
+        task["recent_messages"] = [_strip_embedding(dict(r)) for r in reversed(msg_rows)]
 
         # Artifacts
         art_rows = await db.execute_fetchall(
