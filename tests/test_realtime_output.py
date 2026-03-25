@@ -427,6 +427,23 @@ class TestAttemptsEndpoint:
         assert len(attempts) == 1
         assert attempts[0]["outcome"] == "success"
 
+    async def test_success_outcome_on_task_completed_status(self, db, sample_project):
+        """Dispatcher 'Task completed' status message marks attempt as success."""
+        task = await db.create_task(
+            id="test-project/attempts-completed",
+            project_id="test-project",
+            goal="Task completed without gate",
+        )
+        await db.post_task_message(task_id=task["id"], author="cc-worker", type="result", content="Here are the results")
+        await db.post_task_message(
+            task_id=task["id"], author="dispatcher", type="status",
+            title="Task completed", content="CC session completed successfully.",
+        )
+
+        attempts = await db.get_task_attempts(task["id"])
+        assert len(attempts) == 1
+        assert attempts[0]["outcome"] == "success"
+
     async def test_invalid_task_raises_error(self, db, sample_project):
         """get_task_attempts raises ValueError for unknown task."""
         with pytest.raises(ValueError, match="not found"):

@@ -1582,6 +1582,8 @@ def _determine_attempt_outcome(messages: list[dict], is_last: bool, has_next: bo
                 return "turns-exhausted"
             if msg_type == "status" and ("ERROR" in title or "FAILED" in title or "DISPATCH ERROR" in title):
                 return "error"
+            if msg_type == "status" and "COMPLETED" in title:
+                return "success"
 
         if msg_type == "review":
             if "APPROVED" in title:
