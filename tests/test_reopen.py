@@ -560,6 +560,43 @@ class TestCancelReopen:
         attempt1_msgs = [m for m in msgs if (m.get("attempt_number") or 1) == 1]
         assert len(attempt1_msgs) > 0
 
+    async def test_cancel_reopen_restores_gate_status(self, db, sample_project):
+        """cancel_reopen restores the gate_status and gate_passed_at that were saved at reopen."""
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-gate",
+            project_id="test-project",
+            goal="Gate status restore",
+        )
+        await db.update_task(
+            task["id"],
+            status="completed",
+            current_attempt=1,
+            gate_status="passed",
+            gate_passed_at="2026-03-25T01:00:00Z",
+        )
+
+        await tasks.reopen_task(task["id"])
+
+        # After reopen, gate_status should be cleared
+        reopened = await db.get_task(task["id"])
+        assert reopened["gate_status"] is None
+        assert reopened["gate_passed_at"] is None
+        # But saved values should be stashed
+        assert reopened["reopen_saved_gate_status"] == "passed"
+        assert reopened["reopen_saved_gate_passed_at"] == "2026-03-25T01:00:00Z"
+
+        await tasks.cancel_reopen(task["id"])
+
+        reverted = await db.get_task(task["id"])
+        assert reverted["status"] == "completed"
+        assert reverted["gate_status"] == "passed"
+        assert reverted["gate_passed_at"] == "2026-03-25T01:00:00Z"
+        # Stash should be cleared
+        assert reverted["reopen_saved_gate_status"] is None
+        assert reverted["reopen_saved_gate_passed_at"] is None
+
 
 # ===========================================================================
 # _sync_branch_with_base()
@@ -705,3 +742,25 @@ class TestStartReopenedTaskOverrides:
         call_kwargs = mock_dispatch.await_args.kwargs
         assert "auto_test" not in call_kwargs
         assert "auto_review" not in call_kwargs
+
+    async def test_start_fires_notification_with_correct_args(self, db, sample_project):
+        """start_reopened_task fires task_attempt_starting with correct task_id, attempt, and goal."""
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/start-notify-args",
+            project_id="test-project",
+            goal="Notification args test goal",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await tasks.reopen_task(task["id"])
+
+        mock_notify = AsyncMock()
+        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        with patch("tasks.dispatch_task", mock_dispatch):
+            with patch("tasks._invalidate_chain", AsyncMock()):
+                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+                    with patch("tasks.notify.task_attempt_starting", mock_notify):
+                        await tasks.start_reopened_task(task["id"])
+
+        mock_notify.assert_awaited_once_with(task["id"], 2, "Notification args test goal")

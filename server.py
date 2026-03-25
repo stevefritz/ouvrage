@@ -369,11 +369,13 @@ TASK_TOOLS = [
     ),
     Tool(
         name="start_reopened_task",
-        description="Start a reopened task. Collects feedback messages posted since reopen, does git pull --ff-only, invalidates chain dependents, and dispatches CC with feedback as revision instructions. Only callable on 'reopened' tasks.",
+        description="Start a reopened task. Collects feedback messages posted since reopen, rebases onto base branch, invalidates chain dependents, and dispatches CC with feedback as revision instructions. Only callable on 'reopened' tasks.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Reopened task to start"},
+                "auto_test": {"type": "boolean", "description": "Override test gate for this attempt only"},
+                "auto_review": {"type": "boolean", "description": "Override review gate for this attempt only"},
             },
             "required": ["task_id"],
         },
@@ -1300,7 +1302,12 @@ async def _handle_reopen_task(arguments):
 
 
 async def _handle_start_reopened_task(arguments):
-    return await tasks.start_reopened_task(arguments["task_id"])
+    kwargs = {"task_id": arguments["task_id"]}
+    if "auto_test" in arguments:
+        kwargs["auto_test"] = arguments["auto_test"]
+    if "auto_review" in arguments:
+        kwargs["auto_review"] = arguments["auto_review"]
+    return await tasks.start_reopened_task(**kwargs)
 
 
 async def _handle_cancel_task(arguments):

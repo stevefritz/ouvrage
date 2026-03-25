@@ -2171,6 +2171,25 @@ async def _invalidate_chain(task_id: str) -> None:
         await _invalidate_chain(dep["id"])
 
 
+async def _git_fetch_and_rebase(worktree: str, target_branch: str) -> bool:
+    """Fetch origin and rebase worktree onto origin/{target_branch}.
+
+    Returns True on success. Returns False if rebase failed (rebase is aborted
+    before returning).
+    """
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    _, _stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "rebase", f"origin/{target_branch}",
+    )
+
+    if rc != 0:
+        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+        return False
+
+    return True
+
+
 async def _sync_branch_with_base(task: dict) -> bool:
     """Fetch origin and rebase task worktree onto the task's base branch.
 
@@ -2183,20 +2202,10 @@ async def _sync_branch_with_base(task: dict) -> bool:
         return True  # Nothing to sync
 
     base_branch = await resolve_branch_target(task)
+    success = await _git_fetch_and_rebase(worktree, base_branch)
 
-    # Fetch latest
-    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
-
-    # Attempt rebase
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "rebase", f"origin/{base_branch}",
-    )
-
-    if rc != 0:
-        # Rebase failed — abort and surface to user
-        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+    if not success:
         log.warning(f"Rebase failed for {task['id']} onto origin/{base_branch}")
-
         await db.update_task(task["id"], gate_status="needs-review")
         await db.post_task_message(
             task_id=task["id"], author="switchboard", type="status",
@@ -2224,17 +2233,9 @@ async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
         log.warning(f"Cannot rebase {dep['id']}: missing worktree or branch info")
         return
 
-    # Fetch latest
-    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+    success = await _git_fetch_and_rebase(worktree, parent_branch)
 
-    # Attempt rebase
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "rebase", f"origin/{parent_branch}",
-    )
-
-    if rc != 0:
-        # Rebase failed — abort and let CC handle it
-        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+    if not success:
         log.warning(f"Rebase failed for {dep['id']}, CC will handle manually")
         rebase_context = (
             f"WARNING: Automatic rebase onto the updated parent branch `{parent_branch}` failed "
@@ -3031,6 +3032,8 @@ async def reopen_task(task_id: str) -> dict:
         session_id=None,
         gate_status=None,
         gate_passed_at=None,
+        reopen_saved_gate_status=task.get("gate_status"),
+        reopen_saved_gate_passed_at=task.get("gate_passed_at"),
     )
 
     # Post status message — auto-stamped to new_attempt since current_attempt is now updated
@@ -3071,6 +3074,10 @@ async def cancel_reopen(task_id: str) -> dict:
         task_id,
         status="completed",
         current_attempt=prev_attempt,
+        gate_status=task.get("reopen_saved_gate_status"),
+        gate_passed_at=task.get("reopen_saved_gate_passed_at"),
+        reopen_saved_gate_status=None,
+        reopen_saved_gate_passed_at=None,
     )
 
     return await db.get_task(task_id)

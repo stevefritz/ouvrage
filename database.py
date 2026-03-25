@@ -343,6 +343,11 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN retry_after TEXT")
         if "held" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN held BOOLEAN DEFAULT 0")
+        # v5-reopen: save/restore gate state across reopen/cancel-reopen
+        if "reopen_saved_gate_status" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_status TEXT")
+        if "reopen_saved_gate_passed_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_passed_at TEXT")
 
         # Migrate messages table: add attempt_number and embedding if missing
         msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
@@ -890,6 +895,8 @@ TASK_MUTABLE_FIELDS = {
     "retry_after",
     # hold/approval
     "held",
+    # reopen gate state save/restore
+    "reopen_saved_gate_status", "reopen_saved_gate_passed_at",
 }
 
 
