@@ -85,6 +85,13 @@ export const api = {
     getChain: (id) => request(`/tasks/${eid(id)}/chain`),
     getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
 
+    // Project task creation
+    checkTaskSlug: (projectId, slug) => request(`/projects/${eid(projectId)}/tasks/check?slug=${encodeURIComponent(slug)}`),
+    createProjectTask: (projectId, data) => request(`/projects/${eid(projectId)}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
+
     // Components
     getComponents: (projectId) => request(`/components?project_id=${encodeURIComponent(projectId)}`),
     getComponent: (id) => request(`/components/${eid(id)}`),

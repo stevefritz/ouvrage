@@ -87,11 +87,17 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/projects" and method == "GET":
             return await _handle_list_projects(send)
 
-        # /dashboard/api/projects/{id}[/pause|resume|stop]
+        # /dashboard/api/projects/{id}[/pause|resume|stop|tasks/check|tasks]
         if path.startswith("/dashboard/api/projects/"):
             rest = path[len("/dashboard/api/projects/"):]
             if method == "GET" and "/" not in rest:
                 return await _handle_get_project(send, rest)
+            if method == "GET" and rest.endswith("/tasks/check"):
+                pid = rest[:-len("/tasks/check")]
+                return await _handle_check_task_slug(scope, send, pid)
+            if method == "POST" and rest.endswith("/tasks"):
+                pid = rest[:-len("/tasks")]
+                return await _handle_create_task(receive, send, pid)
             if method == "POST" and rest.endswith("/pause"):
                 pid = rest[:-len("/pause")]
                 result = await tasks.pause_project(pid)
@@ -868,3 +874,73 @@ async def _handle_update_notification_settings(receive, send):
     updates = {k: bool(v) for k, v in data.items() if k in allowed}
     settings = await db.update_notification_settings(**updates)
     await _json_response(send, settings)
+
+
+# ── Project task creation ──────────────────────────────────────────────────
+
+async def _handle_check_task_slug(scope, send, project_id):
+    """GET /dashboard/api/projects/{id}/tasks/check?slug=... — check slug availability."""
+    import re
+    params = _parse_qs(scope)
+    slug = params.get("slug", "").strip()
+    if not slug:
+        return await _json_response(send, {"available": False, "reason": "slug is required"})
+
+    # Validate slug format
+    if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
+        return await _json_response(send, {"available": False, "reason": "Invalid slug format"})
+
+    # Check DB: does a task with id {project_id}/{slug} already exist?
+    task_id = f"{project_id}/{slug}"
+    existing = await db.get_task(task_id)
+    if existing:
+        return await _json_response(send, {"available": False, "reason": "Task ID already exists"})
+
+    # Check git remote: does origin/{slug} branch exist?
+    project = await db.get_project(project_id)
+    if project and project.get("working_dir"):
+        working_dir = project["working_dir"]
+        stdout, _, rc = await tasks._run_as_worker(
+            "git", "-C", working_dir, "ls-remote", "--heads", "origin", slug,
+        )
+        if rc == 0 and stdout.strip():
+            return await _json_response(send, {"available": False, "reason": "Branch already exists on remote"})
+
+    return await _json_response(send, {"available": True})
+
+
+async def _handle_create_task(receive, send, project_id):
+    """POST /dashboard/api/projects/{id}/tasks — create and dispatch a new task."""
+    import re
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    data = json.loads(body)
+
+    slug = data.get("slug", "").strip()
+    goal = data.get("goal", "").strip()
+    spec = data.get("spec", "").strip() or None
+    model = data.get("model", "sonnet")
+    auto_test = bool(data.get("auto_test", True))
+    auto_review = bool(data.get("auto_review", True))
+    component_id = data.get("component_id") or None
+
+    if not goal:
+        return await _error(send, "goal is required")
+    if not slug:
+        return await _error(send, "slug is required")
+    if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
+        return await _error(send, "Invalid slug format: use lowercase letters, numbers, and hyphens only")
+
+    task_id = f"{project_id}/{slug}"
+    result = await tasks.dispatch_task(
+        project_id=project_id,
+        task_id=task_id,
+        goal=goal,
+        spec=spec,
+        model=model,
+        auto_test=auto_test,
+        auto_review=auto_review,
+        component_id=component_id,
+    )
+    await _json_response(send, result, 201)

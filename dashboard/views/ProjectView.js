@@ -6,7 +6,7 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout, statusColors, animation } from '../tokens.js';
-import { routes } from '../router.js';
+import { routes, navigate } from '../router.js';
 import { api } from '../api.js';
 import { StatusDot } from '../components/StatusDot.js';
 import { ChainBadge } from '../components/ChainBadge.js';
@@ -1202,6 +1202,343 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
 }
 
 // ---------------------------------------------------------------------------
+// New Task Panel — slide-out form to create and dispatch a task
+// ---------------------------------------------------------------------------
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+
+function NewTaskPanel({ projectId, components, onClose, onCreated }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+    const [goal, setGoal] = useState('');
+    const [slug, setSlug] = useState('');
+    const [spec, setSpec] = useState('');
+    const [model, setModel] = useState('sonnet');
+    const [componentId, setComponentId] = useState('');
+    const [autoTest, setAutoTest] = useState(true);
+    const [autoReview, setAutoReview] = useState(true);
+
+    // Slug validation state: 'empty' | 'invalid' | 'checking' | 'available' | 'taken'
+    const [slugState, setSlugState] = useState('empty');
+    const [slugReason, setSlugReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState('');
+
+    const goalInputRef = useRef(null);
+    const checkAbortRef = useRef(null);
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 640);
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
+
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    // Autofocus goal on open
+    useEffect(() => {
+        if (goalInputRef.current) goalInputRef.current.focus();
+    }, []);
+
+    const handleSlugChange = (val) => {
+        setSlug(val);
+        setSlugReason('');
+        if (!val) {
+            setSlugState('empty');
+        } else if (!SLUG_RE.test(val)) {
+            setSlugState('invalid');
+        } else {
+            setSlugState('valid'); // valid format but not checked yet
+        }
+    };
+
+    const handleSlugBlur = async () => {
+        if (slugState !== 'valid' && slugState !== 'available' && slugState !== 'taken') return;
+        if (!SLUG_RE.test(slug)) return;
+
+        // Cancel previous check
+        if (checkAbortRef.current) checkAbortRef.current = false;
+        const token = {};
+        checkAbortRef.current = token;
+
+        setSlugState('checking');
+        try {
+            const res = await api.checkTaskSlug(projectId, slug);
+            if (token !== checkAbortRef.current) return; // stale
+            if (res.available) {
+                setSlugState('available');
+            } else {
+                setSlugState('taken');
+                setSlugReason(res.reason || 'Already in use');
+            }
+        } catch {
+            if (token === checkAbortRef.current) setSlugState('valid');
+        }
+    };
+
+    const canDispatch = goal.trim() && slugState === 'available' && !submitting;
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!canDispatch) return;
+        setSubmitting(true);
+        setSubmitError('');
+        try {
+            const task = await api.createProjectTask(projectId, {
+                slug,
+                goal: goal.trim(),
+                spec: spec.trim() || undefined,
+                model,
+                auto_test: autoTest,
+                auto_review: autoReview,
+                component_id: componentId || undefined,
+            });
+            onCreated(task);
+        } catch (err) {
+            setSubmitError(err.message || 'Failed to dispatch task');
+            setSubmitting(false);
+        }
+    };
+
+    const panelStyle = isMobile ? {
+        position: 'fixed', left: 0, right: 0, bottom: 0,
+        height: '85vh', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
+        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)', zIndex: 500,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
+    } : {
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: 'clamp(380px, 35vw, 540px)', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.4)', zIndex: 500,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
+    };
+
+    const headerStyle = {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 20px', borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
+    };
+
+    const bodyStyle = {
+        flex: 1, overflowY: 'auto', padding: '20px',
+        display: 'flex', flexDirection: 'column', gap: '18px',
+    };
+
+    const labelStyle = {
+        fontSize: typography.size.xs, fontWeight: typography.weight.semibold,
+        color: colors.textTertiary, letterSpacing: '0.06em', textTransform: 'uppercase',
+        marginBottom: '6px', display: 'block',
+    };
+
+    const inputStyle = (hasError) => ({
+        width: '100%', boxSizing: 'border-box',
+        background: colors.bg, border: `1px solid ${hasError ? colors.red : colors.border}`,
+        borderRadius: layout.borderRadius.md, padding: '8px 10px',
+        fontSize: typography.size.sm, color: colors.text,
+        fontFamily: typography.fontBody, outline: 'none',
+    });
+
+    const hintStyle = (color) => ({
+        fontSize: typography.size.xs, color: color || colors.textTertiary,
+        marginTop: '5px',
+    });
+
+    const toggleBtnStyle = (active) => ({
+        flex: 1, padding: '6px 0', textAlign: 'center',
+        fontSize: typography.size.sm, fontWeight: typography.weight.medium,
+        cursor: 'pointer', border: 'none', borderRadius: layout.borderRadius.sm,
+        background: active ? colors.accentBg : 'transparent',
+        color: active ? colors.accent : colors.textTertiary,
+        transition: `background ${animation.durationFast}, color ${animation.durationFast}`,
+    });
+
+    const checkboxRowStyle = {
+        display: 'flex', alignItems: 'center', gap: '8px',
+        fontSize: typography.size.sm, color: colors.textSecondary, cursor: 'pointer',
+    };
+
+    const footerStyle = {
+        padding: '14px 20px', borderTop: `1px solid ${colors.border}`,
+        display: 'flex', gap: '10px', flexShrink: 0,
+    };
+
+    const dispatchBtnStyle = {
+        flex: 1, padding: '9px 0', borderRadius: layout.borderRadius.md,
+        border: 'none', cursor: canDispatch ? 'pointer' : 'not-allowed',
+        background: canDispatch ? colors.accent : colors.surfaceActive,
+        color: canDispatch ? '#fff' : colors.textTertiary,
+        fontSize: typography.size.sm, fontWeight: typography.weight.semibold,
+        transition: `background ${animation.durationFast}`,
+    };
+
+    const cancelBtnStyle = {
+        padding: '9px 16px', borderRadius: layout.borderRadius.md,
+        border: `1px solid ${colors.border}`, cursor: 'pointer',
+        background: 'transparent', color: colors.textSecondary,
+        fontSize: typography.size.sm,
+    };
+
+    const closeBtnStyle = {
+        background: 'none', border: 'none', color: colors.textTertiary,
+        cursor: 'pointer', fontSize: '20px', lineHeight: 1, padding: '2px 6px',
+        borderRadius: layout.borderRadius.sm,
+    };
+
+    const backdropStyle = {
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 499,
+    };
+
+    // Slug status indicator
+    const slugIndicator = () => {
+        if (slugState === 'checking') return html`<span style=${{ ...hintStyle(colors.textTertiary) }}>Checking…</span>`;
+        if (slugState === 'available') return html`<span style=${{ ...hintStyle(colors.green) }}>✓ Available</span>`;
+        if (slugState === 'taken') return html`<span style=${{ ...hintStyle(colors.red) }}>✗ ${slugReason}</span>`;
+        if (slugState === 'invalid') return html`<span style=${{ ...hintStyle(colors.red) }}>Lowercase letters, numbers, and hyphens only</span>`;
+        return html`<span style=${{ ...hintStyle() }}>Becomes your git branch name</span>`;
+    };
+
+    return html`
+        <div>
+            <div style=${backdropStyle} onClick=${onClose} />
+            <div style=${panelStyle}>
+                <div style=${headerStyle}>
+                    <span style=${{
+                        fontSize: typography.size.md, fontWeight: typography.weight.semibold,
+                        color: colors.text,
+                    }}>New Task</span>
+                    <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
+                </div>
+
+                <form style=${bodyStyle} onSubmit=${handleSubmit}>
+                    <!-- Goal -->
+                    <div>
+                        <label style=${labelStyle}>Goal *</label>
+                        <input
+                            ref=${goalInputRef}
+                            type="text"
+                            placeholder="What should CC do?"
+                            value=${goal}
+                            onInput=${e => setGoal(e.target.value)}
+                            style=${inputStyle(false)}
+                        />
+                    </div>
+
+                    <!-- Slug -->
+                    <div>
+                        <label style=${labelStyle}>Branch / Slug *</label>
+                        <input
+                            type="text"
+                            placeholder="my-task-slug"
+                            value=${slug}
+                            onInput=${e => handleSlugChange(e.target.value)}
+                            onBlur=${handleSlugBlur}
+                            style=${inputStyle(slugState === 'invalid' || slugState === 'taken')}
+                        />
+                        ${slugIndicator()}
+                    </div>
+
+                    <!-- Spec -->
+                    <div>
+                        <label style=${labelStyle}>Spec</label>
+                        <textarea
+                            placeholder="Detailed instructions for CC (optional)"
+                            rows="6"
+                            value=${spec}
+                            onInput=${e => setSpec(e.target.value)}
+                            style=${{
+                                ...inputStyle(false),
+                                resize: 'vertical', minHeight: '100px',
+                                fontFamily: typography.fontBody, lineHeight: 1.5,
+                            }}
+                        />
+                    </div>
+
+                    <!-- Model toggle -->
+                    <div>
+                        <label style=${labelStyle}>Model</label>
+                        <div style=${{
+                            display: 'flex', gap: '4px', padding: '4px',
+                            background: colors.bg, border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.md,
+                        }}>
+                            <button type="button" style=${toggleBtnStyle(model === 'sonnet')}
+                                onClick=${() => setModel('sonnet')}>Sonnet</button>
+                            <button type="button" style=${toggleBtnStyle(model === 'opus')}
+                                onClick=${() => setModel('opus')}>Opus</button>
+                        </div>
+                    </div>
+
+                    <!-- Component -->
+                    ${components.length > 0 ? html`
+                        <div>
+                            <label style=${labelStyle}>Component</label>
+                            <div style=${{ position: 'relative' }}>
+                                <select
+                                    value=${componentId}
+                                    onChange=${e => setComponentId(e.target.value)}
+                                    style=${{
+                                        ...inputStyle(false),
+                                        appearance: 'none', WebkitAppearance: 'none',
+                                        paddingRight: '28px', cursor: 'pointer',
+                                    }}
+                                >
+                                    <option value="">No component</option>
+                                    ${components.map(c => html`
+                                        <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
+                                    `)}
+                                </select>
+                                <span style=${{
+                                    position: 'absolute', right: '10px', top: '50%',
+                                    transform: 'translateY(-50%)', fontSize: '10px',
+                                    color: colors.textTertiary, pointerEvents: 'none',
+                                }}>▾</span>
+                            </div>
+                        </div>
+                    ` : null}
+
+                    <!-- Auto Test / Auto Review -->
+                    <div style=${{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <label style=${checkboxRowStyle}>
+                            <input type="checkbox" checked=${autoTest}
+                                onChange=${e => setAutoTest(e.target.checked)} />
+                            Auto Test
+                        </label>
+                        <label style=${checkboxRowStyle}>
+                            <input type="checkbox" checked=${autoReview}
+                                onChange=${e => setAutoReview(e.target.checked)} />
+                            Auto Review
+                        </label>
+                    </div>
+
+                    <!-- Submit error -->
+                    ${submitError ? html`
+                        <div style=${{
+                            padding: '10px 12px', borderRadius: layout.borderRadius.md,
+                            background: colors.redBg, border: `1px solid ${colors.red}44`,
+                            color: colors.red, fontSize: typography.size.sm,
+                        }}>${submitError}</div>
+                    ` : null}
+                </form>
+
+                <div style=${footerStyle}>
+                    <button style=${dispatchBtnStyle} disabled=${!canDispatch}
+                        onClick=${handleSubmit}>
+                        ${submitting ? 'Dispatching…' : 'Dispatch Task'}
+                    </button>
+                    <button style=${cancelBtnStyle} onClick=${onClose}>Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
 // Tasks section — filter bar + grouped list
 // ---------------------------------------------------------------------------
 
@@ -1274,7 +1611,7 @@ function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, 
 }
 
 function TasksSection({ tasks, components, conversations, chainMap, statusFilter, componentFilter,
-    onStatusFilter, onComponentFilter, onTaskSelect }) {
+    onStatusFilter, onComponentFilter, onTaskSelect, onNewTask }) {
 
     // Filter
     let filtered = tasks;
@@ -1303,7 +1640,6 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
         color: colors.textSecondary,
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
-        marginBottom: '8px',
     };
 
     const emptyStyle = {
@@ -1315,7 +1651,21 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
 
     return html`
         <div style=${sectionStyle}>
-            <div style=${sectionHeaderStyle}>Tasks · ${filtered.length}</div>
+            <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <div style=${sectionHeaderStyle}>Tasks · ${filtered.length}</div>
+                <button
+                    onClick=${onNewTask}
+                    style=${{
+                        fontSize: typography.size.xs, fontWeight: typography.weight.medium,
+                        color: colors.textTertiary, background: 'none',
+                        border: `1px solid ${colors.border}`, borderRadius: layout.borderRadius.sm,
+                        padding: '3px 10px', cursor: 'pointer',
+                        transition: `color ${animation.durationFast}, border-color ${animation.durationFast}`,
+                    }}
+                    class="foreman-new-task-btn"
+                    title="Create a new task"
+                >+ New Task</button>
+            </div>
 
             <${FilterBar}
                 statusFilter=${statusFilter}
@@ -1357,8 +1707,15 @@ export function ProjectView({ id }) {
 
     const [statusFilter, setStatusFilter] = useState('');
     const [componentFilter, setComponentFilter] = useState('');
+    const [showNewTask, setShowNewTask] = useState(false);
 
     const chainMap = buildChainMap(tasks);
+
+    const handleTaskCreated = useCallback((task) => {
+        setShowNewTask(false);
+        load();
+        navigate(`/task/${encodeURIComponent(task.id || task.task_id)}`);
+    }, [load]);
 
     const load = useCallback(async () => {
         try {
@@ -1526,6 +1883,7 @@ export function ProjectView({ id }) {
                 onStatusFilter=${setStatusFilter}
                 onComponentFilter=${setComponentFilter}
                 onTaskSelect=${setSelectedTaskId}
+                onNewTask=${() => setShowNewTask(true)}
             />
         </div>
 
@@ -1534,5 +1892,15 @@ export function ProjectView({ id }) {
             taskId=${selectedTaskId}
             onClose=${() => setSelectedTaskId(null)}
         />
+
+        <!-- New Task Panel slide-out -->
+        ${showNewTask ? html`
+            <${NewTaskPanel}
+                projectId=${id}
+                components=${components}
+                onClose=${() => setShowNewTask(false)}
+                onCreated=${handleTaskCreated}
+            />
+        ` : null}
     `;
 }
