@@ -445,3 +445,263 @@ class TestRetryTaskStartingMessage:
             if "starting" in (m.get("title") or "").lower()
         ]
         assert len(starting_msgs) == 1, "Starting message must be posted before dispatch_task is called"
+
+
+# ===========================================================================
+# cancel_reopen()
+# ===========================================================================
+
+class TestCancelReopen:
+    """cancel_reopen() reverses a reopen — back to completed."""
+
+    async def test_cancel_reopen_succeeds_on_reopened_task(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-ok",
+            project_id="test-project",
+            goal="Cancel reopen me",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await tasks.reopen_task(task["id"])
+
+        result = await tasks.cancel_reopen(task["id"])
+        assert result["status"] == "completed"
+
+    async def test_cancel_reopen_fails_on_non_reopened_task(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-fail",
+            project_id="test-project",
+            goal="Not reopened",
+        )
+        await db.update_task(task["id"], status="completed")
+
+        with pytest.raises(ValueError, match="must be 'reopened'"):
+            await tasks.cancel_reopen(task["id"])
+
+    async def test_cancel_reopen_fails_on_missing_task(self, db, sample_project):
+        import tasks
+
+        with pytest.raises(ValueError, match="not found"):
+            await tasks.cancel_reopen("test-project/no-such-task")
+
+    async def test_cancel_reopen_decrements_attempt(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-attempt",
+            project_id="test-project",
+            goal="Decrement attempt",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=2)
+        await tasks.reopen_task(task["id"])
+
+        # After reopen, current_attempt=3
+        reopened = await db.get_task(task["id"])
+        assert reopened["current_attempt"] == 3
+
+        await tasks.cancel_reopen(task["id"])
+
+        reverted = await db.get_task(task["id"])
+        assert reverted["current_attempt"] == 2
+
+    async def test_cancel_reopen_deletes_reopened_messages(self, db, sample_project):
+        """Messages stamped to the reopened attempt should be deleted."""
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-msgs",
+            project_id="test-project",
+            goal="Message cleanup check",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await tasks.reopen_task(task["id"])
+
+        # Post some feedback during the reopened state
+        await db.post_task_message(
+            task_id=task["id"], author="stephen", content="Some feedback."
+        )
+
+        thread_before = await db.read_task_messages(task["id"])
+        msgs_before = thread_before["messages"]
+        attempt2_msgs = [m for m in msgs_before if m.get("attempt_number") == 2]
+        assert len(attempt2_msgs) > 0
+
+        await tasks.cancel_reopen(task["id"])
+
+        thread_after = await db.read_task_messages(task["id"])
+        msgs_after = thread_after["messages"]
+        attempt2_msgs_after = [m for m in msgs_after if m.get("attempt_number") == 2]
+        assert len(attempt2_msgs_after) == 0
+
+    async def test_cancel_reopen_preserves_earlier_attempt_messages(self, db, sample_project):
+        """Messages from attempt 1 should NOT be deleted."""
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/cancel-reopen-preserve",
+            project_id="test-project",
+            goal="Preserve old messages",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+
+        # Post a message before reopen (attempt 1)
+        await db.post_task_message(
+            task_id=task["id"], author="cc-worker", type="result", content="Done!"
+        )
+
+        await tasks.reopen_task(task["id"])
+        await tasks.cancel_reopen(task["id"])
+
+        thread = await db.read_task_messages(task["id"])
+        msgs = thread["messages"]
+        attempt1_msgs = [m for m in msgs if (m.get("attempt_number") or 1) == 1]
+        assert len(attempt1_msgs) > 0
+
+
+# ===========================================================================
+# _sync_branch_with_base()
+# ===========================================================================
+
+class TestSyncBranchWithBase:
+    """_sync_branch_with_base() — rebase helper for start_reopened_task."""
+
+    async def test_returns_true_when_no_worktree(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/sync-no-worktree",
+            project_id="test-project",
+            goal="No worktree",
+        )
+        # No worktree_path set — should succeed immediately
+        result = await tasks._sync_branch_with_base(task)
+        assert result is True
+
+    async def test_returns_true_when_worktree_missing_from_disk(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/sync-missing-dir",
+            project_id="test-project",
+            goal="Missing dir",
+        )
+        await db.update_task(task["id"], worktree_path="/nonexistent/path/that/does/not/exist")
+        task = await db.get_task(task["id"])
+
+        result = await tasks._sync_branch_with_base(task)
+        assert result is True
+
+    async def test_rebase_conflict_sets_gate_status_needs_review(self, db, sample_project):
+        """When rebase fails, gate_status is set to needs-review."""
+        import os
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/sync-conflict",
+            project_id="test-project",
+            goal="Rebase conflict",
+        )
+        # Fake a real worktree path using /tmp (exists on disk)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            await db.update_task(task["id"], worktree_path=tmpdir)
+            task = await db.get_task(task["id"])
+
+            # Mock _run_as_worker to fail rebase
+            async def mock_run(*cmd, **kwargs):
+                # fetch succeeds, rebase fails, abort succeeds
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return b"", b"CONFLICT", 1
+                return b"", b"", 0
+
+            with patch("tasks._run_as_worker", mock_run):
+                with patch("tasks.resolve_branch_target", return_value="main"):
+                    result = await tasks._sync_branch_with_base(task)
+
+        assert result is False
+        updated = await db.get_task(task["id"])
+        assert updated["gate_status"] == "needs-review"
+
+    async def test_rebase_conflict_posts_error_message(self, db, sample_project):
+        """When rebase fails, an error message is posted to the thread."""
+        import tasks
+        import tempfile
+        from unittest.mock import patch
+
+        task = await db.create_task(
+            id="test-project/sync-conflict-msg",
+            project_id="test-project",
+            goal="Rebase conflict message",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            await db.update_task(task["id"], worktree_path=tmpdir)
+            task = await db.get_task(task["id"])
+
+            async def mock_run(*cmd, **kwargs):
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return b"", b"CONFLICT", 1
+                return b"", b"", 0
+
+            with patch("tasks._run_as_worker", mock_run):
+                with patch("tasks.resolve_branch_target", return_value="main"):
+                    await tasks._sync_branch_with_base(task)
+
+        thread = await db.read_task_messages(task["id"])
+        msgs = thread["messages"]
+        conflict_msgs = [m for m in msgs if "conflict" in (m.get("title") or "").lower()]
+        assert len(conflict_msgs) == 1
+
+
+# ===========================================================================
+# start_reopened_task() — auto_test/auto_review overrides
+# ===========================================================================
+
+class TestStartReopenedTaskOverrides:
+    """start_reopened_task passes per-dispatch overrides to dispatch_task."""
+
+    async def test_start_passes_auto_test_override(self, db, sample_project):
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/start-override-test",
+            project_id="test-project",
+            goal="Override auto_test",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await tasks.reopen_task(task["id"])
+
+        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        with patch("tasks.dispatch_task", mock_dispatch):
+            with patch("tasks._invalidate_chain", AsyncMock()):
+                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+                    with patch("tasks.notify.task_attempt_starting", AsyncMock()):
+                        await tasks.start_reopened_task(task["id"], auto_test=False)
+
+        call_kwargs = mock_dispatch.await_args.kwargs
+        assert call_kwargs["auto_test"] is False
+
+    async def test_start_without_overrides_omits_auto_test_key(self, db, sample_project):
+        """When no overrides given, dispatch_task is called without auto_test."""
+        import tasks
+
+        task = await db.create_task(
+            id="test-project/start-no-override",
+            project_id="test-project",
+            goal="No override",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await tasks.reopen_task(task["id"])
+
+        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        with patch("tasks.dispatch_task", mock_dispatch):
+            with patch("tasks._invalidate_chain", AsyncMock()):
+                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+                    with patch("tasks.notify.task_attempt_starting", AsyncMock()):
+                        await tasks.start_reopened_task(task["id"])
+
+        call_kwargs = mock_dispatch.await_args.kwargs
+        assert "auto_test" not in call_kwargs
+        assert "auto_review" not in call_kwargs

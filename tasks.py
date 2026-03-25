@@ -2171,6 +2171,49 @@ async def _invalidate_chain(task_id: str) -> None:
         await _invalidate_chain(dep["id"])
 
 
+async def _sync_branch_with_base(task: dict) -> bool:
+    """Fetch origin and rebase task worktree onto the task's base branch.
+
+    Returns True if rebase succeeded (or no worktree to sync).
+    Returns False if rebase failed — in that case gate_status is set to 'needs-review'
+    and an error message is posted to the task thread.
+    """
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        return True  # Nothing to sync
+
+    base_branch = await resolve_branch_target(task)
+
+    # Fetch latest
+    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
+
+    # Attempt rebase
+    _, stderr, rc = await _run_as_worker(
+        "git", "-C", worktree, "rebase", f"origin/{base_branch}",
+    )
+
+    if rc != 0:
+        # Rebase failed — abort and surface to user
+        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
+        log.warning(f"Rebase failed for {task['id']} onto origin/{base_branch}")
+
+        await db.update_task(task["id"], gate_status="needs-review")
+        await db.post_task_message(
+            task_id=task["id"], author="switchboard", type="status",
+            title="Rebase conflict — needs review",
+            content=(
+                f"Automatic rebase onto `origin/{base_branch}` failed due to conflicts.\n\n"
+                f"Resolve manually in the worktree:\n"
+                f"```\ncd {worktree}\ngit rebase origin/{base_branch}\n"
+                f"# resolve conflicts, then:\ngit rebase --continue\n```"
+            ),
+        )
+        return False
+
+    log.info(f"Rebased {task['id']} onto origin/{base_branch} successfully")
+    return True
+
+
 async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
     """Rebase a stale task's branch onto parent's updated branch, then re-dispatch."""
     worktree = dep.get("worktree_path")
@@ -3000,12 +3043,51 @@ async def reopen_task(task_id: str) -> dict:
     return await db.get_task(task_id)
 
 
-async def start_reopened_task(task_id: str) -> dict:
-    """Start a reopened task — collect feedback, pull latest, and dispatch.
+async def cancel_reopen(task_id: str) -> dict:
+    """Cancel a re-open — return the task to 'completed' status.
+
+    Only callable on 'reopened' tasks. Decrements current_attempt back to the
+    previous value and deletes the messages posted during the reopened state
+    (the status message and any feedback notes).
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+    if task.get("status") != "reopened":
+        raise ValueError(f"Task '{task_id}' must be 'reopened' to cancel re-open (current: {task.get('status')})")
+
+    current_attempt = task.get("current_attempt") or 1
+    prev_attempt = max(1, current_attempt - 1)
+
+    # Delete messages stamped to the current (reopened) attempt
+    async with db.get_db() as conn:
+        await conn.execute(
+            "DELETE FROM messages WHERE task_id = ? AND attempt_number = ?",
+            (task_id, current_attempt),
+        )
+        await conn.commit()
+
+    await db.update_task(
+        task_id,
+        status="completed",
+        current_attempt=prev_attempt,
+    )
+
+    return await db.get_task(task_id)
+
+
+async def start_reopened_task(
+    task_id: str,
+    auto_test: bool | None = None,
+    auto_review: bool | None = None,
+) -> dict:
+    """Start a reopened task — collect feedback, rebase, and dispatch.
 
     Only callable on 'reopened' tasks. Collects user messages posted since the
-    reopen status message, posts 'Attempt N starting...', does git pull --ff-only,
+    reopen status message, posts 'Attempt N starting...', rebases onto base branch,
     invalidates chain dependents, then dispatches CC with the feedback as review_feedback.
+
+    auto_test / auto_review override the task's defaults for this dispatch only.
     """
     task = await db.get_task(task_id)
     if not task:
@@ -3043,35 +3125,36 @@ async def start_reopened_task(task_id: str) -> dict:
         content=f"Attempt {current_attempt} starting — revision session launched.",
     )
 
-    # Git pull --ff-only if worktree exists
-    worktree = task.get("worktree_path")
-    branch = task.get("branch")
-    if worktree and os.path.exists(worktree) and branch:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git", "-C", worktree, "pull", "--ff-only", "origin", branch,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-            if proc.returncode != 0:
-                log.warning(f"git pull --ff-only failed for {task_id}: {stderr.decode()}")
-        except asyncio.TimeoutError:
-            log.warning(f"git pull --ff-only timed out for {task_id}")
-        except Exception as e:
-            log.warning(f"git pull --ff-only error for {task_id}: {e}")
+    # Rebase onto base branch before dispatch
+    rebase_ok = await _sync_branch_with_base(task)
+    if not rebase_ok:
+        # Rebase conflict posted to thread — stop here so user can resolve
+        return await db.get_task(task_id)
 
     # Invalidate downstream chain (deferred from reopen to here)
     dependents = await db.get_dependents(task_id)
     if dependents:
         await _invalidate_chain(task_id)
 
-    return await dispatch_task(
+    # Build dispatch kwargs, applying per-dispatch overrides if provided
+    dispatch_kwargs: dict = dict(
         project_id=task["project_id"],
         task_id=task_id,
         goal=task["goal"],
         phase="revisions",
         review_feedback=review_feedback,
     )
+    if auto_test is not None:
+        dispatch_kwargs["auto_test"] = auto_test
+    if auto_review is not None:
+        dispatch_kwargs["auto_review"] = auto_review
+
+    result = await dispatch_task(**dispatch_kwargs)
+
+    # Notify that a new attempt is starting
+    await notify.task_attempt_starting(task_id, current_attempt, task["goal"])
+
+    return result
 
 
 async def cancel_task(task_id: str) -> dict:

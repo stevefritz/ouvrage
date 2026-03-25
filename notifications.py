@@ -344,6 +344,15 @@ async def task_failed(task_id: str, error: str, turns: int = 0, cost_usd: float 
     await _post(text, thread_ts=thread_ts, blocks=blocks)
 
 
+async def task_attempt_starting(task_id: str, attempt: int, goal: str):
+    """Notify when a reopened task starts a new attempt."""
+    await web_push.dispatch_notification(
+        "attempt_starting", task_id,
+        title=f"Attempt {attempt} starting",
+        body=goal[:200],
+    )
+
+
 async def task_needs_review(task_id: str, reason: str):
     """Notify when a task needs human review (timeout, no result, etc.)."""
     await web_push.dispatch_notification(

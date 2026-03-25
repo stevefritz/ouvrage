@@ -69,7 +69,11 @@ export const api = {
     approveTask: (id) => request(`/tasks/${eid(id)}/approve`, { method: 'POST' }),
     dispatchTask: (id) => request(`/tasks/${eid(id)}/dispatch`, { method: 'POST' }),
     reopenTask: (id) => request(`/tasks/${eid(id)}/reopen`, { method: 'POST' }),
-    startTask: (id) => request(`/tasks/${eid(id)}/start`, { method: 'POST' }),
+    cancelReopen: (id) => request(`/tasks/${eid(id)}/cancel-reopen`, { method: 'POST' }),
+    startTask: (id, overrides = {}) => request(`/tasks/${eid(id)}/start`, {
+        method: 'POST',
+        body: JSON.stringify(overrides),
+    }),
 
     // Component/Project control
     pauseComponent: (id) => request(`/components/${eid(id)}/pause`, { method: 'POST' }),
