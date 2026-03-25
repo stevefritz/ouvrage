@@ -1,5 +1,20 @@
 # Switchboard — Developer Guide for CC Workers
 
+## ⚠️ TWO DASHBOARD SYSTEMS — READ BEFORE TOUCHING FRONTEND
+
+This repo has TWO dashboard systems. Always work in the NEW Foreman system.
+
+**NEW Foreman (always use these):**
+- `dashboard/foreman.html`, `dashboard/foreman-app.js`
+- `dashboard/views/ProjectView.js`, `TaskView.js`, `ConversationView.js`, `LandingView.js`
+- `dashboard/components/` — only components imported by the above views
+
+**OLD Dashboard (never touch):**
+- `dashboard/index.html`, `dashboard/app.js`
+- `dashboard/components/ProjectDetail.js`, `TaskDetail.js`, `TaskPanel.js`
+
+If your task says "dashboard" it means Foreman. If you're unsure, check the imports.
+
 This is the MCP Switchboard task dispatch service. It orchestrates Claude Code workers
 via the Agent SDK, managing worktrees, gates, and task chains.
 

@@ -590,6 +590,14 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
                                                     color: colors.textTertiary,
                                                     whiteSpace: 'nowrap',
                                                 }} title=${task.id}>${displayId}</span>
+                                                ${task.checklist_total > 0 ? html`
+                                                    <span style=${{
+                                                        fontFamily: typography.fontMono,
+                                                        fontSize: typography.size.xs,
+                                                        color: task.checklist_done === task.checklist_total ? colors.green : colors.textTertiary,
+                                                        whiteSpace: 'nowrap',
+                                                    }}>✓ ${task.checklist_done}/${task.checklist_total}</span>
+                                                ` : null}
                                                 ${chain ? html`
                                                     <${ChainBadge}
                                                         position=${chain.position}
