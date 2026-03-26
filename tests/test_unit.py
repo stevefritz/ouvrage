@@ -379,9 +379,9 @@ class TestMaybeCreatePr:
         self.mock_post_msg = AsyncMock()
 
         patches = [
-            patch("tasks._run_as_worker", self.mock_run_as_worker),
-            patch("tasks.db.add_artifact", self.mock_add_artifact),
-            patch("tasks.db.post_task_message", self.mock_post_msg),
+            patch("switchboard.git.operations._run_as_worker", self.mock_run_as_worker),
+            patch("switchboard.git.operations.db.add_artifact", self.mock_add_artifact),
+            patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
         ]
         for p in patches:
             p.start()
@@ -685,9 +685,9 @@ class TestEnsureBranchPushed:
         self.mock_exists = lambda p: True  # worktree always exists in tests
 
         patches = [
-            patch("tasks._run_as_worker", self.mock_run),
-            patch("tasks.db.post_task_message", self.mock_post_msg),
-            patch("tasks.os.path.exists", side_effect=self.mock_exists),
+            patch("switchboard.git.operations._run_as_worker", self.mock_run),
+            patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
+            patch("switchboard.git.operations.os.path.exists", side_effect=self.mock_exists),
         ]
         for p in patches:
             p.start()
@@ -834,7 +834,7 @@ class TestRebaseAndRedispatch:
         self.mock_dispatch = AsyncMock()
 
         patches = [
-            patch("tasks._run_as_worker", self.mock_run),
+            patch("switchboard.git.operations._run_as_worker", self.mock_run),
             patch("tasks.db.update_task", self.mock_update_task),
             patch("tasks.db.post_task_message", self.mock_post_msg),
             patch("tasks.dispatch_task", self.mock_dispatch),
@@ -1105,9 +1105,9 @@ class TestListTaskFiles:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("server.db.get_task", self.mock_get_task),
-            patch("server.db.get_project", self.mock_get_project),
-            patch("server._git_run", self.mock_git_run),
+            patch("switchboard.git.files.db.get_task", self.mock_get_task),
+            patch("switchboard.git.files.db.get_project", self.mock_get_project),
+            patch("switchboard.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1222,9 +1222,9 @@ class TestGetTaskFile:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("server.db.get_task", self.mock_get_task),
-            patch("server.db.get_project", self.mock_get_project),
-            patch("server._git_run", self.mock_git_run),
+            patch("switchboard.git.files.db.get_task", self.mock_get_task),
+            patch("switchboard.git.files.db.get_project", self.mock_get_project),
+            patch("switchboard.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1402,9 +1402,9 @@ class TestFetchCache:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("server.db.get_task", self.mock_get_task),
-            patch("server.db.get_project", self.mock_get_project),
-            patch("server._git_run", self.mock_git_run),
+            patch("switchboard.git.files.db.get_task", self.mock_get_task),
+            patch("switchboard.git.files.db.get_project", self.mock_get_project),
+            patch("switchboard.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1489,7 +1489,7 @@ class TestResolveGitRef:
 
         self.mock_git_run = AsyncMock()
         self.mock_isdir = patch("os.path.isdir").start()
-        patch("server._git_run", self.mock_git_run).start()
+        patch("switchboard.git.files._git_run", self.mock_git_run).start()
         yield
         patch.stopall()
 

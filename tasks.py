@@ -589,42 +589,6 @@ async def _recover_single_task(task: dict):
         )
 
 
-async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
-    """Force-push task branch if there are unpushed commits."""
-    worktree = task.get("worktree_path")
-    branch = task.get("branch")
-    if not worktree or not branch or not os.path.exists(worktree):
-        return
-
-    # Check if remote branch exists
-    stdout, _, rc = await _run_as_worker(
-        "git", "-C", worktree, "ls-remote", "--heads", "origin", branch,
-    )
-    remote_exists = rc == 0 and stdout.strip()
-
-    if remote_exists:
-        # Check for unpushed commits
-        stdout, _, rc = await _run_as_worker(
-            "git", "-C", worktree, "log", f"origin/{branch}..HEAD", "--oneline",
-        )
-        if rc != 0 or not stdout.strip():
-            return  # nothing to push
-    # else: remote doesn't exist yet, push to create it
-
-    _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "push", "--force-with-lease", "origin", branch,
-    )
-    if rc != 0:
-        log.warning(f"Auto-push failed for {task_id}: {stderr.decode()}")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Auto-push failed",
-            content=f"```\n{stderr.decode()[:1000]}\n```",
-        )
-    else:
-        log.info(f"Auto-pushed branch {branch} for {task_id}")
-
-
 def _tail_lines(text: str, max_chars: int) -> str:
     """Truncate text to last ~max_chars, breaking at line boundaries."""
     if len(text) <= max_chars:
@@ -638,242 +602,28 @@ def _tail_lines(text: str, max_chars: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Git Worktree Management
+# Git (imported from switchboard.git)
 # ---------------------------------------------------------------------------
 
 from switchboard.config.settings import WORKER_USER
-
-
-def _get_worker_ids() -> tuple[int, int]:
-    """Get uid/gid for the worker user."""
-    pw = pwd.getpwnam(WORKER_USER)
-    return pw.pw_uid, pw.pw_gid
-
-
-async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
-    """Run a command as the worker user via setuid (requires CAP_SETUID)."""
-    uid, gid = _get_worker_ids()
-    pw = pwd.getpwnam(WORKER_USER)
-
-    def _demote():
-        os.setgid(gid)
-        os.setuid(uid)
-
-    # Ensure HOME is set to the worker user's home dir, not the service user's
-    env = kwargs.pop("env", None) or os.environ.copy()
-    env["HOME"] = pw.pw_dir
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        preexec_fn=_demote,
-        env=env,
-        **kwargs,
-    )
-    stdout, stderr = await proc.communicate()
-    return stdout, stderr, proc.returncode
-
-
-async def _find_branch_holder(branch: str) -> dict | None:
-    """Find a task that holds a worktree on the given branch."""
-    async with db.get_db() as conn:
-        rows = await conn.execute_fetchall(
-            "SELECT id, status, worktree_path FROM tasks WHERE branch = ? AND worktree_path IS NOT NULL",
-            (branch,),
-        )
-        if rows:
-            r = rows[0]
-            return {"task_id": r["id"], "status": r["status"], "worktree_path": r["worktree_path"]}
-    return None
-
-
-async def setup_worktree(project: dict, dir_name: str, branch: str,
-                         depends_on: str | None = None) -> str:
-    """Create git worktree for a task. Returns worktree path.
-
-    Args:
-        project: Project config dict.
-        dir_name: Filesystem-safe directory name (no slashes).
-        branch: Git branch name (may contain slashes like feature/foo).
-        depends_on: Parent task ID for branch chaining (branch from parent's branch).
-    """
-    base = project["working_dir"]
-    worktree_path = os.path.join(base, dir_name)
-
-    if os.path.exists(worktree_path):
-        log.info(f"Worktree already exists: {worktree_path}, pulling latest")
-        # Fetch + pull so resumed tasks pick up upstream changes
-        await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
-        stdout, stderr, rc = await _run_as_worker(
-            "git", "-C", worktree_path, "merge", "--ff-only",
-            f"origin/{branch}",
-        )
-        if rc != 0:
-            # Non-fatal — branch may not exist on remote yet, or diverged
-            log.info(f"Auto-pull skipped (ff-only failed): {stderr.decode().strip()}")
-        return worktree_path
-
-    # Ensure base directory exists (created as worker user so ownership is correct)
-    await _run_as_worker("mkdir", "-p", base)
-
-    # Clone the repo as a bare repo if the base doesn't have .git
-    bare_path = os.path.join(base, ".bare")
-    if not os.path.exists(bare_path):
-        log.info(f"Cloning bare repo: {project['repo']} -> {bare_path}")
-        stdout, stderr, rc = await _run_as_worker(
-            "git", "clone", "--bare", project["repo"], bare_path,
-        )
-        if rc != 0:
-            raise RuntimeError(f"git clone --bare failed: {stderr.decode()}")
-
-    # Fetch latest from remote — all tracking refs updated (origin/main, etc.)
-    _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
-    if fetch_rc != 0:
-        log.warning(f"git fetch origin failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
-
-    # Auto-detect default branch from bare clone HEAD if project config is wrong
-    default_branch = project["default_branch"]
-    stdout, _, _ = await _run_as_worker("git", "-C", bare_path, "symbolic-ref", "HEAD")
-    detected = stdout.decode().strip().removeprefix("refs/heads/")
-    if detected and detected != default_branch:
-        log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
-        default_branch = detected
-
-    # Branch chaining: if this task depends on another, branch from parent's branch.
-    # Use origin/ remote tracking ref (always current after fetch) instead of local
-    # branch ref, which can go stale or fail to update when checked out in a worktree.
-    base_branch = f"origin/{default_branch}"
-    if depends_on:
-        parent_task = await db.get_task(depends_on)
-        if parent_task and parent_task.get("branch"):
-            base_branch = parent_task["branch"]
-            log.info(f"Branch chaining: branching from parent branch '{base_branch}' (depends_on={depends_on})")
-
-    stdout, stderr, rc = await _run_as_worker(
-        "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, base_branch,
-    )
-    if rc != 0:
-        error_msg = stderr.decode()
-        # Stale local branch ref — delete it and retry with -b (fresh branch from base)
-        if "already exists" in error_msg:
-            log.info(f"Deleting stale branch ref '{branch}' and retrying")
-            await _run_as_worker("git", "-C", bare_path, "branch", "-D", branch)
-            stdout, stderr, rc = await _run_as_worker(
-                "git", "-C", bare_path, "worktree", "add",
-                "-b", branch, worktree_path, base_branch,
-            )
-        # Branch exists on remote but not as stale ref — checkout existing
-        if rc != 0:
-            stdout, stderr, rc = await _run_as_worker(
-                "git", "-C", bare_path, "worktree", "add",
-                worktree_path, branch,
-            )
-        if rc != 0:
-            error_msg = stderr.decode()
-            # Check if branch is already checked out by another worktree
-            if "already checked out" in error_msg or "is already used by worktree" in error_msg:
-                blocking_info = await _find_branch_holder(branch)
-                if blocking_info:
-                    raise RuntimeError(
-                        f"Cannot create worktree for branch '{branch}':\n"
-                        f"  Branch held by task {blocking_info['task_id']}\n"
-                        f"  Status: {blocking_info['status']} | Worktree: {blocking_info['worktree_path']}\n"
-                        f"  Action: release_worktree('{blocking_info['task_id']}') to free it"
-                    )
-            raise RuntimeError(f"git worktree add failed: {error_msg}")
-
-    log.info(f"Created worktree: {worktree_path} on branch {branch}")
-
-    # Lock git author to the worker's global config — CC workers sometimes
-    # override user.name/email in the repo config, which sticks for all future tasks.
-    await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.name")
-    await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.email")
-
-    # Ensure the default branch and all remotes are visible from the worktree.
-    # Bare-repo worktrees have a narrow fetch refspec by default, which makes
-    # `git merge main` fail because CC can't resolve the branch.
-    await _run_as_worker(
-        "git", "-C", worktree_path, "config",
-        "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
-    )
-    await _run_as_worker(
-        "git", "-C", worktree_path, "fetch", "origin",
-        default_branch + ":" + default_branch,
-    )
-
-    return worktree_path
-
-
-async def run_setup_command(project: dict, worktree_path: str, env_overrides: dict | None = None):
-    """Run project setup command in the worktree."""
-    cmd = project.get("setup_command")
-    if not cmd:
-        return
-
-    log.info(f"Running setup: {cmd} in {worktree_path}")
-    stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
-    if rc != 0:
-        log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
-
-    # Append env overrides AFTER setup (setup may create .env.testing from template)
-    # Uses >> to append so we don't clobber APP_KEY etc. set by key:generate
-    overrides = env_overrides
-    if not overrides and project.get("env_overrides"):
-        overrides = project["env_overrides"]
-        if isinstance(overrides, str):
-            overrides = json.loads(overrides)
-
-    if overrides:
-        env_path = os.path.join(worktree_path, ".env.testing")
-        env_content = "\n" + "\n".join(f"{k}={v}" for k, v in overrides.items()) + "\n"
-        # Append as worker user — later values override earlier ones in dotenv
-        await _run_as_worker(
-            "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
-        )
-        log.info(f"Appended env overrides to {env_path}")
-
-
-async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
-    """Remove worktree and optionally delete branch."""
-    worktree_path = task.get("worktree_path")
-    bare_path = os.path.join(project["working_dir"], ".bare")
-
-    # Run teardown command
-    teardown = project.get("teardown_command")
-    if teardown and worktree_path and os.path.exists(worktree_path):
-        log.info(f"Running teardown: {teardown}")
-        proc = await asyncio.create_subprocess_shell(
-            teardown, cwd=worktree_path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-
-    # Remove worktree
-    if worktree_path and os.path.exists(worktree_path):
-        proc = await asyncio.create_subprocess_exec(
-            "git", "-C", bare_path, "worktree", "remove", "--force", worktree_path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            log.warning(f"worktree remove failed: {stderr.decode()}")
-        else:
-            log.info(f"Removed worktree: {worktree_path}")
-
-    # Delete branch
-    branch = task.get("branch")
-    if branch and os.path.exists(bare_path):
-        flag = "-D" if force_delete_branch else "-d"
-        proc = await asyncio.create_subprocess_exec(
-            "git", "-C", bare_path, "branch", flag, branch,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            log.info(f"Deleted branch: {branch}")
-        else:
-            log.info(f"Branch delete skipped (not merged or not found): {branch}")
+from switchboard.git.worktree import (
+    _get_worker_ids,
+    _run_as_worker,
+    _find_branch_holder,
+    setup_worktree,
+    cleanup_worktree,
+    run_setup_command,
+)
+from switchboard.git.operations import (
+    resolve_branch_target,
+    _git_fetch_and_rebase,
+    _sync_branch_with_base,
+    _ensure_branch_pushed,
+    _get_branch_diff,
+    _filter_diff_by_ignore_patterns,
+    _maybe_create_pr,
+    _perform_auto_merge,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1774,49 +1524,11 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
             )
 
 
-async def _get_branch_diff(task: dict) -> str:
-    """Get git diff between default branch and task branch."""
-    worktree = task.get("worktree_path")
-    if not worktree or not os.path.exists(worktree):
-        return "(no worktree available)"
-    project = await db.get_project(task["project_id"])
-    default_branch = project["default_branch"] if project else "main"
-    stdout, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD", "--stat",
-    )
-    stat = stdout.decode(errors="replace")
-    stdout2, _, _ = await _run_as_worker(
-        "git", "-C", worktree, "diff", f"origin/{default_branch}...HEAD",
-    )
-    full_diff = stdout2.decode(errors="replace")
-    return f"{stat}\n\n{full_diff}"
-
-
 from switchboard.config.constants import (
     _DEFAULT_REVIEW_IGNORE_PATTERNS,
     _TAG_REVIEW_GUIDANCE,
     _DEFAULT_REVIEW_GUIDANCE,
 )
-
-
-def _filter_diff_by_ignore_patterns(diff: str, patterns: list[str]) -> str:
-    """Strip file sections from a unified diff whose paths match any ignore pattern."""
-    if not patterns:
-        return diff
-
-    lines = diff.splitlines(keepends=True)
-    result = []
-    skip_section = False
-
-    for line in lines:
-        # New file section: lines starting with "diff --git"
-        if line.startswith("diff --git "):
-            # Check if this file path matches any ignore pattern
-            skip_section = any(pat in line for pat in patterns)
-        if not skip_section:
-            result.append(line)
-
-    return "".join(result)
 
 
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
@@ -2076,63 +1788,6 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
             )
 
 
-async def _maybe_create_pr(task_id: str) -> None:
-    """Create PR if auto_pr is enabled and this is the tail of a chain."""
-    task = await db.get_task(task_id)
-    if not task or not task.get("auto_pr"):
-        return
-
-    # Check no dependents are waiting
-    dependents = await db.get_dependents(task_id)
-    if any(d["status"] not in ("completed", "cancelled") for d in dependents):
-        return  # Not the tail yet
-
-    project = await db.get_project(task["project_id"])
-    if not project:
-        return
-
-    worktree = task.get("worktree_path")
-    branch = task.get("branch")
-    default_branch = project["default_branch"]
-
-    if not worktree or not branch:
-        return
-
-    # Walk the chain to collect goals
-    chain = await db.get_chain(task_id)
-    goals = [t["goal"] for t in chain if not t.get("parent_task_id")]  # Exclude review tasks
-
-    title = task["goal"][:70]
-    body = "## Summary\n" + "\n".join(f"- {g}" for g in goals)
-
-    log.info(f"Auto-creating PR for {task_id}: {branch} → {default_branch}")
-    stdout, stderr, rc = await _run_as_worker(
-        "gh", "pr", "create",
-        "--title", title,
-        "--body", body,
-        "--base", default_branch,
-        "--head", branch,
-        cwd=worktree,
-    )
-
-    if rc == 0:
-        pr_url = stdout.decode().strip()
-        await db.add_artifact(task_id, "pr_url", pr_url)
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="PR Created",
-            content=f"[{pr_url}]({pr_url})",
-        )
-        log.info(f"PR created for {task_id}: {pr_url}")
-    else:
-        log.warning(f"PR creation failed for {task_id}: {stderr.decode()}")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="PR creation failed",
-            content=f"```\n{stderr.decode()[:2000]}\n```",
-        )
-
-
 async def _check_and_dispatch_dependents(task_id: str) -> None:
     """Gate-pass post-processing: auto-merge, auto-release, chain advancement, queue drain."""
     task = await db.get_task(task_id)
@@ -2214,58 +1869,6 @@ async def _invalidate_chain(task_id: str) -> None:
 
         # Recurse down the chain
         await _invalidate_chain(dep["id"])
-
-
-async def _git_fetch_and_rebase(worktree: str, target_branch: str) -> bool:
-    """Fetch origin and rebase worktree onto origin/{target_branch}.
-
-    Returns True on success. Returns False if rebase failed (rebase is aborted
-    before returning).
-    """
-    await _run_as_worker("git", "-C", worktree, "fetch", "origin")
-
-    _, _stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "rebase", f"origin/{target_branch}",
-    )
-
-    if rc != 0:
-        await _run_as_worker("git", "-C", worktree, "rebase", "--abort")
-        return False
-
-    return True
-
-
-async def _sync_branch_with_base(task: dict) -> bool:
-    """Fetch origin and rebase task worktree onto the task's base branch.
-
-    Returns True if rebase succeeded (or no worktree to sync).
-    Returns False if rebase failed — in that case gate_status is set to 'needs-review'
-    and an error message is posted to the task thread.
-    """
-    worktree = task.get("worktree_path")
-    if not worktree or not os.path.exists(worktree):
-        return True  # Nothing to sync
-
-    base_branch = await resolve_branch_target(task)
-    success = await _git_fetch_and_rebase(worktree, base_branch)
-
-    if not success:
-        log.warning(f"Rebase failed for {task['id']} onto origin/{base_branch}")
-        await db.update_task(task["id"], gate_status="needs-review")
-        await db.post_task_message(
-            task_id=task["id"], author="switchboard", type="status",
-            title="Rebase conflict — needs review",
-            content=(
-                f"Automatic rebase onto `origin/{base_branch}` failed due to conflicts.\n\n"
-                f"Resolve manually in the worktree:\n"
-                f"```\ncd {worktree}\ngit rebase origin/{base_branch}\n"
-                f"# resolve conflicts, then:\ngit rebase --continue\n```"
-            ),
-        )
-        return False
-
-    log.info(f"Rebased {task['id']} onto origin/{base_branch} successfully")
-    return True
 
 
 async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
@@ -2378,133 +1981,8 @@ async def _drain_queue() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Branch Resolution + Auto-Merge
+# Branch Resolution + Auto-Merge (imported from switchboard.git.operations)
 # ---------------------------------------------------------------------------
-
-async def resolve_branch_target(task: dict) -> str:
-    """Resolve the merge target branch using config inheritance.
-
-    Priority: task.branch_target (explicit override) → task.base_branch
-              → component.base_branch → project.default_branch
-
-    NOTE: depends_on has ZERO influence on merge target. It controls dispatch
-    ordering and worktree base (setup_worktree), never where we merge to.
-    """
-    # 1. Task-level override
-    if task.get("base_branch"):
-        return task["base_branch"]
-
-    # 3. Component-level
-    if task.get("component_id"):
-        component = await db.get_component(task["component_id"])
-        if component and component.get("base_branch"):
-            return component["base_branch"]
-
-    # 4. Project default
-    project = await db.get_project(task["project_id"])
-    return project["default_branch"] if project else "main"
-
-
-async def _perform_auto_merge(task_id: str) -> bool:
-    """Merge task branch into branch_target using detached HEAD. Returns True on success.
-
-    Uses `git checkout --detach origin/<target>` instead of checking out the target
-    branch by name, which avoids the "fatal: a branch named 'X' already exists"
-    error that occurs when the target branch is checked out in another worktree.
-    """
-    task = await db.get_task(task_id)
-    if not task:
-        return False
-
-    branch_target = await resolve_branch_target(task)
-    await db.update_task(task_id, branch_target=branch_target)
-
-    worktree = task.get("worktree_path")
-    task_branch = task.get("branch")
-    if not worktree or not task_branch:
-        log.error(f"Auto-merge {task_id}: missing worktree or branch")
-        await db.update_task(task_id, pr_status="error", pr_error="Missing worktree or branch")
-        return False
-
-    try:
-        for attempt in range(1, 4):
-            # Fetch latest target branch
-            await _run_as_worker("git", "-C", worktree, "fetch", "origin", branch_target)
-
-            # Detach HEAD at origin/branch_target — no local branch name conflict possible
-            _, stderr, rc = await _run_as_worker(
-                "git", "-C", worktree, "checkout", "--detach", f"origin/{branch_target}",
-            )
-            if rc != 0:
-                log.error(f"Auto-merge {task_id}: cannot detach to origin/{branch_target}: {stderr.decode()}")
-                await db.update_task(task_id, status="needs-review",
-                                     pr_status="error", pr_error=f"Cannot checkout origin/{branch_target}")
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Auto-merge failed",
-                    content=f"Cannot detach HEAD at `origin/{branch_target}`:\n```\n{stderr.decode()[:1000]}\n```",
-                )
-                return False
-
-            # Merge the task branch
-            stdout, stderr, rc = await _run_as_worker(
-                "git", "-C", worktree, "merge", task_branch, "--no-edit",
-            )
-
-            if rc != 0:
-                # Merge conflict — get list of conflicting files
-                conflict_stdout, _, _ = await _run_as_worker(
-                    "git", "-C", worktree, "diff", "--name-only", "--diff-filter=U",
-                )
-                conflict_files = conflict_stdout.decode().strip()
-
-                # Abort the merge
-                await _run_as_worker("git", "-C", worktree, "merge", "--abort")
-
-                await db.update_task(task_id, status="needs-review",
-                                     pr_status="conflict", pr_error=conflict_files)
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Auto-merge conflict",
-                    content=f"Merge of `{task_branch}` into `{branch_target}` has conflicts:\n\n"
-                            f"```\n{conflict_files or '(unknown)'}\n```\n\n"
-                            f"Resolve manually and retry.",
-                )
-                log.warning(f"Auto-merge {task_id}: conflict merging {task_branch} → {branch_target}")
-                return False
-
-            # Push HEAD to target branch — HEAD:branch_target avoids needing a local branch
-            _, stderr, rc = await _run_as_worker(
-                "git", "-C", worktree, "push", "origin", f"HEAD:{branch_target}",
-            )
-            if rc == 0:
-                break  # push succeeded
-
-            # Push rejected — likely a race with another task; retry
-            log.warning(f"Auto-merge {task_id}: push attempt {attempt} rejected, retrying...")
-            if attempt == 3:
-                log.error(f"Auto-merge {task_id}: push failed after 3 attempts: {stderr.decode()}")
-                await db.update_task(task_id, status="needs-review",
-                                     pr_status="push-failed", pr_error=stderr.decode()[:500])
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Auto-merge push failed",
-                    content=f"Merge succeeded but push to `{branch_target}` failed after 3 attempts:\n```\n{stderr.decode()[:1000]}\n```",
-                )
-                return False
-
-        await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Auto-merged",
-            content=f"Branch `{task_branch}` merged into `{branch_target}` and pushed.",
-        )
-        log.info(f"Auto-merge {task_id}: {task_branch} → {branch_target} success")
-        return True
-
-    finally:
-        # Always restore worktree to original task branch
-        await _run_as_worker("git", "-C", worktree, "checkout", task_branch)
 
 
 # ---------------------------------------------------------------------------
