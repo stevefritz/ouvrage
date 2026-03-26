@@ -20,10 +20,12 @@ def tmp_db(tmp_path):
     db_path = str(tmp_path / "test.db")
     os.environ["SWITCHBOARD_DB"] = db_path
 
-    import database as db
-    # Reset singleton so it picks up the new path
-    db.DB_PATH = db_path
-    db._connection = None
+    # Reset the real connection singleton and DB path (now in switchboard.db.connection)
+    import switchboard.config.settings as _settings
+    import switchboard.db.connection as _conn
+    _settings.DB_PATH = db_path
+    _conn.DB_PATH = db_path  # override the module-level binding in connection.py
+    _conn._connection = None
     return db_path
 
 
@@ -34,7 +36,9 @@ async def db(tmp_db):
     await _db.init_db()
     yield _db
     await _db.close_db()
-    _db._connection = None
+    # Reset connection singleton for test isolation
+    import switchboard.db.connection as _conn
+    _conn._connection = None
 
 
 # ---------------------------------------------------------------------------

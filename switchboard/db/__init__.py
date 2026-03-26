@@ -1,0 +1,172 @@
+"""switchboard.db — database access layer.
+
+Re-exports every public function so callers can do:
+    import switchboard.db as db
+    db.get_task(...)
+"""
+
+# Connection
+from switchboard.db.connection import (
+    _get_shared_connection,
+    get_db,
+    close_db,
+)
+
+# Schema
+from switchboard.db.schema import init_db
+
+# Helpers (private but some are re-exported for test access)
+from switchboard.db._helpers import (
+    now_iso,
+    _strip_embedding,
+    _read_messages,
+    _list_with_aggregates,
+    _make_snippet,
+    _determine_attempt_outcome,
+)
+
+# Push / notifications
+from switchboard.db.push import (
+    get_push_subscriptions,
+    save_push_subscription,
+    delete_push_subscription,
+    get_notification_settings,
+    update_notification_settings,
+)
+
+# Conversations
+from switchboard.db.conversations import (
+    create_conversation,
+    post_message,
+    read_messages,
+    get_pinned,
+    pin_message,
+    board,
+    list_conversations,
+    archive_conversation,
+)
+
+# Projects
+from switchboard.db.projects import (
+    create_project,
+    get_project,
+    update_project,
+    list_projects,
+)
+
+# Tasks
+from switchboard.db.tasks import (
+    create_task,
+    get_task,
+    update_task,
+    bulk_update_tasks,
+    move_task,
+    list_tasks,
+    get_project_task_counts,
+    get_recent_activity,
+    get_dependents,
+    get_chain,
+    count_active_tasks,
+    get_working_tasks_for_conversation,
+    get_queued_tasks,
+    post_task_message,
+    read_task_messages,
+    get_task_pinned,
+    set_message_embedding,
+    get_task_status,
+    get_task_attempts,
+    get_merged_state_definitions,
+    get_state_definition,
+    create_checklist_items,
+    get_checklist,
+    update_checklist_item,
+    add_checklist_item,
+    remove_checklist_item,
+    update_checklist_item_text,
+    add_artifact,
+    get_artifacts,
+    set_task_tags,
+    get_task_tags,
+    create_subtask,
+    update_subtask,
+    get_subtasks,
+    get_subtask,
+)
+
+# Components
+from switchboard.db.components import (
+    create_component,
+    get_component,
+    update_component,
+    list_components,
+    link_conversation,
+    unlink_conversation,
+    get_component_conversations,
+    resolve_config,
+)
+
+# Punchlist
+from switchboard.db.punchlist import (
+    add_punchlist_item,
+    get_punchlist_item,
+    list_punchlist,
+    claim_punchlist_item,
+    resolve_punchlist_items_for_task,
+    create_punchlist_item,
+    update_punchlist_item,
+    delete_punchlist_item,
+    revert_punchlist_items_for_task,
+)
+
+# Search
+from switchboard.db.search import (
+    search_messages_semantic,
+    get_messages_needing_embedding,
+    count_messages_needing_embedding,
+    get_activity,
+    get_component_activity,
+    search_task_messages,
+    search_component,
+)
+
+__all__ = [
+    # connection
+    "_get_shared_connection", "get_db", "close_db",
+    # schema
+    "init_db",
+    # helpers
+    "now_iso", "_strip_embedding", "_read_messages", "_list_with_aggregates",
+    "_make_snippet", "_determine_attempt_outcome",
+    # push
+    "get_push_subscriptions", "save_push_subscription", "delete_push_subscription",
+    "get_notification_settings", "update_notification_settings",
+    # conversations
+    "create_conversation", "post_message", "read_messages", "get_pinned",
+    "pin_message", "board", "list_conversations", "archive_conversation",
+    # projects
+    "create_project", "get_project", "update_project", "list_projects",
+    # tasks
+    "create_task", "get_task", "update_task", "bulk_update_tasks", "move_task",
+    "list_tasks", "get_project_task_counts", "get_recent_activity", "get_dependents",
+    "get_chain", "count_active_tasks", "get_working_tasks_for_conversation",
+    "get_queued_tasks", "post_task_message", "read_task_messages", "get_task_pinned",
+    "set_message_embedding", "get_task_status", "get_task_attempts",
+    "get_merged_state_definitions", "get_state_definition",
+    "create_checklist_items", "get_checklist", "update_checklist_item",
+    "add_checklist_item", "remove_checklist_item", "update_checklist_item_text",
+    "add_artifact", "get_artifacts", "set_task_tags", "get_task_tags",
+    "create_subtask", "update_subtask", "get_subtasks", "get_subtask",
+    # components
+    "create_component", "get_component", "update_component", "list_components",
+    "link_conversation", "unlink_conversation", "get_component_conversations",
+    "resolve_config",
+    # punchlist
+    "add_punchlist_item", "get_punchlist_item", "list_punchlist",
+    "claim_punchlist_item", "resolve_punchlist_items_for_task",
+    "create_punchlist_item", "update_punchlist_item", "delete_punchlist_item",
+    "revert_punchlist_items_for_task",
+    # search
+    "search_messages_semantic", "get_messages_needing_embedding",
+    "count_messages_needing_embedding", "get_activity", "get_component_activity",
+    "search_task_messages", "search_component",
+]
