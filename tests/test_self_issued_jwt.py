@@ -361,8 +361,10 @@ class TestProtectedResourceMetadata:
 
     def test_both_unset_uses_localhost_fallback(self):
         import switchboard.auth.middleware as _mw
+        import switchboard.auth.oauth as _oauth
         _mw.AUTH_ISSUER_URL = None
         _mw.OAUTH_BASE_URL = None
+        _oauth.OAUTH_BASE_URL = None
 
         from switchboard.auth.middleware import _protected_resource_metadata
         meta = _protected_resource_metadata()
