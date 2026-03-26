@@ -563,7 +563,7 @@ class TestCheckStalledTasksRouting:
             patch("tasks.db.read_task_messages", self.mock_read_msgs),
             patch("tasks.db.get_project", AsyncMock(return_value=None)),
             patch("tasks.db.get_component", AsyncMock(return_value=None)),
-            patch("tasks._recover_single_task", self.mock_recover),
+            patch("switchboard.dispatch.recovery._recover_single_task", self.mock_recover),
             patch("tasks.notify", self.mock_notify),
             patch("tasks.asyncio.sleep", self.mock_sleep),
             patch("tasks.retry_task", AsyncMock()),

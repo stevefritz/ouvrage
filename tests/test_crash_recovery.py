@@ -80,7 +80,7 @@ class TestRecoverWithResume:
         self.mock_setup_worktree = AsyncMock(return_value="/tmp/fake-worktree")
         self.mock_run_setup = AsyncMock()
         self.mock_run_sdk = AsyncMock()
-        self.mock_verify = patch("tasks._verify_worktree", AsyncMock(return_value=True))
+        self.mock_verify = patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True))
 
         patches = [
             patch("tasks.setup_worktree", self.mock_setup_worktree),
@@ -115,7 +115,7 @@ class TestRecoverWithResume:
         import tasks
 
         # Override worktree check to return False
-        with patch("tasks._verify_worktree", AsyncMock(return_value=False)):
+        with patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=False)):
             orphan = await _create_orphan(db, session_id="sess-123")
             await tasks.recover_orphaned_tasks()
 
@@ -238,7 +238,7 @@ class TestStaggerRecovery:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -259,7 +259,7 @@ class TestStaggerRecovery:
         async def mock_sleep(seconds):
             sleep_calls.append(seconds)
 
-        with patch("tasks.asyncio.sleep", side_effect=mock_sleep):
+        with patch("switchboard.dispatch.recovery.asyncio.sleep", side_effect=mock_sleep):
             await tasks.recover_orphaned_tasks()
 
         # First task: no sleep. Second: sleep with stagger delay.
@@ -358,7 +358,7 @@ class TestRecoveryPriority:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
             patch("tasks._run_test_gate", AsyncMock()),
             patch("tasks._dispatch_review", AsyncMock()),
             patch("tasks._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
@@ -393,8 +393,8 @@ class TestRecoveryPriority:
         await _create_orphan(db, "test-project/gate-sub", session_id="s2",
                              parent_task_id="test-project/gate-parent")  # prio 0
 
-        with patch("tasks._recover_task", side_effect=tracking_recover), \
-             patch("tasks.asyncio.sleep", AsyncMock()):
+        with patch("switchboard.dispatch.recovery._recover_task", side_effect=tracking_recover), \
+             patch("switchboard.dispatch.recovery.asyncio.sleep", AsyncMock()):
             await tasks.recover_orphaned_tasks()
 
         # Gate subtask first, then resumable, then retryable
@@ -416,7 +416,7 @@ class TestRecoveryDisabled:
 
         await _create_orphan(db)
 
-        with patch.object(tasks, "RECOVERY_ENABLED", False), \
+        with patch("switchboard.dispatch.recovery.RECOVERY_ENABLED", False), \
              patch("tasks.notify", AsyncMock()):
             await tasks.recover_orphaned_tasks()
 
@@ -438,7 +438,7 @@ class TestConcurrencyDuringRecovery:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -520,7 +520,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
     async def test_dirty_worktree_passes(self, tmp_path):
@@ -532,7 +532,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b" M tasks.py\n", b""))
 
-        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
     async def test_corrupted_worktree_fails(self, tmp_path):
@@ -544,7 +544,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 128
         mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: not a git repository"))
 
-        with patch("tasks.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is False
 
 
@@ -562,7 +562,7 @@ class TestResumeFailureFallback:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -612,7 +612,7 @@ class TestRecoveryStatusMessages:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -671,7 +671,7 @@ class TestRecoverSingleTask:
             patch("tasks.run_setup_command", AsyncMock()),
             patch("tasks._run_sdk_session", AsyncMock()),
             patch("tasks.notify", AsyncMock()),
-            patch("tasks._verify_worktree", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
