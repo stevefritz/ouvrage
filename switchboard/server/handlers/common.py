@@ -24,3 +24,9 @@ async def _embed_message_async(message_id: int, content: str, msg_type: str | No
             await db.set_message_embedding(message_id, blob)
     except Exception:
         pass  # Never block — embedding is best-effort
+
+    # Also index message chunks for paragraph-level search
+    try:
+        await db.index_message_chunks(message_id, content)
+    except Exception:
+        pass  # Never block — chunking is best-effort

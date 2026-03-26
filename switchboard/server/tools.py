@@ -900,6 +900,38 @@ CONTROL_TOOLS = [
 
 RAG_TOOLS = [
     Tool(
+        name="search_message_chunks",
+        description=(
+            "Semantic search at the paragraph level within Switchboard messages. "
+            "More precise than search_conversations — finds specific sections of long design docs, "
+            "prior decisions, or meeting notes rather than surfacing the whole message. "
+            "Use when you need a particular passage from a conversation, not just the message that contains it."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The semantic search query — describe the specific section you're looking for",
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Optional: scope search to chunks from this specific conversation",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional: scope search to chunks from this project's conversations and tasks",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum chunk results to return (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
         name="search_conversations",
         description=(
             "Semantic search over Switchboard conversation and task messages using embeddings. "

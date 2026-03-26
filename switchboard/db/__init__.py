@@ -136,6 +136,9 @@ from switchboard.db.search import (
     get_component_activity,
     search_task_messages,
     search_component,
+    index_message_chunks,
+    search_message_chunks,
+    get_messages_needing_chunking,
 )
 
 __all__ = [
@@ -178,6 +181,7 @@ __all__ = [
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",
     "search_task_messages", "search_component",
+    "index_message_chunks", "search_message_chunks", "get_messages_needing_chunking",
     # constants
     "DEFAULT_MAX_CONCURRENT",
     "DEFAULT_MAX_TURNS",

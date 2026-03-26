@@ -130,8 +130,17 @@ async def _handle_search_conversations(arguments):
     if query_vector is None:
         return {"error": "Failed to embed query — check OPENAI_API_KEY and service availability"}
 
-    # Retrieve candidates with raw similarity scores
+    # Retrieve message-level candidates with raw similarity scores
     candidates = await db.search_messages_semantic(
+        query_vector=query_vector,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        type_filter=type_filter,
+        limit=max_results,
+    )
+
+    # Also search message chunks for paragraph-level hits
+    chunk_hits = await db.search_message_chunks(
         query_vector=query_vector,
         conversation_id=conversation_id,
         project_id=project_id,
@@ -149,10 +158,19 @@ async def _handle_search_conversations(arguments):
     candidates.sort(key=lambda r: r["relevance_score"], reverse=True)
     top = candidates[:max_results]
 
+    # Build set of message_ids already in top results for dedup
+    seen_message_ids = {r["message_id"] for r in top}
+
+    # Group chunk hits by message_id, keep best similarity per message
+    chunk_groups: dict[int, list[dict]] = {}
+    for ch in chunk_hits:
+        mid = ch["message_id"]
+        chunk_groups.setdefault(mid, []).append(ch)
+
     # Format output: truncate content to 500 chars
     results = []
     for r in top:
-        results.append({
+        entry = {
             "message_id": r["message_id"],
             "conversation_id": r["conversation_id"],
             "task_id": r["task_id"],
@@ -162,6 +180,97 @@ async def _handle_search_conversations(arguments):
             "content": (r["content"] or "")[:500],
             "relevance_score": r["relevance_score"],
             "created_at": r["created_at"],
+        }
+        # If this message also had chunk hits, attach them
+        if r["message_id"] in chunk_groups:
+            msg_chunks = chunk_groups.pop(r["message_id"])
+            best = max(msg_chunks, key=lambda c: c["similarity"])
+            entry["chunk_heading"] = best["chunk_heading"]
+            entry["context_chunks"] = [
+                {"chunk_index": best["chunk_index"], "heading": best["chunk_heading"],
+                 "content": (best["chunk_content"] or "")[:500]}
+            ] + [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in best.get("context_chunks", [])
+            ]
+        results.append(entry)
+
+    # Add chunk-only hits (messages not already in results)
+    for mid, chunks in chunk_groups.items():
+        if mid in seen_message_ids:
+            continue
+        if len(results) >= max_results:
+            break
+        best = max(chunks, key=lambda c: c["similarity"])
+        relevance = round(
+            emb.compute_relevance_score(best["similarity"], best["type"], best["pinned"]),
+            4,
+        )
+        results.append({
+            "message_id": mid,
+            "conversation_id": best["conversation_id"],
+            "task_id": best["task_id"],
+            "author": best["author"],
+            "type": best["type"],
+            "title": best["title"],
+            "content": (best["chunk_content"] or "")[:500],
+            "relevance_score": relevance,
+            "created_at": best["created_at"],
+            "chunk_heading": best["chunk_heading"],
+            "context_chunks": [
+                {"chunk_index": best["chunk_index"], "heading": best["chunk_heading"],
+                 "content": (best["chunk_content"] or "")[:500]}
+            ] + [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in best.get("context_chunks", [])
+            ],
+        })
+        seen_message_ids.add(mid)
+
+    # Re-sort unified results by relevance
+    results.sort(key=lambda r: r["relevance_score"], reverse=True)
+
+    return {"results": results[:max_results], "total_candidates": len(candidates) + len(chunk_hits)}
+
+
+async def _handle_search_message_chunks(arguments):
+    query = arguments["query"]
+    limit = min(int(arguments.get("limit", 5)), 20)
+    conversation_id = arguments.get("conversation_id")
+    project_id = arguments.get("project_id")
+
+    service = emb.get_embedding_service()
+    query_vector = await service.embed_safe(query)
+    if query_vector is None:
+        return {"error": "Failed to embed query — check OPENAI_API_KEY and service availability"}
+
+    chunk_hits = await db.search_message_chunks(
+        query_vector=query_vector,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        limit=limit,
+    )
+
+    results = []
+    for hit in chunk_hits:
+        results.append({
+            "message_id": hit["message_id"],
+            "conversation_id": hit["conversation_id"],
+            "task_id": hit["task_id"],
+            "author": hit["author"],
+            "type": hit["type"],
+            "title": hit["title"],
+            "created_at": hit["created_at"],
+            "chunk_heading": hit["chunk_heading"],
+            "chunk_content": (hit["chunk_content"] or "")[:500],
+            "similarity": round(hit["similarity"], 4),
+            "context_chunks": [
+                {"chunk_index": ac["chunk_index"], "heading": ac["heading"],
+                 "content": (ac["content"] or "")[:500]}
+                for ac in hit.get("context_chunks", [])
+            ],
         })
 
-    return {"results": results, "total_candidates": len(candidates)}
+    return {"results": results}

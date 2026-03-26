@@ -350,6 +350,18 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
             CREATE INDEX IF NOT EXISTS idx_punchlist_component ON punchlist(component_id);
             CREATE INDEX IF NOT EXISTS idx_punchlist_claimed_by ON punchlist(claimed_by);
+
+            CREATE TABLE IF NOT EXISTS message_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                heading TEXT,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_message_chunks_message_id ON message_chunks(message_id);
         """)
 
         await conn.commit()

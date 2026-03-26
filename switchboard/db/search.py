@@ -1,9 +1,10 @@
-"""Semantic search, full-text search, activity feeds, and component search."""
+"""Semantic search, full-text search, activity feeds, component search, and chunk indexing."""
 import json
 import httpx
 
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import _make_snippet
+from switchboard.embeddings.chunks import MIN_CHUNK_LENGTH, chunk_message
 
 
 async def search_messages_semantic(
@@ -340,3 +341,139 @@ async def search_component(
     }
 
 
+async def index_message_chunks(message_id: int, content: str) -> None:
+    """Chunk a message and embed each chunk. Idempotent — deletes existing chunks first.
+
+    If the message doesn't produce chunks (too short, no headers, single section),
+    inserts a sentinel row (chunk_index=-1) so get_messages_needing_chunking() skips it.
+    """
+    chunks = chunk_message(content)
+
+    async with get_db() as db:
+        await db.execute("DELETE FROM message_chunks WHERE message_id = ?", (message_id,))
+
+        if not chunks:
+            # Insert sentinel so get_messages_needing_chunking() skips this message
+            await db.execute(
+                """INSERT INTO message_chunks (message_id, chunk_index, heading, content, embedding)
+                   VALUES (?, -1, NULL, '', NULL)""",
+                (message_id,),
+            )
+            await db.commit()
+            return
+
+        from switchboard.embeddings.service import get_embedding_service, encode_vector
+
+        service = get_embedding_service()
+
+        for chunk in chunks:
+            vector = await service.embed_safe(chunk["content"])
+            blob = encode_vector(vector) if vector else None
+            await db.execute(
+                """INSERT INTO message_chunks (message_id, chunk_index, heading, content, embedding)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (message_id, chunk["chunk_index"], chunk["heading"], chunk["content"], blob),
+            )
+        await db.commit()
+
+
+async def search_message_chunks(
+    query_vector: list[float],
+    conversation_id: str | None = None,
+    project_id: str | None = None,
+    type_filter: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """Search message chunks by cosine similarity, returning hits with adjacent context."""
+    from switchboard.embeddings.service import decode_vector, cosine_similarity
+
+    async with get_db() as db:
+        conditions = ["mc.embedding IS NOT NULL", "mc.chunk_index >= 0"]
+        params: list = []
+
+        if conversation_id:
+            conditions.append("m.conversation_id = ?")
+            params.append(conversation_id)
+
+        if project_id:
+            conditions.append(
+                "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+            )
+            params.extend([project_id, project_id])
+
+        if type_filter:
+            conditions.append("m.type = ?")
+            params.append(type_filter)
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT mc.id, mc.message_id, mc.chunk_index, mc.heading, mc.content, mc.embedding,
+                   m.conversation_id, m.task_id, m.author, m.type, m.title, m.created_at, m.pinned
+            FROM message_chunks mc
+            JOIN messages m ON m.id = mc.message_id
+            WHERE {where}
+        """
+        rows = await db.execute_fetchall(query, params)
+
+    # Score chunks by cosine similarity
+    scored = []
+    for row in rows:
+        blob = row["embedding"]
+        if not blob:
+            continue
+        try:
+            vec = decode_vector(blob)
+        except Exception:
+            continue
+        sim = cosine_similarity(query_vector, vec)
+        scored.append({
+            "chunk_id": row["id"],
+            "message_id": row["message_id"],
+            "chunk_index": row["chunk_index"],
+            "chunk_heading": row["heading"],
+            "chunk_content": row["content"],
+            "conversation_id": row["conversation_id"],
+            "task_id": row["task_id"],
+            "author": row["author"],
+            "type": row["type"],
+            "title": row["title"],
+            "pinned": bool(row["pinned"]),
+            "created_at": row["created_at"],
+            "similarity": sim,
+        })
+
+    scored.sort(key=lambda r: r["similarity"], reverse=True)
+    top = scored[:limit]
+
+    # Fetch adjacent chunks (±1) for context window
+    if top:
+        async with get_db() as db:
+            for hit in top:
+                adj_rows = await db.execute_fetchall(
+                    """SELECT chunk_index, heading, content FROM message_chunks
+                       WHERE message_id = ? AND chunk_index IN (?, ?)
+                       ORDER BY chunk_index""",
+                    (hit["message_id"], hit["chunk_index"] - 1, hit["chunk_index"] + 1),
+                )
+                hit["context_chunks"] = [
+                    {"chunk_index": r["chunk_index"], "heading": r["heading"], "content": r["content"]}
+                    for r in adj_rows
+                ]
+
+    return top
+
+
+async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:
+    """Return messages >= 500 chars that haven't been chunked yet (no entry in message_chunks)."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT m.id, m.content
+               FROM messages m
+               WHERE length(m.content) >= ?
+                 AND NOT EXISTS (SELECT 1 FROM message_chunks mc WHERE mc.message_id = m.id)
+               ORDER BY m.id ASC
+               LIMIT ?""",
+            (MIN_CHUNK_LENGTH, batch_size),
+        )
+        return [dict(r) for r in rows]

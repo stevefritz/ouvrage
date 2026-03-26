@@ -156,6 +156,28 @@ async def _serve_foreman(scope, send):
 # ASGI app + main entry point
 # ---------------------------------------------------------------------------
 
+async def _backfill_message_chunks() -> None:
+    """Background task: chunk and embed existing long messages that haven't been chunked yet."""
+    total = 0
+    try:
+        while True:
+            batch = await db.get_messages_needing_chunking(batch_size=100)
+            if not batch:
+                break
+            for msg in batch:
+                try:
+                    await db.index_message_chunks(msg["id"], msg["content"])
+                except Exception as e:
+                    log.warning("Chunk backfill failed for message %s: %s", msg["id"], e)
+                total += 1
+                if total % 100 == 0:
+                    log.info("Chunk backfill progress: %d messages processed", total)
+        if total > 0:
+            log.info("Chunk backfill complete: %d messages processed", total)
+    except Exception as e:
+        log.error("Chunk backfill aborted: %s", e)
+
+
 async def main():
     await db.init_db()
 
@@ -178,6 +200,8 @@ async def main():
                 asyncio.create_task(tasks.recover_orphaned_tasks())
                 # Start stall detection background loop
                 asyncio.create_task(tasks.check_stalled_tasks())
+                # Backfill message chunks for existing long messages
+                asyncio.create_task(_backfill_message_chunks())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     # Mark all working tasks for recovery before event loop dies

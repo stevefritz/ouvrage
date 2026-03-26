@@ -10,6 +10,7 @@ from switchboard.server.handlers.conversations import (
     _handle_conversations,
     _handle_archive,
     _handle_search_conversations,
+    _handle_search_message_chunks,
 )
 from switchboard.server.handlers.projects import (
     _handle_create_project,
@@ -86,6 +87,7 @@ TOOL_HANDLERS = {
     "conversations": _handle_conversations,
     "archive": _handle_archive,
     "search_conversations": _handle_search_conversations,
+    "search_message_chunks": _handle_search_message_chunks,
     # Project tools
     "create_project": _handle_create_project,
     "get_project": _handle_get_project,

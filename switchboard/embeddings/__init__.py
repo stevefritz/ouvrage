@@ -1,4 +1,9 @@
-"""switchboard.embeddings — text embedding service."""
+"""switchboard.embeddings — text embedding service and chunking."""
+
+from switchboard.embeddings.chunks import (
+    MIN_CHUNK_LENGTH,
+    chunk_message,
+)
 
 from switchboard.embeddings.service import (
     EmbeddingService,
@@ -19,6 +24,8 @@ from switchboard.embeddings.service import (
 )
 
 __all__ = [
+    "MIN_CHUNK_LENGTH",
+    "chunk_message",
     "EmbeddingService",
     "OpenAIEmbeddingService",
     "should_embed",
