@@ -68,6 +68,7 @@ _UPDATE_TASK_FIELDS = {
     "auto_test", "auto_review", "auto_merge", "auto_pr",
     "max_test_retries", "max_review_retries",
     "model", "jira_ticket", "conversation_id", "claude_chat_url",
+    "held",
 }
 
 
@@ -249,6 +250,23 @@ async def _handle_list_tasks(arguments):
 async def _handle_update_task(arguments):
     task_id = arguments["task_id"]
     fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
+
+    # Re-hold validation: held=True is only allowed on ready tasks
+    if fields.get("held") is True:
+        task = await db.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task '{task_id}' not found")
+        status = task.get("status")
+        if status != "ready":
+            if status == "working":
+                raise ValueError("Cannot re-hold a working task — use cancel_task instead")
+            elif status == "completed":
+                raise ValueError("Cannot re-hold a completed task — use reopen_task instead")
+            elif status == "cancelled":
+                raise ValueError("Cannot re-hold a cancelled task")
+            else:
+                raise ValueError(f"Cannot re-hold a task with status '{status}' — only ready tasks can be re-held")
+
     return await db.update_task(task_id, **fields)
 
 

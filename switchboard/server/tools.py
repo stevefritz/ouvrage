@@ -566,6 +566,7 @@ TASK_TOOLS = [
                 "jira_ticket": {"type": ["string", "null"], "description": "Jira ticket ID or URL"},
                 "conversation_id": {"type": ["string", "null"], "description": "Link to design conversation"},
                 "claude_chat_url": {"type": ["string", "null"], "description": "Claude.ai chat URL"},
+                "held": {"type": "boolean", "description": "Re-hold a ready task to prevent it from dispatching. Only allowed when task status is 'ready'. Use to pause a queued task or undo a premature approval."},
             },
             "required": ["task_id"],
         },
