@@ -197,6 +197,8 @@ UNPROTECTED_PATHS = {
     "/oauth/authorize",
     "/oauth/token",
     "/oauth/revoke",
+    "/auth/login",
+    "/auth/logout",
 }
 
 

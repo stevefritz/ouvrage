@@ -12,6 +12,7 @@ from mcp.types import TextContent
 
 from switchboard.auth import middleware as auth
 from switchboard.auth import oauth as oauth_server
+from switchboard.auth import sessions as session_server
 from switchboard.dashboard import api as dashboard_api
 import switchboard.db as db
 import switchboard.dispatch as tasks
@@ -171,7 +172,7 @@ async def _serve_foreman(scope, send):
     # /foreman/anything → serve from dashboard/ (shared JS/CSS)
     _app_root = os.path.dirname(os.path.abspath(__file__))
     _project_root = os.path.join(_app_root, "..", "..")
-    if path in ("/foreman", "/foreman.html", "/foreman/"):
+    if path in ("/foreman", "/foreman.html", "/foreman/", "/foreman/login"):
         file_path = os.path.join(_project_root, "foreman.html")
     else:
         # Strip /foreman prefix, serve from dashboard dir (shared assets)
@@ -288,7 +289,15 @@ async def main():
             await oauth_server.handle_openid_configuration(scope, receive, send)
         elif path == "/jwks" and method == "GET":
             await oauth_server.handle_jwks(scope, receive, send)
+        elif path == "/auth/login" and method == "POST":
+            await session_server.handle_login(scope, receive, send)
+        elif path == "/auth/logout" and method == "POST":
+            await session_server.handle_logout(scope, receive, send)
         elif path == "/oauth/authorize" and method == "GET":
+            # Inject oauth_user_id from session before authorize handler runs
+            user = await session_server.get_session_user(scope)
+            if user:
+                scope["oauth_user_id"] = user["id"]
             await oauth_server.handle_authorize(scope, receive, send)
         elif path == "/oauth/token" and method == "POST":
             await oauth_server.handle_token(scope, receive, send)
