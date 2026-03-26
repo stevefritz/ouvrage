@@ -393,8 +393,6 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN dispatched_by INTEGER REFERENCES users(id)")
 
         # Migrate messages: add user_id FK
-        msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
-        msg_col_names = [c["name"] for c in msg_columns]
         if "user_id" not in msg_col_names:
             await conn.execute("ALTER TABLE messages ADD COLUMN user_id INTEGER REFERENCES users(id)")
 
@@ -480,6 +478,7 @@ async def init_db():
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_message_chunks_message_id ON message_chunks(message_id);
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
         """)
 
         await conn.commit()

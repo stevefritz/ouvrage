@@ -45,8 +45,8 @@ async def create_user(
         user_id = cursor.lastrowid
         return {
             "id": user_id, "email": email, "name": name,
-            "password_hash": password_hash, "role": role,
-            "timezone": timezone, "created_at": ts, "updated_at": ts,
+            "role": role, "timezone": timezone,
+            "created_at": ts, "updated_at": ts,
         }
 
 
