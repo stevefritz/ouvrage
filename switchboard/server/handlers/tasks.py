@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 import switchboard.db as db
@@ -392,23 +393,8 @@ def _resolve_log_dir(task: dict, project: dict | None, attempt: int | None) -> t
     return None, None
 
 
-async def _handle_get_session_log(arguments):
-    task_id = arguments["task_id"]
-    task = await db.get_task(task_id)
-    if not task:
-        return {"error": f"Task '{task_id}' not found"}
-
-    attempt = arguments.get("attempt")
-    project = await db.get_project(task["project_id"]) if task.get("project_id") else None
-    log_dir, source = _resolve_log_dir(task, project, attempt)
-
-    if not log_dir:
-        return {"error": "No log data found (no live worktree and no archived attempts)"}
-
-    log_path = os.path.join(log_dir, "session.jsonl")
-    if not os.path.isfile(log_path):
-        return {"entries": [], "message": "No session log file found", "source": source}
-
+async def _read_session_log(log_path: str, arguments: dict, source: str) -> dict:
+    """Read a JSONL session log file with tail/type filtering and truncation."""
     tail = arguments.get("tail", 50)
     type_filter = None
     if arguments.get("types"):
@@ -431,10 +417,8 @@ async def _handle_get_session_log(arguments):
     except Exception as e:
         return {"error": f"Failed to read session log: {e}"}
 
-    # Apply tail
     entries = entries[-tail:]
 
-    # Truncate large content fields to keep response size reasonable
     for entry in entries:
         if isinstance(entry.get("content"), list):
             for block in entry["content"]:
@@ -445,6 +429,43 @@ async def _handle_get_session_log(arguments):
             entry["result"] = entry["result"][:500] + "... [truncated]"
 
     return {"entries": entries, "count": len(entries), "source": source}
+
+
+async def _handle_get_session_log(arguments):
+    task_id = arguments["task_id"]
+    task = await db.get_task(task_id)
+
+    # If not found as a task, check if it's a subtask ID (e.g. "proj/task/review-1")
+    if not task:
+        subtask = await db.get_subtask(task_id)
+        if subtask:
+            parent_task = await db.get_task(subtask["task_id"])
+            if parent_task:
+                project = await db.get_project(parent_task["project_id"]) if parent_task.get("project_id") else None
+                log_dir, source = _resolve_log_dir(parent_task, project, arguments.get("attempt"))
+                if log_dir:
+                    # Subtask logs use {type}-{count}-session.jsonl naming
+                    m = re.search(r"/([\w-]+)-(\d+)$", task_id)
+                    if m:
+                        filename = f"{m.group(1)}-{m.group(2)}-session.jsonl"
+                        log_path = os.path.join(log_dir, filename)
+                        if os.path.isfile(log_path):
+                            return await _read_session_log(log_path, arguments, f"subtask {source}")
+                return {"entries": [], "message": "No subtask session log found"}
+        return {"error": f"Task '{task_id}' not found"}
+
+    attempt = arguments.get("attempt")
+    project = await db.get_project(task["project_id"]) if task.get("project_id") else None
+    log_dir, source = _resolve_log_dir(task, project, attempt)
+
+    if not log_dir:
+        return {"error": "No log data found (no live worktree and no archived attempts)"}
+
+    log_path = os.path.join(log_dir, "session.jsonl")
+    if not os.path.isfile(log_path):
+        return {"entries": [], "message": "No session log file found", "source": source}
+
+    return await _read_session_log(log_path, arguments, source)
 
 
 async def _handle_get_dispatch_log(arguments):

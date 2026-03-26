@@ -66,7 +66,8 @@ def _extract_task_id(path: str, prefix: str) -> str:
     for suffix in ("/cancel", "/retry", "/resume", "/close", "/skip-gate",
                     "/advance-chain", "/cancel-chain", "/approve", "/chain",
                     "/review-task", "/messages", "/session-log", "/dispatch-log",
-                    "/attempts", "/dispatch", "/reopen", "/cancel-reopen", "/start"):
+                    "/attempts", "/dispatch", "/reopen", "/cancel-reopen", "/start",
+                    "/test-output", "/gate-session-log"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -257,6 +258,12 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/review-task"):
                     task_id = rest[:-len("/review-task")]
                     return await _handle_get_review_task(send, task_id)
+                if rest.endswith("/test-output"):
+                    task_id = rest[:-len("/test-output")]
+                    return await _handle_test_output(scope, send, task_id)
+                if rest.endswith("/gate-session-log"):
+                    task_id = rest[:-len("/gate-session-log")]
+                    return await _handle_gate_session_log(scope, send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -506,6 +513,73 @@ async def _handle_dispatch_log(scope, send, task_id):
             return await _text_response(send, f.read())
     except Exception:
         return await _text_response(send, "")
+
+
+async def _handle_test_output(scope, send, task_id):
+    """Serve the live test output log file (.switchboard/test-output.log)."""
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+
+    log_dir = await _resolve_dashboard_log_dir(task, None)
+    if log_dir is None:
+        return await _text_response(send, "")
+
+    log_path = log_dir / "test-output.log"
+    if not log_path.exists():
+        return await _text_response(send, "")
+
+    try:
+        with open(log_path) as f:
+            return await _text_response(send, f.read())
+    except Exception:
+        return await _text_response(send, "")
+
+
+async def _handle_gate_session_log(scope, send, task_id):
+    """Serve a subtask's session log (e.g. review-1-session.jsonl).
+
+    Query params:
+      - type: subtask type (default "review")
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+
+    params = _parse_qs(scope)
+    subtask_type = params.get("type", "review")
+
+    # Find the most recent subtask of this type to determine the count
+    subtasks = await db.get_subtasks(task_id)
+    type_subtasks = [s for s in subtasks if s.get("type") == subtask_type]
+    if not type_subtasks:
+        return await _json_response(send, [])
+
+    count = len(type_subtasks)
+    filename = f"{subtask_type}-{count}-session.jsonl"
+
+    log_dir = await _resolve_dashboard_log_dir(task, None)
+    if log_dir is None:
+        return await _json_response(send, [])
+
+    log_path = log_dir / filename
+    if not log_path.exists():
+        return await _json_response(send, [])
+
+    entries = []
+    try:
+        with open(log_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        pass
+
+    await _json_response(send, entries)
 
 
 async def _handle_get_attempts(send, task_id):

@@ -84,6 +84,11 @@ export const api = {
     stopProject: (id) => request(`/projects/${eid(id)}/stop`, { method: 'POST' }),
     getChain: (id) => request(`/tasks/${eid(id)}/chain`),
     getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
+    getTestOutput: (id) => request(`/tasks/${eid(id)}/test-output`),
+    getGateSessionLog: (id, params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request(`/tasks/${eid(id)}/gate-session-log` + (qs ? '?' + qs : ''));
+    },
 
     // Components
     getComponents: (projectId) => request(`/components?project_id=${encodeURIComponent(projectId)}`),

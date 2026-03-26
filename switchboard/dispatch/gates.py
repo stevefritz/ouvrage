@@ -11,6 +11,7 @@ Lazy imports from switchboard.dispatch.engine (to break circular dependency):
   resume_task, retry_task, _check_and_dispatch_dependents, _update_usage
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -51,6 +52,54 @@ def _tail_lines(text: str, max_chars: int) -> str:
     if idx == -1:
         return text[cut:]
     return text[idx + 1:]
+
+
+async def _run_test_streaming(worktree: str, test_command: str) -> tuple[str, int]:
+    """Run test command with live output streaming to a log file.
+
+    Tees stdout+stderr line by line to .switchboard/test-output.log so the
+    dashboard can poll it during execution.  Returns (full_output, returncode).
+    """
+    log_dir = Path(worktree) / ".switchboard"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    output_path = log_dir / "test-output.log"
+
+    uid, gid = pwd.getpwnam(WORKER_USER).pw_uid, pwd.getpwnam(WORKER_USER).pw_gid
+    pw = pwd.getpwnam(WORKER_USER)
+
+    def _demote():
+        os.setgid(gid)
+        os.setuid(uid)
+
+    env = os.environ.copy()
+    env["HOME"] = pw.pw_dir
+
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,  # merge stderr into stdout
+        preexec_fn=_demote,
+        env=env,
+    )
+
+    chunks = []
+    try:
+        with open(output_path, "w") as f:
+            # Set file permissions so dashboard can read it
+            os.chmod(output_path, 0o644)
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                decoded = line.decode(errors="replace")
+                chunks.append(decoded)
+                f.write(decoded)
+                f.flush()
+    except Exception as e:
+        log.warning(f"Error streaming test output: {e}")
+
+    await proc.wait()
+    return "".join(chunks), proc.returncode
 
 
 async def _run_subtask(
@@ -211,10 +260,7 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         return
 
     log.info(f"Task {task_id}: running test gate: {test_command}")
-    stdout, stderr, rc = await _run_as_worker(
-        "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
-    )
-    test_output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+    test_output, rc = await _run_test_streaming(worktree, test_command)
 
     # Store structured test output on the task
     task = await db.get_task(task_id)

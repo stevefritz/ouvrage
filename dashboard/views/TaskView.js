@@ -1097,6 +1097,200 @@ function GateDotsSection({ task }) {
     `;
 }
 
+// ── Gate Activity Panel ─────────────────────────────────────
+
+function GateActivityPanel({ task }) {
+    const [isOpen, setIsOpen] = useState(true);
+    const [testOutput, setTestOutput] = useState('');
+    const [reviewEntries, setReviewEntries] = useState([]);
+    const outputRef = useRef(null);
+    const autoScrollRef = useRef(true);
+
+    const isTesting = task.gate_status === 'testing';
+    const isReviewing = task.gate_status === 'reviewing';
+
+    // Don't render if no active gate
+    if (!isTesting && !isReviewing) return null;
+
+    // Poll test output
+    useEffect(() => {
+        if (!isTesting) return;
+        let cancelled = false;
+
+        async function load() {
+            try {
+                const data = await api.getTestOutput(task.id);
+                if (!cancelled && typeof data === 'string') setTestOutput(data);
+            } catch (e) { /* ignore */ }
+        }
+
+        load();
+        const timer = setInterval(load, 3000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [isTesting, task.id]);
+
+    // Poll review session log
+    useEffect(() => {
+        if (!isReviewing) return;
+        let cancelled = false;
+
+        async function load() {
+            try {
+                const data = await api.getGateSessionLog(task.id, { type: 'review' });
+                if (!cancelled && Array.isArray(data)) setReviewEntries(data);
+            } catch (e) { /* ignore */ }
+        }
+
+        load();
+        const timer = setInterval(load, 4000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [isReviewing, task.id]);
+
+    // Auto-scroll test output
+    useEffect(() => {
+        if (outputRef.current && autoScrollRef.current) {
+            outputRef.current.scrollTop = outputRef.current.scrollHeight;
+        }
+    }, [testOutput]);
+
+    const handleScroll = useCallback(() => {
+        if (!outputRef.current) return;
+        const el = outputRef.current;
+        autoScrollRef.current = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+    }, []);
+
+    const label = isTesting ? 'Tests Running' : 'Review Running';
+    const dotColor = '#eab308'; // yellow for active
+
+    // Extract text blocks from review entries for display
+    const reviewText = reviewEntries
+        .filter(e => e.type === 'AssistantMessage' && e.content)
+        .flatMap(e => e.content.filter(b => b.type === 'text').map(b => b.text))
+        .join('\n\n');
+
+    // Extract tool calls for a compact summary
+    const toolCalls = reviewEntries
+        .filter(e => e.type === 'AssistantMessage' && e.content)
+        .flatMap(e => e.content.filter(b => b.type === 'tool_use').map(b => b.name));
+    const lastTools = toolCalls.slice(-5);
+
+    return html`
+        <div style=${{
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            borderRadius: layout.borderRadius.md,
+            marginBottom: '8px', overflow: 'hidden',
+            background: 'rgba(234, 179, 8, 0.04)',
+        }}>
+            <div
+                onClick=${() => setIsOpen(!isOpen)}
+                style=${{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '10px 14px', cursor: 'pointer',
+                }}
+                class="foreman-attempt-header"
+            >
+                <span style=${{
+                    width: '8px', height: '8px', borderRadius: '50%',
+                    background: dotColor, flexShrink: 0,
+                }} class="foreman-status-dot-pulse" />
+                <span style=${{
+                    fontFamily: typography.fontMono, fontSize: typography.size.sm,
+                    fontWeight: typography.weight.semibold,
+                    color: '#eab308',
+                }}>${label}</span>
+
+                ${isTesting && testOutput ? html`
+                    <span style=${{
+                        marginLeft: 'auto',
+                        fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                        color: colors.textTertiary,
+                    }}>${testOutput.split('\\n').filter(Boolean).length} lines</span>
+                ` : null}
+
+                ${isReviewing && lastTools.length > 0 ? html`
+                    <span style=${{
+                        marginLeft: 'auto',
+                        fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                        color: colors.textTertiary,
+                    }}>${lastTools[lastTools.length - 1]}</span>
+                ` : null}
+
+                <span style=${{ fontSize: '10px', color: colors.textTertiary, marginLeft: lastTools.length > 0 || testOutput ? '8px' : 'auto' }}>
+                    ${isOpen ? '▾' : '▸'}
+                </span>
+            </div>
+
+            ${isOpen ? html`
+                <div style=${{ padding: '0 14px 12px' }}>
+                    ${isTesting ? html`
+                        <pre
+                            ref=${outputRef}
+                            onScroll=${handleScroll}
+                            style=${{
+                                margin: 0, padding: '10px',
+                                background: colors.surface,
+                                borderRadius: layout.borderRadius.sm,
+                                fontSize: typography.size.xs,
+                                fontFamily: typography.fontMono,
+                                color: colors.text,
+                                maxHeight: '400px', overflow: 'auto',
+                                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                                lineHeight: '1.5',
+                            }}
+                        >${testOutput || 'Waiting for test output...'}</pre>
+                    ` : null}
+
+                    ${isReviewing ? html`
+                        <div style=${{
+                            background: colors.surface,
+                            borderRadius: layout.borderRadius.sm,
+                            padding: '10px',
+                            maxHeight: '400px', overflow: 'auto',
+                            fontSize: typography.size.xs,
+                            fontFamily: typography.fontMono,
+                            color: colors.text,
+                            lineHeight: '1.5',
+                        }}>
+                            ${reviewEntries.length === 0 ? html`
+                                <span style=${{ color: colors.textTertiary }}>Waiting for reviewer activity...</span>
+                            ` : null}
+
+                            ${reviewEntries.filter(e => e.type === 'AssistantMessage' && e.content).map((entry, i) => html`
+                                <div key=${i} style=${{ marginBottom: '8px' }}>
+                                    ${entry.content.map((block, j) => {
+                                        if (block.type === 'text') {
+                                            return html`<div key=${j} style=${{ whiteSpace: 'pre-wrap', color: colors.text }}>${block.text}</div>`;
+                                        }
+                                        if (block.type === 'tool_use') {
+                                            return html`<div key=${j} style=${{
+                                                color: colors.accent, fontSize: typography.size.xs,
+                                                padding: '2px 0',
+                                            }}>⚡ ${block.name}</div>`;
+                                        }
+                                        return null;
+                                    })}
+                                </div>
+                            `)}
+                        </div>
+
+                        ${task.review_subtask ? html`
+                            <div style=${{
+                                marginTop: '6px',
+                                fontSize: typography.size.xs,
+                                fontFamily: typography.fontMono,
+                                color: colors.textTertiary,
+                            }}>
+                                Subtask: ${task.review_subtask.task_id}
+                                ${task.review_subtask.elapsed_s ? html` · ${Math.floor(task.review_subtask.elapsed_s / 60)}m ${task.review_subtask.elapsed_s % 60}s` : null}
+                            </div>
+                        ` : null}
+                    ` : null}
+                </div>
+            ` : null}
+        </div>
+    `;
+}
+
 // ── Checklist Drawer ────────────────────────────────────────
 
 function ChecklistDrawer({ task }) {
@@ -1902,6 +2096,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 <${MessageInput} taskId=${id} onMessageSent=${() => { loadTask(); loadAttempts(); }} />
             ` : null}
 
+            <${GateActivityPanel} task=${task} />
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />
             <${DetailsDrawer} task=${task} />
