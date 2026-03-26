@@ -785,13 +785,33 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
         if feedback:
             review_feedback = feedback
 
-    return await dispatch_task(
-        project_id=task["project_id"],
-        task_id=task_id,
-        goal=task["goal"],
-        phase="revisions" if review_feedback else "analysis",
-        review_feedback=review_feedback,
-    )
+    try:
+        return await dispatch_task(
+            project_id=task["project_id"],
+            task_id=task_id,
+            goal=task["goal"],
+            phase="revisions" if review_feedback else "analysis",
+            review_feedback=review_feedback,
+        )
+    except Exception as dispatch_err:
+        # Dispatch failed after we already incremented current_attempt and posted
+        # "Attempt N starting". Roll the task back to a retryable state so it
+        # surfaces as attention-needed rather than silently becoming a ghost attempt.
+        log.error(f"retry_task: dispatch failed for {task_id} (attempt {new_attempt}): {dispatch_err}")
+        await db.update_task(task_id, status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-retry dispatch failed",
+            content=(
+                f"Failed to dispatch attempt {new_attempt}: {dispatch_err}\n\n"
+                f"Manual retry needed."
+            ),
+        )
+        await notify.task_needs_review(
+            task_id=task_id,
+            reason=f"Auto-retry dispatch failed: {dispatch_err}",
+        )
+        return {"task_id": task_id, "status": "needs-review", "error": str(dispatch_err)}
 
 
 async def reopen_task(task_id: str) -> dict:
