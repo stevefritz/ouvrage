@@ -471,15 +471,18 @@ class TestASGIHandlers:
         assert len(data["keys"]) == 1
         assert data["keys"][0]["kid"] == RSA_KID
 
-    async def test_authorize_no_session(self, seeded_client):
+    async def test_authorize_no_session_redirects_to_login(self, seeded_client):
         from switchboard.auth.oauth import handle_authorize
         query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid"
         status, headers, body = await self._call_handler(
             handle_authorize, path="/oauth/authorize", query=query
         )
-        assert status == 401
-        data = json.loads(body)
-        assert data["error"] == "login_required"
+        # No session → redirect to login page (not 401 anymore)
+        assert status == 302
+        location = headers.get("location", "")
+        assert location.startswith("/foreman/login?next=")
+        # oauth/authorize appears URL-encoded in the next= param
+        assert "oauth" in location and "authorize" in location
 
     async def test_authorize_with_session(self, seeded_client, test_user):
         from switchboard.auth.oauth import handle_authorize
