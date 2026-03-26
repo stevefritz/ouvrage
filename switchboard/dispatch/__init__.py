@@ -1,6 +1,7 @@
 """switchboard.dispatch — task orchestration sub-package.
 
-Currently exposes:
+Exposes the full public interface for task lifecycle management:
+  engine     — dispatch, resume, retry, cancel, close, approve, chain ops
   recovery   — orphan/stall detection and auto-recovery
   sdk_session — Claude Agent SDK session management and prompt building
   gates      — test gate, review dispatch, and subtask orchestration
@@ -45,6 +46,41 @@ from switchboard.dispatch.gates import (
 
 from switchboard.dispatch.queue import _drain_queue
 
+from switchboard.dispatch.engine import (
+    _running_tasks,
+    _active_clients,
+    _handle_task_exception,
+    _resolve_limit,
+    _check_and_dispatch_dependents,
+    _invalidate_chain,
+    _rebase_and_redispatch,
+    _update_usage,
+    _task_slug,
+    archive_task_logs,
+    list_attempts,
+    _find_archive_path,
+    release_worktree,
+    _auto_release_worktree,
+    dispatch_task,
+    resume_task,
+    retry_task,
+    reopen_task,
+    cancel_reopen,
+    start_reopened_task,
+    cancel_task,
+    skip_gate,
+    advance_chain,
+    cancel_chain,
+    approve_task,
+    close_task,
+    pause_component,
+    resume_component,
+    stop_component,
+    pause_project,
+    resume_project,
+    stop_project,
+)
+
 __all__ = [
     # recovery
     "_is_pid_alive",
@@ -78,4 +114,37 @@ __all__ = [
     "_process_review_result",
     # queue
     "_drain_queue",
+    # engine — public API
+    "_running_tasks",
+    "_active_clients",
+    "_handle_task_exception",
+    "_resolve_limit",
+    "_check_and_dispatch_dependents",
+    "_invalidate_chain",
+    "_rebase_and_redispatch",
+    "_update_usage",
+    "_task_slug",
+    "archive_task_logs",
+    "list_attempts",
+    "_find_archive_path",
+    "release_worktree",
+    "_auto_release_worktree",
+    "dispatch_task",
+    "resume_task",
+    "retry_task",
+    "reopen_task",
+    "cancel_reopen",
+    "start_reopened_task",
+    "cancel_task",
+    "skip_gate",
+    "advance_chain",
+    "cancel_chain",
+    "approve_task",
+    "close_task",
+    "pause_component",
+    "resume_component",
+    "stop_component",
+    "pause_project",
+    "resume_project",
+    "stop_project",
 ]

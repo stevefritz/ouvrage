@@ -268,7 +268,7 @@ class TestAutoMerge:
 
         self.mock_run.side_effect = mock_run
 
-        with patch("tasks.release_worktree", AsyncMock()) as mock_release:
+        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
             result = await _perform_auto_merge("test-project/detach-test")
 
         assert result is True
@@ -425,7 +425,7 @@ class TestWorktreeLifecycle:
         )
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree")
 
-        with patch("tasks.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
+        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
             await _auto_release_worktree("test-project/auto-release")
             mock_release.assert_awaited_once_with("test-project/auto-release", reason="completion")
 
@@ -443,7 +443,7 @@ class TestWorktreeLifecycle:
         # let's also update it to make sure the field works via update
         await db.update_task(task["id"], auto_release_worktree=False)
 
-        with patch("tasks.release_worktree", AsyncMock()) as mock_release:
+        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
             await _auto_release_worktree("test-project/keep-wt")
             mock_release.assert_not_awaited()
 
@@ -551,9 +551,9 @@ class TestCheckAndDispatchWithAutoMerge:
         self.mock_drain = AsyncMock()
 
         patches = [
-            patch("tasks.dispatch_task", self.mock_dispatch),
-            patch("tasks._maybe_create_pr", self.mock_pr),
-            patch("tasks._drain_queue", self.mock_drain),
+            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
+            patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
         ]
         for p in patches:
             p.start()
@@ -574,8 +574,8 @@ class TestCheckAndDispatchWithAutoMerge:
             worktree_path="/tmp/fake",
         )
 
-        with patch("tasks._perform_auto_merge", AsyncMock(return_value=True)) as mock_merge:
-            with patch("tasks._auto_release_worktree", AsyncMock()):
+        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)) as mock_merge:
+            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/am-gate")
                 mock_merge.assert_awaited_once_with("test-project/am-gate")
 
@@ -596,8 +596,8 @@ class TestCheckAndDispatchWithAutoMerge:
             goal="Dependent", depends_on="test-project/am-fail",
         )
 
-        with patch("tasks._perform_auto_merge", AsyncMock(return_value=False)):
-            with patch("tasks._auto_release_worktree", AsyncMock()):
+        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=False)):
+            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/am-fail")
 
         # Dependent should NOT have been dispatched
@@ -615,8 +615,8 @@ class TestCheckAndDispatchWithAutoMerge:
             status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
         )
 
-        with patch("tasks._perform_auto_merge", AsyncMock(return_value=True)):
-            with patch("tasks._auto_release_worktree", AsyncMock()):
+        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
+            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/drain-test")
 
         self.mock_drain.assert_awaited_once()

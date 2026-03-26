@@ -83,10 +83,10 @@ class TestRecoverWithResume:
         self.mock_verify = patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True))
 
         patches = [
-            patch("tasks.setup_worktree", self.mock_setup_worktree),
-            patch("tasks.run_setup_command", self.mock_run_setup),
-            patch("tasks._run_sdk_session", self.mock_run_sdk),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", self.mock_setup_worktree),
+            patch("switchboard.dispatch.engine.run_setup_command", self.mock_run_setup),
+            patch("switchboard.dispatch.engine._run_sdk_session", self.mock_run_sdk),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             self.mock_verify,
         ]
         for p in patches:
@@ -135,10 +135,10 @@ class TestRecoverWithRetry:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -174,7 +174,7 @@ class TestRecoverGateSubtask:
             patch("tasks._run_test_gate", self.mock_run_test_gate),
             patch("tasks._dispatch_review", self.mock_dispatch_review),
             patch("tasks._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -234,10 +234,10 @@ class TestStaggerRecovery:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
@@ -277,10 +277,10 @@ class TestFlapDetection:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -354,10 +354,10 @@ class TestRecoveryPriority:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
             patch("tasks._run_test_gate", AsyncMock()),
             patch("tasks._dispatch_review", AsyncMock()),
@@ -417,7 +417,7 @@ class TestRecoveryDisabled:
         await _create_orphan(db)
 
         with patch("switchboard.dispatch.recovery.RECOVERY_ENABLED", False), \
-             patch("tasks.notify", AsyncMock()):
+             patch("switchboard.dispatch.engine.notify", AsyncMock()):
             await tasks.recover_orphaned_tasks()
 
         task = await db.get_task("test-project/orphan-1")
@@ -434,10 +434,10 @@ class TestConcurrencyDuringRecovery:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
@@ -558,10 +558,10 @@ class TestResumeFailureFallback:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
@@ -608,10 +608,10 @@ class TestRecoveryStatusMessages:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
@@ -667,10 +667,10 @@ class TestRecoverSingleTask:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks._run_sdk_session", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
             patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:

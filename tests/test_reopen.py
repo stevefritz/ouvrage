@@ -201,14 +201,14 @@ class TestStartReopenedTask:
         )
         await db.update_task(task["id"], status="completed")
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with pytest.raises(ValueError, match="must be 'reopened'"):
                 await tasks.start_reopened_task(task["id"])
 
     async def test_start_fails_on_missing_task(self, db, sample_project):
         import tasks
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with pytest.raises(ValueError, match="not found"):
                 await tasks.start_reopened_task("test-project/no-such-task")
 
@@ -224,8 +224,8 @@ class TestStartReopenedTask:
         await tasks.reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.start_reopened_task(task["id"])
 
         mock_dispatch.assert_awaited_once()
@@ -262,8 +262,8 @@ class TestStartReopenedTask:
         )
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
@@ -294,8 +294,8 @@ class TestStartReopenedTask:
         )
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
@@ -314,8 +314,8 @@ class TestStartReopenedTask:
         await tasks.reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
@@ -335,8 +335,8 @@ class TestStartReopenedTask:
         await tasks.reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.start_reopened_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
@@ -364,8 +364,8 @@ class TestStartReopenedTask:
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         mock_invalidate = AsyncMock()
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", mock_invalidate):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
                 await tasks.start_reopened_task(parent["id"])
 
         mock_invalidate.assert_awaited_once_with("test-project/start-parent")
@@ -383,8 +383,8 @@ class TestStartReopenedTask:
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         mock_invalidate = AsyncMock()
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", mock_invalidate):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
                 await tasks.start_reopened_task(task["id"])
 
         mock_invalidate.assert_not_awaited()
@@ -407,8 +407,8 @@ class TestRetryTaskStartingMessage:
         )
         await db.update_task(task["id"], status="failed", current_attempt=1)
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.retry_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
@@ -436,8 +436,8 @@ class TestRetryTaskStartingMessage:
             messages_at_dispatch_time.extend(thread["messages"])
             return {"status": "working"}
 
-        with patch("tasks.dispatch_task", AsyncMock(side_effect=capture_dispatch)):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(side_effect=capture_dispatch)):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.retry_task(task["id"])
 
         starting_msgs = [
@@ -711,9 +711,9 @@ class TestStartReopenedTaskOverrides:
         await tasks.reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
-                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+                with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
                     with patch("tasks.notify.task_attempt_starting", AsyncMock()):
                         await tasks.start_reopened_task(task["id"], auto_test=False)
 
@@ -733,9 +733,9 @@ class TestStartReopenedTaskOverrides:
         await tasks.reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
-                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+                with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
                     with patch("tasks.notify.task_attempt_starting", AsyncMock()):
                         await tasks.start_reopened_task(task["id"])
 
@@ -757,9 +757,9 @@ class TestStartReopenedTaskOverrides:
 
         mock_notify = AsyncMock()
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("tasks.dispatch_task", mock_dispatch):
-            with patch("tasks._invalidate_chain", AsyncMock()):
-                with patch("tasks._sync_branch_with_base", AsyncMock(return_value=True)):
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+                with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
                     with patch("tasks.notify.task_attempt_starting", mock_notify):
                         await tasks.start_reopened_task(task["id"])
 

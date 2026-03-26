@@ -196,12 +196,12 @@ class TestArchiveCallSites:
         async def fake_archive(t, p, reason):
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
-        with patch("tasks.archive_task_logs", side_effect=fake_archive), \
-             patch("tasks.setup_worktree", AsyncMock(return_value=str(tmp_path / "retry-me"))), \
-             patch("tasks._setup_log_dir", AsyncMock(return_value=tmp_path / "retry-me" / ".switchboard")), \
-             patch("tasks._run_sdk_session", AsyncMock()), \
-             patch("tasks.run_setup_command", AsyncMock()), \
-             patch("tasks._write_dispatch_log"), \
+        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
+             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "retry-me"))), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / "retry-me" / ".switchboard")), \
+             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
              patch("tasks.notify.task_dispatched", AsyncMock()):
             await tasks.retry_task("test-project/retry-me")
 
@@ -228,8 +228,8 @@ class TestArchiveCallSites:
         async def fake_archive(t, p, reason):
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
-        with patch("tasks.archive_task_logs", side_effect=fake_archive), \
-             patch("tasks.cleanup_worktree", AsyncMock()):
+        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
+             patch("switchboard.dispatch.engine.cleanup_worktree", AsyncMock()):
             await tasks.close_task("test-project/close-me")
 
         assert len(archived_calls) == 1
@@ -256,7 +256,7 @@ class TestArchiveCallSites:
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
         # Patch subprocess so worktree remove doesn't fail
-        with patch("tasks.archive_task_logs", side_effect=fake_archive), \
+        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
              patch("tasks.asyncio.create_subprocess_exec", AsyncMock(
                  return_value=MagicMock(returncode=0, communicate=AsyncMock(return_value=(b"", b"")))
              )):
@@ -285,7 +285,7 @@ class TestArchiveCallSites:
         async def fake_release(task_id, reason="detach"):
             release_calls.append({"task_id": task_id, "reason": reason})
 
-        with patch("tasks.release_worktree", side_effect=fake_release):
+        with patch("switchboard.dispatch.engine.release_worktree", side_effect=fake_release):
             await tasks._auto_release_worktree("test-project/auto-release")
 
         assert release_calls[0]["reason"] == "completion"

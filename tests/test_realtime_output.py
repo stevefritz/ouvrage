@@ -271,8 +271,8 @@ class TestAttemptTracking:
         )
         await db.update_task(task["id"], status="completed")
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
@@ -289,8 +289,8 @@ class TestAttemptTracking:
         )
         await db.update_task(task["id"], status="completed")
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("tasks._invalidate_chain", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 await tasks.retry_task(task["id"])
                 await db.update_task(task["id"], status="completed")
                 await tasks.retry_task(task["id"])
@@ -327,7 +327,7 @@ class TestAttemptTracking:
         )
         await db.update_task(task["id"], status="needs-review", current_attempt=2)
 
-        with patch("tasks.dispatch_task", AsyncMock(return_value={"status": "working"})) as mock_dispatch:
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})) as mock_dispatch:
             await tasks.resume_task(task["id"])
 
         # current_attempt should still be 2 (resume_task doesn't touch it)

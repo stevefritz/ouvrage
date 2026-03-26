@@ -72,7 +72,7 @@ class TestInvalidateChain:
         patches = [
             patch("tasks.db.get_dependents", self.mock_get_dependents),
             patch("tasks.db.update_task", self.mock_update_task),
-            patch("tasks.cancel_task", self.mock_cancel_task),
+            patch("switchboard.dispatch.engine.cancel_task", self.mock_cancel_task),
         ]
         for p in patches:
             p.start()
@@ -259,12 +259,12 @@ class TestCheckAndDispatchDependents:
         patches = [
             patch("tasks.db.get_task", self.mock_get_task),
             patch("tasks.db.get_dependents", self.mock_get_dependents),
-            patch("tasks.dispatch_task", self.mock_dispatch),
-            patch("tasks._rebase_and_redispatch", self.mock_rebase),
-            patch("tasks._maybe_create_pr", self.mock_pr),
-            patch("tasks._drain_queue", self.mock_drain),
-            patch("tasks._perform_auto_merge", self.mock_auto_merge),
-            patch("tasks._auto_release_worktree", self.mock_auto_release),
+            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.engine._rebase_and_redispatch", self.mock_rebase),
+            patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
+            patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
+            patch("switchboard.dispatch.engine._perform_auto_merge", self.mock_auto_merge),
+            patch("switchboard.dispatch.engine._auto_release_worktree", self.mock_auto_release),
             patch("tasks.db.resolve_punchlist_items_for_task", self.mock_resolve_punchlist),
             patch("tasks.db.post_task_message", self.mock_post_msg),
         ]
@@ -449,8 +449,8 @@ class TestMaybeCreatePr:
             await db.update_task(tid, worktree_path=None)
             return {"released": True}
 
-        with patch("tasks.release_worktree", AsyncMock(side_effect=fake_release)):
-            with patch("tasks._drain_queue", AsyncMock()):
+        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock(side_effect=fake_release)):
+            with patch("switchboard.dispatch.engine._drain_queue", AsyncMock()):
                 with patch("tasks.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
                     await _check_and_dispatch_dependents("test-project/pr-release-bug")
 
@@ -522,9 +522,9 @@ class TestHeldWithDependsOn:
         await db.update_task(child["id"], held=True)
 
         # Now run dependency resolution
-        with patch("tasks.release_worktree", AsyncMock()):
-            with patch("tasks._drain_queue", AsyncMock()):
-                with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
+        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()):
+            with patch("switchboard.dispatch.engine._drain_queue", AsyncMock()):
+                with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
                     with patch("tasks.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
                         await _check_and_dispatch_dependents("test-project/gated-parent")
 
@@ -837,7 +837,7 @@ class TestRebaseAndRedispatch:
             patch("switchboard.git.operations._run_as_worker", self.mock_run),
             patch("tasks.db.update_task", self.mock_update_task),
             patch("tasks.db.post_task_message", self.mock_post_msg),
-            patch("tasks.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
         ]
         for p in patches:
             p.start()

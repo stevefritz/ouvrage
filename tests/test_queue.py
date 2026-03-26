@@ -24,9 +24,9 @@ class TestDispatchTaskQueuing:
         self.mock_notify = AsyncMock()
 
         patches = [
-            patch("tasks.setup_worktree", self.mock_setup_worktree),
-            patch("tasks.run_setup_command", self.mock_run_setup),
-            patch("tasks.notify", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", self.mock_setup_worktree),
+            patch("switchboard.dispatch.engine.run_setup_command", self.mock_run_setup),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -69,7 +69,7 @@ class TestDispatchTaskQueuing:
         import tasks
 
         # Mock SDK session to avoid actually running
-        with patch("tasks._run_sdk_session", AsyncMock()):
+        with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
             result = await tasks.dispatch_task(
                 project_id="test-project",
                 task_id="test-project/immediate-task",
@@ -253,10 +253,10 @@ class TestChainPriority:
         async def mock_dispatch(**kwargs):
             dispatch_order.append(kwargs["task_id"])
 
-        with patch("tasks.dispatch_task", AsyncMock(side_effect=mock_dispatch)):
-            with patch("tasks._maybe_create_pr", AsyncMock()):
-                with patch("tasks._perform_auto_merge", AsyncMock(return_value=True)):
-                    with patch("tasks._auto_release_worktree", AsyncMock()):
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(side_effect=mock_dispatch)):
+            with patch("switchboard.dispatch.engine._maybe_create_pr", AsyncMock()):
+                with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
+                    with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
                         await tasks._check_and_dispatch_dependents("test-project/parent")
 
         # Dependent dispatched first, then queue drain
