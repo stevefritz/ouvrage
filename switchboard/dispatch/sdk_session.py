@@ -343,7 +343,7 @@ async def _run_sdk_session(
     mcp_servers = {
         "switchboard": {
             "type": "http",
-            "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp",
+            "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp/worker",
         },
         "graphiti": {
             "type": "http",

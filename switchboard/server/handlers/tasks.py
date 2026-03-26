@@ -11,7 +11,7 @@ import switchboard.db as db
 from switchboard.notifications import slack as notify
 import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
-from switchboard.server.context import get_request_user_id, get_request_is_token_auth
+from switchboard.server.context import get_request_user_id, get_request_is_token_auth, get_request_is_worker
 
 log = logging.getLogger("switchboard.server")
 
@@ -73,6 +73,16 @@ _UPDATE_TASK_FIELDS = {
     "max_test_retries", "max_review_retries",
     "model", "jira_ticket", "conversation_id", "claude_chat_url",
     "held",
+}
+
+# Fields that CC workers are not allowed to modify via /mcp/worker.
+# Prevents CC from disabling its own test/review gates or changing its own model.
+WORKER_BLOCKED_FIELDS = {
+    "auto_test", "auto_review", "auto_merge", "auto_pr",
+    "model", "review_model",
+    "max_gate_retries", "max_review_retries", "max_test_retries",
+    "held", "base_branch", "branch_target",
+    "max_turns", "max_wall_clock",
 }
 
 
@@ -256,6 +266,12 @@ async def _handle_list_tasks(arguments):
 
 async def _handle_update_task(arguments):
     task_id = arguments["task_id"]
+    if get_request_is_worker():
+        # Check raw arguments — some blocked fields (e.g. held) may not be in
+        # _UPDATE_TASK_FIELDS, so we check before filtering to give explicit errors.
+        blocked = set(arguments.keys()) & WORKER_BLOCKED_FIELDS
+        if blocked:
+            return {"error": f"Worker cannot modify: {', '.join(sorted(blocked))}"}
     fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
 
     # Re-hold validation: held=True is only allowed on ready tasks
@@ -279,6 +295,10 @@ async def _handle_update_task(arguments):
 
 async def _handle_bulk_update_tasks(arguments):
     task_ids = arguments["task_ids"]
+    if get_request_is_worker():
+        blocked = set(arguments.keys()) & WORKER_BLOCKED_FIELDS
+        if blocked:
+            return {"error": f"Worker cannot modify: {', '.join(sorted(blocked))}"}
     fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
     count = await db.bulk_update_tasks(task_ids, **fields)
     return {"updated": count, "requested": len(task_ids)}

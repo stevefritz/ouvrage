@@ -266,6 +266,12 @@ async def main():
             user_id, is_token_auth = await _resolve_mcp_user_id(scope)
             set_request_context(user_id, is_token_auth)
             await session_manager.handle_request(scope, receive, send)
+        elif path == "/mcp/worker":
+            # Worker endpoint — trust-based, no token auth required.
+            # Sets is_worker=True so handlers can enforce field-level restrictions.
+            # user_id is None; attribution comes from the task's dispatched_by.
+            set_request_context(user_id=None, is_token_auth=False, is_worker=True)
+            await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)
         elif path.startswith("/dashboard"):
