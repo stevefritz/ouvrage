@@ -39,7 +39,7 @@ from switchboard.git.worktree import _run_as_worker
 from switchboard.git.operations import _get_branch_diff, _filter_diff_by_ignore_patterns
 from switchboard.dispatch.sdk_session import _open_shared
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 def _tail_lines(text: str, max_chars: int) -> str:

@@ -91,7 +91,7 @@ async def resolve_punchlist_items_for_task(task_id: str) -> int:
         return cursor.rowcount
 
 
-# Aliases used by dashboard_api.py
+# Aliases used by dashboard REST API
 async def create_punchlist_item(component_id: str, item: str) -> dict:
     """Alias for add_punchlist_item (used by dashboard API)."""
     return await add_punchlist_item(component_id, item)

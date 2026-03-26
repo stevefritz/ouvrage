@@ -7,7 +7,7 @@ import os
 import switchboard.db as db
 from switchboard.git.worktree import _run_as_worker
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 async def resolve_branch_target(task: dict) -> str:

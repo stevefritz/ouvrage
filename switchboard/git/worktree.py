@@ -10,7 +10,7 @@ import shlex
 import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 def _get_worker_ids() -> tuple[int, int]:

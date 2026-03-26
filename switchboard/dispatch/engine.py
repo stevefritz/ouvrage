@@ -54,7 +54,7 @@ from switchboard.dispatch.sdk_session import (
 )
 from switchboard.dispatch.queue import _drain_queue
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:

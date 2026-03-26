@@ -45,7 +45,7 @@ from switchboard.config.constants import MESSAGE_POLL_INTERVAL, DEFAULT_MODEL
 from switchboard.git.worktree import _run_as_worker
 from switchboard.git.operations import _ensure_branch_pushed
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Process group isolation — patch anyio.open_process at module load time
@@ -60,7 +60,7 @@ log = logging.getLogger("switchboard.tasks")
 # its own session and process group — signals within CC's group can't escape
 # upward to Switchboard.
 #
-# Both tasks.py and the SDK transport module reference the same anyio module
+# Both this module and the SDK transport module reference the same anyio module
 # object, so patching anyio.open_process here affects all SDK subprocess spawns.
 _orig_anyio_open_process = anyio.open_process
 
@@ -317,7 +317,7 @@ async def _run_sdk_session(
     log_dir: Path, model: str = "sonnet",
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
-    # Lazy imports to break circular dependency with tasks.py
+    # Lazy imports to break circular dependency with dispatch.engine
     from switchboard.dispatch.gates import _run_test_gate, _dispatch_review, _process_review_result
     from switchboard.dispatch.engine import _check_and_dispatch_dependents, _update_usage
     from switchboard.dispatch.queue import _drain_queue

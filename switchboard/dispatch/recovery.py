@@ -28,7 +28,7 @@ from switchboard.config.settings import (
 )
 from switchboard.config.constants import STALL_THRESHOLD_SECONDS, STALL_CHECK_INTERVAL
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -151,7 +151,7 @@ async def recover_orphaned_tasks():
 
     Features staggered recovery, flap detection, and FIFO queue priority.
     """
-    # Lazy imports to break circular dependency with tasks.py
+    # Lazy imports to break circular dependency with dispatch.engine
     from switchboard.dispatch.gates import _run_test_gate, _dispatch_review  # noqa: PLC0415
 
     # Re-trigger gate for tasks stuck in test-failed/review-failed

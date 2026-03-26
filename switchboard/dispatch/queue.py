@@ -12,7 +12,7 @@ import logging
 
 import switchboard.db as db
 
-log = logging.getLogger("switchboard.tasks")
+log = logging.getLogger(__name__)
 
 
 async def _drain_queue() -> None:
