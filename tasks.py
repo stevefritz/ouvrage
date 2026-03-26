@@ -25,7 +25,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
 import database as db
-import notifications as notify
+from switchboard.notifications import slack as notify
 
 # ---------------------------------------------------------------------------
 # Process group isolation — patch anyio.open_process at module load time

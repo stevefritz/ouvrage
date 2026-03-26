@@ -13,11 +13,11 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
 
-import auth
+from switchboard.auth import middleware as auth
 import dashboard_api
 import database as db
-import embedding_service as emb
-import notifications as notify
+from switchboard.embeddings import service as emb
+from switchboard.notifications import slack as notify
 import tasks
 
 PR_URL_RE = re.compile(r'https://github\.com/[^\s)]+/pull/\d+')

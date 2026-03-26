@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, unquote
 
 import database as db
 import tasks
-import web_push
+from switchboard.notifications import web_push
 
 logger = logging.getLogger(__name__)
 _start_time = time.monotonic()
