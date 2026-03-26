@@ -133,6 +133,7 @@ from switchboard.db.users import (
     create_user,
     get_user,
     get_user_by_email,
+    get_user_by_email_with_auth,
     update_user,
     list_users,
     get_instance,
@@ -198,7 +199,8 @@ __all__ = [
     "create_punchlist_item", "update_punchlist_item", "delete_punchlist_item",
     "revert_punchlist_items_for_task",
     # users / instance / credentials / api tokens
-    "create_user", "get_user", "get_user_by_email", "update_user", "list_users",
+    "create_user", "get_user", "get_user_by_email", "get_user_by_email_with_auth",
+    "update_user", "list_users",
     "get_instance", "update_instance",
     "get_user_credentials", "update_user_credentials",
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",

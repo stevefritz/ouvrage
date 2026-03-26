@@ -14,6 +14,7 @@ _ENCRYPTED_CREDENTIAL_FIELDS = frozenset({"anthropic_api_key", "github_pat"})
 # Field allowlists to prevent SQL injection in dynamic UPDATE queries
 _USER_MUTABLE_FIELDS = frozenset({
     "email", "name", "password_hash", "role", "timezone", "updated_at",
+    "failed_login_count", "locked_until",
 })
 _INSTANCE_MUTABLE_FIELDS = frozenset({
     "name", "slug", "stripe_customer_id", "plan_tier", "owner_user_id",
@@ -70,6 +71,21 @@ async def get_user_by_email(email: str) -> dict | None:
     async with get_db() as db:
         rows = await db.execute_fetchall(
             f"SELECT {_USER_PUBLIC_COLS} FROM users WHERE email = ?", (email,)
+        )
+        return dict(rows[0]) if rows else None
+
+
+async def get_user_by_email_with_auth(email: str) -> dict | None:
+    """Fetch user including auth fields (password_hash, failed_login_count, locked_until).
+
+    Only use this for authentication — never return these fields to clients.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT id, email, name, role, timezone, password_hash,
+                      failed_login_count, locked_until, created_at, updated_at
+               FROM users WHERE email = ?""",
+            (email,),
         )
         return dict(rows[0]) if rows else None
 

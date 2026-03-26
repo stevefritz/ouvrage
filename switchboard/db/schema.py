@@ -225,6 +225,17 @@ async def init_db():
                 expires_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMP NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                last_active TIMESTAMP NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
             CREATE TABLE IF NOT EXISTS oauth_tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_id TEXT NOT NULL,
@@ -367,6 +378,14 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_status TEXT")
         if "reopen_saved_gate_passed_at" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_passed_at TEXT")
+
+        # Migrate users table: add rate-limiting fields if missing
+        user_columns = await conn.execute_fetchall("PRAGMA table_info(users)")
+        user_col_names = [c["name"] for c in user_columns]
+        if "failed_login_count" not in user_col_names:
+            await conn.execute("ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0")
+        if "locked_until" not in user_col_names:
+            await conn.execute("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP")
 
         # Migrate messages table: add attempt_number and embedding if missing
         msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
