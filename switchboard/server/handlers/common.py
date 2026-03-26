@@ -1,0 +1,26 @@
+"""Shared utilities used across multiple handler modules."""
+
+import asyncio
+import logging
+import re
+
+from switchboard.embeddings import service as emb
+import database as db
+
+log = logging.getLogger("switchboard.server")
+
+PR_URL_RE = re.compile(r'https://github\.com/[^\s)]+/pull/\d+')
+
+
+async def _embed_message_async(message_id: int, content: str, msg_type: str | None) -> None:
+    """Fire-and-forget: embed a message and store the vector. Never raises."""
+    if not emb.should_embed(content, msg_type):
+        return
+    try:
+        service = emb.get_embedding_service()
+        vector = await service.embed_safe(content)
+        if vector:
+            blob = emb.encode_vector(vector)
+            await db.set_message_embedding(message_id, blob)
+    except Exception:
+        pass  # Never block — embedding is best-effort
