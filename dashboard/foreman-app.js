@@ -9,10 +9,16 @@ import { LandingView } from './views/LandingView.js';
 import { ProjectView } from './views/ProjectView.js';
 import { TaskView } from './views/TaskView.js';
 import { ConversationView } from './views/ConversationView.js';
+import { LoginView } from './views/LoginView.js';
 
 const html = htm.bind(h);
 
 function ForemanApp() {
+    // Login page is served at /foreman/login (full URL path, not hash route)
+    if (window.location.pathname === '/foreman/login') {
+        return html`<${LoginView} />`;
+    }
+
     const { view, params } = useRouter();
 
     let content;
