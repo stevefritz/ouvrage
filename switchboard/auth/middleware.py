@@ -1,20 +1,32 @@
 """
-OAuth 2.1 resource server middleware for Switchboard.
+Auth middleware for Switchboard.
 
-When AUTH_ISSUER_URL is set, all requests to protected paths require a valid
-Bearer token issued by the configured authorization server (Authelia).
-Tokens are validated against the issuer's JWKS endpoint.
+Two layers of protection, always active:
 
-When AUTH_ISSUER_URL is unset, auth is disabled (local dev mode).
+1. Session auth (always active):
+   - /foreman* (except /foreman/login): requires valid session cookie.
+     No session → 302 redirect to /foreman/login?next={path}
+   - /dashboard/api/*: requires valid session cookie.
+     No session → 401 JSON {"error": "authentication_required"}
+   - /dashboard* static: pass through, no auth.
+
+2. Bearer JWT auth (active when AUTH_ISSUER_URL is set):
+   - All other paths require a valid Bearer token from the configured
+     authorization server (previously Authelia, now Switchboard's own OAuth).
+
+Both layers bypass localhost connections (CC workers on the same host).
 """
 
 import json
 import logging
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import jwt
+
+from switchboard.auth.sessions import get_session_user
 
 logger = logging.getLogger("switchboard.auth")
 
@@ -199,22 +211,27 @@ UNPROTECTED_PATHS = {
     "/oauth/revoke",
     "/auth/login",
     "/auth/logout",
+    "/foreman/login",
 }
 
 
 def auth_middleware(inner_app):
     """
-    ASGI middleware that enforces Bearer token auth on protected paths.
-    No-op when AUTH_ISSUER_URL is not set.
-    """
-    if not is_auth_enabled():
-        return inner_app
+    ASGI middleware that enforces auth on protected paths.
 
+    Session auth (always active):
+      /foreman* → session required; no session → 302 to /foreman/login?next=...
+      /dashboard/api/* → session required; no session → 401 JSON
+      /dashboard* static → pass through (no auth)
+
+    Bearer JWT auth (only when AUTH_ISSUER_URL is set):
+      All other paths → Bearer token required.
+    """
     async def middleware(scope, receive, send):
         if scope["type"] != "http":
             return await inner_app(scope, receive, send)
 
-        # Bypass auth for localhost connections (CC subprocesses on the same host)
+        # Bypass all auth for localhost connections (CC subprocesses on the same host)
         client = scope.get("client")
         if client and client[0] in ("127.0.0.1", "::1"):
             return await inner_app(scope, receive, send)
@@ -226,12 +243,44 @@ def auth_middleware(inner_app):
             await _send_json(send, 200, _protected_resource_metadata())
             return
 
-        # Dashboard paths bypass OAuth — Caddy handles basic auth (htpasswd)
-        # for /dashboard routes before requests reach this middleware.
-        if path.startswith("/dashboard") or path.startswith("/foreman"):
+        # ── Session auth for /foreman* ──────────────────────────────────────
+        # /foreman/login is public; everything else requires a session.
+        if path.startswith("/foreman") and path != "/foreman/login":
+            user = await get_session_user(scope)
+            if user is None:
+                # Build next= param: path + query string
+                qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
+                next_path = path + ("?" + qs if qs else "")
+                location = "/foreman/login?next=" + quote(next_path, safe="")
+                await send({
+                    "type": "http.response.start",
+                    "status": 302,
+                    "headers": [[b"location", location.encode()]],
+                })
+                await send({"type": "http.response.body", "body": b""})
+                return
+            scope["session_user"] = user
             return await inner_app(scope, receive, send)
 
-        # Skip auth for unprotected paths
+        # ── Session auth for /dashboard/api/* ──────────────────────────────
+        if path.startswith("/dashboard/api/"):
+            user = await get_session_user(scope)
+            if user is None:
+                await _send_json(send, 401, {"error": "authentication_required"})
+                return
+            scope["session_user"] = user
+            return await inner_app(scope, receive, send)
+
+        # ── Dashboard static assets — no auth ──────────────────────────────
+        if path.startswith("/dashboard"):
+            return await inner_app(scope, receive, send)
+
+        # ── Bearer JWT for all other paths (/mcp, OAuth, etc.) ─────────────
+        # No-op when AUTH_ISSUER_URL is not configured (dev mode).
+        if not is_auth_enabled():
+            return await inner_app(scope, receive, send)
+
+        # Skip auth for explicitly unprotected paths
         if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
