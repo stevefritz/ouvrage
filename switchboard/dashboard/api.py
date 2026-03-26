@@ -216,6 +216,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/cancel-chain"):
                     task_id = rest[:-len("/cancel-chain")]
                     return await _handle_cancel_chain(send, task_id)
+                if rest.endswith("/hold"):
+                    task_id = rest[:-len("/hold")]
+                    return await _handle_hold(send, task_id)
                 if rest.endswith("/approve"):
                     task_id = rest[:-len("/approve")]
                     return await _handle_approve(send, task_id)
@@ -642,6 +645,16 @@ async def _handle_close(receive, send, task_id):
 
 async def _handle_release_worktree(send, task_id):
     result = await tasks.release_worktree(task_id)
+    await _json_response(send, result)
+
+
+async def _handle_hold(send, task_id):
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+    if task["status"] != "ready":
+        return await _error(send, f"Cannot hold a task with status '{task['status']}' — only ready tasks can be held", 400)
+    result = await db.update_task(task_id, held=True)
     await _json_response(send, result)
 
 

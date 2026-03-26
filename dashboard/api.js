@@ -67,6 +67,7 @@ export const api = {
     cancelChain: (id) => request(`/tasks/${eid(id)}/cancel-chain`, { method: 'POST' }),
     releaseWorktree: (id) => request(`/tasks/${eid(id)}/release-worktree`, { method: 'POST' }),
     approveTask: (id) => request(`/tasks/${eid(id)}/approve`, { method: 'POST' }),
+    holdTask: (id) => request(`/tasks/${eid(id)}/hold`, { method: 'POST' }),
     dispatchTask: (id) => request(`/tasks/${eid(id)}/dispatch`, { method: 'POST' }),
     reopenTask: (id) => request(`/tasks/${eid(id)}/reopen`, { method: 'POST' }),
     cancelReopen: (id) => request(`/tasks/${eid(id)}/cancel-reopen`, { method: 'POST' }),
