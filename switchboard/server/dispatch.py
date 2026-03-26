@@ -16,6 +16,9 @@ from switchboard.server.handlers.projects import (
     _handle_get_project,
     _handle_update_project,
     _handle_list_projects,
+    _handle_pause_project,
+    _handle_resume_project,
+    _handle_stop_project,
 )
 from switchboard.server.handlers.tasks import (
     _handle_dispatch_task,
@@ -56,9 +59,6 @@ from switchboard.server.handlers.components import (
     _handle_pause_component,
     _handle_resume_component,
     _handle_stop_component,
-    _handle_pause_project,
-    _handle_resume_project,
-    _handle_stop_project,
 )
 from switchboard.server.handlers.punchlist import (
     _handle_add_punchlist_item,

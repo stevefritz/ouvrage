@@ -5,19 +5,21 @@ import tasks as task_engine
 
 
 async def _handle_create_component(arguments):
-    component_id = arguments.pop("id")
-    project_id = arguments.pop("project_id")
-    name = arguments.pop("name")
+    component_id = arguments["id"]
+    project_id = arguments["project_id"]
+    name = arguments["name"]
+    extras = {k: v for k, v in arguments.items() if k not in ("id", "project_id", "name")}
     return await db.create_component(
-        id=component_id, project_id=project_id, name=name, **arguments,
+        id=component_id, project_id=project_id, name=name, **extras,
     )
 
 
 async def _handle_update_component(arguments):
-    component_id = arguments.pop("id")
-    if not arguments:
+    component_id = arguments["id"]
+    fields = {k: v for k, v in arguments.items() if k != "id"}
+    if not fields:
         return {"error": "No fields to update"}
-    return await db.update_component(component_id, **arguments)
+    return await db.update_component(component_id, **fields)
 
 
 async def _handle_get_component(arguments):
@@ -64,13 +66,3 @@ async def _handle_stop_component(arguments):
     return await task_engine.stop_component(arguments["component_id"])
 
 
-async def _handle_pause_project(arguments):
-    return await task_engine.pause_project(arguments["project_id"])
-
-
-async def _handle_resume_project(arguments):
-    return await task_engine.resume_project(arguments["project_id"])
-
-
-async def _handle_stop_project(arguments):
-    return await task_engine.stop_project(arguments["project_id"])

@@ -74,6 +74,8 @@ from switchboard.server.handlers.components import (  # noqa: F401
     _handle_pause_component,
     _handle_resume_component,
     _handle_stop_component,
+)
+from switchboard.server.handlers.projects import (  # noqa: F401
     _handle_pause_project,
     _handle_resume_project,
     _handle_stop_project,

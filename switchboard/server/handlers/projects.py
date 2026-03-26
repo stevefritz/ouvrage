@@ -3,6 +3,7 @@
 import os
 
 import database as db
+import tasks as task_engine
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 
@@ -57,10 +58,23 @@ async def _handle_get_project(arguments):
 
 
 async def _handle_update_project(arguments):
-    project_id = arguments.pop("id")
-    if not arguments:
+    project_id = arguments["id"]
+    fields = {k: v for k, v in arguments.items() if k != "id"}
+    if not fields:
         return {"error": "No fields to update"}
-    return await db.update_project(project_id, **arguments)
+    return await db.update_project(project_id, **fields)
+
+
+async def _handle_pause_project(arguments):
+    return await task_engine.pause_project(arguments["project_id"])
+
+
+async def _handle_resume_project(arguments):
+    return await task_engine.resume_project(arguments["project_id"])
+
+
+async def _handle_stop_project(arguments):
+    return await task_engine.stop_project(arguments["project_id"])
 
 
 async def _handle_list_projects(arguments):
