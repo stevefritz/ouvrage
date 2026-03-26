@@ -572,7 +572,8 @@ async def dispatch_task(
     if task["branch"] != effective_branch:
         await db.update_task(task_id, branch=effective_branch)
     worktree_path = await setup_worktree(project, short_name, effective_branch,
-                                         depends_on=task.get("depends_on"))
+                                         depends_on=task.get("depends_on"),
+                                         base_branch=task.get("base_branch"))
 
     # Run setup command
     await run_setup_command(project, worktree_path)

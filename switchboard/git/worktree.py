@@ -57,7 +57,8 @@ async def _find_branch_holder(branch: str) -> dict | None:
 
 
 async def setup_worktree(project: dict, dir_name: str, branch: str,
-                         depends_on: str | None = None) -> str:
+                         depends_on: str | None = None,
+                         base_branch: str | None = None) -> str:
     """Create git worktree for a task. Returns worktree path.
 
     Args:
@@ -113,19 +114,20 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
         default_branch = detected
 
-    # Branch chaining: if this task depends on another, branch from parent's branch.
-    # Use origin/ remote tracking ref (always current after fetch) instead of local
-    # branch ref, which can go stale or fail to update when checked out in a worktree.
-    base_branch = f"origin/{default_branch}"
+    # Priority: depends_on (chain from parent) > base_branch (explicit) > origin/{default}
+    base_ref = f"origin/{default_branch}"
     if depends_on:
         parent_task = await db.get_task(depends_on)
         if parent_task and parent_task.get("branch"):
-            base_branch = parent_task["branch"]
-            log.info(f"Branch chaining: branching from parent branch '{base_branch}' (depends_on={depends_on})")
+            base_ref = parent_task["branch"]
+            log.info(f"Branch chaining: branching from parent branch '{base_ref}' (depends_on={depends_on})")
+    elif base_branch:
+        base_ref = base_branch if base_branch.startswith("origin/") else f"origin/{base_branch}"
+        log.info(f"Explicit base_branch: branching from '{base_ref}'")
 
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
-        "-b", branch, worktree_path, base_branch,
+        "-b", branch, worktree_path, base_ref,
     )
     if rc != 0:
         error_msg = stderr.decode()
@@ -135,7 +137,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
             await _run_as_worker("git", "-C", bare_path, "branch", "-D", branch)
             stdout, stderr, rc = await _run_as_worker(
                 "git", "-C", bare_path, "worktree", "add",
-                "-b", branch, worktree_path, base_branch,
+                "-b", branch, worktree_path, base_ref,
             )
         # Branch exists on remote but not as stale ref — checkout existing
         if rc != 0:
