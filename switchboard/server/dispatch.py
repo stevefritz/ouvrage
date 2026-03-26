@@ -71,6 +71,11 @@ from switchboard.server.handlers.ops import (
     _handle_get_context,
     _handle_get_guide,
 )
+from switchboard.server.handlers.tokens import (
+    _handle_create_api_token,
+    _handle_list_api_tokens,
+    _handle_revoke_api_token,
+)
 from switchboard.git.files import (
     _handle_list_task_files,
     _handle_get_task_file,
@@ -145,6 +150,10 @@ TOOL_HANDLERS = {
     "get_context": _handle_get_context,
     "get_guide": _handle_get_guide,
     "search_component": _handle_search_component,
+    # Token management
+    "create_api_token": _handle_create_api_token,
+    "list_api_tokens": _handle_list_api_tokens,
+    "revoke_api_token": _handle_revoke_api_token,
 }
 
 

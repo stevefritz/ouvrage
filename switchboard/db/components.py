@@ -13,6 +13,7 @@ from switchboard.db._helpers import now_iso
 async def create_component(
     id: str, project_id: str, name: str,
     description: str | None = None, phase: str = "planning",
+    created_by: int | None = None,
     **config_fields,
 ) -> dict:
     async with get_db() as db:
@@ -28,8 +29,8 @@ async def create_component(
         # Filter to valid config fields
         valid_config = {k: v for k, v in config_fields.items() if k in COMPONENT_CONFIG_FIELDS}
 
-        cols = ["id", "project_id", "name", "description", "phase", "env_overrides", "secrets", "created_at", "updated_at"]
-        vals = [id, project_id, name, description, phase, env_json, secrets_json, ts, ts]
+        cols = ["id", "project_id", "name", "description", "phase", "env_overrides", "secrets", "created_by", "created_at", "updated_at"]
+        vals = [id, project_id, name, description, phase, env_json, secrets_json, created_by, ts, ts]
 
         for k, v in valid_config.items():
             cols.append(k)
@@ -45,7 +46,7 @@ async def create_component(
             "description": description, "phase": phase,
             "env_overrides": json.loads(env_json) if env_json else None,
             "secrets": json.loads(secrets_json) if secrets_json else None,
-            "created_at": ts, "updated_at": ts,
+            "created_by": created_by, "created_at": ts, "updated_at": ts,
         }
         result.update(valid_config)
         return result

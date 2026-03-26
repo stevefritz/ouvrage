@@ -185,7 +185,9 @@ class TestApiTokens:
         result = await db.create_api_token(user["id"], name="my laptop")
         assert "token" in result
         assert "id" in result
-        assert len(result["token"]) == 64  # secrets.token_hex(32)
+        assert result["name"] == "my laptop"
+        assert result["token"].startswith("sb_")
+        assert len(result["token"]) == 67  # "sb_" + secrets.token_hex(32)
 
     async def test_validate_valid_token(self, db):
         user = await db.create_user(email="val@example.com", name="Val User")

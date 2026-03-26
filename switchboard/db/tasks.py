@@ -23,6 +23,8 @@ async def create_task(
     auto_merge: bool = False,
     auto_release_worktree: bool = True,
     base_branch: str | None = None,
+    created_by: int | None = None,
+    dispatched_by: int | None = None,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -40,13 +42,13 @@ async def create_task(
                 jira_ticket, conversation_id, model, auto_test, depends_on,
                 auto_review, review_model, parent_task_id, auto_pr, component_id,
                 claude_chat_url, auto_merge, auto_release_worktree, base_branch,
-                created_at, updated_at)
-               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_by, dispatched_by, created_at, updated_at)
+               VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, project_id, goal, branch, max_turns, max_wall_clock,
              jira_ticket, conversation_id, model, auto_test, depends_on,
              auto_review, review_model, parent_task_id, auto_pr, component_id,
              claude_chat_url, auto_merge, auto_release_worktree, base_branch,
-             ts, ts),
+             created_by, dispatched_by, ts, ts),
         )
         await db.commit()
         return {
@@ -60,6 +62,7 @@ async def create_task(
             "component_id": component_id, "claude_chat_url": claude_chat_url,
             "auto_merge": auto_merge, "auto_release_worktree": auto_release_worktree,
             "base_branch": base_branch,
+            "created_by": created_by, "dispatched_by": dispatched_by,
             "created_at": ts, "updated_at": ts,
         }
 
@@ -321,6 +324,7 @@ async def get_queued_tasks() -> list[dict]:
 async def post_task_message(
     task_id: str, author: str, content: str,
     type: str | None = None, title: str | None = None, pinned: bool = False,
+    user_id: int | None = None,
 ) -> dict:
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id, current_attempt FROM tasks WHERE id = ?", (task_id,))
@@ -337,9 +341,9 @@ async def post_task_message(
 
         ts = now_iso()
         cursor = await db.execute(
-            """INSERT INTO messages (task_id, author, type, title, content, pinned, created_at, attempt_number)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, author, type, title, content, pinned, ts, attempt_number),
+            """INSERT INTO messages (task_id, author, type, title, content, pinned, user_id, created_at, attempt_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, author, type, title, content, pinned, user_id, ts, attempt_number),
         )
         msg_id = cursor.lastrowid
 
@@ -348,7 +352,7 @@ async def post_task_message(
         return {
             "id": msg_id, "task_id": task_id, "author": author,
             "type": type, "title": title, "content": content,
-            "pinned": pinned, "created_at": ts, "attempt_number": attempt_number,
+            "pinned": pinned, "user_id": user_id, "created_at": ts, "attempt_number": attempt_number,
         }
 
 

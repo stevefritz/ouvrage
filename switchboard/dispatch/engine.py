@@ -453,6 +453,8 @@ async def dispatch_task(
     auto_release_worktree: bool = True,
     base_branch: str | None = None,
     held: bool = False,
+    created_by: int | None = None,
+    dispatched_by: int | None = None,
 ) -> dict:
     """Create task (if needed), setup worktree, launch CC via Agent SDK.
 
@@ -496,6 +498,7 @@ async def dispatch_task(
             component_id=component_id, claude_chat_url=claude_chat_url,
             auto_merge=auto_merge, auto_release_worktree=auto_release_worktree,
             base_branch=base_branch,
+            created_by=created_by, dispatched_by=dispatched_by,
         )
         if spec:
             await db.post_task_message(

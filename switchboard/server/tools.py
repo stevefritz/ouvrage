@@ -973,6 +973,43 @@ RAG_TOOLS = [
     ),
 ]
 
+
+# ---------------------------------------------------------------------------
+# API Token Tools
+# ---------------------------------------------------------------------------
+
+TOKEN_TOOLS = [
+    Tool(
+        name="create_api_token",
+        description="Create a new API token for authenticating MCP requests. The raw token is returned ONCE — store it securely. Use it as a Bearer token in the Authorization header.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Human-readable label for this token, e.g. 'my laptop' or 'CI pipeline'"},
+            },
+        },
+    ),
+    Tool(
+        name="list_api_tokens",
+        description="List your API tokens. Never returns the token value or hash — only metadata (id, name, last_used_at, created_at, expires_at).",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+    Tool(
+        name="revoke_api_token",
+        description="Permanently delete an API token by ID. The token will immediately stop working.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "token_id": {"type": "integer", "description": "ID of the token to revoke (from list_api_tokens)"},
+            },
+            "required": ["token_id"],
+        },
+    ),
+]
+
 # ---------------------------------------------------------------------------
 # Full tools list
 # ---------------------------------------------------------------------------
@@ -986,4 +1023,5 @@ TOOLS = (
     + OPS_TOOLS
     + CONTROL_TOOLS
     + RAG_TOOLS
+    + TOKEN_TOOLS
 )

@@ -17,8 +17,49 @@ import switchboard.dispatch as tasks
 
 from switchboard.server.tools import TOOLS
 from switchboard.server.dispatch import _dispatch_tool
+from switchboard.server.context import set_request_context
 
 log = logging.getLogger("switchboard.server")
+
+_SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
+
+
+async def _resolve_mcp_user_id(scope) -> tuple[int | None, bool]:
+    """Extract Bearer token from ASGI headers and resolve to a user_id.
+
+    Returns (user_id, is_token_auth) where is_token_auth=True if a valid
+    API token was presented, False if falling back to the instance owner.
+
+    Backward compatibility: if no token is provided, fall back to the instance
+    owner's user_id so single-tenant instances work without configuration.
+    """
+    # Extract Authorization header
+    raw_token: str | None = None
+    for name, value in scope.get("headers", []):
+        if name.lower() == b"authorization":
+            auth_str = value.decode("utf-8", errors="replace")
+            if auth_str.lower().startswith("bearer "):
+                raw_token = auth_str[7:].strip()
+            break
+
+    if raw_token:
+        user_id = await db.validate_api_token(raw_token)
+        if user_id is not None:
+            return user_id, True
+        # Token provided but invalid — return None so handlers get no user
+        log.warning("MCP request with invalid API token")
+        return None, False
+
+    # No token — fall back to instance owner (single-tenant mode)
+    log.warning(
+        "No API token provided, using instance owner. "
+        "Set up tokens for proper attribution."
+    )
+    instance = await db.get_instance()
+    if instance and instance.get("owner_user_id"):
+        return instance["owner_user_id"], False
+    return None, False
+
 
 SERVER_INSTRUCTIONS = """\
 Switchboard is a task orchestration system. It dispatches autonomous Claude Code \
@@ -222,6 +263,8 @@ async def main():
             await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
+            user_id, is_token_auth = await _resolve_mcp_user_id(scope)
+            set_request_context(user_id, is_token_auth)
             await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)

@@ -4,6 +4,7 @@ import os
 
 import switchboard.db as db
 import switchboard.dispatch as task_engine
+from switchboard.server.context import get_request_user_id
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 
@@ -58,6 +59,7 @@ async def _handle_create_project(arguments):
         claude_md_path=arguments.get("claude_md_path"),
         model=arguments.get("model"),
         state_definitions=arguments.get("state_definitions"),
+        created_by=get_request_user_id(),
     )
 
 

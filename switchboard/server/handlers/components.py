@@ -2,6 +2,7 @@
 
 import switchboard.db as db
 import switchboard.dispatch as task_engine
+from switchboard.server.context import get_request_user_id
 
 
 async def _handle_create_component(arguments):
@@ -10,7 +11,8 @@ async def _handle_create_component(arguments):
     name = arguments["name"]
     extras = {k: v for k, v in arguments.items() if k not in ("id", "project_id", "name")}
     return await db.create_component(
-        id=component_id, project_id=project_id, name=name, **extras,
+        id=component_id, project_id=project_id, name=name,
+        created_by=get_request_user_id(), **extras,
     )
 
 

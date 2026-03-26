@@ -6,8 +6,26 @@ import logging
 import switchboard.db as db
 from switchboard.embeddings import service as emb
 from switchboard.server.handlers.common import _embed_message_async
+from switchboard.server.context import get_request_user_id, get_request_is_token_auth
 
 log = logging.getLogger("switchboard.server")
+
+_SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
+
+
+def _resolve_message_user_id(author: str) -> int | None:
+    """Determine user_id to stamp on a message.
+
+    If the request is token-authenticated: always stamp the resolved user_id.
+    If fallback (no token): stamp for non-system authors, None for system actors.
+    """
+    user_id = get_request_user_id()
+    if user_id is None:
+        return None
+    if get_request_is_token_auth():
+        return user_id
+    # Fallback: only stamp if not a system actor
+    return None if author in _SYSTEM_AUTHORS else user_id
 
 
 async def _handle_board(arguments):
@@ -23,14 +41,17 @@ async def _handle_create_conversation(arguments):
         project=arguments["project"],
         goal=arguments["goal"],
         claude_chat_url=arguments.get("claude_chat_url"),
+        created_by=get_request_user_id(),
     )
     if arguments.get("content"):
+        initial_author = arguments.get("author", "human")
         msg = await db.post_message(
             conversation_id=arguments["id"],
-            author=arguments.get("author", "human"),
+            author=initial_author,
             content=arguments["content"],
             type=arguments.get("type"),
             title=arguments.get("title"),
+            user_id=_resolve_message_user_id(initial_author),
         )
         result["initial_message"] = msg
         asyncio.create_task(
@@ -51,6 +72,7 @@ async def _handle_post(arguments):
         type=msg_type,
         title=arguments.get("title"),
         pinned=arguments.get("pinned", False),
+        user_id=_resolve_message_user_id(author),
     )
 
     # Async embed — fire and forget, doesn't block the response

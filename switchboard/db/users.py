@@ -1,4 +1,5 @@
 """User, instance, credentials, and API token CRUD."""
+import asyncio
 import hashlib
 import json
 import secrets
@@ -184,12 +185,13 @@ async def update_user_credentials(user_id: int, **fields) -> dict:
 # ---------------------------------------------------------------------------
 
 async def create_api_token(user_id: int, name: str | None = None) -> dict:
-    """Generate a raw token, store its hash, return {token, id}.
+    """Generate a raw token, store its hash, return {token, id, name}.
 
+    Token format: "sb_" + 32 random hex chars (66 chars total).
     The raw token is returned exactly once and never stored. Callers must
     present the raw token to validate_api_token().
     """
-    raw_token = secrets.token_hex(32)  # 64-char hex string
+    raw_token = "sb_" + secrets.token_hex(32)  # "sb_" + 64-char hex = 67 chars
     token_hash = _hash_token(raw_token)
     ts = now_iso()
 
@@ -202,11 +204,27 @@ async def create_api_token(user_id: int, name: str | None = None) -> dict:
         await db.commit()
         token_id = cursor.lastrowid
 
-    return {"token": raw_token, "id": token_id}
+    return {"token": raw_token, "id": token_id, "name": name}
+
+
+async def _update_token_last_used(token_id: int) -> None:
+    """Fire-and-forget: update last_used_at without blocking the request."""
+    try:
+        async with get_db() as db:
+            await db.execute(
+                "UPDATE api_tokens SET last_used_at = ? WHERE id = ?",
+                (now_iso(), token_id),
+            )
+            await db.commit()
+    except Exception:
+        pass  # best-effort, never fail a request over this
 
 
 async def validate_api_token(raw_token: str) -> int | None:
-    """Return user_id if the token is valid and not expired, else None."""
+    """Return user_id if the token is valid and not expired, else None.
+
+    Updates last_used_at fire-and-forget so validation stays fast.
+    """
     token_hash = _hash_token(raw_token)
     ts = now_iso()
 
@@ -224,13 +242,9 @@ async def validate_api_token(raw_token: str) -> int | None:
         if row["expires_at"] and row["expires_at"] < ts:
             return None
 
-        # Update last_used_at
-        await db.execute(
-            "UPDATE api_tokens SET last_used_at = ? WHERE id = ?",
-            (ts, row["id"]),
-        )
-        await db.commit()
-        return row["user_id"]
+    # Update last_used_at fire-and-forget (don't block the response)
+    asyncio.create_task(_update_token_last_used(row["id"]))
+    return row["user_id"]
 
 
 async def revoke_api_token(token_id: int) -> bool:

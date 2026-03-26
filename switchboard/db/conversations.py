@@ -3,19 +3,19 @@ from switchboard.db.connection import get_db
 from switchboard.db._helpers import now_iso, _strip_embedding, _read_messages, _list_with_aggregates
 
 
-async def create_conversation(id: str, project: str, goal: str, claude_chat_url: str | None = None) -> dict:
+async def create_conversation(id: str, project: str, goal: str, claude_chat_url: str | None = None, created_by: int | None = None) -> dict:
     async with get_db() as db:
         ts = now_iso()
         await db.execute(
-            "INSERT INTO conversations (id, project, goal, claude_chat_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (id, project, goal, claude_chat_url, ts, ts),
+            "INSERT INTO conversations (id, project, goal, claude_chat_url, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (id, project, goal, claude_chat_url, created_by, ts, ts),
         )
         await db.commit()
         return {"id": id, "project": project, "goal": goal, "archived": False,
-                "claude_chat_url": claude_chat_url, "created_at": ts, "updated_at": ts}
+                "claude_chat_url": claude_chat_url, "created_by": created_by, "created_at": ts, "updated_at": ts}
 
 
-async def post_message(conversation_id: str, author: str, content: str, type: str | None = None, title: str | None = None, pinned: bool = False) -> dict:
+async def post_message(conversation_id: str, author: str, content: str, type: str | None = None, title: str | None = None, pinned: bool = False, user_id: int | None = None) -> dict:
     async with get_db() as db:
         # Verify conversation exists
         row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
@@ -31,8 +31,8 @@ async def post_message(conversation_id: str, author: str, content: str, type: st
 
         ts = now_iso()
         cursor = await db.execute(
-            "INSERT INTO messages (conversation_id, author, type, title, content, pinned, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, author, type, title, content, pinned, ts),
+            "INSERT INTO messages (conversation_id, author, type, title, content, pinned, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, author, type, title, content, pinned, user_id, ts),
         )
         msg_id = cursor.lastrowid
 
@@ -41,7 +41,7 @@ async def post_message(conversation_id: str, author: str, content: str, type: st
             (ts, conversation_id),
         )
         await db.commit()
-        return {"id": msg_id, "conversation_id": conversation_id, "author": author, "type": type, "title": title, "content": content, "pinned": pinned, "created_at": ts}
+        return {"id": msg_id, "conversation_id": conversation_id, "author": author, "type": type, "title": title, "content": content, "pinned": pinned, "user_id": user_id, "created_at": ts}
 
 
 async def read_messages(conversation_id: str, last_n: int | None = None, since: str | None = None, after: int | None = None, author: str | None = None, type: str | None = None) -> dict:

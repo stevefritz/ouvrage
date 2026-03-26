@@ -12,6 +12,7 @@ async def create_project(
     max_turns: int | None = None, max_wall_clock: int | None = None,
     claude_md_path: str | None = None, model: str | None = None,
     state_definitions: dict | None = None,
+    created_by: int | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
@@ -21,11 +22,11 @@ async def create_project(
             """INSERT INTO projects
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
                 test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
-                state_definitions, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                state_definitions, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
              test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
-             state_json, ts),
+             state_json, created_by, ts),
         )
         await db.commit()
         return {
@@ -35,7 +36,7 @@ async def create_project(
             "env_overrides": env_overrides, "max_turns": max_turns,
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
             "model": model, "state_definitions": state_definitions,
-            "created_at": ts,
+            "created_by": created_by, "created_at": ts,
         }
 
 

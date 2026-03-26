@@ -11,6 +11,7 @@ import switchboard.db as db
 from switchboard.notifications import slack as notify
 import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
+from switchboard.server.context import get_request_user_id, get_request_is_token_auth
 
 log = logging.getLogger("switchboard.server")
 
@@ -64,6 +65,8 @@ def _truncate_message(msg: dict, max_len: int = 200) -> dict:
         msg = {**msg, "content": content[:max_len] + "…"}
     return msg
 
+_SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
+
 _UPDATE_TASK_FIELDS = {
     "component_id", "base_branch", "branch_target", "tags",
     "auto_test", "auto_review", "auto_merge", "auto_pr",
@@ -78,6 +81,7 @@ async def _handle_dispatch_task(arguments):
     project_id = arguments["project_id"]
     raw_id = arguments["id"]
     task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
+    caller_user_id = get_request_user_id()
     result = await task_engine.dispatch_task(
         project_id=project_id,
         task_id=task_id,
@@ -105,6 +109,8 @@ async def _handle_dispatch_task(arguments):
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
                     else arguments.get("depends_on")),
         held=arguments.get("held", False),
+        created_by=caller_user_id,
+        dispatched_by=caller_user_id,
     )
     # Set tags if provided
     tags = arguments.get("tags")
@@ -316,13 +322,19 @@ async def _handle_update_task_phase(arguments):
 
 
 async def _handle_post_task_message(arguments):
+    author = arguments["author"]
+    user_id = get_request_user_id()
+    if user_id is not None:
+        if not get_request_is_token_auth() and author in _SYSTEM_AUTHORS:
+            user_id = None
     result = await db.post_task_message(
         task_id=arguments["task_id"],
-        author=arguments["author"],
+        author=author,
         content=arguments["content"],
         type=arguments.get("type"),
         title=arguments.get("title"),
         pinned=arguments.get("pinned", False),
+        user_id=user_id,
     )
     # Async embed — fire and forget, doesn't block the response
     asyncio.create_task(
