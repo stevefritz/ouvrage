@@ -226,6 +226,24 @@ async def _backfill_message_chunks() -> None:
 async def main():
     await db.init_db()
 
+    # Auto-migration: if owner env vars are set and no real owner exists, seed one.
+    import os as _os
+    _owner_email = _os.environ.get("SWITCHBOARD_OWNER_EMAIL")
+    _owner_hash = _os.environ.get("SWITCHBOARD_OWNER_PASSWORD_HASH")
+    if _owner_email and _owner_hash:
+        from switchboard.db.users import get_user_by_email as _get_user_by_email
+        _existing = await _get_user_by_email(_owner_email)
+        if not _existing:
+            from switchboard.migrate import run_migrate_auth as _run_migrate_auth
+            log.info("Auto-migrating owner user from env vars: %s", _owner_email)
+            await _run_migrate_auth(
+                email=_owner_email,
+                name=_os.environ.get("SWITCHBOARD_OWNER_NAME", "Owner"),
+                password_hash=_owner_hash,
+                slug=_os.environ.get("SWITCHBOARD_INSTANCE_SLUG", "default"),
+                instance_name=_os.environ.get("SWITCHBOARD_INSTANCE_NAME", "Switchboard"),
+            )
+
     # Initialize OAuth authorization server (RSA keys + seed default client)
     oauth_server.init_oauth_keys()
     await oauth_server.seed_default_client()
