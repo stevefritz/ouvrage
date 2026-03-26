@@ -13,7 +13,7 @@ Keeping a few module-level names that tests access directly:
 """
 
 import asyncio  # noqa: F401 — tests patch tasks.asyncio.*
-import database as db  # noqa: F401 — tests patch tasks.db.*
+import switchboard.db as db  # noqa: F401 — tests patch tasks.db.* (must be switchboard.db so patches propagate to engine.py)
 from switchboard.notifications import slack as notify  # noqa: F401 — tests patch tasks.notify.*
 
 # ---------------------------------------------------------------------------

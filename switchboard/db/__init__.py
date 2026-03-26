@@ -118,6 +118,13 @@ from switchboard.db.punchlist import (
     revert_punchlist_items_for_task,
 )
 
+# Constants (re-exported for callers that do `db.DEFAULT_MAX_CONCURRENT` etc.)
+from switchboard.config.constants import (
+    DEFAULT_MAX_CONCURRENT,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_MAX_WALL_CLOCK,
+)
+
 # Search
 from switchboard.db.search import (
     search_messages_semantic,
@@ -169,4 +176,8 @@ __all__ = [
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",
     "search_task_messages", "search_component",
+    # constants
+    "DEFAULT_MAX_CONCURRENT",
+    "DEFAULT_MAX_TURNS",
+    "DEFAULT_MAX_WALL_CLOCK",
 ]
