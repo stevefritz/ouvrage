@@ -54,10 +54,13 @@ async def create_user(
         }
 
 
+_USER_PUBLIC_COLS = "id, email, name, role, timezone, created_at, updated_at"
+
+
 async def get_user(user_id: int) -> dict | None:
     async with get_db() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
+            f"SELECT {_USER_PUBLIC_COLS} FROM users WHERE id = ?", (user_id,)
         )
         return dict(rows[0]) if rows else None
 
@@ -65,7 +68,7 @@ async def get_user(user_id: int) -> dict | None:
 async def get_user_by_email(email: str) -> dict | None:
     async with get_db() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM users WHERE email = ?", (email,)
+            f"SELECT {_USER_PUBLIC_COLS} FROM users WHERE email = ?", (email,)
         )
         return dict(rows[0]) if rows else None
 

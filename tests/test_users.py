@@ -46,6 +46,16 @@ class TestGetUser:
         assert fetched is not None
         assert fetched["email"] == "get@example.com"
 
+    async def test_get_does_not_leak_password_hash(self, db):
+        created = await db.create_user(email="noleak@example.com", name="No Leak")
+        fetched = await db.get_user(created["id"])
+        assert "password_hash" not in fetched
+
+    async def test_get_by_email_does_not_leak_password_hash(self, db):
+        await db.create_user(email="noleak2@example.com", name="No Leak 2")
+        fetched = await db.get_user_by_email("noleak2@example.com")
+        assert "password_hash" not in fetched
+
     async def test_get_nonexistent_returns_none(self, db):
         result = await db.get_user(999999)
         assert result is None

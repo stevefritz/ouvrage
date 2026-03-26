@@ -60,7 +60,7 @@ def _classify_push_error(stderr_text: str) -> str | None:
     s = stderr_text.lower()
     if "authentication failed" in s or "invalid credentials" in s or "401" in s:
         return "GitHub PAT is invalid or expired. Update it in settings."
-    if "403" in s or "permission" in s and "denied" in s:
+    if "403" in s or ("permission" in s and "denied" in s):
         return "GitHub PAT lacks push permission. Ensure it has `repo` scope."
     if "not found" in s or "404" in s:
         return "Repository not found. Check that the PAT has access to this repo."
@@ -81,46 +81,43 @@ async def create_github_pr(
 
     Handles 422 "already exists" by finding the existing PR.
     """
-    async with httpx.AsyncClient(timeout=30) as client:
+    headers = {
+        "Authorization": f"Bearer {pat}",
+        "Accept": "application/vnd.github+json",
+    }
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
         resp = await client.post(
             f"https://api.github.com/repos/{owner}/{repo}/pulls",
-            headers={
-                "Authorization": f"Bearer {pat}",
-                "Accept": "application/vnd.github+json",
-            },
             json={"title": title, "head": head, "base": base, "body": body},
         )
 
-    if resp.status_code == 201:
-        data = resp.json()
-        return {"url": data["html_url"], "number": data["number"]}
+        if resp.status_code == 201:
+            data = resp.json()
+            return {"url": data["html_url"], "number": data["number"]}
 
-    if resp.status_code == 422:
-        errors = resp.json()
-        if "already exists" in str(errors).lower():
-            return await _find_existing_pr(pat, owner, repo, head)
-        raise ValueError(f"PR creation failed: {errors}")
+        if resp.status_code == 422:
+            errors = resp.json()
+            if "already exists" in str(errors).lower():
+                return await _find_existing_pr(client, owner, repo, head)
+            raise ValueError(f"PR creation failed: {errors}")
 
-    if resp.status_code == 404:
-        raise ValueError(f"Repository not found: {owner}/{repo}")
-    if resp.status_code == 403:
-        raise ValueError(f"PAT lacks permission to create PRs. Ensure it has `repo` scope.")
+        if resp.status_code == 404:
+            raise ValueError(f"Repository not found: {owner}/{repo}")
+        if resp.status_code == 403:
+            raise ValueError(f"PAT lacks permission to create PRs. Ensure it has `repo` scope.")
 
-    resp.raise_for_status()
-    return {}  # unreachable, but satisfies type checker
+        resp.raise_for_status()
+        return {}  # unreachable, but satisfies type checker
 
 
-async def _find_existing_pr(pat: str, owner: str, repo: str, head: str) -> dict:
+async def _find_existing_pr(
+    client: httpx.AsyncClient, owner: str, repo: str, head: str,
+) -> dict:
     """Find an existing open PR for the given head branch."""
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/pulls",
-            headers={
-                "Authorization": f"Bearer {pat}",
-                "Accept": "application/vnd.github+json",
-            },
-            params={"head": f"{owner}:{head}", "state": "open"},
-        )
+    resp = await client.get(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls",
+        params={"head": f"{owner}:{head}", "state": "open"},
+    )
 
     if resp.status_code == 200:
         prs = resp.json()
