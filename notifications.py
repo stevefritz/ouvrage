@@ -1,15 +1,13 @@
 """Slack channel notifications for task lifecycle events."""
 
 import logging
-import os
 
 import httpx
 import web_push
 
 log = logging.getLogger("switchboard.notify")
 
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
+from switchboard.config.settings import SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 
 # Per-task thread timestamps
 _task_threads: dict[str, str] = {}  # task_id -> thread_ts

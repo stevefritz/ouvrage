@@ -60,8 +60,7 @@ _running_tasks: set[asyncio.Task] = set()
 # Track active SDK clients for tasks (used by cancel to interrupt)
 _active_clients: dict[str, ClaudeSDKClient] = {}
 
-MESSAGE_POLL_INTERVAL = 5  # seconds between DB polls for injected messages
-DEFAULT_MODEL = "sonnet"
+from switchboard.config.constants import MESSAGE_POLL_INTERVAL, DEFAULT_MODEL
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:
@@ -96,9 +95,11 @@ def _resolve_limit(task_val, project_val, global_default):
 # Crash Recovery Configuration
 # ---------------------------------------------------------------------------
 
-RECOVERY_STAGGER_SECONDS = int(os.environ.get("RECOVERY_STAGGER_SECONDS", "30"))
-MAX_RECOVERY_ATTEMPTS = int(os.environ.get("MAX_RECOVERY_ATTEMPTS", "3"))
-RECOVERY_ENABLED = os.environ.get("RECOVERY_ENABLED", "true").lower() in ("true", "1", "yes")
+from switchboard.config.settings import (
+    RECOVERY_STAGGER_SECONDS,
+    MAX_RECOVERY_ATTEMPTS,
+    RECOVERY_ENABLED,
+)
 
 
 async def mark_working_for_recovery():
@@ -422,8 +423,7 @@ async def _recover_with_retry(task_id: str, task: dict) -> None:
         raise
 
 
-STALL_THRESHOLD_SECONDS = 300  # 5 minutes
-STALL_CHECK_INTERVAL = 60  # check every minute
+from switchboard.config.constants import STALL_THRESHOLD_SECONDS, STALL_CHECK_INTERVAL
 
 
 async def check_stalled_tasks():
@@ -641,7 +641,7 @@ def _tail_lines(text: str, max_chars: int) -> str:
 # Git Worktree Management
 # ---------------------------------------------------------------------------
 
-WORKER_USER = os.environ.get("WORKER_USER", "switchboard")
+from switchboard.config.settings import WORKER_USER
 
 
 def _get_worker_ids() -> tuple[int, int]:
@@ -1792,31 +1792,10 @@ async def _get_branch_diff(task: dict) -> str:
     return f"{stat}\n\n{full_diff}"
 
 
-_DEFAULT_REVIEW_IGNORE_PATTERNS = [
-    ".switchboard/",
-    ".lock",
-    "package-lock.json",
-    "composer.lock",
-    ".gitignore",
-]
-
-_TAG_REVIEW_GUIDANCE = {
-    "backend": (
-        "Focus on: error handling and edge cases, test coverage for failure paths, "
-        "security (input validation, SQL injection, auth checks), API contract correctness."
-    ),
-    "frontend": (
-        "Focus on: UX and user-facing correctness, accessibility (ARIA, keyboard nav), "
-        "responsive behavior across screen sizes, render performance."
-    ),
-    "testing": (
-        "Focus on: test quality and assertion correctness (assertions match spec, not just code output), "
-        "coverage of edge cases and failure modes, test isolation and fixture design."
-    ),
-}
-
-_DEFAULT_REVIEW_GUIDANCE = (
-    "Balanced review: correctness vs spec, test quality, edge cases, code clarity."
+from switchboard.config.constants import (
+    _DEFAULT_REVIEW_IGNORE_PATTERNS,
+    _TAG_REVIEW_GUIDANCE,
+    _DEFAULT_REVIEW_GUIDANCE,
 )
 
 

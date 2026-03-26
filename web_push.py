@@ -3,16 +3,13 @@
 import asyncio
 import json
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 import database as db
 
 log = logging.getLogger("switchboard.web_push")
 
-VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
-VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
-VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:admin@example.com")
+from switchboard.config.settings import VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY, VAPID_CLAIM_EMAIL
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-push")
 

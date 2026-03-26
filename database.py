@@ -1,32 +1,16 @@
 import aiosqlite
 import httpx
 import json
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-DB_PATH = os.environ.get("SWITCHBOARD_DB", "./data/switchboard.db")
-
-# Core state definitions — hardcoded defaults for the dashboard
-CORE_STATE_DEFINITIONS = {
-    "ready":         {"color": "#6b7280", "label": "Ready",        "pulse": False},
-    "blocked":       {"color": "#f59e0b", "label": "Blocked",      "pulse": False},
-    "working":       {"color": "#3b82f6", "label": "Working",      "pulse": True},
-    "testing":       {"color": "#8b5cf6", "label": "Testing",      "pulse": True},
-    "reviewing":     {"color": "#8b5cf6", "label": "Reviewing",    "pulse": True},
-    "needs-review":  {"color": "#f59e0b", "label": "Needs Review", "pulse": False},
-    "turns-exhausted": {"color": "#f59e0b", "label": "Turns Exhausted", "pulse": False},
-    "reopened":      {"color": "#f59e0b", "label": "Reopened",     "pulse": False},
-    "completed":     {"color": "#10b981", "label": "Completed",    "pulse": False},
-    "merged":        {"color": "#10b981", "label": "Merged",       "pulse": False},
-    "failed":        {"color": "#ef4444", "label": "Failed",       "pulse": False},
-    "cancelled":     {"color": "#6b7280", "label": "Cancelled",    "pulse": False},
-}
-
-# Global defaults for task resource limits
-DEFAULT_MAX_TURNS = 200
-DEFAULT_MAX_WALL_CLOCK = 60  # minutes
-DEFAULT_MAX_CONCURRENT = 6
+from switchboard.config.settings import DB_PATH
+from switchboard.config.constants import (
+    CORE_STATE_DEFINITIONS,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_MAX_WALL_CLOCK,
+    DEFAULT_MAX_CONCURRENT,
+)
 
 # ---------------------------------------------------------------------------
 # Connection Management — singleton with async context manager
@@ -872,32 +856,7 @@ async def get_task(id: str) -> dict | None:
         return dict(rows[0])
 
 
-TASK_MUTABLE_FIELDS = {
-    "status", "phase", "branch", "worktree_path", "session_id", "pid",
-    "max_turns", "max_wall_clock",
-    "total_input_tokens", "total_output_tokens", "total_cost_usd",
-    "dispatch_count", "last_activity", "updated_at",
-    "jira_ticket", "conversation_id",
-    "auto_test", "gate_status", "gate_retries", "max_gate_retries", "gate_passed_at",
-    "depends_on", "auto_review", "review_model", "parent_task_id", "auto_pr",
-    "component_id", "model", "claude_chat_url",
-    # v5 migration toolkit fields
-    "base_branch", "branch_target",
-    "max_test_retries", "max_review_retries",
-    # v5 auto-merge-queue fields
-    "queued_at", "auto_merge", "auto_release_worktree",
-    "pushed_at", "pr_status", "pr_error",
-    # v5 crash-recovery fields
-    "recovery_count", "last_recovery_at", "recovery_priority",
-    # v5 realtime-output fields
-    "last_test_output", "current_attempt",
-    # retry scheduling
-    "retry_after",
-    # hold/approval
-    "held",
-    # reopen gate state save/restore
-    "reopen_saved_gate_status", "reopen_saved_gate_passed_at",
-}
+from switchboard.config.constants import TASK_MUTABLE_FIELDS
 
 
 async def update_task(id: str, **fields) -> dict:
@@ -1704,27 +1663,11 @@ async def get_subtask(id: str) -> dict | None:
 # Components
 # ---------------------------------------------------------------------------
 
-COMPONENT_CONFIG_FIELDS = {
-    "base_branch", "setup_command", "test_command", "model",
-    "auto_test", "auto_review", "review_model",
-    "max_test_retries", "max_review_retries",
-    "auto_pr", "auto_merge", "max_turns", "max_wall_clock",
-}
-
-COMPONENT_MUTABLE_FIELDS = COMPONENT_CONFIG_FIELDS | {
-    "name", "description", "phase", "env_overrides", "secrets",
-}
-
-SYSTEM_DEFAULTS = {
-    "auto_test": True,
-    "auto_review": True,
-    "review_model": "opus",
-    "max_test_retries": 3,
-    "max_review_retries": 2,
-    "auto_pr": False,
-    "auto_merge": False,
-    "auto_release_worktree": True,
-}
+from switchboard.config.constants import (
+    COMPONENT_CONFIG_FIELDS,
+    COMPONENT_MUTABLE_FIELDS,
+    SYSTEM_DEFAULTS,
+)
 
 
 async def create_component(

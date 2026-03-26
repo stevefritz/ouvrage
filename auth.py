@@ -10,7 +10,6 @@ When AUTH_ISSUER_URL is unset, auth is disabled (local dev mode).
 
 import json
 import logging
-import os
 import time
 from typing import Any
 
@@ -21,10 +20,12 @@ logger = logging.getLogger("switchboard.auth")
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-AUTH_ISSUER_URL = os.environ.get("AUTH_ISSUER_URL")  # e.g. https://auth.example.dev
-AUTH_AUDIENCE = os.environ.get("AUTH_AUDIENCE")  # e.g. https://switchboard.example.dev/mcp
-AUTH_REQUIRED_SCOPES = os.environ.get("AUTH_REQUIRED_SCOPES", "").split(",") if os.environ.get("AUTH_REQUIRED_SCOPES") else []
-RESOURCE_URL = os.environ.get("RESOURCE_URL")  # e.g. https://switchboard.example.dev/mcp
+from switchboard.config.settings import (
+    AUTH_ISSUER_URL,
+    AUTH_AUDIENCE,
+    AUTH_REQUIRED_SCOPES,
+    RESOURCE_URL,
+)
 
 
 def is_auth_enabled() -> bool:
