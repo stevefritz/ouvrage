@@ -20,6 +20,12 @@ def tmp_db(tmp_path):
     db_path = str(tmp_path / "test.db")
     os.environ["SWITCHBOARD_DB"] = db_path
 
+    # Ensure SWITCHBOARD_MASTER_KEY is set for tests so encryption works.
+    # Generate a fresh random key if none is configured in the environment.
+    if not os.environ.get("SWITCHBOARD_MASTER_KEY"):
+        from cryptography.fernet import Fernet
+        os.environ["SWITCHBOARD_MASTER_KEY"] = Fernet.generate_key().decode()
+
     # Reset the real connection singleton and DB path (now in switchboard.db.connection)
     import switchboard.config.settings as _settings
     import switchboard.db.connection as _conn

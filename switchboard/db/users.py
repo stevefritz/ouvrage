@@ -3,8 +3,12 @@ import hashlib
 import json
 import secrets
 
+from switchboard.crypto import decrypt_value, encrypt_value, is_fernet_token
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import now_iso
+
+# Fields in user_credentials that are encrypted at rest
+_ENCRYPTED_CREDENTIAL_FIELDS = frozenset({"anthropic_api_key", "github_pat"})
 
 # Field allowlists to prevent SQL injection in dynamic UPDATE queries
 _USER_MUTABLE_FIELDS = frozenset({
@@ -134,6 +138,10 @@ async def get_user_credentials(user_id: int) -> dict | None:
                 cred["notification_preferences"] = json.loads(cred["notification_preferences"])
             except (json.JSONDecodeError, TypeError):
                 pass
+        # Decrypt sensitive fields
+        for field in _ENCRYPTED_CREDENTIAL_FIELDS:
+            if cred.get(field) and is_fernet_token(cred[field]):
+                cred[field] = decrypt_value(cred[field])
         return cred
 
 
@@ -144,6 +152,11 @@ async def update_user_credentials(user_id: int, **fields) -> dict:
 
     if "notification_preferences" in fields and isinstance(fields["notification_preferences"], dict):
         fields["notification_preferences"] = json.dumps(fields["notification_preferences"])
+
+    # Encrypt sensitive fields before writing
+    for field in _ENCRYPTED_CREDENTIAL_FIELDS:
+        if field in fields and fields[field] is not None and not is_fernet_token(fields[field]):
+            fields[field] = encrypt_value(fields[field])
 
     fields["updated_at"] = now_iso()
 
@@ -237,3 +250,40 @@ async def list_api_tokens(user_id: int) -> list[dict]:
             (user_id,),
         )
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Credential resolution — project override → user default → error
+# ---------------------------------------------------------------------------
+
+async def get_github_pat(project_id: str) -> str:
+    """Resolve GitHub PAT: project.github_pat_override → owner's github_pat → error.
+
+    Decrypts the value before returning.
+    """
+    from switchboard.db.projects import get_project
+    from switchboard.crypto import decrypt_value, is_fernet_token
+
+    project = await get_project(project_id)
+    if project and project.get("github_pat_override"):
+        override = project["github_pat_override"]
+        return decrypt_value(override) if is_fernet_token(override) else override
+
+    instance = await get_instance()
+    if not instance:
+        raise ValueError("No GitHub PAT configured. Add one in settings or on the project.")
+    creds = await get_user_credentials(instance["owner_user_id"])
+    if creds and creds.get("github_pat"):
+        return creds["github_pat"]  # already decrypted by get_user_credentials
+    raise ValueError("No GitHub PAT configured. Add one in settings or on the project.")
+
+
+async def get_anthropic_key(user_id: int) -> str:
+    """Resolve Anthropic API key for a user → error if not configured.
+
+    Decrypts the value before returning.
+    """
+    creds = await get_user_credentials(user_id)
+    if creds and creds.get("anthropic_api_key"):
+        return creds["anthropic_api_key"]  # already decrypted by get_user_credentials
+    raise ValueError("No Anthropic API key configured.")

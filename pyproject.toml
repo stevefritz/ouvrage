@@ -12,6 +12,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.0",
     "pywebpush>=2.0.0",
     "openai>=1.0.0",
+    "cryptography>=41.0.0",
 ]
 
 [project.optional-dependencies]

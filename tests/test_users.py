@@ -2,6 +2,8 @@
 
 import pytest
 
+from switchboard.crypto import is_fernet_token
+
 
 # ===========================================================================
 # User CRUD
@@ -258,3 +260,123 @@ class TestBootstrapMigration:
         users = await db.list_users()
         owners = [u for u in users if u["email"] == "owner@localhost"]
         assert len(owners) == 1
+
+
+# ===========================================================================
+# Encryption of sensitive credential fields
+# ===========================================================================
+
+class TestEncryption:
+
+    async def test_anthropic_key_stored_encrypted(self, db):
+        """Value written to DB is Fernet-encrypted, not plaintext."""
+        import switchboard.db.connection as _conn
+        user = await db.create_user(email="enc@example.com", name="Enc User")
+        await db.update_user_credentials(user["id"], anthropic_api_key="sk-plaintext")
+        # Check the raw DB value is a Fernet token
+        async with _conn.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT anthropic_api_key FROM user_credentials WHERE user_id = ?", (user["id"],)
+            )
+        assert rows
+        raw = rows[0]["anthropic_api_key"]
+        assert is_fernet_token(raw), f"Expected Fernet token, got: {raw!r}"
+
+    async def test_anthropic_key_decrypted_on_read(self, db):
+        """get_user_credentials returns plaintext, not ciphertext."""
+        user = await db.create_user(email="dec@example.com", name="Dec User")
+        await db.update_user_credentials(user["id"], anthropic_api_key="sk-plaintext")
+        creds = await db.get_user_credentials(user["id"])
+        assert creds["anthropic_api_key"] == "sk-plaintext"
+
+    async def test_github_pat_stored_encrypted(self, db):
+        """github_pat written to DB is Fernet-encrypted."""
+        import switchboard.db.connection as _conn
+        user = await db.create_user(email="pat@example.com", name="PAT User")
+        await db.update_user_credentials(user["id"], github_pat="ghp_plaintextpat")
+        async with _conn.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT github_pat FROM user_credentials WHERE user_id = ?", (user["id"],)
+            )
+        raw = rows[0]["github_pat"]
+        assert is_fernet_token(raw), f"Expected Fernet token, got: {raw!r}"
+
+    async def test_github_pat_decrypted_on_read(self, db):
+        """github_pat is decrypted when read back."""
+        user = await db.create_user(email="patread@example.com", name="PAT Read")
+        await db.update_user_credentials(user["id"], github_pat="ghp_mytoken")
+        creds = await db.get_user_credentials(user["id"])
+        assert creds["github_pat"] == "ghp_mytoken"
+
+    async def test_slack_webhook_not_encrypted(self, db):
+        """slack_webhook_url is stored as plaintext (not sensitive enough to encrypt)."""
+        import switchboard.db.connection as _conn
+        user = await db.create_user(email="slack@example.com", name="Slack User")
+        url = "https://hooks.slack.com/services/T0/B0/xyz"
+        await db.update_user_credentials(user["id"], slack_webhook_url=url)
+        async with _conn.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT slack_webhook_url FROM user_credentials WHERE user_id = ?", (user["id"],)
+            )
+        raw = rows[0]["slack_webhook_url"]
+        assert raw == url  # stored plaintext
+
+    async def test_get_anthropic_key_returns_plaintext(self, db):
+        """get_anthropic_key resolves and decrypts the key for the given user."""
+        user = await db.create_user(email="anthro@example.com", name="Anthro User")
+        await db.update_user_credentials(user["id"], anthropic_api_key="sk-test-key")
+        key = await db.get_anthropic_key(user["id"])
+        assert key == "sk-test-key"
+
+    async def test_get_anthropic_key_raises_if_missing(self, db):
+        """get_anthropic_key raises ValueError when no key is configured."""
+        user = await db.create_user(email="nokey@example.com", name="No Key User")
+        with pytest.raises(ValueError, match="Anthropic API key"):
+            await db.get_anthropic_key(user["id"])
+
+    async def test_get_github_pat_from_owner_credentials(self, db):
+        """get_github_pat falls back to instance owner's github_pat."""
+        # The bootstrap migration creates owner@localhost as the instance owner
+        inst = await db.get_instance()
+        await db.update_user_credentials(inst["owner_user_id"], github_pat="ghp_ownertoken")
+        pat = await db.get_github_pat("nonexistent-project")
+        assert pat == "ghp_ownertoken"
+
+    async def test_get_github_pat_raises_if_not_configured(self, db):
+        """get_github_pat raises ValueError when no PAT is found."""
+        with pytest.raises(ValueError, match="GitHub PAT"):
+            await db.get_github_pat("some-project")
+
+    async def test_encryption_migration_encrypts_plaintext_values(self, db):
+        """init_db() re-run encrypts any pre-existing plaintext credential values."""
+        import switchboard.db.connection as _conn
+
+        # Write a plaintext value directly to the DB (bypassing the ORM layer)
+        inst = await db.get_instance()
+        user_id = inst["owner_user_id"]
+        async with _conn.get_db() as conn:
+            await conn.execute(
+                """INSERT OR IGNORE INTO user_credentials (user_id, notification_preferences, updated_at)
+                   VALUES (?, '{}', '2026-01-01T00:00:00Z')""",
+                (user_id,),
+            )
+            await conn.execute(
+                "UPDATE user_credentials SET anthropic_api_key = ? WHERE user_id = ?",
+                ("sk-plaintext-migrate", user_id),
+            )
+            await conn.commit()
+
+        # Re-run init_db to trigger migration
+        await db.init_db()
+
+        # Now the value in the DB should be encrypted
+        async with _conn.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT anthropic_api_key FROM user_credentials WHERE user_id = ?", (user_id,)
+            )
+        raw = rows[0]["anthropic_api_key"]
+        assert is_fernet_token(raw), f"Expected encrypted value after migration, got: {raw!r}"
+
+        # And reading via ORM returns plaintext
+        creds = await db.get_user_credentials(user_id)
+        assert creds["anthropic_api_key"] == "sk-plaintext-migrate"

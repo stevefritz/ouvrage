@@ -143,6 +143,8 @@ from switchboard.db.users import (
     validate_api_token,
     revoke_api_token,
     list_api_tokens,
+    get_github_pat,
+    get_anthropic_key,
 )
 
 # Search
@@ -200,6 +202,7 @@ __all__ = [
     "get_instance", "update_instance",
     "get_user_credentials", "update_user_credentials",
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
+    "get_github_pat", "get_anthropic_key",
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",

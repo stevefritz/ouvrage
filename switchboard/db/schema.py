@@ -377,6 +377,10 @@ async def init_db():
         if "created_by" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN created_by INTEGER REFERENCES users(id)")
 
+        # Migrate projects: add github_pat_override (encrypted, nullable)
+        if "github_pat_override" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN github_pat_override TEXT")
+
         # Migrate components: add created_by FK
         if comp_table:
             if "created_by" not in comp_col_names:
@@ -480,5 +484,26 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_message_chunks_message_id ON message_chunks(message_id);
             CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
         """)
+
+        # Credential encryption migration: encrypt any plaintext values in user_credentials.
+        # Only runs if SWITCHBOARD_MASTER_KEY is set — skipped silently otherwise.
+        import os as _os
+        if _os.environ.get("SWITCHBOARD_MASTER_KEY"):
+            from switchboard.crypto import maybe_encrypt, is_fernet_token
+            cred_rows = await conn.execute_fetchall(
+                "SELECT user_id, anthropic_api_key, github_pat FROM user_credentials"
+            )
+            for row in cred_rows:
+                updates = {}
+                for field in ("anthropic_api_key", "github_pat"):
+                    val = row[field]
+                    if val and not is_fernet_token(val):
+                        updates[field] = maybe_encrypt(val)
+                if updates:
+                    set_clause = ", ".join(f"{k} = ?" for k in updates)
+                    await conn.execute(
+                        f"UPDATE user_credentials SET {set_clause} WHERE user_id = ?",
+                        list(updates.values()) + [row["user_id"]],
+                    )
 
         await conn.commit()
