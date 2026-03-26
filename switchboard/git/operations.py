@@ -3,11 +3,130 @@
 import asyncio
 import logging
 import os
+import re
+
+import httpx
 
 import switchboard.db as db
+from switchboard.db.users import get_github_pat
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Repo URL parsing and authenticated URL construction
+# ---------------------------------------------------------------------------
+
+_SSH_PATTERN = re.compile(r"^git@github\.com:([^/]+)/(.+?)(?:\.git)?$")
+_HTTPS_PATTERN = re.compile(r"^https?://github\.com/([^/]+)/(.+?)(?:\.git)?$")
+
+
+def parse_repo_url(url: str) -> tuple[str, str]:
+    """Parse a GitHub repo URL into (owner, repo).
+
+    Handles:
+        git@github.com:owner/repo.git
+        git@github.com:owner/repo
+        https://github.com/owner/repo.git
+        https://github.com/owner/repo
+    """
+    m = _SSH_PATTERN.match(url)
+    if m:
+        return m.group(1), m.group(2)
+    m = _HTTPS_PATTERN.match(url)
+    if m:
+        return m.group(1), m.group(2)
+    raise ValueError(f"Cannot parse GitHub owner/repo from URL: {url}")
+
+
+def _build_authenticated_url(pat: str, repo_url: str) -> str:
+    """Build an HTTPS push URL with PAT embedded. Never store this — use at call time only."""
+    owner, repo = parse_repo_url(repo_url)
+    return f"https://oauth2:{pat}@github.com/{owner}/{repo}.git"
+
+
+async def _resolve_push_url(project_id: str) -> str:
+    """Resolve PAT and project repo URL into an authenticated HTTPS push URL."""
+    pat = await get_github_pat(project_id)
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
+    return _build_authenticated_url(pat, project["repo"])
+
+
+def _classify_push_error(stderr_text: str) -> str | None:
+    """Classify git push stderr into a user-friendly error message, or None if unrecognized."""
+    s = stderr_text.lower()
+    if "authentication failed" in s or "invalid credentials" in s or "401" in s:
+        return "GitHub PAT is invalid or expired. Update it in settings."
+    if "403" in s or "permission" in s and "denied" in s:
+        return "GitHub PAT lacks push permission. Ensure it has `repo` scope."
+    if "not found" in s or "404" in s:
+        return "Repository not found. Check that the PAT has access to this repo."
+    if "could not resolve host" in s or "unable to access" in s:
+        return "Could not reach GitHub. Will retry."
+    return None
+
+
+# ---------------------------------------------------------------------------
+# GitHub REST API — PR creation
+# ---------------------------------------------------------------------------
+
+async def create_github_pr(
+    pat: str, owner: str, repo: str, head: str, base: str,
+    title: str, body: str = "",
+) -> dict:
+    """Create a GitHub PR via REST API. Returns {url, number}.
+
+    Handles 422 "already exists" by finding the existing PR.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"https://api.github.com/repos/{owner}/{repo}/pulls",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"title": title, "head": head, "base": base, "body": body},
+        )
+
+    if resp.status_code == 201:
+        data = resp.json()
+        return {"url": data["html_url"], "number": data["number"]}
+
+    if resp.status_code == 422:
+        errors = resp.json()
+        if "already exists" in str(errors).lower():
+            return await _find_existing_pr(pat, owner, repo, head)
+        raise ValueError(f"PR creation failed: {errors}")
+
+    if resp.status_code == 404:
+        raise ValueError(f"Repository not found: {owner}/{repo}")
+    if resp.status_code == 403:
+        raise ValueError(f"PAT lacks permission to create PRs. Ensure it has `repo` scope.")
+
+    resp.raise_for_status()
+    return {}  # unreachable, but satisfies type checker
+
+
+async def _find_existing_pr(pat: str, owner: str, repo: str, head: str) -> dict:
+    """Find an existing open PR for the given head branch."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/pulls",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": "application/vnd.github+json",
+            },
+            params={"head": f"{owner}:{head}", "state": "open"},
+        )
+
+    if resp.status_code == 200:
+        prs = resp.json()
+        if prs:
+            return {"url": prs[0]["html_url"], "number": prs[0]["number"]}
+    raise ValueError(f"PR already exists for {head} but could not find it")
 
 
 async def resolve_branch_target(task: dict) -> str:
@@ -35,15 +154,30 @@ async def resolve_branch_target(task: dict) -> str:
 
 
 async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
-    """Force-push task branch if there are unpushed commits."""
+    """Force-push task branch if there are unpushed commits.
+
+    Uses HTTPS + PAT for authentication instead of SSH.
+    """
     worktree = task.get("worktree_path")
     branch = task.get("branch")
     if not worktree or not branch or not os.path.exists(worktree):
         return
 
+    # Resolve authenticated push URL
+    try:
+        push_url = await _resolve_push_url(task["project_id"])
+    except ValueError as e:
+        log.warning(f"Cannot push {task_id}: {e}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Push failed — no PAT configured",
+            content=str(e),
+        )
+        return
+
     # Check if remote branch exists
     stdout, _, rc = await _run_as_worker(
-        "git", "-C", worktree, "ls-remote", "--heads", "origin", branch,
+        "git", "-C", worktree, "ls-remote", "--heads", push_url, branch,
     )
     remote_exists = rc == 0 and stdout.strip()
 
@@ -57,14 +191,16 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
     # else: remote doesn't exist yet, push to create it
 
     _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "push", "--force-with-lease", "origin", branch,
+        "git", "-C", worktree, "push", "--force-with-lease", push_url, branch,
     )
     if rc != 0:
-        log.warning(f"Auto-push failed for {task_id}: {stderr.decode()}")
+        stderr_text = stderr.decode()
+        friendly = _classify_push_error(stderr_text)
+        log.warning(f"Auto-push failed for {task_id}: {stderr_text}")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="Auto-push failed",
-            content=f"```\n{stderr.decode()[:1000]}\n```",
+            content=friendly or f"```\n{stderr_text[:1000]}\n```",
         )
     else:
         log.info(f"Auto-pushed branch {branch} for {task_id}")
@@ -161,7 +297,10 @@ def _filter_diff_by_ignore_patterns(diff: str, patterns: list[str]) -> str:
 
 
 async def _maybe_create_pr(task_id: str) -> None:
-    """Create PR if auto_pr is enabled and this is the tail of a chain."""
+    """Create PR if auto_pr is enabled and this is the tail of a chain.
+
+    Uses GitHub REST API with PAT instead of gh CLI.
+    """
     task = await db.get_task(task_id)
     if not task or not task.get("auto_pr"):
         return
@@ -182,6 +321,19 @@ async def _maybe_create_pr(task_id: str) -> None:
     if not worktree or not branch:
         return
 
+    # Resolve PAT and parse owner/repo
+    try:
+        pat = await get_github_pat(task["project_id"])
+        owner, repo = parse_repo_url(project["repo"])
+    except ValueError as e:
+        log.warning(f"PR creation skipped for {task_id}: {e}")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="PR creation failed — no PAT configured",
+            content=str(e),
+        )
+        return
+
     # Walk the chain to collect goals
     chain = await db.get_chain(task_id)
     goals = [t["goal"] for t in chain if not t.get("parent_task_id")]  # Exclude review tasks
@@ -190,17 +342,13 @@ async def _maybe_create_pr(task_id: str) -> None:
     body = "## Summary\n" + "\n".join(f"- {g}" for g in goals)
 
     log.info(f"Auto-creating PR for {task_id}: {branch} → {default_branch}")
-    stdout, stderr, rc = await _run_as_worker(
-        "gh", "pr", "create",
-        "--title", title,
-        "--body", body,
-        "--base", default_branch,
-        "--head", branch,
-        cwd=worktree,
-    )
-
-    if rc == 0:
-        pr_url = stdout.decode().strip()
+    try:
+        result = await create_github_pr(
+            pat=pat, owner=owner, repo=repo,
+            head=branch, base=default_branch,
+            title=title, body=body,
+        )
+        pr_url = result["url"]
         await db.add_artifact(task_id, "pr_url", pr_url)
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
@@ -208,12 +356,12 @@ async def _maybe_create_pr(task_id: str) -> None:
             content=f"[{pr_url}]({pr_url})",
         )
         log.info(f"PR created for {task_id}: {pr_url}")
-    else:
-        log.warning(f"PR creation failed for {task_id}: {stderr.decode()}")
+    except Exception as e:
+        log.warning(f"PR creation failed for {task_id}: {e}")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="PR creation failed",
-            content=f"```\n{stderr.decode()[:2000]}\n```",
+            content=str(e),
         )
 
 
@@ -223,6 +371,8 @@ async def _perform_auto_merge(task_id: str) -> bool:
     Uses `git checkout --detach origin/<target>` instead of checking out the target
     branch by name, which avoids the "fatal: a branch named 'X' already exists"
     error that occurs when the target branch is checked out in another worktree.
+
+    Uses HTTPS + PAT for fetch and push operations.
     """
     task = await db.get_task(task_id)
     if not task:
@@ -238,10 +388,23 @@ async def _perform_auto_merge(task_id: str) -> bool:
         await db.update_task(task_id, pr_status="error", pr_error="Missing worktree or branch")
         return False
 
+    # Resolve authenticated push URL
+    try:
+        push_url = await _resolve_push_url(task["project_id"])
+    except ValueError as e:
+        log.error(f"Auto-merge {task_id}: {e}")
+        await db.update_task(task_id, pr_status="error", pr_error=str(e))
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Auto-merge failed — no PAT configured",
+            content=str(e),
+        )
+        return False
+
     try:
         for attempt in range(1, 4):
-            # Fetch latest target branch
-            await _run_as_worker("git", "-C", worktree, "fetch", "origin", branch_target)
+            # Fetch latest target branch via authenticated URL
+            await _run_as_worker("git", "-C", worktree, "fetch", push_url, branch_target)
 
             # Detach HEAD at origin/branch_target — no local branch name conflict possible
             _, stderr, rc = await _run_as_worker(
@@ -285,23 +448,25 @@ async def _perform_auto_merge(task_id: str) -> bool:
                 log.warning(f"Auto-merge {task_id}: conflict merging {task_branch} → {branch_target}")
                 return False
 
-            # Push HEAD to target branch — HEAD:branch_target avoids needing a local branch
+            # Push HEAD to target branch via authenticated URL
             _, stderr, rc = await _run_as_worker(
-                "git", "-C", worktree, "push", "origin", f"HEAD:{branch_target}",
+                "git", "-C", worktree, "push", push_url, f"HEAD:{branch_target}",
             )
             if rc == 0:
                 break  # push succeeded
 
             # Push rejected — likely a race with another task; retry
+            stderr_text = stderr.decode()
             log.warning(f"Auto-merge {task_id}: push attempt {attempt} rejected, retrying...")
             if attempt == 3:
-                log.error(f"Auto-merge {task_id}: push failed after 3 attempts: {stderr.decode()}")
+                friendly = _classify_push_error(stderr_text)
+                log.error(f"Auto-merge {task_id}: push failed after 3 attempts: {stderr_text}")
                 await db.update_task(task_id, status="needs-review",
-                                     pr_status="push-failed", pr_error=stderr.decode()[:500])
+                                     pr_status="push-failed", pr_error=stderr_text[:500])
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Auto-merge push failed",
-                    content=f"Merge succeeded but push to `{branch_target}` failed after 3 attempts:\n```\n{stderr.decode()[:1000]}\n```",
+                    content=friendly or f"Merge succeeded but push to `{branch_target}` failed after 3 attempts:\n```\n{stderr_text[:1000]}\n```",
                 )
                 return False
 

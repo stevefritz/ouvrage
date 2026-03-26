@@ -374,12 +374,14 @@ class TestMaybeCreatePr:
 
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        self.mock_run_as_worker = AsyncMock(return_value=(b"https://github.com/org/repo/pull/42\n", b"", 0))
+        self.mock_create_pr = AsyncMock(return_value={"url": "https://github.com/acme/widgets/pull/42", "number": 42})
+        self.mock_get_pat = AsyncMock(return_value="ghp_fake_token_123")
         self.mock_add_artifact = AsyncMock()
         self.mock_post_msg = AsyncMock()
 
         patches = [
-            patch("switchboard.git.operations._run_as_worker", self.mock_run_as_worker),
+            patch("switchboard.git.operations.create_github_pr", self.mock_create_pr),
+            patch("switchboard.git.operations.get_github_pat", self.mock_get_pat),
             patch("switchboard.git.operations.db.add_artifact", self.mock_add_artifact),
             patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
         ]
@@ -390,7 +392,7 @@ class TestMaybeCreatePr:
             p.stop()
 
     async def test_pr_created_when_worktree_exists(self, db, sample_project):
-        """auto_pr task with worktree should create a PR."""
+        """auto_pr task with worktree should create a PR via REST API."""
         from switchboard.git.operations import _maybe_create_pr
 
         task = await db.create_task(
@@ -403,15 +405,16 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-tail")
-        self.mock_run_as_worker.assert_awaited_once()
-        # Verify gh pr create was called with the right args
-        call_args = self.mock_run_as_worker.await_args
-        assert "gh" in call_args.args
-        assert "pr" in call_args.args
-        assert "create" in call_args.args
+        self.mock_create_pr.assert_awaited_once()
+        # Verify REST API was called with correct owner/repo parsed from SSH URL
+        call_kwargs = self.mock_create_pr.await_args.kwargs
+        assert call_kwargs["owner"] == "acme"
+        assert call_kwargs["repo"] == "widgets"
+        assert call_kwargs["head"] == "pr-tail"
+        assert call_kwargs["base"] == "main"
 
     async def test_pr_skipped_when_no_worktree(self, db, sample_project):
-        """auto_pr task WITHOUT worktree should silently skip — this is the bug."""
+        """auto_pr task WITHOUT worktree should silently skip."""
         from switchboard.git.operations import _maybe_create_pr
 
         task = await db.create_task(
@@ -424,7 +427,7 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-no-wt")
-        self.mock_run_as_worker.assert_not_awaited()
+        self.mock_create_pr.assert_not_awaited()
 
     async def test_auto_release_before_pr_causes_silent_skip(self, db, sample_project):
         """Integration: _check_and_dispatch_dependents releases worktree before PR creation.
@@ -455,7 +458,7 @@ class TestMaybeCreatePr:
                     await _check_and_dispatch_dependents("test-project/pr-release-bug")
 
         # The PR should have been created
-        self.mock_run_as_worker.assert_awaited_once()
+        self.mock_create_pr.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -683,11 +686,13 @@ class TestEnsureBranchPushed:
         self.mock_run = AsyncMock()
         self.mock_post_msg = AsyncMock()
         self.mock_exists = lambda p: True  # worktree always exists in tests
+        self.mock_resolve_url = AsyncMock(return_value="https://oauth2:ghp_test@github.com/acme/widgets.git")
 
         patches = [
             patch("switchboard.git.operations._run_as_worker", self.mock_run),
             patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
             patch("switchboard.git.operations.os.path.exists", side_effect=self.mock_exists),
+            patch("switchboard.git.operations._resolve_push_url", self.mock_resolve_url),
         ]
         for p in patches:
             p.start()
@@ -698,12 +703,12 @@ class TestEnsureBranchPushed:
 
     async def test_no_worktree_noop(self):
         from switchboard.git.operations import _ensure_branch_pushed
-        await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat"})
+        await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
     async def test_no_branch_noop(self):
         from switchboard.git.operations import _ensure_branch_pushed
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None})
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
     async def test_nothing_to_push(self):
@@ -713,7 +718,7 @@ class TestEnsureBranchPushed:
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"", b"", 0),  # log shows nothing unpushed
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat"})
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         assert self.mock_run.await_count == 2  # ls-remote + log, no push
 
     async def test_pushes_unpushed_commits(self):
@@ -723,7 +728,7 @@ class TestEnsureBranchPushed:
             (b"abc Fix something\n", b"", 0),  # log shows unpushed
             (b"", b"", 0),  # push succeeds
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat"})
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         assert self.mock_run.await_count == 3
         push_call = self.mock_run.await_args_list[2]
         assert "push" in push_call.args
@@ -735,7 +740,7 @@ class TestEnsureBranchPushed:
             (b"", b"", 0),  # ls-remote returns empty (no remote branch)
             (b"", b"", 0),  # push succeeds
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat"})
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         assert self.mock_run.await_count == 2
         push_call = self.mock_run.await_args_list[1]
         assert "push" in push_call.args
@@ -746,7 +751,7 @@ class TestEnsureBranchPushed:
             (b"", b"", 0),  # ls-remote empty
             (b"", b"rejected", 1),  # push fails
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat"})
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         self.mock_post_msg.assert_awaited_once()
         call_kwargs = self.mock_post_msg.await_args.kwargs
         assert call_kwargs["type"] == "status"

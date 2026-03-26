@@ -167,8 +167,10 @@ class TestAutoMerge:
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.mock_run = AsyncMock(return_value=(b"", b"", 0))
+        self.mock_resolve_url = AsyncMock(return_value="https://oauth2:ghp_test@github.com/acme/widgets.git")
         patches = [
             patch("switchboard.git.operations._run_as_worker", self.mock_run),
+            patch("switchboard.git.operations._resolve_push_url", self.mock_resolve_url),
         ]
         for p in patches:
             p.start()
