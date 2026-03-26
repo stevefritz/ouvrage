@@ -168,7 +168,7 @@ class TestAutoMerge:
     def _setup(self):
         self.mock_run = AsyncMock(return_value=(b"", b"", 0))
         patches = [
-            patch("tasks._run_as_worker", self.mock_run),
+            patch("switchboard.git.operations._run_as_worker", self.mock_run),
         ]
         for p in patches:
             p.start()
