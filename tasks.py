@@ -83,6 +83,7 @@ from switchboard.config.settings import (
     MAX_RECOVERY_ATTEMPTS,
     RECOVERY_ENABLED,
 )
+from switchboard.config.constants import STALL_THRESHOLD_SECONDS
 
 
 def _tail_lines(text: str, max_chars: int) -> str:
@@ -136,6 +137,8 @@ from switchboard.dispatch.sdk_session import (
     _tail_file,
     _run_sdk_session,
     _log_result,
+    _orig_anyio_open_process,
+    _isolated_open_process,
 )
 
 async def _run_subtask(

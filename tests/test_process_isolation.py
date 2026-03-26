@@ -37,7 +37,7 @@ class TestAnyioOpenProcessPatch:
 
     async def test_patched_fn_forces_start_new_session_true(self):
         """_isolated_open_process always passes start_new_session=True."""
-        import tasks
+        import switchboard.dispatch.sdk_session as sdk_session
         captured_kwargs = {}
 
         async def mock_orig(command, **kwargs):
@@ -48,14 +48,14 @@ class TestAnyioOpenProcessPatch:
             mock.stderr = None
             return mock
 
-        with patch.object(tasks, "_orig_anyio_open_process", mock_orig):
+        with patch.object(sdk_session, "_orig_anyio_open_process", mock_orig):
             await anyio.open_process(["echo", "hello"])
 
         assert captured_kwargs.get("start_new_session") is True
 
     async def test_patched_fn_overrides_false(self):
         """Even if caller passes start_new_session=False, we force True."""
-        import tasks
+        import switchboard.dispatch.sdk_session as sdk_session
         captured_kwargs = {}
 
         async def mock_orig(command, **kwargs):
@@ -66,14 +66,14 @@ class TestAnyioOpenProcessPatch:
             mock.stderr = None
             return mock
 
-        with patch.object(tasks, "_orig_anyio_open_process", mock_orig):
+        with patch.object(sdk_session, "_orig_anyio_open_process", mock_orig):
             await anyio.open_process(["echo", "hello"], start_new_session=False)
 
         assert captured_kwargs.get("start_new_session") is True
 
     async def test_patched_fn_passes_through_kwargs(self):
         """Other kwargs (env, cwd, etc.) are passed through unchanged."""
-        import tasks
+        import switchboard.dispatch.sdk_session as sdk_session
         captured_args = []
         captured_kwargs = {}
 
@@ -86,7 +86,7 @@ class TestAnyioOpenProcessPatch:
             mock.stderr = None
             return mock
 
-        with patch.object(tasks, "_orig_anyio_open_process", mock_orig):
+        with patch.object(sdk_session, "_orig_anyio_open_process", mock_orig):
             await anyio.open_process(
                 ["pytest", "tests/"],
                 cwd="/tmp/worktree",
