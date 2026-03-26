@@ -7,7 +7,7 @@ Handles the full gate pipeline:
   - _process_review_result_inline: check review outcome after inline subtask
   - _process_review_result: check review outcome from separate review task
 
-Lazy imports from tasks (to break circular dependency):
+Lazy imports from switchboard.dispatch.engine (to break circular dependency):
   resume_task, retry_task, _check_and_dispatch_dependents, _update_usage
 """
 
@@ -65,7 +65,7 @@ async def _run_subtask(
     No separate worktree, no setup_command, no gate pipeline.
     Returns the subtask record.
     """
-    from tasks import _update_usage
+    from switchboard.dispatch.engine import _update_usage
 
     task = await db.get_task(task_id)
     if not task:
@@ -195,7 +195,7 @@ async def _run_subtask(
 
 async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
     """Run the project's test_command after task completion. Auto-retry on failure."""
-    from tasks import resume_task, retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import resume_task, retry_task, _check_and_dispatch_dependents
 
     test_command = project.get("test_command")
     if not test_command:
@@ -301,7 +301,7 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
 
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     """Run a lightweight review subtask in the parent's worktree."""
-    from tasks import retry_task
+    from switchboard.dispatch.engine import retry_task
 
     await db.update_task(task_id, gate_status="reviewing")
 
@@ -503,7 +503,7 @@ If changes needed: title="CHANGES REQUESTED" and list specific issues
 
 async def _process_review_result_inline(task_id: str) -> None:
     """Check review messages on task and process approval/rejection."""
-    from tasks import retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import retry_task, _check_and_dispatch_dependents
 
     msgs = await db.read_task_messages(task_id)
     review_msg = next(
@@ -532,7 +532,7 @@ async def _process_review_result_inline(task_id: str) -> None:
 
 async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
     """Check if review approved or requested changes."""
-    from tasks import retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import retry_task, _check_and_dispatch_dependents
 
     msgs = await db.read_task_messages(parent_task_id)
     review_msg = next(

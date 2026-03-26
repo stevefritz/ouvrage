@@ -9,9 +9,11 @@ Handles everything needed to run a CC worker session:
 Also applies the anyio process isolation patch at module import time so that
 all CC subprocess spawns get their own session/process group.
 
-Lazy imports from tasks (to break circular dependency):
-  _run_test_gate, _dispatch_review, _process_review_result,
-  _check_and_dispatch_dependents, _drain_queue, _update_usage, _active_clients
+Lazy imports from dispatch siblings (to break circular dependency):
+  gates: _run_test_gate, _dispatch_review, _process_review_result
+  engine: _check_and_dispatch_dependents, _update_usage
+  queue: _drain_queue
+  _state: _active_clients
 """
 
 import asyncio
@@ -316,11 +318,10 @@ async def _run_sdk_session(
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     # Lazy imports to break circular dependency with tasks.py
-    from tasks import (  # noqa: PLC0415
-        _run_test_gate, _dispatch_review, _process_review_result,
-        _check_and_dispatch_dependents, _drain_queue, _update_usage,
-        _active_clients,
-    )
+    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review, _process_review_result
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents, _update_usage
+    from switchboard.dispatch.queue import _drain_queue
+    from switchboard.dispatch._state import _active_clients
 
     stderr_path = log_dir / "cc-stderr.log"
     stderr_log = _open_shared(stderr_path)

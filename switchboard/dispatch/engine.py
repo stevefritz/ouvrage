@@ -5,16 +5,15 @@ approve, skip_gate, advance_chain, cancel_chain, and component/project
 pause/stop/resume controls.
 
 Also owns:
-  _running_tasks / _active_clients — asyncio task tracking for cancel/recovery
   _check_and_dispatch_dependents  — post-gate chain progression
   _invalidate_chain               — downstream stale-marking
   _update_usage                   — SDK token/cost accumulation
   archive_task_logs / release_worktree / list_attempts — log and worktree ops
 
-Circular-dependency note:
-  recovery.py, gates.py, queue.py, and sdk_session.py lazy-import from tasks
-  (not from this module directly).  tasks.py re-exports everything, so those
-  lazy imports resolve through tasks → engine at call time.
+Shared mutable state (_running_tasks, _active_clients) lives in _state.py
+to avoid circular imports. Sibling modules (gates.py, recovery.py, queue.py,
+sdk_session.py) use lazy function-level imports from engine or _state when
+they need to call back into engine functions.
 """
 
 import asyncio
@@ -46,6 +45,7 @@ from switchboard.git.operations import (
     _maybe_create_pr,
     _perform_auto_merge,
 )
+from switchboard.dispatch._state import _running_tasks, _active_clients
 from switchboard.dispatch.sdk_session import (
     _build_task_prompt,
     _setup_log_dir,
@@ -55,12 +55,6 @@ from switchboard.dispatch.sdk_session import (
 from switchboard.dispatch.queue import _drain_queue
 
 log = logging.getLogger("switchboard.tasks")
-
-# Track running async tasks to prevent garbage collection and silent failures
-_running_tasks: set[asyncio.Task] = set()
-
-# Track active SDK clients for tasks (used by cancel to interrupt)
-_active_clients: dict[str, ClaudeSDKClient] = {}
 
 
 def _handle_task_exception(task: asyncio.Task) -> None:

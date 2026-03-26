@@ -4,7 +4,7 @@ Handles concurrency-limited dispatch: when a slot opens up (on task
 completion or cancellation), _drain_queue() dispatches the oldest
 eligible queued task.
 
-Lazy import from tasks (to break circular dependency):
+Lazy import from switchboard.dispatch.engine (to break circular dependency):
   dispatch_task
 """
 
@@ -17,7 +17,7 @@ log = logging.getLogger("switchboard.tasks")
 
 async def _drain_queue() -> None:
     """Dispatch the oldest eligible queued task if a concurrency slot is available."""
-    from tasks import dispatch_task
+    from switchboard.dispatch.engine import dispatch_task
 
     active = await db.count_active_tasks()
     if active >= db.DEFAULT_MAX_CONCURRENT:

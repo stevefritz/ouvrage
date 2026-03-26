@@ -8,8 +8,10 @@ Handles three categories of broken tasks after a service restart:
 Also provides check_stalled_tasks() — a background loop that detects working
 tasks with no recent activity or dead SDK clients.
 
-Lazy imports from tasks (to break circular dependency):
-  resume_task, retry_task, _run_test_gate, _dispatch_review, _active_clients
+Lazy imports from dispatch siblings (to break circular dependency):
+  engine: resume_task, retry_task
+  gates: _run_test_gate, _dispatch_review
+  _state: _active_clients
 """
 
 import asyncio
@@ -150,7 +152,7 @@ async def recover_orphaned_tasks():
     Features staggered recovery, flap detection, and FIFO queue priority.
     """
     # Lazy imports to break circular dependency with tasks.py
-    from tasks import _run_test_gate, _dispatch_review  # noqa: PLC0415
+    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review  # noqa: PLC0415
 
     # Re-trigger gate for tasks stuck in test-failed/review-failed
     # (this is independent of RECOVERY_ENABLED — it's existing behavior)
@@ -294,7 +296,7 @@ async def _recover_task(task_id: str, task: dict, method: str) -> None:
 async def _recover_gate_subtask(task_id: str, task: dict) -> None:
     """Re-trigger parent gate pipeline for an orphaned gate subtask."""
     # Lazy imports to break circular dependency
-    from tasks import _run_test_gate, _dispatch_review  # noqa: PLC0415
+    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review  # noqa: PLC0415
 
     parent_id = task["parent_task_id"]
     parent = await db.get_task(parent_id)
@@ -327,7 +329,7 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
 async def _recover_with_resume(task_id: str, task: dict) -> None:
     """Resume a task with existing session_id. Falls back to retry on failure."""
     # Lazy import to break circular dependency
-    from tasks import resume_task  # noqa: PLC0415
+    from switchboard.dispatch.engine import resume_task  # noqa: PLC0415
 
     # Verify worktree before resume
     if not await _verify_worktree(task):
@@ -359,7 +361,7 @@ async def _recover_with_resume(task_id: str, task: dict) -> None:
 async def _recover_with_retry(task_id: str, task: dict) -> None:
     """Retry a task with a fresh session."""
     # Lazy import to break circular dependency
-    from tasks import retry_task  # noqa: PLC0415
+    from switchboard.dispatch.engine import retry_task  # noqa: PLC0415
 
     # Task is already in needs-review status (set at start of recovery)
     try:
@@ -374,7 +376,7 @@ async def _recover_with_retry(task_id: str, task: dict) -> None:
 async def _recover_single_task(task: dict):
     """Attempt to recover a single dead/orphaned task."""
     # Lazy imports to break circular dependency
-    from tasks import resume_task, retry_task  # noqa: PLC0415
+    from switchboard.dispatch.engine import resume_task, retry_task  # noqa: PLC0415
 
     task_id = task["id"]
     current_count = task.get("recovery_count") or 0
@@ -414,7 +416,8 @@ async def _recover_single_task(task: dict):
 async def check_stalled_tasks():
     """Background loop: check for working tasks with no recent activity or dead processes."""
     # Lazy imports to break circular dependency
-    from tasks import retry_task, _active_clients  # noqa: PLC0415
+    from switchboard.dispatch.engine import retry_task  # noqa: PLC0415
+    from switchboard.dispatch._state import _active_clients
 
     while True:
         try:

@@ -46,9 +46,9 @@ from switchboard.dispatch.gates import (
 
 from switchboard.dispatch.queue import _drain_queue
 
+from switchboard.dispatch._state import _running_tasks, _active_clients
+
 from switchboard.dispatch.engine import (
-    _running_tasks,
-    _active_clients,
     _handle_task_exception,
     _resolve_limit,
     _check_and_dispatch_dependents,
