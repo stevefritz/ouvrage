@@ -85,7 +85,7 @@ async def pin_message(message_id: int) -> dict:
         await db.commit()
 
         msg["pinned"] = True
-        return msg
+        return _strip_embedding(msg)
 
 
 async def board(project: str | None = None, include_archived: bool = False) -> list[dict]:

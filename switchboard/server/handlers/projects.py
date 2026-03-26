@@ -35,6 +35,15 @@ async def _handle_create_project(arguments):
     if not resolved.startswith(base + "/") and resolved != base:
         raise ValueError(f"working_dir must be under {WORKTREE_BASE}, got: {working_dir}")
 
+    # Check for working_dir collision with existing projects
+    existing = await db.list_projects()
+    for p in existing:
+        if os.path.realpath(p["working_dir"]) == resolved:
+            raise ValueError(
+                f"working_dir '{resolved}' already belongs to project '{p['id']}' "
+                f"— use folder_name to override"
+            )
+
     return await db.create_project(
         id=arguments["id"],
         repo=arguments["repo"],

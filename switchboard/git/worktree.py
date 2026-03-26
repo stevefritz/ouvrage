@@ -94,6 +94,11 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         )
         if rc != 0:
             raise RuntimeError(f"git clone --bare failed: {stderr.decode()}")
+        # bare clones lack a fetch refspec — set one so origin/* refs are created
+        await _run_as_worker(
+            "git", "-C", bare_path, "config",
+            "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
+        )
 
     # Fetch latest from remote — all tracking refs updated (origin/main, etc.)
     _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
