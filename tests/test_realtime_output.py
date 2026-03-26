@@ -148,7 +148,7 @@ class TestStructuredTestOutput:
         )
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed")
 
-        with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"All tests passed\nOK", b"", 0))):
+        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("All tests passed\nOK", 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
@@ -174,7 +174,7 @@ class TestStructuredTestOutput:
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed",
                              max_gate_retries=0)
 
-        with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"FAILED: 3 errors", b"", 1))):
+        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("FAILED: 3 errors", 1))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
@@ -201,7 +201,7 @@ class TestStructuredTestOutput:
         # Generate 200 lines of output
         big_output = "\n".join(f"line {i}" for i in range(200))
 
-        with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(big_output.encode(), b"", 0))):
+        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=(big_output, 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
