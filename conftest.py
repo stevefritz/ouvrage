@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Ensure the project root is on sys.path so `import database` etc. works
+# Ensure the project root is on sys.path for test discovery
 sys.path.insert(0, os.path.dirname(__file__))
 
 
@@ -32,7 +32,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 async def db(tmp_db):
     """Initialized database ready for use. Yields the database module."""
-    import database as _db
+    import switchboard.db as _db
     await _db.init_db()
     yield _db
     await _db.close_db()
@@ -163,7 +163,7 @@ async def completed_chain(db, sample_project):
 
 @pytest.fixture
 def mock_git():
-    """Mock all git/subprocess operations in tasks.py.
+    """Mock all git/subprocess operations in dispatch engine.
 
     Patches: _run_as_worker, setup_worktree, cleanup_worktree.
     Returns a dict of the mocks for assertion.
@@ -175,9 +175,9 @@ def mock_git():
     }
 
     patches = [
-        patch("tasks._run_as_worker", mocks["run_as_worker"]),
-        patch("tasks.setup_worktree", mocks["setup_worktree"]),
-        patch("tasks.cleanup_worktree", mocks["cleanup_worktree"]),
+        patch("switchboard.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
+        patch("switchboard.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
+        patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
     ]
     for p in patches:
         p.start()

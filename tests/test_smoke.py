@@ -18,7 +18,7 @@ class TestConfigResolution:
     """_resolve_limit uses task > project > global fallback chain."""
 
     def setup_method(self):
-        from tasks import _resolve_limit
+        from switchboard.dispatch.engine import _resolve_limit
         self.resolve = _resolve_limit
 
     def test_task_value_wins(self):
@@ -47,8 +47,8 @@ class TestPromptBuilding:
         self.mock_get_task = AsyncMock(return_value=None)
         self.mock_read_msgs = AsyncMock(return_value={"messages": []})
         patches = [
-            patch("tasks.db.get_task", self.mock_get_task),
-            patch("tasks.db.read_task_messages", self.mock_read_msgs),
+            patch("switchboard.db.get_task", self.mock_get_task),
+            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
         ]
         for p in patches:
             p.start()
@@ -68,22 +68,22 @@ class TestPromptBuilding:
         return base
 
     async def test_prompt_includes_goal(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "The spec")
         assert "Do stuff" in result
 
     async def test_prompt_includes_spec(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "Build the widget")
         assert "Build the widget" in result
 
     async def test_prompt_includes_project_id(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), None)
         assert "test-proj" in result
 
     async def test_prompt_includes_checklist(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         checklist = [
             {"id": 1, "item": "Step one", "done": False},
             {"id": 2, "item": "Step two", "done": True},
@@ -96,7 +96,7 @@ class TestPromptBuilding:
         assert "✅" in result
 
     async def test_revision_prompt_includes_feedback(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         feedback = [{"author": "reviewer", "title": "CHANGES REQUESTED",
                       "content": "Fix the imports"}]
         result = await _build_task_prompt(
@@ -105,13 +105,13 @@ class TestPromptBuilding:
         assert "Fix the imports" in result
 
     async def test_auto_test_flag_in_prompt(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._project(), self._task(auto_test=True), "spec")
         assert "automatically" in result.lower()
 
     async def test_push_instruction_present(self):
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "spec")
         assert "push your branch" in result.lower()
 

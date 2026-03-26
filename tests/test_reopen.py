@@ -19,7 +19,7 @@ class TestReopenTask:
     """reopen_task transitions completed → reopened."""
 
     async def test_reopen_succeeds_on_completed_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-ok",
@@ -28,11 +28,11 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed")
 
-        result = await tasks.reopen_task(task["id"])
+        result = await reopen_task(task["id"])
         assert result["status"] == "reopened"
 
     async def test_reopen_fails_on_non_completed_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-fail-working",
@@ -42,10 +42,10 @@ class TestReopenTask:
         await db.update_task(task["id"], status="working")
 
         with pytest.raises(ValueError, match="must be 'completed'"):
-            await tasks.reopen_task(task["id"])
+            await reopen_task(task["id"])
 
     async def test_reopen_fails_on_failed_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-fail-failed",
@@ -55,16 +55,16 @@ class TestReopenTask:
         await db.update_task(task["id"], status="failed")
 
         with pytest.raises(ValueError, match="must be 'completed'"):
-            await tasks.reopen_task(task["id"])
+            await reopen_task(task["id"])
 
     async def test_reopen_fails_on_missing_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         with pytest.raises(ValueError, match="not found"):
-            await tasks.reopen_task("test-project/does-not-exist")
+            await reopen_task("test-project/does-not-exist")
 
     async def test_reopen_increments_current_attempt(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-attempt",
@@ -73,14 +73,14 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["current_attempt"] == 2
 
     async def test_reopen_increments_from_higher_attempt(self, db, sample_project):
         """Works correctly when current_attempt > 1."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-attempt-3",
@@ -89,13 +89,13 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed", current_attempt=3)
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["current_attempt"] == 4
 
     async def test_reopen_sets_status_to_reopened(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-status",
@@ -104,13 +104,13 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed")
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["status"] == "reopened"
 
     async def test_reopen_clears_session_id(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-clear-session",
@@ -119,13 +119,13 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed", session_id="ses_abc123")
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["session_id"] is None
 
     async def test_reopen_clears_gate_status(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-clear-gate",
@@ -139,14 +139,14 @@ class TestReopenTask:
             gate_passed_at=db.now_iso(),
         )
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["gate_status"] is None
         assert updated["gate_passed_at"] is None
 
     async def test_reopen_posts_status_message_stamped_to_new_attempt(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-msg",
@@ -155,7 +155,7 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -165,7 +165,7 @@ class TestReopenTask:
         assert reopen_msgs[0]["attempt_number"] == 2
 
     async def test_reopen_posts_awaiting_feedback_message(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-msg-content",
@@ -174,7 +174,7 @@ class TestReopenTask:
         )
         await db.update_task(task["id"], status="completed")
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -192,7 +192,7 @@ class TestStartReopenedTask:
     """start_reopened_task transitions reopened → working via dispatch."""
 
     async def test_start_fails_on_non_reopened_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-fail-completed",
@@ -203,17 +203,17 @@ class TestStartReopenedTask:
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with pytest.raises(ValueError, match="must be 'reopened'"):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
     async def test_start_fails_on_missing_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import start_reopened_task
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with pytest.raises(ValueError, match="not found"):
-                await tasks.start_reopened_task("test-project/no-such-task")
+                await start_reopened_task("test-project/no-such-task")
 
     async def test_start_calls_dispatch_with_phase_revisions(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-phase",
@@ -221,12 +221,12 @@ class TestStartReopenedTask:
             goal="Phase check",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         mock_dispatch.assert_awaited_once()
         call_kwargs = mock_dispatch.await_args.kwargs
@@ -234,7 +234,7 @@ class TestStartReopenedTask:
 
     async def test_start_collects_user_feedback_messages(self, db, sample_project):
         """Only user-authored messages after the reopen message are passed as feedback."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-feedback",
@@ -244,7 +244,7 @@ class TestStartReopenedTask:
         await db.update_task(task["id"], status="completed", current_attempt=1)
 
         # Reopen — posts the reopen status message stamped to attempt 2
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         # Post some user feedback after reopen
         await db.post_task_message(
@@ -264,7 +264,7 @@ class TestStartReopenedTask:
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
         feedback = call_kwargs.get("review_feedback")
@@ -275,7 +275,7 @@ class TestStartReopenedTask:
 
     async def test_start_excludes_system_authors_from_feedback(self, db, sample_project):
         """switchboard, dispatcher, cc-worker messages are not included in feedback."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-filter",
@@ -283,7 +283,7 @@ class TestStartReopenedTask:
             goal="Author filter check",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         # Post messages from system authors — should all be filtered
         await db.post_task_message(
@@ -296,14 +296,14 @@ class TestStartReopenedTask:
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
         # No user feedback — review_feedback should be None
         assert call_kwargs.get("review_feedback") is None
 
     async def test_start_passes_correct_task_id_and_goal(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-args",
@@ -311,12 +311,12 @@ class TestStartReopenedTask:
             goal="My specific goal",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
         assert call_kwargs["task_id"] == "test-project/start-args"
@@ -324,7 +324,7 @@ class TestStartReopenedTask:
 
     async def test_start_posts_attempt_starting_message(self, db, sample_project):
         """start_reopened_task posts 'Attempt N starting' before dispatching."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-msg",
@@ -332,12 +332,12 @@ class TestStartReopenedTask:
             goal="Starting message check",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -346,7 +346,7 @@ class TestStartReopenedTask:
         assert starting_msgs[0]["attempt_number"] == 2
 
     async def test_start_invalidates_chain_when_dependents_exist(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         parent = await db.create_task(
             id="test-project/start-parent",
@@ -360,18 +360,18 @@ class TestStartReopenedTask:
             depends_on="test-project/start-parent",
         )
         await db.update_task(parent["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(parent["id"])
+        await reopen_task(parent["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         mock_invalidate = AsyncMock()
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
-                await tasks.start_reopened_task(parent["id"])
+                await start_reopened_task(parent["id"])
 
         mock_invalidate.assert_awaited_once_with("test-project/start-parent")
 
     async def test_start_does_not_invalidate_when_no_dependents(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-no-deps",
@@ -379,13 +379,13 @@ class TestStartReopenedTask:
             goal="No dependents",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         mock_invalidate = AsyncMock()
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
-                await tasks.start_reopened_task(task["id"])
+                await start_reopened_task(task["id"])
 
         mock_invalidate.assert_not_awaited()
 
@@ -398,7 +398,7 @@ class TestRetryTaskStartingMessage:
     """Regression: retry_task posts 'Attempt N starting' message before dispatch."""
 
     async def test_retry_posts_starting_message(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-starting-msg",
@@ -409,7 +409,7 @@ class TestRetryTaskStartingMessage:
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.retry_task(task["id"])
+                await retry_task(task["id"])
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -420,7 +420,7 @@ class TestRetryTaskStartingMessage:
 
     async def test_retry_starting_message_posted_before_dispatch(self, db, sample_project):
         """The 'Attempt N starting' message must exist in DB before dispatch_task is called."""
-        import tasks
+        from switchboard.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-order",
@@ -438,7 +438,7 @@ class TestRetryTaskStartingMessage:
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(side_effect=capture_dispatch)):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.retry_task(task["id"])
+                await retry_task(task["id"])
 
         starting_msgs = [
             m for m in messages_at_dispatch_time
@@ -455,7 +455,7 @@ class TestCancelReopen:
     """cancel_reopen() reverses a reopen — back to completed."""
 
     async def test_cancel_reopen_succeeds_on_reopened_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-ok",
@@ -463,13 +463,13 @@ class TestCancelReopen:
             goal="Cancel reopen me",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
-        result = await tasks.cancel_reopen(task["id"])
+        result = await cancel_reopen(task["id"])
         assert result["status"] == "completed"
 
     async def test_cancel_reopen_fails_on_non_reopened_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen
 
         task = await db.create_task(
             id="test-project/cancel-reopen-fail",
@@ -479,16 +479,16 @@ class TestCancelReopen:
         await db.update_task(task["id"], status="completed")
 
         with pytest.raises(ValueError, match="must be 'reopened'"):
-            await tasks.cancel_reopen(task["id"])
+            await cancel_reopen(task["id"])
 
     async def test_cancel_reopen_fails_on_missing_task(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen
 
         with pytest.raises(ValueError, match="not found"):
-            await tasks.cancel_reopen("test-project/no-such-task")
+            await cancel_reopen("test-project/no-such-task")
 
     async def test_cancel_reopen_decrements_attempt(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-attempt",
@@ -496,20 +496,20 @@ class TestCancelReopen:
             goal="Decrement attempt",
         )
         await db.update_task(task["id"], status="completed", current_attempt=2)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         # After reopen, current_attempt=3
         reopened = await db.get_task(task["id"])
         assert reopened["current_attempt"] == 3
 
-        await tasks.cancel_reopen(task["id"])
+        await cancel_reopen(task["id"])
 
         reverted = await db.get_task(task["id"])
         assert reverted["current_attempt"] == 2
 
     async def test_cancel_reopen_deletes_reopened_messages(self, db, sample_project):
         """Messages stamped to the reopened attempt should be deleted."""
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-msgs",
@@ -517,7 +517,7 @@ class TestCancelReopen:
             goal="Message cleanup check",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         # Post some feedback during the reopened state
         await db.post_task_message(
@@ -529,7 +529,7 @@ class TestCancelReopen:
         attempt2_msgs = [m for m in msgs_before if m.get("attempt_number") == 2]
         assert len(attempt2_msgs) > 0
 
-        await tasks.cancel_reopen(task["id"])
+        await cancel_reopen(task["id"])
 
         thread_after = await db.read_task_messages(task["id"])
         msgs_after = thread_after["messages"]
@@ -538,7 +538,7 @@ class TestCancelReopen:
 
     async def test_cancel_reopen_preserves_earlier_attempt_messages(self, db, sample_project):
         """Messages from attempt 1 should NOT be deleted."""
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-preserve",
@@ -552,8 +552,8 @@ class TestCancelReopen:
             task_id=task["id"], author="cc-worker", type="result", content="Done!"
         )
 
-        await tasks.reopen_task(task["id"])
-        await tasks.cancel_reopen(task["id"])
+        await reopen_task(task["id"])
+        await cancel_reopen(task["id"])
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -562,7 +562,7 @@ class TestCancelReopen:
 
     async def test_cancel_reopen_restores_gate_status(self, db, sample_project):
         """cancel_reopen restores the gate_status and gate_passed_at that were saved at reopen."""
-        import tasks
+        from switchboard.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-gate",
@@ -577,7 +577,7 @@ class TestCancelReopen:
             gate_passed_at="2026-03-25T01:00:00Z",
         )
 
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         # After reopen, gate_status should be cleared
         reopened = await db.get_task(task["id"])
@@ -587,7 +587,7 @@ class TestCancelReopen:
         assert reopened["reopen_saved_gate_status"] == "passed"
         assert reopened["reopen_saved_gate_passed_at"] == "2026-03-25T01:00:00Z"
 
-        await tasks.cancel_reopen(task["id"])
+        await cancel_reopen(task["id"])
 
         reverted = await db.get_task(task["id"])
         assert reverted["status"] == "completed"
@@ -606,7 +606,7 @@ class TestSyncBranchWithBase:
     """_sync_branch_with_base() — rebase helper for start_reopened_task."""
 
     async def test_returns_true_when_no_worktree(self, db, sample_project):
-        import tasks
+        from switchboard.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-no-worktree",
@@ -614,11 +614,11 @@ class TestSyncBranchWithBase:
             goal="No worktree",
         )
         # No worktree_path set — should succeed immediately
-        result = await tasks._sync_branch_with_base(task)
+        result = await _sync_branch_with_base(task)
         assert result is True
 
     async def test_returns_true_when_worktree_missing_from_disk(self, db, sample_project):
-        import tasks
+        from switchboard.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-missing-dir",
@@ -628,13 +628,13 @@ class TestSyncBranchWithBase:
         await db.update_task(task["id"], worktree_path="/nonexistent/path/that/does/not/exist")
         task = await db.get_task(task["id"])
 
-        result = await tasks._sync_branch_with_base(task)
+        result = await _sync_branch_with_base(task)
         assert result is True
 
     async def test_rebase_conflict_sets_gate_status_needs_review(self, db, sample_project):
         """When rebase fails, gate_status is set to needs-review."""
         import os
-        import tasks
+        from switchboard.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-conflict",
@@ -654,9 +654,9 @@ class TestSyncBranchWithBase:
                     return b"", b"CONFLICT", 1
                 return b"", b"", 0
 
-            with patch("tasks._run_as_worker", mock_run):
-                with patch("tasks.resolve_branch_target", return_value="main"):
-                    result = await tasks._sync_branch_with_base(task)
+            with patch("switchboard.git.operations._run_as_worker", mock_run):
+                with patch("switchboard.git.operations.resolve_branch_target", return_value="main"):
+                    result = await _sync_branch_with_base(task)
 
         assert result is False
         updated = await db.get_task(task["id"])
@@ -664,9 +664,10 @@ class TestSyncBranchWithBase:
 
     async def test_rebase_conflict_posts_error_message(self, db, sample_project):
         """When rebase fails, an error message is posted to the thread."""
-        import tasks
         import tempfile
         from unittest.mock import patch
+
+        from switchboard.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-conflict-msg",
@@ -682,9 +683,9 @@ class TestSyncBranchWithBase:
                     return b"", b"CONFLICT", 1
                 return b"", b"", 0
 
-            with patch("tasks._run_as_worker", mock_run):
-                with patch("tasks.resolve_branch_target", return_value="main"):
-                    await tasks._sync_branch_with_base(task)
+            with patch("switchboard.git.operations._run_as_worker", mock_run):
+                with patch("switchboard.git.operations.resolve_branch_target", return_value="main"):
+                    await _sync_branch_with_base(task)
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
@@ -700,7 +701,7 @@ class TestStartReopenedTaskOverrides:
     """start_reopened_task passes per-dispatch overrides to dispatch_task."""
 
     async def test_start_passes_auto_test_override(self, db, sample_project):
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-override-test",
@@ -708,21 +709,21 @@ class TestStartReopenedTaskOverrides:
             goal="Override auto_test",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
-                    with patch("tasks.notify.task_attempt_starting", AsyncMock()):
-                        await tasks.start_reopened_task(task["id"], auto_test=False)
+                    with patch("switchboard.dispatch.engine.notify.task_attempt_starting", AsyncMock()):
+                        await start_reopened_task(task["id"], auto_test=False)
 
         call_kwargs = mock_dispatch.await_args.kwargs
         assert call_kwargs["auto_test"] is False
 
     async def test_start_without_overrides_omits_auto_test_key(self, db, sample_project):
         """When no overrides given, dispatch_task is called without auto_test."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-no-override",
@@ -730,14 +731,14 @@ class TestStartReopenedTaskOverrides:
             goal="No override",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
-                    with patch("tasks.notify.task_attempt_starting", AsyncMock()):
-                        await tasks.start_reopened_task(task["id"])
+                    with patch("switchboard.dispatch.engine.notify.task_attempt_starting", AsyncMock()):
+                        await start_reopened_task(task["id"])
 
         call_kwargs = mock_dispatch.await_args.kwargs
         assert "auto_test" not in call_kwargs
@@ -745,7 +746,7 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_fires_notification_with_correct_args(self, db, sample_project):
         """start_reopened_task fires task_attempt_starting with correct task_id, attempt, and goal."""
-        import tasks
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-notify-args",
@@ -753,14 +754,14 @@ class TestStartReopenedTaskOverrides:
             goal="Notification args test goal",
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
-        await tasks.reopen_task(task["id"])
+        await reopen_task(task["id"])
 
         mock_notify = AsyncMock()
         mock_dispatch = AsyncMock(return_value={"status": "working"})
         with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
                 with patch("switchboard.dispatch.engine._sync_branch_with_base", AsyncMock(return_value=True)):
-                    with patch("tasks.notify.task_attempt_starting", mock_notify):
-                        await tasks.start_reopened_task(task["id"])
+                    with patch("switchboard.dispatch.engine.notify.task_attempt_starting", mock_notify):
+                        await start_reopened_task(task["id"])
 
         mock_notify.assert_awaited_once_with(task["id"], 2, "Notification args test goal")

@@ -231,7 +231,7 @@ class TestGraphitiProxy:
 
     async def test_graphiti_skipped_by_default(self, db, sample_project, component_with_graphiti):
         """include_graphiti=False (default) should not call Graphiti."""
-        with patch("database.httpx.AsyncClient") as mock_client_cls:
+        with patch("switchboard.db.search.httpx.AsyncClient") as mock_client_cls:
             result = await db.search_component("search-comp", "anything")
         mock_client_cls.assert_not_called()
         assert result["graphiti_error"] is None
@@ -253,7 +253,7 @@ class TestGraphitiProxy:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("database.httpx.AsyncClient", return_value=mock_client):
+        with patch("switchboard.db.search.httpx.AsyncClient", return_value=mock_client):
             result = await db.search_component("search-comp", "trigram", include_graphiti=True)
 
         mock_client.post.assert_called_once()
@@ -269,7 +269,7 @@ class TestGraphitiProxy:
 
     async def test_graphiti_skipped_when_not_configured(self, db, sample_project, component):
         """No connectors config → Graphiti silently skipped, no error."""
-        with patch("database.httpx.AsyncClient") as mock_client_cls:
+        with patch("switchboard.db.search.httpx.AsyncClient") as mock_client_cls:
             result = await db.search_component("search-comp", "anything", include_graphiti=True)
         mock_client_cls.assert_not_called()
         assert result["graphiti_error"] is None
@@ -280,7 +280,7 @@ class TestGraphitiProxy:
             "test-project",
             connectors=json.dumps({"graphiti": {"url": "http://graphiti.internal"}}),
         )
-        with patch("database.httpx.AsyncClient") as mock_client_cls:
+        with patch("switchboard.db.search.httpx.AsyncClient") as mock_client_cls:
             result = await db.search_component("search-comp", "anything", include_graphiti=True)
         mock_client_cls.assert_not_called()
         assert result["graphiti_error"] is None
@@ -292,7 +292,7 @@ class TestGraphitiProxy:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("database.httpx.AsyncClient", return_value=mock_client):
+        with patch("switchboard.db.search.httpx.AsyncClient", return_value=mock_client):
             result = await db.search_component("search-comp", "anything", include_graphiti=True)
 
         assert result["graphiti_error"] is not None
@@ -313,7 +313,7 @@ class TestGraphitiProxy:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("database.httpx.AsyncClient", return_value=mock_client):
+        with patch("switchboard.db.search.httpx.AsyncClient", return_value=mock_client):
             result = await db.search_component("search-comp", "search", include_graphiti=True)
 
         sources = {r["source"] for r in result["results"]}

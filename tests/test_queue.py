@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import database as _db
+import switchboard.db as _db
+from switchboard.dispatch.engine import dispatch_task, _check_and_dispatch_dependents
+from switchboard.dispatch.queue import _drain_queue
 
 # Use actual concurrency limit from the database module
 _MAX_CONCURRENT = _db.DEFAULT_MAX_CONCURRENT
@@ -36,9 +38,6 @@ class TestDispatchTaskQueuing:
 
     async def test_queued_at_concurrency_limit(self, db, sample_project):
         """Task is created with queued_at when concurrency is full."""
-        import tasks
-        import database as _db
-
         # Fill all concurrency slots with working tasks
         max_concurrent = _db.DEFAULT_MAX_CONCURRENT
         for i in range(max_concurrent):
@@ -49,7 +48,7 @@ class TestDispatchTaskQueuing:
             )
             await db.update_task(t["id"], status="working")
 
-        result = await tasks.dispatch_task(
+        result = await dispatch_task(
             project_id="test-project",
             task_id="test-project/queued-task",
             goal="Should be queued",
@@ -66,11 +65,9 @@ class TestDispatchTaskQueuing:
 
     async def test_not_queued_when_slots_available(self, db, sample_project):
         """Task dispatches immediately when concurrency slots available."""
-        import tasks
-
         # Mock SDK session to avoid actually running
         with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-            result = await tasks.dispatch_task(
+            result = await dispatch_task(
                 project_id="test-project",
                 task_id="test-project/immediate-task",
                 goal="Should dispatch immediately",
@@ -81,15 +78,13 @@ class TestDispatchTaskQueuing:
 
     async def test_queued_response_includes_branch(self, db, sample_project):
         """Queued response includes the branch name."""
-        import tasks
-
         for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/w-{i}", project_id="test-project", goal=f"W {i}",
             )
             await db.update_task(t["id"], status="working")
 
-        result = await tasks.dispatch_task(
+        result = await dispatch_task(
             project_id="test-project",
             task_id="test-project/queued-branch",
             goal="Queue with branch",
@@ -101,15 +96,13 @@ class TestDispatchTaskQueuing:
 
     async def test_depends_on_waiting_returns_queued_false(self, db, sample_project):
         """Task waiting on parent returns queued=false (it's waiting, not queued)."""
-        import tasks
-
         parent = await db.create_task(
             id="test-project/parent",
             project_id="test-project",
             goal="Parent task",
         )
 
-        result = await tasks.dispatch_task(
+        result = await dispatch_task(
             project_id="test-project",
             task_id="test-project/child",
             goal="Child task",
@@ -130,8 +123,6 @@ class TestQueueDrain:
 
     async def test_drains_oldest_first(self, db, sample_project):
         """FIFO: oldest queued task dispatched first."""
-        import tasks
-
         # Create 2 queued tasks with different queued_at
         t1 = await db.create_task(
             id="test-project/q1", project_id="test-project", goal="First",
@@ -143,14 +134,13 @@ class TestQueueDrain:
         )
         await db.update_task(t2["id"], queued_at="2026-01-01T01:00:00Z")
 
-        with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
-            await tasks._drain_queue()
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+            await _drain_queue()
             mock_dispatch.assert_awaited_once()
             assert mock_dispatch.await_args.kwargs["task_id"] == "test-project/q1"
 
     async def test_no_drain_when_concurrency_full(self, db, sample_project):
         """Queue does not drain if concurrency slots are full."""
-        import tasks
 
         # Fill concurrency
         for i in range(_MAX_CONCURRENT):
@@ -165,21 +155,18 @@ class TestQueueDrain:
         )
         await db.update_task(t["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
-            await tasks._drain_queue()
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+            await _drain_queue()
             mock_dispatch.assert_not_awaited()
 
     async def test_no_drain_when_queue_empty(self, db, sample_project):
         """Nothing happens when queue is empty."""
-        import tasks
-
-        with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
-            await tasks._drain_queue()
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+            await _drain_queue()
             mock_dispatch.assert_not_awaited()
 
     async def test_skips_task_with_unfinished_depends(self, db, sample_project):
         """Queued task with unfinished depends_on is skipped."""
-        import tasks
 
         parent = await db.create_task(
             id="test-project/parent", project_id="test-project", goal="Parent",
@@ -192,13 +179,12 @@ class TestQueueDrain:
         )
         await db.update_task(child["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
-            await tasks._drain_queue()
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+            await _drain_queue()
             mock_dispatch.assert_not_awaited()
 
     async def test_dispatches_when_depends_on_passed(self, db, sample_project):
         """Queued task with passed depends_on is eligible."""
-        import tasks
 
         parent = await db.create_task(
             id="test-project/parent", project_id="test-project", goal="Parent",
@@ -211,8 +197,8 @@ class TestQueueDrain:
         )
         await db.update_task(child["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("tasks.dispatch_task", AsyncMock()) as mock_dispatch:
-            await tasks._drain_queue()
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+            await _drain_queue()
             mock_dispatch.assert_awaited_once()
             assert mock_dispatch.await_args.kwargs["task_id"] == "test-project/child"
 
@@ -226,8 +212,6 @@ class TestChainPriority:
 
     async def test_chain_before_queue(self, db, sample_project):
         """When a task gate-passes, its dependent is dispatched BEFORE queued tasks."""
-        import tasks
-
         # Parent task that just gate-passed
         parent = await db.create_task(
             id="test-project/parent", project_id="test-project", goal="Parent",
@@ -257,7 +241,7 @@ class TestChainPriority:
             with patch("switchboard.dispatch.engine._maybe_create_pr", AsyncMock()):
                 with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
                     with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
-                        await tasks._check_and_dispatch_dependents("test-project/parent")
+                        await _check_and_dispatch_dependents("test-project/parent")
 
         # Dependent dispatched first, then queue drain
         assert dispatch_order[0] == "test-project/dep"
@@ -271,10 +255,8 @@ class TestMutualExclusion:
     """auto_merge and auto_pr cannot both be true."""
 
     async def test_auto_merge_and_auto_pr_raises(self, db, sample_project):
-        import tasks
-
         with pytest.raises(ValueError, match="mutually exclusive"):
-            await tasks.dispatch_task(
+            await dispatch_task(
                 project_id="test-project",
                 task_id="test-project/bad-combo",
                 goal="Should fail",
@@ -284,8 +266,6 @@ class TestMutualExclusion:
 
     async def test_auto_merge_alone_ok(self, db, sample_project):
         """auto_merge without auto_pr is fine."""
-        import tasks
-
         # Fill concurrency so it queues (avoids SDK launch)
         for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
@@ -293,7 +273,7 @@ class TestMutualExclusion:
             )
             await db.update_task(t["id"], status="working")
 
-        result = await tasks.dispatch_task(
+        result = await dispatch_task(
             project_id="test-project",
             task_id="test-project/merge-only",
             goal="Merge only",
@@ -304,15 +284,13 @@ class TestMutualExclusion:
 
     async def test_auto_pr_alone_ok(self, db, sample_project):
         """auto_pr without auto_merge is fine."""
-        import tasks
-
         for i in range(_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"test-project/filler2-{i}", project_id="test-project", goal=f"F {i}",
             )
             await db.update_task(t["id"], status="working")
 
-        result = await tasks.dispatch_task(
+        result = await dispatch_task(
             project_id="test-project",
             task_id="test-project/pr-only",
             goal="PR only",

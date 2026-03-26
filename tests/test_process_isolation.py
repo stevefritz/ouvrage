@@ -25,15 +25,15 @@ import pytest
 class TestAnyioOpenProcessPatch:
     def test_anyio_open_process_is_patched(self):
         """anyio.open_process should be replaced with _isolated_open_process."""
-        import tasks
+        import switchboard.dispatch.sdk_session as _sdk_session
         # The patched function should be our wrapper
-        assert anyio.open_process is tasks._isolated_open_process
+        assert anyio.open_process is _sdk_session._isolated_open_process
 
     def test_original_is_preserved(self):
         """The original anyio.open_process is saved as _orig_anyio_open_process."""
-        import tasks
-        assert tasks._orig_anyio_open_process is not None
-        assert tasks._orig_anyio_open_process is not tasks._isolated_open_process
+        import switchboard.dispatch.sdk_session as _sdk_session
+        assert _sdk_session._orig_anyio_open_process is not None
+        assert _sdk_session._orig_anyio_open_process is not _sdk_session._isolated_open_process
 
     async def test_patched_fn_forces_start_new_session_true(self):
         """_isolated_open_process always passes start_new_session=True."""
@@ -114,7 +114,7 @@ class TestCancelTaskUnaffectedByIsolation:
 
     async def test_cancel_task_sets_status(self, db, sample_project):
         """cancel_task marks task as cancelled even with process isolation patch."""
-        from tasks import cancel_task
+        from switchboard.dispatch.engine import cancel_task
 
         task = await db.create_task(
             id="test-project/cancel-test",
@@ -133,7 +133,8 @@ class TestCancelTaskUnaffectedByIsolation:
 
     async def test_cancel_task_cancels_asyncio_task(self, db, sample_project):
         """cancel_task finds and cancels the running asyncio Task by name."""
-        from tasks import cancel_task, _running_tasks
+        from switchboard.dispatch.engine import cancel_task
+        from switchboard.dispatch._state import _running_tasks
 
         # Create a long-running asyncio task with the expected name
         async def _long_task():
@@ -231,7 +232,7 @@ class TestSafetyFiles:
 class TestGroundingPromptSafety:
     async def test_prompt_includes_safety_section(self, db, sample_project):
         """_build_task_prompt includes the SAFETY section in all tasks."""
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
 
         task = await db.create_task(
             id="test-project/prompt-safety-test",
@@ -247,7 +248,7 @@ class TestGroundingPromptSafety:
 
     async def test_safety_section_present_on_revision(self, db, sample_project):
         """Safety instructions appear even on revision retries."""
-        from tasks import _build_task_prompt
+        from switchboard.dispatch.sdk_session import _build_task_prompt
 
         task = await db.create_task(
             id="test-project/revision-safety-test",

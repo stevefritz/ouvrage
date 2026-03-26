@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 class TestFilterDiffByIgnorePatterns:
     def setup_method(self):
-        from tasks import _filter_diff_by_ignore_patterns
+        from switchboard.git.operations import _filter_diff_by_ignore_patterns
         self.fn = _filter_diff_by_ignore_patterns
 
     SAMPLE_DIFF = """\
@@ -81,7 +81,7 @@ index 333..444 100644
 
 class TestTagReviewGuidance:
     def setup_method(self):
-        from tasks import _TAG_REVIEW_GUIDANCE, _DEFAULT_REVIEW_GUIDANCE
+        from switchboard.config.constants import _TAG_REVIEW_GUIDANCE, _DEFAULT_REVIEW_GUIDANCE
         self.tag_guidance = _TAG_REVIEW_GUIDANCE
         self.default_guidance = _DEFAULT_REVIEW_GUIDANCE
 
@@ -141,16 +141,16 @@ def base_project():
 
 async def _run_dispatch_review(task, project, captured, fake_run_subtask):
     """Helper: patches everything and runs _dispatch_review, returns captured prompt."""
-    from tasks import _dispatch_review
-    import database as db_module
+    from switchboard.dispatch.gates import _dispatch_review
+    import switchboard.db as db_module
 
     with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/src/app.py b/src/app.py\n+new line\n")), \
-         patch("tasks.db.update_task", AsyncMock()), \
-         patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
-         patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-         patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-         patch("tasks.db.list_punchlist", AsyncMock(return_value=[])), \
-         patch("tasks.db.get_component", AsyncMock(return_value=None)), \
+         patch("switchboard.db.update_task", AsyncMock()), \
+         patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
+         patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+         patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+         patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
+         patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
          patch("switchboard.dispatch.gates._run_subtask", fake_run_subtask), \
          patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
         await _dispatch_review(task["id"], project, task)
@@ -160,7 +160,7 @@ async def _run_dispatch_review(task, project, captured, fake_run_subtask):
 
 class TestDispatchReviewComponentContext:
     async def test_no_component_shows_placeholder(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -173,11 +173,11 @@ class TestDispatchReviewComponentContext:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.get_component", AsyncMock(return_value=None)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -185,7 +185,7 @@ class TestDispatchReviewComponentContext:
         assert "No component assigned" in captured["prompt"]
 
     async def test_component_context_included(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "auth",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -203,12 +203,12 @@ class TestDispatchReviewComponentContext:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("tasks.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -221,7 +221,7 @@ class TestDispatchReviewComponentContext:
 
 class TestDispatchReviewIgnorePatterns:
     async def test_default_ignores_applied(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -238,11 +238,11 @@ class TestDispatchReviewIgnorePatterns:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value=diff_with_lockfile)), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.get_component", AsyncMock(return_value=None)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -252,7 +252,7 @@ class TestDispatchReviewIgnorePatterns:
         assert "+lock stuff" not in prompt
 
     async def test_component_ignore_patterns_override_defaults(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "ui",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -274,12 +274,12 @@ class TestDispatchReviewIgnorePatterns:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value=diff)), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("tasks.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -292,7 +292,7 @@ class TestDispatchReviewIgnorePatterns:
 
 class TestDispatchReviewPunchlistClaims:
     async def test_punchlist_claims_included(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Fix bugs", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -313,12 +313,12 @@ class TestDispatchReviewPunchlistClaims:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
-             patch("tasks.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -331,7 +331,7 @@ class TestDispatchReviewPunchlistClaims:
         assert "#2" in prompt
 
     async def test_no_punchlist_shows_none(self, tmp_db):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -348,12 +348,12 @@ class TestDispatchReviewPunchlistClaims:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("tasks.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("tasks.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
+             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
@@ -363,7 +363,7 @@ class TestDispatchReviewPunchlistClaims:
 
 class TestDispatchReviewTagGuidance:
     async def _run_with_tags(self, tags):
-        from tasks import _dispatch_review
+        from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -376,11 +376,11 @@ class TestDispatchReviewTagGuidance:
             return {"status": "completed"}
 
         with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("tasks.db.update_task", AsyncMock()), \
-             patch("tasks.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("tasks.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("tasks.db.get_task_tags", AsyncMock(return_value=tags)), \
-             patch("tasks.db.get_component", AsyncMock(return_value=None)), \
+             patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_task_tags", AsyncMock(return_value=tags)), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)

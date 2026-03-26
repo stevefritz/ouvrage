@@ -4,11 +4,14 @@ Covers: claude_chat_url, state definitions, get_guide, stall detection,
 resume vs retry session handling.
 """
 
-import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from switchboard.config.constants import STALL_THRESHOLD_SECONDS
+from switchboard.server.handlers.ops import _handle_get_guide
+from switchboard.server.handlers.tasks import _handle_get_task_status, _handle_list_tasks
 
 
 # ===========================================================================
@@ -199,33 +202,28 @@ class TestGetGuide:
     """get_guide MCP tool returns structured guide."""
 
     async def test_guide_returns_markdown(self, db, sample_project):
-        # Import server and call handler directly
-        import server
-        result = await server._handle_get_guide({})
+        result = await _handle_get_guide({})
         assert "guide" in result
         guide = result["guide"]
         assert "# Switchboard Guide" in guide
         assert "Mental Model" in guide
 
     async def test_guide_includes_tool_tables(self, db, sample_project):
-        import server
-        result = await server._handle_get_guide({})
+        result = await _handle_get_guide({})
         guide = result["guide"]
         assert "dispatch_task" in guide
         assert "resume_task" in guide
         assert "get_task_status" in guide
 
     async def test_guide_includes_patterns(self, db, sample_project):
-        import server
-        result = await server._handle_get_guide({})
+        result = await _handle_get_guide({})
         guide = result["guide"]
         assert "Common Patterns" in guide
         assert "Anti-Patterns" in guide
         assert "create_component" in guide
 
     async def test_guide_includes_live_summary(self, db, sample_project):
-        import server
-        result = await server._handle_get_guide({})
+        result = await _handle_get_guide({})
         guide = result["guide"]
         assert "Live System Summary" in guide
         assert "Projects" in guide
@@ -241,8 +239,7 @@ class TestGetGuide:
         )
         await db.update_task("test-project/guide-task", status="working")
 
-        import server
-        result = await server._handle_get_guide({})
+        result = await _handle_get_guide({})
         guide = result["guide"]
         assert "Active tasks" in guide
 
@@ -265,8 +262,7 @@ class TestStallDetection:
         old_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         await db.update_task("test-project/stale-test", status="working", last_activity=old_time)
 
-        import server
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/stale-test", "include_detail": True}
         )
         assert result["stale_seconds"] >= 550  # ~10 min, give some slack
@@ -280,8 +276,7 @@ class TestStallDetection:
             project_id="test-project",
             goal="Ready stale test",
         )
-        import server
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/ready-stale", "include_detail": True}
         )
         assert result["stale_seconds"] == 0
@@ -297,8 +292,7 @@ class TestStallDetection:
         old_time = (datetime.now(timezone.utc) - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
         await db.update_task("test-project/very-stale", status="working", last_activity=old_time)
 
-        import server
-        result = await server._handle_get_task_status({"task_id": "test-project/very-stale"})
+        result = await _handle_get_task_status({"task_id": "test-project/very-stale"})
         assert result["stale"] is True
 
     async def test_state_definition_in_task_status(self, db, sample_project):
@@ -308,8 +302,7 @@ class TestStallDetection:
             project_id="test-project",
             goal="State definition test",
         )
-        import server
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/state-def-test", "include_detail": True}
         )
         assert "state_definition" in result
@@ -322,8 +315,7 @@ class TestStallDetection:
             project_id="test-project",
             goal="List state test",
         )
-        import server
-        result = await server._handle_list_tasks({"project_id": "test-project"})
+        result = await _handle_list_tasks({"project_id": "test-project"})
         assert len(result) >= 1
         task = next(t for t in result if t["id"] == "test-project/list-state-test")
         assert "state_definition" in task
@@ -400,8 +392,6 @@ class TestStallChecker:
 
     async def test_stall_warning_posted(self, db, sample_project):
         """Stalled task gets a warning message posted."""
-        import tasks as tasks_module
-
         task = await db.create_task(
             id="test-project/stall-warn",
             project_id="test-project",
@@ -411,8 +401,7 @@ class TestStallChecker:
         await db.update_task("test-project/stall-warn", status="working", last_activity=old_time)
 
         # Mock notify to prevent actual Slack calls
-        with patch.object(tasks_module, "notify") as mock_notify:
-            mock_notify.task_heartbeat = AsyncMock()
+        with patch("switchboard.notifications.slack.task_heartbeat", new_callable=AsyncMock) as mock_heartbeat:
 
             # Run one iteration of the check (not the infinite loop)
             working_tasks = await db.list_tasks(status="working")
@@ -425,7 +414,7 @@ class TestStallChecker:
                     continue
                 last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
                 stale_seconds = (now - last).total_seconds()
-                if stale_seconds >= tasks_module.STALL_THRESHOLD_SECONDS:
+                if stale_seconds >= STALL_THRESHOLD_SECONDS:
                     minutes = round(stale_seconds / 60, 1)
                     await db.post_task_message(
                         task_id=t["id"], author="dispatcher",
@@ -442,5 +431,4 @@ class TestStallChecker:
 
     async def test_stall_threshold_constant(self, db):
         """STALL_THRESHOLD_SECONDS should be 300 (5 minutes)."""
-        import tasks as tasks_module
-        assert tasks_module.STALL_THRESHOLD_SECONDS == 300
+        assert STALL_THRESHOLD_SECONDS == 300

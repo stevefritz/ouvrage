@@ -121,14 +121,14 @@ class TestStructuredTestOutput:
     @pytest.fixture(autouse=True)
     def _patches(self):
         patches = [
-            patch("tasks.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("tasks.run_setup_command", AsyncMock()),
-            patch("tasks.notify", AsyncMock()),
-            patch("tasks._ensure_branch_pushed", AsyncMock()),
-            patch("tasks._check_and_dispatch_dependents", AsyncMock()),
-            patch("tasks._dispatch_review", AsyncMock()),
-            patch("tasks.notify.task_needs_review", AsyncMock()),
-            patch("tasks.retry_task", AsyncMock()),
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.notifications.slack", AsyncMock()),
+            patch("switchboard.dispatch.engine._ensure_branch_pushed", AsyncMock()),
+            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
+            patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -138,7 +138,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_stored_on_pass(self, db, sample_project):
         """On test pass, last_test_output is stored as structured JSON."""
-        import tasks
+        from switchboard.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-pass",
@@ -151,7 +151,7 @@ class TestStructuredTestOutput:
         with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"All tests passed\nOK", b"", 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
-            await tasks._run_test_gate(task["id"], project, task_fresh)
+            await _run_test_gate(task["id"], project, task_fresh)
 
         updated = await db.get_task(task["id"])
         assert updated["last_test_output"] is not None
@@ -163,7 +163,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_stored_on_fail(self, db, sample_project):
         """On test fail, last_test_output stores exit_code=1 with stdout_tail."""
-        import tasks
+        from switchboard.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-fail",
@@ -177,7 +177,7 @@ class TestStructuredTestOutput:
         with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"FAILED: 3 errors", b"", 1))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
-            await tasks._run_test_gate(task["id"], project, task_fresh)
+            await _run_test_gate(task["id"], project, task_fresh)
 
         updated = await db.get_task(task["id"])
         assert updated["last_test_output"] is not None
@@ -188,7 +188,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_capped_at_100_lines(self, db, sample_project):
         """stdout_tail is capped at the last 100 lines."""
-        import tasks
+        from switchboard.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-lines",
@@ -204,7 +204,7 @@ class TestStructuredTestOutput:
         with patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(big_output.encode(), b"", 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
-            await tasks._run_test_gate(task["id"], project, task_fresh)
+            await _run_test_gate(task["id"], project, task_fresh)
 
         updated = await db.get_task(task["id"])
         output = json.loads(updated["last_test_output"])
@@ -262,7 +262,7 @@ class TestAttemptTracking:
 
     async def test_retry_increments_attempt(self, db, sample_project):
         """retry_task increments current_attempt on the task."""
-        import tasks
+        from switchboard.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/attempt-retry",
@@ -273,14 +273,14 @@ class TestAttemptTracking:
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.retry_task(task["id"])
+                await retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["current_attempt"] == 2
 
     async def test_retry_increments_again(self, db, sample_project):
         """Multiple retries keep incrementing current_attempt."""
-        import tasks
+        from switchboard.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/attempt-multi-retry",
@@ -291,9 +291,9 @@ class TestAttemptTracking:
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
             with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
-                await tasks.retry_task(task["id"])
+                await retry_task(task["id"])
                 await db.update_task(task["id"], status="completed")
-                await tasks.retry_task(task["id"])
+                await retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
         assert updated["current_attempt"] == 3
@@ -318,7 +318,7 @@ class TestAttemptTracking:
 
     async def test_resume_does_not_increment_attempt(self, db, sample_project):
         """resume_task does NOT increment current_attempt (same attempt)."""
-        import tasks
+        from switchboard.dispatch.engine import resume_task
 
         task = await db.create_task(
             id="test-project/attempt-resume",
@@ -328,7 +328,7 @@ class TestAttemptTracking:
         await db.update_task(task["id"], status="needs-review", current_attempt=2)
 
         with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})) as mock_dispatch:
-            await tasks.resume_task(task["id"])
+            await resume_task(task["id"])
 
         # current_attempt should still be 2 (resume_task doesn't touch it)
         updated = await db.get_task(task["id"])
@@ -459,7 +459,7 @@ class TestDashboardApiAttempts:
 
     async def test_attempts_endpoint(self, db, sample_project):
         """Dashboard API returns attempts for a task (from disk archives)."""
-        import dashboard_api
+        from switchboard.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-attempts",
@@ -477,7 +477,7 @@ class TestDashboardApiAttempts:
             "method": "GET",
             "query_string": b"",
         }
-        await dashboard_api.handle_request(scope, None, mock_send)
+        await handle_request(scope, None, mock_send)
 
         # Find the response body
         body_event = next((e for e in send_calls if e.get("type") == "http.response.body"), None)
@@ -490,7 +490,7 @@ class TestDashboardApiAttempts:
 
     async def test_task_detail_includes_review_subtask_field(self, db, sample_project):
         """GET /api/tasks/{id} includes review_subtask in response."""
-        import dashboard_api
+        from switchboard.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-review-sub",
@@ -508,7 +508,7 @@ class TestDashboardApiAttempts:
             "method": "GET",
             "query_string": b"",
         }
-        await dashboard_api.handle_request(scope, None, mock_send)
+        await handle_request(scope, None, mock_send)
 
         body_event = next((e for e in send_calls if e.get("type") == "http.response.body"), None)
         data = json.loads(body_event["body"])
@@ -517,7 +517,7 @@ class TestDashboardApiAttempts:
 
     async def test_task_detail_includes_last_test_output(self, db, sample_project):
         """GET /api/tasks/{id} includes last_test_output parsed as dict."""
-        import dashboard_api
+        from switchboard.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-test-output",
@@ -537,7 +537,7 @@ class TestDashboardApiAttempts:
             "method": "GET",
             "query_string": b"",
         }
-        await dashboard_api.handle_request(scope, None, mock_send)
+        await handle_request(scope, None, mock_send)
 
         body_event = next((e for e in send_calls if e.get("type") == "http.response.body"), None)
         data = json.loads(body_event["body"])

@@ -15,20 +15,20 @@ class TestEmbeddingStripping:
     """_strip_embedding removes embedding field from message dicts."""
 
     def test_strip_embedding_removes_field(self):
-        from database import _strip_embedding
+        from switchboard.db._helpers import _strip_embedding
         msg = {"id": 1, "content": "hello", "embedding": b"\x00\x01\x02\x03"}
         result = _strip_embedding(msg)
         assert "embedding" not in result
         assert result["content"] == "hello"
 
     def test_strip_embedding_noop_when_absent(self):
-        from database import _strip_embedding
+        from switchboard.db._helpers import _strip_embedding
         msg = {"id": 1, "content": "hello"}
         result = _strip_embedding(msg)
         assert result == {"id": 1, "content": "hello"}
 
     def test_strip_embedding_modifies_in_place_and_returns(self):
-        from database import _strip_embedding
+        from switchboard.db._helpers import _strip_embedding
         msg = {"id": 1, "embedding": "blob"}
         returned = _strip_embedding(msg)
         assert returned is msg  # same object
@@ -80,8 +80,8 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_returns_slim_keys(self, db, sample_project, sample_task):
         """Default response contains expected slim fields."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         expected_keys = {
@@ -93,8 +93,8 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_excludes_detail_fields(self, db, sample_project, sample_task):
         """Summary mode must not include last_test_output, resolved_config, or recent_messages."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         assert "last_test_output" not in result
@@ -103,21 +103,21 @@ class TestGetTaskStatusSummaryMode:
         assert "checklist" not in result
 
     async def test_summary_mode_correct_task_id(self, db, sample_project, sample_task):
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         assert result["task_id"] == "test-project/implement-feature"
 
     async def test_summary_mode_checklist_counts(self, db, sample_project, sample_task):
         """Checklist counts are correct in summary mode."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_get_task_status
         # Mark 2 items done (sample_task has 4 items)
         checklist = await db.get_checklist("test-project/implement-feature")
         await db.update_checklist_item(checklist[0]["id"], done=True)
         await db.update_checklist_item(checklist[1]["id"], done=True)
 
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         assert result["checklist_done"] == 2
@@ -125,7 +125,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_last_message_excerpt(self, db, sample_project, sample_task):
         """last_message_excerpt is populated from most recent message."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_get_task_status
         long_content = "This is a very long progress message. " * 10
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -133,7 +133,7 @@ class TestGetTaskStatusSummaryMode:
             content=long_content,
             type="progress",
         )
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         assert result["last_message_excerpt"] is not None
@@ -142,8 +142,8 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_no_messages_excerpt_is_none(self, db, sample_project, sample_task):
         """When no messages exist, excerpt and timestamp are None."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
         assert result["last_message_excerpt"] is None
@@ -155,13 +155,13 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_recent_messages(self, db, sample_project, sample_task):
         """Detail mode includes recent_messages."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_get_task_status
         await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",
             content="In progress",
         )
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
         assert "recent_messages" in result
@@ -169,8 +169,8 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_checklist(self, db, sample_project, sample_task):
         """Detail mode includes full checklist."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
         assert "checklist" in result
@@ -178,16 +178,16 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_state_definition(self, db, sample_project, sample_task):
         """Detail mode includes state_definition for dashboard rendering."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
         assert "state_definition" in result
 
     async def test_detail_mode_includes_alive_and_stale(self, db, sample_project, sample_task):
         """Detail mode still includes liveness fields."""
-        import server
-        result = await server._handle_get_task_status(
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
         assert "alive" in result
@@ -195,13 +195,13 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_no_embedding_in_messages(self, db, sample_project, sample_task):
         """Detail mode recent_messages never contain embedding field."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_get_task_status
         await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",
             content="Done",
         )
-        result = await server._handle_get_task_status(
+        result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
         for msg in result.get("recent_messages", []):
@@ -325,7 +325,7 @@ class TestListTasksActiveOnly:
 
     async def test_mcp_handler_defaults_to_active_only(self, db, sample_project):
         """The MCP handler uses active_only=True by default."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_list_tasks
         await db.create_task(
             id="test-project/mcp-cancelled",
             project_id="test-project",
@@ -333,13 +333,13 @@ class TestListTasksActiveOnly:
         )
         await db.update_task("test-project/mcp-cancelled", status="cancelled")
 
-        result = await server._handle_list_tasks({"project_id": "test-project"})
+        result = await _handle_list_tasks({"project_id": "test-project"})
         ids = [t["id"] for t in result]
         assert "test-project/mcp-cancelled" not in ids
 
     async def test_mcp_handler_active_only_false_shows_all(self, db, sample_project):
         """The MCP handler respects active_only=False."""
-        import server
+        from switchboard.server.handlers.tasks import _handle_list_tasks
         await db.create_task(
             id="test-project/mcp-cancelled-visible",
             project_id="test-project",
@@ -347,7 +347,7 @@ class TestListTasksActiveOnly:
         )
         await db.update_task("test-project/mcp-cancelled-visible", status="cancelled")
 
-        result = await server._handle_list_tasks(
+        result = await _handle_list_tasks(
             {"project_id": "test-project", "active_only": False}
         )
         ids = [t["id"] for t in result]
