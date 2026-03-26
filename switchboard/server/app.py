@@ -84,14 +84,12 @@ _MIME_TYPES = {
 
 
 async def _serve_dashboard(scope, send):
-    """Serve static files from dashboard/ (shared assets used by Foreman)."""
+    """Serve static files from dashboard/, with SPA fallback to index.html."""
     path = scope["path"]
     # Strip /dashboard prefix to get file path
     file_path = path[len("/dashboard"):].lstrip("/")
     if not file_path:
-        await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
-        await send({"type": "http.response.body", "body": b"Not Found"})
-        return
+        file_path = "index.html"
 
     full_path = os.path.join(_DASHBOARD_DIR, file_path)
 
@@ -102,9 +100,13 @@ async def _serve_dashboard(scope, send):
         await send({"type": "http.response.body", "body": b"Forbidden"})
         return
 
+    # SPA fallback: if file doesn't exist, serve index.html
+    if not os.path.isfile(full_path):
+        full_path = os.path.join(_DASHBOARD_DIR, "index.html")
+
     if not os.path.isfile(full_path):
         await send({"type": "http.response.start", "status": 404, "headers": []})
-        await send({"type": "http.response.body", "body": b"Not Found"})
+        await send({"type": "http.response.body", "body": b"Dashboard not found"})
         return
 
     ext = os.path.splitext(full_path)[1]

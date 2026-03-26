@@ -74,6 +74,9 @@ async def _run_test_streaming(worktree: str, test_command: str) -> tuple[str, in
     env = os.environ.copy()
     env["HOME"] = pw.pw_dir
 
+    # Note: preexec_fn is not safe with threads per Python docs, but asyncio's
+    # subprocess implementation uses fork+exec on Linux where this runs in the
+    # child process before exec. Safe for our single-threaded event loop use case.
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
         stdout=asyncio.subprocess.PIPE,
@@ -84,9 +87,9 @@ async def _run_test_streaming(worktree: str, test_command: str) -> tuple[str, in
 
     chunks = []
     try:
-        with open(output_path, "w") as f:
-            # Set file permissions so dashboard can read it
-            os.chmod(output_path, 0o644)
+        # Create file with explicit permissions before writing
+        fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        with os.fdopen(fd, "w") as f:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
