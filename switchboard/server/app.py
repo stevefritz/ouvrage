@@ -11,6 +11,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent
 
 from switchboard.auth import middleware as auth
+from switchboard.auth import oauth as oauth_server
 from switchboard.dashboard import api as dashboard_api
 import switchboard.db as db
 import switchboard.dispatch as tasks
@@ -224,6 +225,10 @@ async def _backfill_message_chunks() -> None:
 async def main():
     await db.init_db()
 
+    # Initialize OAuth authorization server (RSA keys + seed default client)
+    oauth_server.init_oauth_keys()
+    await oauth_server.seed_default_client()
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=False,
@@ -278,6 +283,17 @@ async def main():
             await _serve_dashboard(scope, send)
         elif path.startswith("/foreman"):
             await _serve_foreman(scope, send)
+        # OAuth authorization server endpoints
+        elif path == "/.well-known/openid-configuration" and method == "GET":
+            await oauth_server.handle_openid_configuration(scope, receive, send)
+        elif path == "/jwks" and method == "GET":
+            await oauth_server.handle_jwks(scope, receive, send)
+        elif path == "/oauth/authorize" and method == "GET":
+            await oauth_server.handle_authorize(scope, receive, send)
+        elif path == "/oauth/token" and method == "POST":
+            await oauth_server.handle_token(scope, receive, send)
+        elif path == "/oauth/revoke" and method == "POST":
+            await oauth_server.handle_revoke(scope, receive, send)
         else:
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})

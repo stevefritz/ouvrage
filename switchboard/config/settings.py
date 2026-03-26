@@ -45,3 +45,11 @@ AUTH_ISSUER_URL = os.environ.get("AUTH_ISSUER_URL")  # e.g. https://auth.example
 AUTH_AUDIENCE = os.environ.get("AUTH_AUDIENCE")  # e.g. https://switchboard.example.dev/mcp
 AUTH_REQUIRED_SCOPES = os.environ.get("AUTH_REQUIRED_SCOPES", "").split(",") if os.environ.get("AUTH_REQUIRED_SCOPES") else []
 RESOURCE_URL = os.environ.get("RESOURCE_URL")  # e.g. https://switchboard.example.dev/mcp
+
+# ---------------------------------------------------------------------------
+# OAuth Authorization Server
+# ---------------------------------------------------------------------------
+
+OAUTH_BASE_URL = os.environ.get("OAUTH_BASE_URL")  # e.g. https://switchboard.example.dev
+OAUTH_RSA_KEY_PATH = os.environ.get("OAUTH_RSA_KEY_PATH", "./data/oauth_rsa_key.pem")
+OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")  # claude-mcp client secret (seeded on first run)

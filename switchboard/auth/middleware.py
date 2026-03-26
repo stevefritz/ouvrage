@@ -25,6 +25,7 @@ from switchboard.config.settings import (
     AUTH_AUDIENCE,
     AUTH_REQUIRED_SCOPES,
     RESOURCE_URL,
+    OAUTH_BASE_URL,
 )
 
 
@@ -164,7 +165,18 @@ def _www_authenticate_header(error: str | None = None, error_description: str | 
 # ── Protected resource metadata ────────────────────────────────────────────
 
 def _protected_resource_metadata() -> dict:
-    """RFC 9728 OAuth Protected Resource Metadata."""
+    """RFC 9728 OAuth Protected Resource Metadata.
+
+    When OAUTH_BASE_URL is set, points to self as the authorization server.
+    Otherwise falls back to external AUTH_ISSUER_URL (Authelia).
+    """
+    if OAUTH_BASE_URL:
+        base = OAUTH_BASE_URL.rstrip("/")
+        return {
+            "resource": RESOURCE_URL or base,
+            "authorization_servers": [base],
+            "bearer_methods_supported": ["header"],
+        }
     meta = {
         "resource": RESOURCE_URL or AUTH_ISSUER_URL,
         "authorization_servers": [AUTH_ISSUER_URL.rstrip("/")],
@@ -177,7 +189,15 @@ def _protected_resource_metadata() -> dict:
 
 # ── Middleware ──────────────────────────────────────────────────────────────
 
-UNPROTECTED_PATHS = {"/health", "/.well-known/oauth-protected-resource"}
+UNPROTECTED_PATHS = {
+    "/health",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/openid-configuration",
+    "/jwks",
+    "/oauth/authorize",
+    "/oauth/token",
+    "/oauth/revoke",
+}
 
 
 def auth_middleware(inner_app):

@@ -201,6 +201,43 @@ async def init_db():
 
             INSERT OR IGNORE INTO notification_settings (id, notify_failed, notify_needs_review, notify_completed, notify_question)
                 VALUES (1, 1, 1, 0, 1);
+
+            -- OAuth Authorization Server tables
+            CREATE TABLE IF NOT EXISTS oauth_clients (
+                client_id TEXT PRIMARY KEY,
+                client_name TEXT NOT NULL,
+                client_secret_encrypted TEXT,
+                redirect_uris TEXT NOT NULL DEFAULT '[]',
+                grant_types TEXT NOT NULL DEFAULT '[]',
+                scopes TEXT NOT NULL DEFAULT '[]',
+                token_endpoint_auth_method TEXT DEFAULT 'client_secret_post',
+                consent_mode TEXT DEFAULT 'implicit'
+            );
+
+            CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+                code TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                redirect_uri TEXT NOT NULL,
+                scope TEXT,
+                code_challenge TEXT,
+                code_challenge_method TEXT,
+                expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                token_type TEXT NOT NULL DEFAULT 'Bearer',
+                access_token_jti TEXT UNIQUE,
+                refresh_token TEXT UNIQUE,
+                scope TEXT,
+                issued_at INTEGER,
+                access_token_expires_at INTEGER,
+                refresh_token_expires_at INTEGER,
+                revoked INTEGER DEFAULT 0
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
