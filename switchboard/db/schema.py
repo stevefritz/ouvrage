@@ -1,11 +1,52 @@
 """Database schema initialization and migrations."""
 from switchboard.db.connection import get_db
+from switchboard.db._helpers import now_iso
 
 
 async def init_db():
     async with get_db() as conn:
         # Create new tables (won't affect existing ones)
         await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT,
+                role TEXT DEFAULT 'member',
+                timezone TEXT DEFAULT 'America/Toronto',
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS instance (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                slug TEXT,
+                stripe_customer_id TEXT,
+                plan_tier TEXT DEFAULT 'free',
+                owner_user_id INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS user_credentials (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id),
+                anthropic_api_key TEXT,
+                github_pat TEXT,
+                slack_webhook_url TEXT,
+                notification_preferences TEXT DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                token_hash TEXT NOT NULL,
+                name TEXT,
+                last_used_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                expires_at TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 project TEXT NOT NULL,
@@ -331,6 +372,83 @@ async def init_db():
         # Migrate projects: add paused
         if "paused" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN paused BOOLEAN DEFAULT 0")
+
+        # Migrate projects: add created_by FK
+        if "created_by" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN created_by INTEGER REFERENCES users(id)")
+
+        # Migrate components: add created_by FK
+        if comp_table:
+            if "created_by" not in comp_col_names:
+                await conn.execute("ALTER TABLE components ADD COLUMN created_by INTEGER REFERENCES users(id)")
+
+        # Migrate conversations: add created_by FK
+        if "created_by" not in conv_col_names:
+            await conn.execute("ALTER TABLE conversations ADD COLUMN created_by INTEGER REFERENCES users(id)")
+
+        # Migrate tasks: add created_by and dispatched_by FKs
+        if "created_by" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN created_by INTEGER REFERENCES users(id)")
+        if "dispatched_by" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN dispatched_by INTEGER REFERENCES users(id)")
+
+        # Migrate messages: add user_id FK
+        msg_columns = await conn.execute_fetchall("PRAGMA table_info(messages)")
+        msg_col_names = [c["name"] for c in msg_columns]
+        if "user_id" not in msg_col_names:
+            await conn.execute("ALTER TABLE messages ADD COLUMN user_id INTEGER REFERENCES users(id)")
+
+        # Migrate task_messages (messages with task_id): same user_id FK — already handled above
+        # (messages table serves both conversation messages and task messages)
+
+        # Migrate push_subscriptions: add user_id FK
+        push_columns = await conn.execute_fetchall("PRAGMA table_info(push_subscriptions)")
+        push_col_names = [c["name"] for c in push_columns]
+        if "user_id" not in push_col_names:
+            await conn.execute("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER REFERENCES users(id)")
+
+        # ---------------------------------------------------------------------------
+        # Bootstrap migration: seed default owner user and instance if users is empty.
+        # Backfill all FK columns so existing rows point to the owner.
+        # This runs once on upgrade from single-tenant to user-model schema.
+        # ---------------------------------------------------------------------------
+        user_count_rows = await conn.execute_fetchall("SELECT COUNT(*) as cnt FROM users")
+        if user_count_rows[0]["cnt"] == 0:
+            ts = now_iso()
+            cursor = await conn.execute(
+                """INSERT INTO users (email, name, role, timezone, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                ("owner@localhost", "Owner", "owner", "America/Toronto", ts, ts),
+            )
+            user_id = cursor.lastrowid
+
+            await conn.execute(
+                """INSERT INTO instance (id, name, slug, plan_tier, owner_user_id, created_at)
+                   VALUES (1, ?, ?, ?, ?, ?)""",
+                ("Switchboard", "default", "free", user_id, ts),
+            )
+
+            # Backfill FK columns on existing rows
+            await conn.execute(
+                "UPDATE projects SET created_by = ? WHERE created_by IS NULL", (user_id,)
+            )
+            await conn.execute(
+                "UPDATE components SET created_by = ? WHERE created_by IS NULL", (user_id,)
+            )
+            await conn.execute(
+                "UPDATE conversations SET created_by = ? WHERE created_by IS NULL", (user_id,)
+            )
+            await conn.execute(
+                "UPDATE tasks SET created_by = ?, dispatched_by = ? WHERE created_by IS NULL",
+                (user_id, user_id),
+            )
+            # Only backfill messages authored by humans (not system actors)
+            await conn.execute(
+                """UPDATE messages SET user_id = ?
+                   WHERE author NOT IN ('dispatcher', 'cc-worker', 'switchboard')
+                   AND user_id IS NULL""",
+                (user_id,),
+            )
 
         # Create/recreate indexes
         await conn.executescript("""

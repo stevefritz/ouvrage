@@ -128,6 +128,23 @@ from switchboard.config.constants import (
     TASK_MUTABLE_FIELDS,
 )
 
+# Users, instance, credentials, API tokens
+from switchboard.db.users import (
+    create_user,
+    get_user,
+    get_user_by_email,
+    update_user,
+    list_users,
+    get_instance,
+    update_instance,
+    get_user_credentials,
+    update_user_credentials,
+    create_api_token,
+    validate_api_token,
+    revoke_api_token,
+    list_api_tokens,
+)
+
 # Search
 from switchboard.db.search import (
     search_messages_semantic,
@@ -178,6 +195,11 @@ __all__ = [
     "claim_punchlist_item", "resolve_punchlist_items_for_task",
     "create_punchlist_item", "update_punchlist_item", "delete_punchlist_item",
     "revert_punchlist_items_for_task",
+    # users / instance / credentials / api tokens
+    "create_user", "get_user", "get_user_by_email", "update_user", "list_users",
+    "get_instance", "update_instance",
+    "get_user_credentials", "update_user_credentials",
+    "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",
