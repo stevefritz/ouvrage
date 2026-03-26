@@ -48,10 +48,13 @@ function ProgressBar({ done, total, failed, active }) {
 function ComponentCard({ comp }) {
     const hasActive = comp.active_tasks > 0;
     return html`
-        <div class="bg-slate-900 border border-slate-700 rounded-lg p-4 hover:border-slate-500 cursor-pointer transition-colors"
+        <div class="bg-slate-900 border ${comp.paused ? 'border-amber-500/40 opacity-75' : 'border-slate-700'} rounded-lg p-4 hover:border-slate-500 cursor-pointer transition-colors"
             onClick=${() => navigate(`#/components/${encodeURIComponent(comp.id)}`)}>
             <div class="flex items-start justify-between mb-2">
-                <h3 class="text-base font-medium text-slate-200">${comp.name}</h3>
+                <div class="flex items-center gap-2 min-w-0">
+                    <h3 class="text-base font-medium text-slate-200">${comp.name}</h3>
+                    ${comp.paused ? html`<span class="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">PAUSED</span>` : null}
+                </div>
                 <${ComponentStatusBadge} status=${comp.status} />
             </div>
             ${comp.description && html`

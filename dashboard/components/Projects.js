@@ -27,10 +27,13 @@ export function Projects() {
                 ${projects.length === 0
                     ? html`<${EmptyState} message="No projects registered" />`
                     : projects.map(p => html`
-                        <div key=${p.id} class="bg-slate-900 border border-slate-700 rounded-lg p-4 hover:border-slate-600">
+                        <div key=${p.id} class="bg-slate-900 border ${p.paused ? 'border-amber-500/40' : 'border-slate-700'} rounded-lg p-4 hover:border-slate-600 ${p.paused ? 'opacity-75' : ''}">
                             <div class="flex items-start justify-between mb-1">
-                                <h3 class="text-lg font-medium text-slate-200 cursor-pointer hover:text-slate-100"
-                                    onClick=${() => navigate(`#/projects/${encodeURIComponent(p.id)}`)}>${p.id}</h3>
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <h3 class="text-lg font-medium text-slate-200 cursor-pointer hover:text-slate-100"
+                                        onClick=${() => navigate(`#/projects/${encodeURIComponent(p.id)}`)}>${p.id}</h3>
+                                    ${p.paused ? html`<span class="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">PAUSED</span>` : null}
+                                </div>
                                 <a href="#/graph/${encodeURIComponent(p.id)}"
                                     class="px-2 py-1 text-xs rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0"
                                     onClick=${(e) => e.stopPropagation()}>Graph \u2197</a>
