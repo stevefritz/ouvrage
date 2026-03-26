@@ -1,6 +1,6 @@
 """Punchlist tool handlers."""
 
-import database as db
+import switchboard.db as db
 
 
 async def _handle_add_punchlist_item(arguments):

@@ -18,7 +18,7 @@ async def search_messages_semantic(
     Filtering by project_id joins through the conversations table.
     Actual relevance scoring (type weights, pinned boost) is applied by the caller.
     """
-    from embedding_service import decode_vector, cosine_similarity
+    from switchboard.embeddings.service import decode_vector, cosine_similarity
 
     async with get_db() as db:
         conditions = ["m.embedding IS NOT NULL"]

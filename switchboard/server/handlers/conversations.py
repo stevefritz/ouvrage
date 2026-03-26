@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-import database as db
+import switchboard.db as db
 from switchboard.embeddings import service as emb
 from switchboard.server.handlers.common import _embed_message_async
 

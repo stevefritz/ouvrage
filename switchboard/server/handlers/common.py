@@ -5,7 +5,7 @@ import logging
 import re
 
 from switchboard.embeddings import service as emb
-import database as db
+import switchboard.db as db
 
 log = logging.getLogger("switchboard.server")
 

@@ -1,7 +1,7 @@
 """Component and control tool handlers."""
 
-import database as db
-import tasks as task_engine
+import switchboard.db as db
+import switchboard.dispatch as task_engine
 
 
 async def _handle_create_component(arguments):

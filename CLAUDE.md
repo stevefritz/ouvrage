@@ -22,11 +22,16 @@ timeout 60 python -m pytest tests/test_unit.py::TestTailLines  # specific class
 
 ## Architecture
 
-- `server.py` — MCP server, tool registration, HTTP handlers
-- `tasks.py` — Task execution engine: dispatch, worktree ops, gate pipeline, SDK integration
-- `database.py` — SQLite async wrapper, schema migrations
-- `notifications.py` — Slack notifications
+- `switchboard/server/` — MCP server, tool definitions, HTTP handlers, ASGI app
+- `switchboard/dispatch/` — Task execution engine: dispatch, worktree ops, gate pipeline, SDK integration
+- `switchboard/db/` — SQLite async wrapper, schema migrations
+- `switchboard/dashboard/` — REST API for the Switchboard SPA
+- `switchboard/notifications/` — Slack and web push notifications
+- `switchboard/git/` — Git operations, worktree management
+- `switchboard/auth/` — OAuth middleware
 - `tests/` — Pytest suite (unit, integration, smoke)
+
+Root-level compat shims (`tasks.py`, `database.py`, `embedding_service.py`) remain for test compatibility.
 
 ## Deployment note
 

@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-import database as db
+import switchboard.db as db
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger("switchboard.server")

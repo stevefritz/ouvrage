@@ -10,7 +10,7 @@ Lazy import from tasks (to break circular dependency):
 
 import logging
 
-import database as db
+import switchboard.db as db
 
 log = logging.getLogger("switchboard.tasks")
 

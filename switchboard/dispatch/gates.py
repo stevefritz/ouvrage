@@ -27,7 +27,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import TextBlock, ToolUseBlock
 
-import database as db
+import switchboard.db as db
 from switchboard.notifications import slack as notify
 from switchboard.config.constants import (
     _DEFAULT_REVIEW_IGNORE_PATTERNS,

@@ -17,7 +17,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-import database as db
+import switchboard.db as db
 from switchboard.notifications import slack as notify
 from switchboard.config.settings import (
     RECOVERY_STAGGER_SECONDS,

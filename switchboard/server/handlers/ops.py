@@ -1,6 +1,6 @@
 """Ops tool handlers — get_context and get_guide."""
 
-import database as db
+import switchboard.db as db
 
 GUIDE_STATIC = """# Switchboard Guide
 

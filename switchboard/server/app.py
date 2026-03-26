@@ -11,9 +11,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent
 
 from switchboard.auth import middleware as auth
-import dashboard_api
-import database as db
-import tasks
+from switchboard.dashboard import api as dashboard_api
+import switchboard.db as db
+import switchboard.dispatch as tasks
 
 from switchboard.server.tools import TOOLS
 from switchboard.server.dispatch import _dispatch_tool

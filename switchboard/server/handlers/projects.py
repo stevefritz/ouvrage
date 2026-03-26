@@ -2,8 +2,8 @@
 
 import os
 
-import database as db
-import tasks as task_engine
+import switchboard.db as db
+import switchboard.dispatch as task_engine
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 

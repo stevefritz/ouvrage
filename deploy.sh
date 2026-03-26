@@ -8,7 +8,7 @@
 set -e
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-PYTHON_FILES="auth.py dashboard_api.py database.py notifications.py server.py tasks.py web_push.py"
+PYTHON_FILES="database.py embedding_service.py tasks.py"
 
 # Instance registry: name -> (app_dir, service_name, owner_user, owner_group)
 declare -A INSTANCES
@@ -35,6 +35,9 @@ deploy_instance() {
             cp "$SRC/$f" "$app_dir/$f"
         fi
     done
+
+    # Copy switchboard package
+    rsync -a --delete "$SRC/switchboard/" "$app_dir/switchboard/"
 
     # Copy dashboard
     if [ -d "$SRC/dashboard" ]; then

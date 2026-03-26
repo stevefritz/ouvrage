@@ -7,7 +7,7 @@ import os
 import pwd
 import shlex
 
-import database as db
+import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
 
 log = logging.getLogger("switchboard.tasks")

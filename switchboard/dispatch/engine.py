@@ -30,7 +30,7 @@ from pathlib import Path
 
 from claude_agent_sdk import ClaudeSDKClient
 
-import database as db
+import switchboard.db as db
 from switchboard.notifications import slack as notify
 from switchboard.config.constants import DEFAULT_MODEL
 from switchboard.git.worktree import (

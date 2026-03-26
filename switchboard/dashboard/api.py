@@ -6,8 +6,9 @@ import os
 import time
 from urllib.parse import parse_qs, unquote
 
-import database as db
-import tasks
+import switchboard.db as db
+import switchboard.dispatch as tasks
+from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
 from switchboard.notifications import web_push
 
 logger = logging.getLogger(__name__)
@@ -279,7 +280,7 @@ async def _handle_system(send):
     total_cost = sum(t.get("total_cost_usd", 0) or 0 for t in all_tasks)
     await _json_response(send, {
         "active_tasks": active,
-        "max_concurrent": db.DEFAULT_MAX_CONCURRENT,
+        "max_concurrent": DEFAULT_MAX_CONCURRENT,
         "total_cost_usd": round(total_cost, 2),
         "uptime_seconds": round(time.monotonic() - _start_time),
         "jira_base_url": JIRA_BASE_URL or None,

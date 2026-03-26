@@ -5,7 +5,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-import database as db
+import switchboard.db as db
 
 log = logging.getLogger("switchboard.web_push")
 

@@ -6,9 +6,9 @@ import logging
 import os
 from datetime import datetime, timezone
 
-import database as db
+import switchboard.db as db
 from switchboard.notifications import slack as notify
-import tasks as task_engine
+import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
 
 log = logging.getLogger("switchboard.server")

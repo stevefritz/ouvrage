@@ -36,7 +36,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
 
-import database as db
+import switchboard.db as db
 from switchboard.notifications import slack as notify
 from switchboard.config.settings import WORKER_USER
 from switchboard.config.constants import MESSAGE_POLL_INTERVAL, DEFAULT_MODEL

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 
-import database as db
+import switchboard.db as db
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger("switchboard.tasks")
