@@ -20,4 +20,8 @@ from switchboard.config.constants import (  # noqa: F401
     DEFAULT_MAX_TURNS,
     DEFAULT_MAX_WALL_CLOCK,
     DEFAULT_MAX_CONCURRENT,
+    TASK_MUTABLE_FIELDS,
 )
+
+# httpx is used by search.py (Graphiti proxy); tests patch `database.httpx.AsyncClient`
+import httpx  # noqa: F401
