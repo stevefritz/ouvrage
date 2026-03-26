@@ -8,8 +8,6 @@
 set -e
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-PYTHON_FILES="database.py embedding_service.py tasks.py"
-
 # Instance registry: name -> (app_dir, service_name, owner_user, owner_group)
 declare -A INSTANCES
 INSTANCES[prod]="/opt/switchboard|switchboard|switchboard-svc|switchboard"
@@ -28,13 +26,6 @@ deploy_instance() {
     IFS='|' read -r app_dir service owner_user owner_group <<< "$config"
 
     echo "=== Deploying to $name ($app_dir) ==="
-
-    # Copy Python files
-    for f in $PYTHON_FILES; do
-        if [ -f "$SRC/$f" ]; then
-            cp "$SRC/$f" "$app_dir/$f"
-        fi
-    done
 
     # Copy switchboard package
     rsync -a --delete "$SRC/switchboard/" "$app_dir/switchboard/"

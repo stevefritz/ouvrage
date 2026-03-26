@@ -31,7 +31,7 @@ timeout 60 python -m pytest tests/test_unit.py::TestTailLines  # specific class
 - `switchboard/auth/` — OAuth middleware
 - `tests/` — Pytest suite (unit, integration, smoke)
 
-Root-level compat shims (`tasks.py`, `database.py`, `embedding_service.py`) remain for test compatibility.
+All code lives in the `switchboard/` package. No root-level Python shims.
 
 ## Deployment note
 
