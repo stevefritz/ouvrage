@@ -99,13 +99,24 @@ function reviewVerdict(msg) {
 
 // ── Status Line ─────────────────────────────────────────────
 
+// Gate statuses that replace the task status as the primary label
+const GATE_PRIMARY = {
+    'testing':   { label: 'TESTING',   color: colors.yellow },
+    'reviewing': { label: 'IN REVIEW', color: colors.yellow },
+};
+
 function StatusLine({ task }) {
-    const gateLabel = task.gate_status && task.gate_status !== 'passed' && task.gate_status !== 'stale'
+    // When gate is actively testing or reviewing, show that as the primary label
+    const gatePrimary = task.gate_status ? GATE_PRIMARY[task.gate_status] : null;
+
+    // Secondary gate badge: non-primary gate states that are worth showing
+    const secondaryGateLabel = !gatePrimary && task.gate_status
+        && task.gate_status !== 'passed' && task.gate_status !== 'stale'
         ? task.gate_status.toUpperCase().replace(/-/g, ' ')
         : null;
 
-    const statusLabel = (task.status || 'ready').toUpperCase();
-    const isPulsing = task.status === 'working';
+    const statusLabel = gatePrimary ? gatePrimary.label : (task.status || 'ready').toUpperCase();
+    const statusColor = gatePrimary ? gatePrimary.color : (statusColors[task.status] || colors.textSecondary);
 
     return html`
         <div style=${{
@@ -116,20 +127,20 @@ function StatusLine({ task }) {
             <span style=${{
                 fontFamily: typography.fontMono, fontSize: typography.size.sm,
                 fontWeight: typography.weight.semibold,
-                color: statusColors[task.status] || colors.textSecondary,
+                color: statusColor,
                 textTransform: 'uppercase', letterSpacing: '0.05em',
             }}>${statusLabel}</span>
 
-            ${gateLabel ? html`
+            ${secondaryGateLabel ? html`
                 <span style=${{
                     fontFamily: typography.fontMono, fontSize: typography.size.xs,
                     padding: '2px 8px', borderRadius: '4px',
                     background: statusBgs[task.status] || 'rgba(92, 94, 102, 0.12)',
                     color: statusColors[task.status] || colors.textSecondary,
-                }}>${gateLabel}</span>
+                }}>${secondaryGateLabel}</span>
             ` : null}
 
-            ${task.status === 'working' ? html`
+            ${task.status === 'working' || gatePrimary ? html`
                 <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
                     ${relativeTime(task.last_activity)}
                 </span>
@@ -516,6 +527,7 @@ function ActionToolbar({ task, onAction }) {
         actions.push(btn('approve', 'Approve', colors.greenBg, colors.green));
     } else if (task.status === 'ready') {
         actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue));
+        actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow));
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
     if (task.status === 'working') {
@@ -1393,6 +1405,16 @@ function DetailsDrawer({ task }) {
                     ${row('Tokens In', `${((task.total_input_tokens || 0) / 1000).toFixed(0)}K`)}
                     ${row('Tokens Out', `${((task.total_output_tokens || 0) / 1000).toFixed(1)}K`)}
                     ${row('Phase', task.phase)}
+                    ${task.resolved_config?.test_command ? html`
+                        <div style=${{
+                            display: 'flex', justifyContent: 'space-between',
+                            padding: '4px 0', borderBottom: `1px solid ${colors.borderSubtle}`,
+                            gap: '8px',
+                        }}>
+                            <span style=${{ fontFamily: typography.fontBody, fontSize: typography.size.sm, color: colors.textTertiary, flexShrink: 0 }}>Test Command</span>
+                            <span style=${{ fontFamily: typography.fontMono, fontSize: typography.size.xs, color: colors.textSecondary, wordBreak: 'break-all', textAlign: 'right' }}>${task.resolved_config.test_command}</span>
+                        </div>
+                    ` : null}
                     ${row('Auto Test', task.auto_test ? 'Yes' : 'No')}
                     ${row('Auto Review', task.auto_review ? 'Yes' : 'No')}
                     ${task.auto_review ? row('Review model', task.review_model === 'sonnet' ? 'Sonnet' : 'Opus') : null}
@@ -1581,6 +1603,7 @@ const CONFIRM_TEXT = {
     'advance-chain': { title: 'Advance Chain', body: 'Dispatch the next dependent task in the chain?' },
     'release-worktree': { title: 'Release Worktree', body: 'Detach worktree without closing the task?' },
     approve: { title: 'Approve & Dispatch', body: 'Release this held task for dispatch?' },
+    hold: { title: 'Hold Task', body: 'Put this task on hold? It will require manual approval before dispatch.' },
     dispatch: { title: 'Dispatch Task', body: 'Create worktree and launch CC session?' },
 };
 
@@ -1745,6 +1768,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 'advance-chain': () => api.advanceChain(id),
                 'release-worktree': () => api.releaseWorktree(id),
                 approve: () => api.approveTask(id),
+                hold: () => api.holdTask(id),
                 dispatch: () => api.dispatchTask(id),
                 reopen: () => api.reopenTask(id),
             };
