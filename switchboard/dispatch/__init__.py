@@ -3,6 +3,8 @@
 Currently exposes:
   recovery   — orphan/stall detection and auto-recovery
   sdk_session — Claude Agent SDK session management and prompt building
+  gates      — test gate, review dispatch, and subtask orchestration
+  queue      — FIFO queue drain
 """
 
 from switchboard.dispatch.recovery import (
@@ -32,6 +34,17 @@ from switchboard.dispatch.sdk_session import (
     _log_result,
 )
 
+from switchboard.dispatch.gates import (
+    _tail_lines,
+    _run_subtask,
+    _run_test_gate,
+    _dispatch_review,
+    _process_review_result_inline,
+    _process_review_result,
+)
+
+from switchboard.dispatch.queue import _drain_queue
+
 __all__ = [
     # recovery
     "_is_pid_alive",
@@ -56,4 +69,13 @@ __all__ = [
     "_tail_file",
     "_run_sdk_session",
     "_log_result",
+    # gates
+    "_tail_lines",
+    "_run_subtask",
+    "_run_test_gate",
+    "_dispatch_review",
+    "_process_review_result_inline",
+    "_process_review_result",
+    # queue
+    "_drain_queue",
 ]
