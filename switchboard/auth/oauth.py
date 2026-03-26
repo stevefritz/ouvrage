@@ -488,15 +488,18 @@ async def handle_authorize(scope, receive, send):
         })
         return
 
-    # Check for session (user_id in scope, set by login middleware)
+    # Check for session (user_id in scope, set by session middleware)
     user_id = scope.get("oauth_user_id")
     if not user_id:
-        # No session — return 401 login_required
-        # The login UI (next task) will handle presenting the login form
-        await _send_json(send, 401, {
-            "error": "login_required",
-            "error_description": "User authentication required",
-        })
+        # No session — redirect to login page with next= pointing back here
+        from urllib.parse import quote
+        base = _get_base_url()
+        # Reconstruct the full authorize URL
+        authorize_url = f"{base}/oauth/authorize"
+        if qs:
+            authorize_url = f"{authorize_url}?{qs}"
+        login_url = f"/foreman/login?next={quote(authorize_url, safe='')}"
+        await _send_redirect(send, login_url)
         return
 
     # Implicit consent — generate code and redirect immediately
