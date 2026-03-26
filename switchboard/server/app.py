@@ -307,15 +307,17 @@ async def main():
             await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
             await send({"type": "http.response.body", "body": b"Not Found"})
 
-    # Wrap with OAuth middleware (no-op if AUTH_ISSUER_URL is unset)
+    # Wrap with auth middleware (always active — self-issued or external)
     protected_app = auth.auth_middleware(app)
 
     port = int(os.environ.get("SWITCHBOARD_PORT", "8100"))
 
-    if auth.is_auth_enabled():
-        print(f"OAuth enabled — issuer: {auth.AUTH_ISSUER_URL}")
+    from switchboard.auth.middleware import _is_self_issuer
+    if _is_self_issuer():
+        from switchboard.auth.middleware import _get_self_base_url
+        print(f"OAuth enabled — self-issued JWTs (issuer: {_get_self_base_url()})")
     else:
-        print("OAuth disabled — no AUTH_ISSUER_URL set (local dev mode)")
+        print(f"OAuth enabled — external issuer: {auth.AUTH_ISSUER_URL}")
 
     config = uvicorn.Config(protected_app, host="0.0.0.0", port=port, log_level="info")
     srv = uvicorn.Server(config)
