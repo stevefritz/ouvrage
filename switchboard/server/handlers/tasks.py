@@ -13,6 +13,56 @@ from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
 
 log = logging.getLogger("switchboard.server")
 
+_VERDICT_WORDS = ("APPROVED", "CHANGES REQUESTED", "COMMENT")
+
+
+def _truncate_message(msg: dict, max_len: int = 200) -> dict:
+    """Return a copy of msg with content truncated for lean API responses.
+
+    Rules:
+    - Pinned spec messages (pinned=True, type='spec') are never truncated.
+    - Review messages: extract verdict line + first paragraph only.
+    - All others: truncate to max_len chars, append '…' if truncated.
+    """
+    content = msg.get("content") or ""
+
+    # Spec messages are source-of-truth — never truncate.
+    if msg.get("pinned") and msg.get("type") == "spec":
+        return msg
+
+    if msg.get("type") == "review":
+        # Extract verdict line + first paragraph of review content.
+        lines = content.splitlines()
+        verdict_idx = None
+        for i, line in enumerate(lines):
+            upper = line.upper()
+            if any(v in upper for v in _VERDICT_WORDS):
+                verdict_idx = i
+                break
+        if verdict_idx is not None:
+            # Collect verdict line, then skip blanks, then collect first paragraph
+            result_lines = [lines[verdict_idx]]
+            rest = lines[verdict_idx + 1:]
+            # Skip blank lines between verdict and first paragraph
+            para_start = 0
+            while para_start < len(rest) and not rest[para_start].strip():
+                para_start += 1
+            # Collect first paragraph (until next blank line)
+            for line in rest[para_start:]:
+                if not line.strip():
+                    break
+                result_lines.append(line)
+            truncated = "\n".join(result_lines)
+            if truncated != content:
+                truncated += "…"
+            msg = {**msg, "content": truncated}
+            return msg
+
+    # Default: truncate to max_len
+    if len(content) > max_len:
+        msg = {**msg, "content": content[:max_len] + "…"}
+    return msg
+
 _UPDATE_TASK_FIELDS = {
     "component_id", "base_branch", "branch_target", "tags",
     "auto_test", "auto_review", "auto_merge", "auto_pr",
@@ -137,6 +187,18 @@ async def _handle_get_task_status(arguments):
         if arguments.get("include_log_tail") and result.get("worktree_path"):
             log_path = os.path.join(result["worktree_path"], ".switchboard", "cc-stderr.log")
             result["log_tail"] = task_engine._tail_file(log_path, 30)
+
+        include_full = arguments.get("include_full_messages", False)
+        if not include_full:
+            # Slim down messages: truncate content, strip updated_at from checklist
+            result["recent_messages"] = [
+                _truncate_message(m) for m in result.get("recent_messages", [])
+            ]
+            result["checklist"] = [
+                {"id": c["id"], "item": c["item"], "done": c["done"]}
+                for c in result.get("checklist", [])
+            ]
+
         return result
 
     # Slim summary — only the fields a caller needs for "is this done yet?"
@@ -270,6 +332,12 @@ async def _handle_post_task_message(arguments):
 
 
 async def _handle_read_task_messages(arguments):
+    message_id = arguments.get("message_id")
+    if message_id is not None:
+        msg = await db.get_message_by_id(message_id)
+        if msg is None:
+            return {"error": f"Message {message_id} not found"}
+        return {"message": msg}
     return await db.read_task_messages(
         task_id=arguments["task_id"],
         after=arguments.get("after"),

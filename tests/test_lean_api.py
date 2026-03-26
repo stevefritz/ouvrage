@@ -352,3 +352,215 @@ class TestListTasksActiveOnly:
         )
         ids = [t["id"] for t in result]
         assert "test-project/mcp-cancelled-visible" in ids
+
+
+# ===========================================================================
+# D. Message truncation in include_detail mode
+# ===========================================================================
+
+class TestMessageTruncation:
+    """include_detail=True truncates messages by default; include_full_messages bypasses."""
+
+    async def test_long_message_truncated_to_200_chars(self, db, sample_project, sample_task):
+        """Regular messages over 200 chars are truncated with '…' appended."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        long_content = "x" * 400
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content=long_content,
+            type="progress",
+        )
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        msg = result["recent_messages"][-1]
+        assert msg["content"].endswith("…")
+        assert len(msg["content"]) == 201  # 200 chars + ellipsis
+
+    async def test_short_message_not_truncated(self, db, sample_project, sample_task):
+        """Messages under 200 chars are returned unchanged."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        short_content = "Short message."
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content=short_content,
+        )
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        msg = result["recent_messages"][-1]
+        assert msg["content"] == short_content
+
+    async def test_spec_pinned_message_never_truncated(self, db, sample_project, sample_task):
+        """Pinned spec messages are never truncated regardless of length."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        spec_content = "# Spec\n\n" + "Detail " * 100
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content=spec_content,
+            type="spec",
+            pinned=True,
+        )
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        spec_msg = next(m for m in result["recent_messages"] if m.get("pinned"))
+        assert spec_msg["content"] == spec_content
+
+    async def test_review_message_truncated_to_verdict_plus_first_para(self, db, sample_project, sample_task):
+        """Review messages are truncated to verdict line + first paragraph."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        review_content = (
+            "## CHANGES REQUESTED\n"
+            "\n"
+            "Please fix the test coverage.\n"
+            "There are missing edge cases.\n"
+            "\n"
+            "Here is a long second paragraph with lots more detail that should be cut off. " * 10
+        )
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="dispatcher",
+            content=review_content,
+            type="review",
+        )
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        review_msg = next(m for m in result["recent_messages"] if m.get("type") == "review")
+        assert "CHANGES REQUESTED" in review_msg["content"]
+        # Second paragraph content should not appear
+        assert "second paragraph" not in review_msg["content"]
+
+    async def test_review_message_approved_verdict_extracted(self, db, sample_project, sample_task):
+        """APPROVED verdict is preserved in truncated review."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        review_content = "## APPROVED\n\nLooks good. Ship it.\n\nLong detailed analysis follows here. " * 20
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="dispatcher",
+            content=review_content,
+            type="review",
+        )
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        review_msg = next(m for m in result["recent_messages"] if m.get("type") == "review")
+        assert "APPROVED" in review_msg["content"]
+        assert "Looks good. Ship it." in review_msg["content"]
+
+    async def test_checklist_strips_updated_at(self, db, sample_project, sample_task):
+        """Checklist items in include_detail mode only have id, item, done fields."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
+            {"task_id": "test-project/implement-feature", "include_detail": True}
+        )
+        for item in result["checklist"]:
+            assert set(item.keys()) == {"id", "item", "done"}
+            assert "updated_at" not in item
+
+    async def test_include_full_messages_bypasses_truncation(self, db, sample_project, sample_task):
+        """include_full_messages=True returns full untruncated content."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        long_content = "y" * 500
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content=long_content,
+            type="progress",
+        )
+        result = await _handle_get_task_status(
+            {
+                "task_id": "test-project/implement-feature",
+                "include_detail": True,
+                "include_full_messages": True,
+            }
+        )
+        msg = result["recent_messages"][-1]
+        assert msg["content"] == long_content
+        assert not msg["content"].endswith("…")
+
+    async def test_include_full_messages_preserves_checklist_fields(self, db, sample_project, sample_task):
+        """include_full_messages=True returns all checklist fields including updated_at."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status(
+            {
+                "task_id": "test-project/implement-feature",
+                "include_detail": True,
+                "include_full_messages": True,
+            }
+        )
+        # updated_at should be present when include_full_messages=True
+        for item in result["checklist"]:
+            assert "updated_at" in item
+
+
+# ===========================================================================
+# E. read_task_messages with message_id
+# ===========================================================================
+
+class TestReadTaskMessageById:
+    """message_id param fetches a single message with full content."""
+
+    async def test_fetch_single_message_by_id(self, db, sample_project, sample_task):
+        """Providing message_id returns that single message with full content."""
+        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        long_content = "z" * 1000
+        posted = await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content=long_content,
+            type="result",
+        )
+        msg_id = posted["id"]
+        result = await _handle_read_task_messages(
+            {"task_id": "test-project/implement-feature", "message_id": msg_id}
+        )
+        assert "message" in result
+        assert result["message"]["id"] == msg_id
+        assert result["message"]["content"] == long_content  # full, not truncated
+
+    async def test_fetch_message_not_found_returns_error(self, db, sample_project, sample_task):
+        """Nonexistent message_id returns an error dict."""
+        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        result = await _handle_read_task_messages(
+            {"task_id": "test-project/implement-feature", "message_id": 99999}
+        )
+        assert "error" in result
+
+    async def test_message_id_bypasses_cursor(self, db, sample_project, sample_task):
+        """When message_id is provided, after/last_n are ignored."""
+        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        posted = await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content="Target message",
+        )
+        msg_id = posted["id"]
+        # Pass after=9999 which would normally return no results
+        result = await _handle_read_task_messages(
+            {
+                "task_id": "test-project/implement-feature",
+                "message_id": msg_id,
+                "after": 99999,
+            }
+        )
+        assert "message" in result
+        assert result["message"]["id"] == msg_id
+
+    async def test_without_message_id_returns_cursor_list(self, db, sample_project, sample_task):
+        """Without message_id, normal cursor behavior is unchanged."""
+        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        await db.post_task_message(
+            task_id="test-project/implement-feature",
+            author="cc-worker",
+            content="Normal message",
+        )
+        result = await _handle_read_task_messages(
+            {"task_id": "test-project/implement-feature"}
+        )
+        assert "messages" in result
+        assert "cursor" in result

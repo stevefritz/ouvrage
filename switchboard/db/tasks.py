@@ -376,6 +376,16 @@ async def get_task_pinned(task_id: str) -> dict | None:
         return _strip_embedding(dict(rows[0])) if rows else None
 
 
+async def get_message_by_id(message_id: int) -> dict | None:
+    """Fetch a single message by its ID. Returns None if not found."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM messages WHERE id = ?",
+            (message_id,),
+        )
+        return _strip_embedding(dict(rows[0])) if rows else None
+
+
 async def set_message_embedding(message_id: int, embedding_blob: bytes) -> None:
     """Store a packed float32 embedding blob on a message row."""
     async with get_db() as db:

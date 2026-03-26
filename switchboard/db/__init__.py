@@ -72,6 +72,7 @@ from switchboard.db.tasks import (
     post_task_message,
     read_task_messages,
     get_task_pinned,
+    get_message_by_id,
     set_message_embedding,
     get_task_status,
     get_task_attempts,
