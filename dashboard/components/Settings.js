@@ -2,25 +2,6 @@ import { html } from './utils.js';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
 
-// ── Toggle component ──────────────────────────────────────────────────────
-
-function Toggle({ checked, onChange, disabled = false }) {
-    return html`
-        <button
-            role="switch"
-            aria-checked=${checked}
-            disabled=${disabled}
-            onClick=${() => !disabled && onChange(!checked)}
-            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none
-                   ${checked ? 'bg-indigo-500' : 'bg-slate-600'}
-                   ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}"
-        >
-            <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform
-                         ${checked ? 'translate-x-4' : 'translate-x-1'}" />
-        </button>
-    `;
-}
-
 // ── Subscribe/unsubscribe logic ───────────────────────────────────────────
 
 async function getPushState() {
@@ -91,22 +72,69 @@ const TIMEZONES = [
 
 const inputClass = 'w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500';
 const inputStyle = {
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border-primary)',
-    color: 'var(--text-primary)',
+    background: 'var(--f-surface)',
+    border: '1px solid var(--f-border)',
+    color: 'var(--f-text)',
 };
-const btnPrimary = 'px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed';
-const btnDanger = 'px-4 py-2 text-sm rounded-md bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50 disabled:cursor-not-allowed';
-const btnSecondary = 'px-4 py-2 text-sm rounded-md text-slate-300 hover:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed';
-const cardClass = 'border rounded-lg p-5 mb-6';
-const cardStyle = { background: 'var(--bg-card)', borderColor: 'var(--border-primary)' };
+const btnPrimary = 'px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed';
+const btnDanger = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
+const btnDangerStyle = {
+    background: 'transparent',
+    border: '1px solid var(--f-red)',
+    color: 'var(--f-red)',
+};
+const btnSecondary = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
+const btnSecondaryStyle = {
+    background: 'var(--f-surface)',
+    border: '1px solid var(--f-border)',
+    color: 'var(--f-text-secondary)',
+};
+const cardStyle = {
+    background: 'transparent',
+    border: '0.5px solid var(--f-border)',
+    borderRadius: '8px',
+    padding: '16px',
+    marginBottom: '12px',
+};
+const sectionLabelStyle = {
+    fontSize: '11px',
+    fontWeight: '500',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    color: 'var(--f-text-tertiary)',
+    marginBottom: '12px',
+};
+const cardTitleStyle = {
+    fontSize: '14px',
+    fontWeight: '500',
+    color: 'var(--f-text)',
+    margin: '0',
+};
+const bodyTextStyle = {
+    fontSize: '13px',
+    color: 'var(--f-text-secondary)',
+};
+const labelStyle = {
+    fontSize: '12px',
+    fontWeight: '500',
+    color: 'var(--f-text-secondary)',
+};
+const monoStyle = {
+    fontSize: '13px',
+    fontFamily: 'monospace',
+    color: 'var(--f-text-secondary)',
+    background: 'var(--f-surface)',
+    border: '1px solid var(--f-border)',
+    borderRadius: '6px',
+    padding: '6px 10px',
+};
 
 // ── Feedback banner ───────────────────────────────────────────────────────
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const colors = type === 'success' ? 'text-emerald-400' : 'text-red-400';
-    return html`<div class="text-sm ${colors} mt-2">${message}</div>`;
+    const color = type === 'success' ? 'var(--f-green)' : 'var(--f-red)';
+    return html`<div style="font-size: 12px; color: ${color}; margin-top: 8px;">${message}</div>`;
 }
 
 // ── Copy button ───────────────────────────────────────────────────────────
@@ -119,7 +147,6 @@ function CopyButton({ value }) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch {
-            // Fallback
             const ta = document.createElement('textarea');
             ta.value = value;
             document.body.appendChild(ta);
@@ -132,31 +159,20 @@ function CopyButton({ value }) {
     }, [value]);
 
     return html`<button onClick=${handleCopy}
-        class="px-2 py-1 text-xs rounded ${copied ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'}"
-        style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+        style=${{
+            padding: '2px 8px',
+            fontSize: '11px',
+            borderRadius: '4px',
+            background: 'var(--f-surface)',
+            border: '1px solid var(--f-border)',
+            color: copied ? 'var(--f-green)' : 'var(--f-text-tertiary)',
+            cursor: 'pointer',
+        }}
         >${copied ? 'Copied!' : 'Copy'}</button>`;
 }
 
-// ── Confirmation modal ────────────────────────────────────────────────────
-
-function ConfirmModal({ show, title, message, confirmLabel, onConfirm, onCancel }) {
-    if (!show) return null;
-    return html`
-        <div class="confirm-overlay" onClick=${onCancel}>
-            <div class="confirm-dialog" onClick=${(e) => e.stopPropagation()}>
-                <h3>${title}</h3>
-                <p>${message}</p>
-                <div class="confirm-actions">
-                    <button class="confirm-btn confirm-btn-cancel" onClick=${onCancel}>Cancel</button>
-                    <button class="confirm-btn confirm-btn-danger" onClick=${onConfirm}>${confirmLabel}</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
 // ══════════════════════════════════════════════════════════════════════════
-// Instance Settings — GitHub Connection
+// Compact credential card (GitHub / Anthropic pattern)
 // ══════════════════════════════════════════════════════════════════════════
 
 function GitHubCard({ github, onSaved }) {
@@ -201,54 +217,53 @@ function GitHubCard({ github, onSaved }) {
     }, []);
 
     return html`
-        <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">GitHub Connection</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Connect a GitHub Personal Access Token to enable repository operations.
-            </p>
-
-            ${github.connected && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">Connected as <strong>${github.username}</strong></span>
-                    <span class="text-xs" style="color: var(--text-muted)">PAT ****${github.pat_last4}</span>
-                </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
-                </div>
-            `}
-
-            ${!github.connected && github.pat_last4 && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">PAT configured (****${github.pat_last4}) but connection failed</span>
-                </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
+        <div style=${cardStyle}>
+            ${!editing && html`
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 16px;">🐙</span>
+                        <span style=${cardTitleStyle}>GitHub</span>
+                        ${github.connected && html`
+                            <span style="font-size: 12px; color: var(--f-text-secondary);">Connected${github.username ? ` as ${github.username}` : ''}</span>
+                        `}
+                        ${!github.connected && github.pat_last4 && html`
+                            <span style="font-size: 12px; color: var(--f-yellow);">Not connected</span>
+                        `}
+                        ${github.pat_last4 && html`
+                            <span style="font-size: 12px; font-family: monospace; color: var(--f-text-tertiary);">····${github.pat_last4}</span>
+                        `}
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        ${github.connected && html`
+                            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--f-green);"></span>
+                        `}
+                        <button class=${btnSecondary} style=${btnSecondaryStyle}
+                            onClick=${() => setEditing(true)}>Update</button>
+                        ${github.pat_last4 && html`
+                            <button class=${btnSecondary} style=${btnSecondaryStyle}
+                                onClick=${handleTest} disabled=${testing}>
+                                ${testing ? 'Testing…' : 'Test'}
+                            </button>
+                        `}
+                    </div>
                 </div>
             `}
 
             ${editing && html`
-                <div class="flex gap-2 mb-2">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <span style="font-size: 16px;">🐙</span>
+                    <span style=${cardTitleStyle}>GitHub</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
                     <input type="password" class=${inputClass} style=${inputStyle}
                         placeholder="ghp_xxxxxxxxxxxx"
                         value=${pat} onInput=${(e) => setPat(e.target.value)}
                         onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
                     <button class=${btnPrimary} onClick=${handleSave} disabled=${saving || !pat.trim()}>
-                        ${saving ? 'Saving...' : (github.pat_last4 ? 'Update' : 'Connect')}
+                        ${saving ? 'Saving…' : (github.pat_last4 ? 'Update' : 'Connect')}
                     </button>
                     ${github.pat_last4 && html`
-                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                        <button class=${btnSecondary} style=${btnSecondaryStyle}
                             onClick=${() => { setEditing(false); setPat(''); setFeedback(null); }}>Cancel</button>
                     `}
                 </div>
@@ -260,16 +275,17 @@ function GitHubCard({ github, onSaved }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Instance Settings — OAuth / MCP Connection
+// OAuth / MCP Connection
 // ══════════════════════════════════════════════════════════════════════════
 
 function OAuthCard({ oauth, onRegenerated }) {
-    const [showConfirm, setShowConfirm] = useState(false);
+    const [showSecret, setShowSecret] = useState(false);
+    const [confirmRegen, setConfirmRegen] = useState(false);
     const [regenerating, setRegenerating] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
     const handleRegenerate = useCallback(async () => {
-        setShowConfirm(false);
+        setConfirmRegen(false);
         setRegenerating(true);
         setFeedback(null);
         try {
@@ -285,64 +301,74 @@ function OAuthCard({ oauth, onRegenerated }) {
 
     if (!oauth.client_id) {
         return html`
-            <div class=${cardClass} style=${cardStyle}>
-                <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">OAuth / MCP Connection</h2>
-                <p class="text-sm" style="color: var(--text-muted)">OAuth client not configured.</p>
+            <div style=${cardStyle}>
+                <div style=${cardTitleStyle}>OAuth / MCP Connection</div>
+                <div style=${{ ...bodyTextStyle, marginTop: '4px' }}>OAuth client not configured.</div>
             </div>
         `;
     }
 
+    const maskedSecret = oauth.client_secret ? '•'.repeat(Math.min(oauth.client_secret.length, 32)) : '';
+
     return html`
-        <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">OAuth / MCP Connection</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Use these credentials to connect Claude.ai to your Switchboard MCP server.
-            </p>
+        <div style=${cardStyle}>
+            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>OAuth / MCP Connection</div>
 
-            <div class="space-y-3">
-                <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Client ID</label>
-                    <div class="flex items-center gap-2 mt-1">
-                        <code class="flex-1 px-3 py-2 rounded-md text-sm font-mono"
-                            style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-primary);"
-                            >${oauth.client_id}</code>
-                        <${CopyButton} value=${oauth.client_id} />
-                    </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 0.5px solid var(--f-border-subtle);">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style=${labelStyle}>Client ID</span>
+                    <code style="font-size: 13px; font-family: monospace; color: var(--f-text-secondary);">${oauth.client_id}</code>
                 </div>
+                <${CopyButton} value=${oauth.client_id} />
+            </div>
 
-                <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Client Secret</label>
-                    <div class="flex items-center gap-2 mt-1">
-                        <code class="flex-1 px-3 py-2 rounded-md text-sm font-mono"
-                            style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-primary); word-break: break-all;"
-                            >${oauth.client_secret}</code>
-                        <${CopyButton} value=${oauth.client_secret} />
-                    </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0;">
+                <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                    <span style=${labelStyle}>Client Secret</span>
+                    <code style="font-size: 13px; font-family: monospace; color: var(--f-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        ${showSecret ? oauth.client_secret : maskedSecret}
+                    </code>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                    <button onClick=${() => setShowSecret(!showSecret)}
+                        style=${{
+                            padding: '2px 8px',
+                            fontSize: '11px',
+                            borderRadius: '4px',
+                            background: 'var(--f-surface)',
+                            border: '1px solid var(--f-border)',
+                            color: 'var(--f-text-tertiary)',
+                            cursor: 'pointer',
+                        }}
+                    >${showSecret ? 'Hide' : 'Show'}</button>
+                    <${CopyButton} value=${oauth.client_secret} />
                 </div>
             </div>
 
-            <div class="mt-4">
-                <button class=${btnDanger} onClick=${() => setShowConfirm(true)} disabled=${regenerating}>
-                    ${regenerating ? 'Regenerating...' : 'Regenerate Secret'}
-                </button>
+            <div style="margin-top: 12px; display: flex; align-items: center; gap: 12px;">
+                ${!confirmRegen && html`
+                    <button class=${btnDanger} style=${btnDangerStyle}
+                        onClick=${() => setConfirmRegen(true)} disabled=${regenerating}>
+                        ${regenerating ? 'Regenerating…' : 'Regenerate Secret'}
+                    </button>
+                    <span style="font-size: 11px; color: var(--f-text-tertiary);">Disconnects existing MCP connections</span>
+                `}
+                ${confirmRegen && html`
+                    <span style="font-size: 12px; color: var(--f-red);">Are you sure?</span>
+                    <button class=${btnDanger} style=${btnDangerStyle}
+                        onClick=${handleRegenerate}>Yes, regenerate</button>
+                    <button class=${btnSecondary} style=${btnSecondaryStyle}
+                        onClick=${() => setConfirmRegen(false)}>Cancel</button>
+                `}
             </div>
 
             <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
-
-            <${ConfirmModal}
-                show=${showConfirm}
-                title="Regenerate OAuth Secret"
-                message="This will disconnect existing Claude.ai connections. You will need to reconfigure Claude.ai with the new secret."
-                confirmLabel="Regenerate"
-                onConfirm=${handleRegenerate}
-                onCancel=${() => setShowConfirm(false)}
-            />
         </div>
     `;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// User Settings — Anthropic API Key
+// Anthropic API Key — compact single-line
 // ══════════════════════════════════════════════════════════════════════════
 
 function AnthropicKeyCard({ anthropic, onSaved }) {
@@ -387,39 +413,50 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     }, []);
 
     return html`
-        <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">Anthropic API Key</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Your personal API key for Claude model access.
-            </p>
-
-            ${anthropic.configured && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">Configured</span>
-                    <span class="text-xs" style="color: var(--text-muted)">****${anthropic.key_last4}</span>
-                </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
+        <div style=${cardStyle}>
+            ${!editing && html`
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 16px;">🔑</span>
+                        <span style=${cardTitleStyle}>Anthropic API Key</span>
+                        ${anthropic.configured && html`
+                            <span style="font-size: 12px; color: var(--f-text-secondary);">Configured</span>
+                        `}
+                        ${anthropic.key_last4 && html`
+                            <span style="font-size: 12px; font-family: monospace; color: var(--f-text-tertiary);">····${anthropic.key_last4}</span>
+                        `}
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        ${anthropic.configured && html`
+                            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--f-green);"></span>
+                        `}
+                        <button class=${btnSecondary} style=${btnSecondaryStyle}
+                            onClick=${() => setEditing(true)}>Update</button>
+                        ${anthropic.configured && html`
+                            <button class=${btnSecondary} style=${btnSecondaryStyle}
+                                onClick=${handleTest} disabled=${testing}>
+                                ${testing ? 'Testing…' : 'Test'}
+                            </button>
+                        `}
+                    </div>
                 </div>
             `}
 
             ${editing && html`
-                <div class="flex gap-2 mb-2">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <span style="font-size: 16px;">🔑</span>
+                    <span style=${cardTitleStyle}>Anthropic API Key</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
                     <input type="password" class=${inputClass} style=${inputStyle}
                         placeholder="sk-ant-xxxxxxxxxxxx"
                         value=${key} onInput=${(e) => setKey(e.target.value)}
                         onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
                     <button class=${btnPrimary} onClick=${handleSave} disabled=${saving || !key.trim()}>
-                        ${saving ? 'Saving...' : 'Save'}
+                        ${saving ? 'Saving…' : 'Save'}
                     </button>
                     ${anthropic.configured && html`
-                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                        <button class=${btnSecondary} style=${btnSecondaryStyle}
                             onClick=${() => { setEditing(false); setKey(''); setFeedback(null); }}>Cancel</button>
                     `}
                 </div>
@@ -431,7 +468,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// User Settings — Profile
+// Profile — two-column grid
 // ══════════════════════════════════════════════════════════════════════════
 
 function ProfileCard({ profile, onSaved }) {
@@ -465,36 +502,34 @@ function ProfileCard({ profile, onSaved }) {
     }, [name, email, timezone, profile, onSaved]);
 
     return html`
-        <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">Profile</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Your account information.
-            </p>
+        <div style=${cardStyle}>
+            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>Profile</div>
 
-            <div class="space-y-3">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Name</label>
-                    <input type="text" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label style=${labelStyle}>Name</label>
+                    <input type="text" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
                         value=${name} onInput=${(e) => setName(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Email</label>
-                    <input type="email" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label style=${labelStyle}>Email</label>
+                    <input type="email" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
                         value=${email} onInput=${(e) => setEmail(e.target.value)} />
-                </div>
-                <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Timezone</label>
-                    <select class=${inputClass + ' mt-1'} style=${inputStyle}
-                        value=${timezone} onChange=${(e) => setTimezone(e.target.value)}>
-                        <option value="">Select timezone...</option>
-                        ${TIMEZONES.map(tz => html`<option key=${tz} value=${tz}>${tz}</option>`)}
-                    </select>
                 </div>
             </div>
 
-            <div class="mt-4">
+            <div style="margin-top: 12px;">
+                <label style=${labelStyle}>Timezone</label>
+                <select class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
+                    value=${timezone} onChange=${(e) => setTimezone(e.target.value)}>
+                    <option value="">Select timezone…</option>
+                    ${TIMEZONES.map(tz => html`<option key=${tz} value=${tz}>${tz}</option>`)}
+                </select>
+            </div>
+
+            <div style="margin-top: 14px;">
                 <button class=${btnPrimary} onClick=${handleSave} disabled=${saving}>
-                    ${saving ? 'Saving...' : 'Save Profile'}
+                    ${saving ? 'Saving…' : 'Save profile'}
                 </button>
             </div>
 
@@ -504,7 +539,7 @@ function ProfileCard({ profile, onSaved }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// User Settings — Change Password
+// Change Password — contained width
 // ══════════════════════════════════════════════════════════════════════════
 
 function ChangePasswordCard() {
@@ -543,35 +578,32 @@ function ChangePasswordCard() {
     }, [currentPassword, newPassword, confirmPassword]);
 
     return html`
-        <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">Change Password</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Update your login password.
-            </p>
+        <div style=${cardStyle}>
+            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>Change Password</div>
 
-            <div class="space-y-3" style="max-width: 400px;">
+            <div style="max-width: 280px; display: flex; flex-direction: column; gap: 10px;">
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Current Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label style=${labelStyle}>Current Password</label>
+                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
                         value=${currentPassword} onInput=${(e) => setCurrentPassword(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">New Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label style=${labelStyle}>New Password</label>
+                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
                         value=${newPassword} onInput=${(e) => setNewPassword(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Confirm New Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label style=${labelStyle}>Confirm New Password</label>
+                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
                         value=${confirmPassword} onInput=${(e) => setConfirmPassword(e.target.value)}
                         onKeyDown=${(e) => e.key === 'Enter' && handleSubmit()} />
                 </div>
             </div>
 
-            <div class="mt-4">
+            <div style="margin-top: 14px;">
                 <button class=${btnPrimary} onClick=${handleSubmit}
                     disabled=${saving || !currentPassword || !newPassword || !confirmPassword}>
-                    ${saving ? 'Changing...' : 'Change Password'}
+                    ${saving ? 'Updating…' : 'Update password'}
                 </button>
             </div>
 
@@ -581,11 +613,31 @@ function ChangePasswordCard() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Notification checkbox row
+// ══════════════════════════════════════════════════════════════════════════
+
+function NotifCheckbox({ label, description, checked, disabled, onChange }) {
+    return html`
+        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: ${disabled ? 'not-allowed' : 'pointer'}; opacity: ${disabled ? '0.5' : '1'};">
+            <input type="checkbox"
+                checked=${checked}
+                disabled=${disabled}
+                onChange=${(e) => onChange(e.target.checked)}
+                style="margin-top: 2px; accent-color: var(--f-accent);"
+            />
+            <div>
+                <div style="font-size: 13px; font-weight: 500; color: var(--f-text);">${label}</div>
+                <div style="font-size: 12px; color: var(--f-text-tertiary); margin-top: 1px;">${description}</div>
+            </div>
+        </label>
+    `;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Main Settings component
 // ══════════════════════════════════════════════════════════════════════════
 
 export function Settings() {
-    // Push notification state (existing)
     const [push, setPush] = useState({ supported: false, subscribed: false, subscription: null });
     const [pushLoading, setPushLoading] = useState(false);
     const [pushError, setPushError] = useState(null);
@@ -594,19 +646,16 @@ export function Settings() {
     const [settingsError, setSettingsError] = useState(null);
     const [saved, setSaved] = useState(false);
 
-    // User settings state
     const [userSettings, setUserSettings] = useState(null);
     const [userLoading, setUserLoading] = useState(true);
     const [userError, setUserError] = useState(null);
 
-    // Instance settings state (only loaded for admins)
     const [instanceSettings, setInstanceSettings] = useState(null);
     const [instanceLoading, setInstanceLoading] = useState(false);
     const [instanceError, setInstanceError] = useState(null);
 
     const isAdmin = userSettings?.profile?.role === 'owner' || userSettings?.profile?.role === 'admin';
 
-    // Load user settings on mount
     const loadUserSettings = useCallback(async () => {
         try {
             const data = await api.getUserSettings();
@@ -619,7 +668,6 @@ export function Settings() {
         }
     }, []);
 
-    // Load instance settings (admin only)
     const loadInstanceSettings = useCallback(async () => {
         setInstanceLoading(true);
         try {
@@ -643,17 +691,15 @@ export function Settings() {
             .catch(e => setSettingsError(e.message));
     }, []);
 
-    // Load instance settings once we know the user is admin
     useEffect(() => {
         if (isAdmin) loadInstanceSettings();
     }, [isAdmin]);
 
-    // Existing push/notification handlers
-    const handlePushToggle = useCallback(async () => {
+    const handlePushToggle = useCallback(async (enable) => {
         setPushError(null);
         setPushLoading(true);
         try {
-            if (push.subscribed) {
+            if (!enable) {
                 await unsubscribePush(push.subscription);
                 setPush(await getPushState());
             } else {
@@ -693,39 +739,35 @@ export function Settings() {
     const notifDisabled = !push.subscribed;
 
     if (userLoading) {
-        return html`<div class="px-6 py-8">
-            <h1 class="text-xl font-semibold mb-6" style="color: var(--text-primary)">Settings</h1>
-            <div class="flex items-center gap-3 p-8">
+        return html`<div style="padding: 24px; max-width: 800px;">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 32px 0;">
                 <span class="loading-spinner"></span>
-                <span class="text-sm" style="color: var(--text-muted)">Loading settings...</span>
+                <span style="font-size: 13px; color: var(--f-text-secondary);">Loading settings…</span>
             </div>
         </div>`;
     }
 
     return html`
-        <div class="px-6 py-8" style="max-width: 800px;">
-            <h1 class="text-xl font-semibold mb-6" style="color: var(--text-primary)">Settings</h1>
+        <div style="padding: 24px; max-width: 800px;">
 
             ${userError && html`
-                <div class="text-sm text-red-400 mb-4">Failed to load user settings: ${userError}</div>
+                <div style="font-size: 13px; color: var(--f-red); margin-bottom: 16px;">Failed to load user settings: ${userError}</div>
             `}
 
-            <!-- ═══ Instance Settings (admin/owner only) ═══ -->
+            <!-- ═══ INSTANCE section (admin/owner only) ═══ -->
             ${isAdmin && html`
-                <div class="mb-8">
-                    <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary); border-bottom: 1px solid var(--border-primary); padding-bottom: 0.5rem;">
-                        Instance Settings
-                    </h2>
+                <div style="margin-bottom: 24px;">
+                    <div style=${sectionLabelStyle}>INSTANCE</div>
 
                     ${instanceLoading && html`
-                        <div class="flex items-center gap-3 p-4">
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 16px 0;">
                             <span class="loading-spinner"></span>
-                            <span class="text-sm" style="color: var(--text-muted)">Loading instance settings...</span>
+                            <span style="font-size: 13px; color: var(--f-text-secondary);">Loading…</span>
                         </div>
                     `}
 
                     ${instanceError && html`
-                        <div class="text-sm text-red-400 mb-4">${instanceError}</div>
+                        <div style="font-size: 13px; color: var(--f-red); margin-bottom: 12px;">${instanceError}</div>
                     `}
 
                     ${instanceSettings && html`
@@ -741,11 +783,9 @@ export function Settings() {
                 </div>
             `}
 
-            <!-- ═══ User Settings ═══ -->
-            <div class="mb-8">
-                <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary); border-bottom: 1px solid var(--border-primary); padding-bottom: 0.5rem;">
-                    User Settings
-                </h2>
+            <!-- ═══ ACCOUNT section ═══ -->
+            <div style="margin-bottom: 24px;">
+                <div style=${sectionLabelStyle}>ACCOUNT</div>
 
                 ${userSettings && html`
                     <${AnthropicKeyCard}
@@ -762,119 +802,83 @@ export function Settings() {
                 `}
             </div>
 
-            <!-- ═══ Notifications (existing) ═══ -->
-            <div class="mb-8">
-                <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary); border-bottom: 1px solid var(--border-primary); padding-bottom: 0.5rem;">
-                    Notifications
-                </h2>
+            <!-- ═══ NOTIFICATIONS section ═══ -->
+            <div style="margin-bottom: 24px;">
+                <div style=${sectionLabelStyle}>NOTIFICATIONS</div>
 
-                <!-- Push notifications card -->
-                <div class=${cardClass} style=${cardStyle}>
-                    <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">Push Notifications</h2>
-                    <p class="text-sm mb-4" style="color: var(--text-muted)">
-                        Receive browser notifications when tasks complete, fail, or need attention.
-                        This browser/device only.
-                    </p>
-
+                <div style=${cardStyle}>
+                    <!-- Push toggle -->
                     ${!push.supported && html`
-                        <p class="text-sm text-amber-400">
+                        <div style="font-size: 13px; color: var(--f-yellow);">
                             Push notifications are not supported in this browser.
-                        </p>
+                        </div>
                     `}
 
                     ${push.supported && !push.serverConfigured && html`
-                        <p class="text-sm text-amber-400">
+                        <div style="font-size: 13px; color: var(--f-yellow);">
                             Push notifications require server configuration (VAPID keys not set).
-                        </p>
+                        </div>
                     `}
 
                     ${push.supported && push.serverConfigured && html`
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <div class="text-sm font-medium" style="color: var(--text-primary)">Enable push notifications</div>
-                                <div class="text-xs mt-0.5" style="color: var(--text-muted)">
-                                    ${push.subscribed ? 'Active on this device' : 'Not subscribed'}
-                                </div>
+                        <${NotifCheckbox}
+                            label="Push notifications"
+                            description=${push.subscribed ? 'Active on this device' : 'Receive browser notifications. This device only.'}
+                            checked=${push.subscribed}
+                            disabled=${pushLoading}
+                            onChange=${handlePushToggle}
+                        />
+
+                        ${pushError && html`
+                            <div style="font-size: 12px; color: var(--f-red); margin-top: 6px; margin-left: 26px;">${pushError}</div>
+                        `}
+
+                        ${push.subscribed && settings && html`
+                            <div style="margin-top: 14px; padding-top: 12px; border-top: 0.5px solid var(--f-border-subtle); display: flex; flex-direction: column; gap: 10px;">
+                                ${saved && html`<span style="font-size: 11px; color: var(--f-green); align-self: flex-end;">Saved</span>`}
+                                ${settingsError && html`
+                                    <div style="font-size: 12px; color: var(--f-red);">${settingsError}</div>
+                                `}
+                                <${NotifCheckbox}
+                                    label="Task failed"
+                                    description="Task ends with an error or exception."
+                                    checked=${!!settings.notify_failed}
+                                    disabled=${settingsSaving}
+                                    onChange=${(v) => handleSettingToggle('notify_failed', v)}
+                                />
+                                <${NotifCheckbox}
+                                    label="Needs review"
+                                    description="Task timed out, lost its process, or ended without a result."
+                                    checked=${!!settings.notify_needs_review}
+                                    disabled=${settingsSaving}
+                                    onChange=${(v) => handleSettingToggle('notify_needs_review', v)}
+                                />
+                                <${NotifCheckbox}
+                                    label="CC posted a question"
+                                    description="Task is paused waiting for your input."
+                                    checked=${!!settings.notify_question}
+                                    disabled=${settingsSaving}
+                                    onChange=${(v) => handleSettingToggle('notify_question', v)}
+                                />
+                                <${NotifCheckbox}
+                                    label="Task completed"
+                                    description="Task finishes successfully. Off by default to reduce noise."
+                                    checked=${!!settings.notify_completed}
+                                    disabled=${settingsSaving}
+                                    onChange=${(v) => handleSettingToggle('notify_completed', v)}
+                                />
                             </div>
-                            <${Toggle}
-                                checked=${push.subscribed}
-                                onChange=${handlePushToggle}
-                                disabled=${pushLoading}
-                            />
-                        </div>
-                    `}
+                        `}
 
-                    ${pushError && html`
-                        <p class="text-sm text-red-400 mt-3">${pushError}</p>
-                    `}
-                </div>
+                        ${push.subscribed && !settings && !settingsError && html`
+                            <div style="font-size: 13px; color: var(--f-text-secondary); margin-top: 12px;">Loading notification preferences…</div>
+                        `}
 
-                <!-- Notification types card -->
-                <div class=${cardClass} style=${cardStyle}>
-                    <div class="flex items-center justify-between mb-1">
-                        <h2 class="text-base font-medium" style="color: var(--text-primary)">Notification Types</h2>
-                        ${saved && html`<span class="text-xs text-emerald-400">Saved</span>`}
-                    </div>
-                    <p class="text-sm mb-4" style="color: var(--text-muted)">
-                        Choose which events trigger a push notification.
-                        ${notifDisabled ? html`<span style="color: var(--text-muted)"> Enable push above first.</span>` : ''}
-                    </p>
-
-                    ${!settings && !settingsError && html`
-                        <p class="text-sm" style="color: var(--text-muted)">Loading\u2026</p>
-                    `}
-
-                    ${settingsError && html`
-                        <p class="text-sm text-red-400">${settingsError}</p>
-                    `}
-
-                    ${settings && html`
-                        <div class="space-y-4">
-                            <${SettingRow}
-                                label="Task failed"
-                                description="Task ends with an error or exception."
-                                checked=${!!settings.notify_failed}
-                                disabled=${notifDisabled || settingsSaving}
-                                onChange=${(v) => handleSettingToggle('notify_failed', v)}
-                            />
-                            <${SettingRow}
-                                label="Needs review"
-                                description="Task timed out, lost its process, or ended without a result."
-                                checked=${!!settings.notify_needs_review}
-                                disabled=${notifDisabled || settingsSaving}
-                                onChange=${(v) => handleSettingToggle('notify_needs_review', v)}
-                            />
-                            <${SettingRow}
-                                label="CC posted a question"
-                                description="Task is paused waiting for your input."
-                                checked=${!!settings.notify_question}
-                                disabled=${notifDisabled || settingsSaving}
-                                onChange=${(v) => handleSettingToggle('notify_question', v)}
-                            />
-                            <${SettingRow}
-                                label="Task completed"
-                                description="Task finishes successfully. Off by default to reduce noise."
-                                checked=${!!settings.notify_completed}
-                                disabled=${notifDisabled || settingsSaving}
-                                onChange=${(v) => handleSettingToggle('notify_completed', v)}
-                            />
-                        </div>
+                        ${!push.subscribed && html`
+                            <div style="font-size: 12px; color: var(--f-text-tertiary); margin-top: 6px; margin-left: 26px;">Enable push above to configure notification types.</div>
+                        `}
                     `}
                 </div>
-            </div>
-        </div>
-    `;
-}
-
-function SettingRow({ label, description, checked, disabled, onChange }) {
-    return html`
-        <div class="flex items-start justify-between gap-4">
-            <div>
-                <div class="text-sm" style="color: var(--text-primary)">${label}</div>
-                <div class="text-xs mt-0.5" style="color: var(--text-muted)">${description}</div>
-            </div>
-            <div class="mt-0.5 flex-shrink-0">
-                <${Toggle} checked=${checked} disabled=${disabled} onChange=${onChange} />
             </div>
         </div>
     `;
