@@ -12,6 +12,7 @@ import { ConversationsList, ConversationDetail } from './components/Conversation
 import { GraphView } from './components/GraphView.js';
 import { ActivityBar } from './components/ActivityBar.js';
 import { Settings } from './components/Settings.js';
+import { Files } from './components/Files.js';
 
 // Register service worker for push notifications
 if ('serviceWorker' in navigator) {
@@ -139,6 +140,8 @@ function App() {
         view = html`<${ConversationsList} />`;
     } else if (route.view === 'conversation-detail') {
         view = html`<${ConversationDetail} key=${route.convId} convId=${route.convId} />`;
+    } else if (route.view === 'files') {
+        view = html`<${Files} />`;
     } else if (route.view === 'settings') {
         view = html`<${Settings} />`;
     }

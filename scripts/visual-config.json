@@ -29,6 +29,14 @@
       },
       "reference": "fixtures/visual/ref-landing.png",
       "wait_ms": 1500
+    },
+    "files": {
+      "url": "/foreman#/files",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/files": "fixtures/visual/files.json"
+      },
+      "wait_ms": 1500
     }
   }
 }

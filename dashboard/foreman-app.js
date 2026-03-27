@@ -11,6 +11,7 @@ import { TaskView } from './views/TaskView.js';
 import { ConversationView } from './views/ConversationView.js';
 import { LoginView } from './views/LoginView.js';
 import { Settings } from './components/Settings.js';
+import { Files } from './components/Files.js';
 
 const html = htm.bind(h);
 
@@ -32,6 +33,8 @@ function ForemanApp() {
         content = html`<${TaskView} id=${params.id} />`;
     } else if (view === 'conversation') {
         content = html`<${ConversationView} id=${params.id} />`;
+    } else if (view === 'files') {
+        content = html`<${Files} />`;
     } else if (view === 'settings') {
         content = html`<${Settings} />`;
     } else {

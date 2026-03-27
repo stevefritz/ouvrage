@@ -80,6 +80,9 @@ from switchboard.git.files import (
     _handle_list_task_files,
     _handle_get_task_file,
 )
+from switchboard.server.handlers.files_handler import (
+    _handle_list_files,
+)
 
 TOOL_HANDLERS = {
     # Conversation tools
@@ -154,6 +157,8 @@ TOOL_HANDLERS = {
     "create_api_token": _handle_create_api_token,
     "list_api_tokens": _handle_list_api_tokens,
     "revoke_api_token": _handle_revoke_api_token,
+    # Files
+    "list_files": _handle_list_files,
 }
 
 

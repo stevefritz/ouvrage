@@ -4,7 +4,10 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import time
+import uuid
+from pathlib import Path
 from urllib.parse import parse_qs, unquote
 
 import httpx
@@ -298,6 +301,18 @@ async def handle_request(scope, receive, send):
             return await _handle_test_anthropic(send, scope)
         if path == "/dashboard/api/settings/user/change-password" and method == "POST":
             return await _handle_change_password(receive, send, scope)
+
+        # ── Files endpoints ────────────────────────────────────────────────
+        if path == "/dashboard/api/files" and method == "GET":
+            return await _handle_list_files(send)
+        if path == "/dashboard/api/files" and method == "POST":
+            return await _handle_upload_file(scope, receive, send)
+        if path.startswith("/dashboard/api/files/"):
+            file_id = path[len("/dashboard/api/files/"):]
+            if method == "PATCH":
+                return await _handle_rename_file(receive, send, file_id, scope)
+            if method == "DELETE":
+                return await _handle_delete_file(send, file_id, scope)
 
         await _error(send, "Not found", 404)
 
@@ -1222,4 +1237,229 @@ async def _handle_change_password(receive, send, scope):
 
     new_hash = ph.hash(new_password)
     await db.update_user(user_id, password_hash=new_hash)
+    await _json_response(send, {"ok": True})
+
+
+# ── File upload constants ──────────────────────────────────────────────────
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+ALLOWED_EXTENSIONS = {
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',  # images
+    'txt', 'md', 'json', 'csv', 'yaml', 'yml', 'toml', 'xml',  # text
+    'pdf',  # documents
+}
+
+MIME_TYPES = {
+    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'gif': 'image/gif', 'webp': 'image/webp', 'svg': 'image/svg+xml',
+    'txt': 'text/plain', 'md': 'text/markdown', 'json': 'application/json',
+    'csv': 'text/csv', 'yaml': 'application/yaml', 'yml': 'application/yaml',
+    'toml': 'application/toml', 'xml': 'application/xml',
+    'pdf': 'application/pdf',
+}
+
+
+def _get_header(scope, name: bytes) -> bytes | None:
+    for key, val in scope.get("headers", []):
+        if key.lower() == name.lower():
+            return val
+    return None
+
+
+def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | None]:
+    """Parse a multipart body and return (filename, file_data) from the first file field."""
+    from python_multipart.multipart import MultipartParser, parse_options_header
+
+    filename_holder = [None]
+    data_chunks = []
+    in_file = [False]
+    current_header_field = [b""]
+    current_header_value = [b""]
+    headers = [{}]
+
+    def on_header_field(data, start, end):
+        current_header_field[0] += data[start:end]
+
+    def on_header_value(data, start, end):
+        current_header_value[0] += data[start:end]
+
+    def on_header_end():
+        field = current_header_field[0].lower()
+        value = current_header_value[0]
+        headers[0][field] = value
+        current_header_field[0] = b""
+        current_header_value[0] = b""
+
+    def on_headers_finished():
+        cd = headers[0].get(b"content-disposition", b"")
+        _, params = parse_options_header(cd)
+        fname = params.get(b"filename")
+        if fname is not None:
+            filename_holder[0] = fname.decode("utf-8", errors="replace")
+            in_file[0] = True
+        else:
+            in_file[0] = False
+
+    def on_part_data(data, start, end):
+        if in_file[0]:
+            data_chunks.append(bytes(data[start:end]))
+
+    def on_part_end():
+        in_file[0] = False
+        headers[0] = {}
+
+    callbacks = {
+        "on_header_field": on_header_field,
+        "on_header_value": on_header_value,
+        "on_header_end": on_header_end,
+        "on_headers_finished": on_headers_finished,
+        "on_part_data": on_part_data,
+        "on_part_end": on_part_end,
+    }
+
+    parser = MultipartParser(boundary, callbacks=callbacks)
+    parser.write(body)
+    parser.finalize()
+
+    if filename_holder[0] is None:
+        return None, None
+
+    return filename_holder[0], b"".join(data_chunks)
+
+
+# ── File handlers ──────────────────────────────────────────────────────────
+
+async def _handle_list_files(send):
+    files = await db.list_files()
+    await _json_response(send, files)
+
+
+async def _handle_upload_file(scope, receive, send):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    # Check Content-Length header for early rejection
+    cl_header = _get_header(scope, b"content-length")
+    if cl_header:
+        try:
+            cl = int(cl_header)
+            if cl > MAX_FILE_SIZE:
+                return await _error(send, "File too large. Maximum 10MB.", 413)
+        except ValueError:
+            pass
+
+    # Parse content-type for boundary
+    ct_header = _get_header(scope, b"content-type") or b""
+    ct_str = ct_header.decode("latin-1", errors="replace")
+    if "multipart/form-data" not in ct_str:
+        return await _error(send, "Expected multipart/form-data", 400)
+
+    from python_multipart.multipart import parse_options_header
+    _, params = parse_options_header(ct_header)
+    boundary = params.get(b"boundary")
+    if not boundary:
+        return await _error(send, "Missing multipart boundary", 400)
+
+    body = await _read_body(receive)
+
+    filename, file_data = _parse_multipart(body, boundary)
+    if filename is None or file_data is None:
+        return await _error(send, "No file found in request", 400)
+
+    # Sanitize filename — strip all directory components to prevent path traversal
+    filename = Path(filename).name
+    if not filename:
+        return await _error(send, "Invalid filename", 400)
+
+    # Check actual file data size
+    if len(file_data) > MAX_FILE_SIZE:
+        return await _error(send, "File too large. Maximum 10MB.", 413)
+
+    # Validate extension
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        return await _error(
+            send,
+            f"File type .{ext} not allowed. Supported: images, text, PDF.",
+            400,
+        )
+
+    # Save to disk
+    file_id = str(uuid.uuid4())
+    uploads_dir = Path.home() / "uploads" / file_id
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    dest = uploads_dir / filename
+    dest.write_bytes(file_data)
+
+    mime_type = MIME_TYPES.get(ext)
+    record = await db.create_file(
+        id=file_id,
+        filename=filename,
+        stored_path=str(dest),
+        mime_type=mime_type,
+        size_bytes=len(file_data),
+        uploaded_by=user_id,
+    )
+    await _json_response(send, record, status=201)
+
+
+async def _handle_rename_file(receive, send, file_id: str, scope):
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    record = await db.get_file(file_id)
+    if not record:
+        return await _error(send, f"File '{file_id}' not found", 404)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    new_name = data.get("filename", "").strip()
+    if not new_name:
+        return await _error(send, "filename is required")
+
+    # Sanitize filename — strip all directory components to prevent path traversal
+    new_name = Path(new_name).name
+    if not new_name:
+        return await _error(send, "Invalid filename", 400)
+
+    # Validate extension of new name
+    ext = new_name.rsplit(".", 1)[-1].lower() if "." in new_name else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        return await _error(
+            send,
+            f"File type .{ext} not allowed. Supported: images, text, PDF.",
+            400,
+        )
+
+    # Rename on disk (within same UUID directory)
+    old_path = Path(record["stored_path"])
+    new_path = old_path.parent / new_name
+    if old_path != new_path:
+        old_path.rename(new_path)
+
+    new_mime = MIME_TYPES.get(ext)
+    updated = await db.update_file(file_id, new_name, str(new_path), mime_type=new_mime)
+    await _json_response(send, updated)
+
+
+async def _handle_delete_file(send, file_id: str, scope):
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    record = await db.get_file(file_id)
+    if not record:
+        return await _error(send, f"File '{file_id}' not found", 404)
+
+    # Remove UUID directory from disk
+    stored = Path(record["stored_path"])
+    uuid_dir = stored.parent
+    if uuid_dir.exists() and uuid_dir.parent == (Path.home() / "uploads"):
+        shutil.rmtree(uuid_dir, ignore_errors=True)
+
+    await db.delete_file(file_id)
     await _json_response(send, {"ok": True})

@@ -150,6 +150,15 @@ from switchboard.db.users import (
     get_instance_github_pat,
 )
 
+# Files
+from switchboard.db.files import (
+    create_file,
+    get_file,
+    list_files,
+    update_file,
+    delete_file,
+)
+
 # Search
 from switchboard.db.search import (
     search_messages_semantic,
