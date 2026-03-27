@@ -9,7 +9,6 @@ Usage:
 """
 
 import json
-import os
 import socket
 import sys
 import threading
@@ -26,8 +25,7 @@ def load_config(config_path=None):
     """Load and return the visual check configuration."""
     path = Path(config_path) if config_path else CONFIG_PATH
     if not path.exists():
-        print(f"Error: Config file not found: {path}", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(f"Config file not found: {path}")
     with open(path) as f:
         return json.load(f)
 
@@ -36,8 +34,7 @@ def load_fixture(fixture_path, base_dir):
     """Load a mock fixture file and return its contents as a string."""
     full_path = base_dir / fixture_path
     if not full_path.exists():
-        print(f"Error: Fixture file not found: {full_path}", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(f"Fixture file not found: {full_path}")
     return full_path.read_text()
 
 

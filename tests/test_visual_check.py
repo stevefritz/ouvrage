@@ -15,8 +15,6 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from pathlib import Path as _Path
-
 # Import functions from the script module
 import importlib.util
 
@@ -45,8 +43,8 @@ class TestLoadConfig:
             assert "width" in page["viewport"], f"Page {name} missing viewport width"
             assert "height" in page["viewport"], f"Page {name} missing viewport height"
 
-    def test_missing_config_exits(self):
-        with pytest.raises(SystemExit):
+    def test_missing_config_raises(self):
+        with pytest.raises(FileNotFoundError):
             visual_check.load_config("/nonexistent/path.json")
 
     def test_settings_page_has_correct_viewport(self):
@@ -92,8 +90,8 @@ class TestLoadFixture:
         assert isinstance(data, list)
         assert len(data) >= 4
 
-    def test_missing_fixture_exits(self):
-        with pytest.raises(SystemExit):
+    def test_missing_fixture_raises(self):
+        with pytest.raises(FileNotFoundError):
             visual_check.load_fixture("nonexistent.json", SCRIPTS_DIR.parent)
 
 
