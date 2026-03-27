@@ -80,8 +80,10 @@ const btnPrimary = 'px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hove
 const btnDanger = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
 const btnDangerStyle = {
     background: 'transparent',
-    border: '1px solid var(--f-red)',
-    color: 'var(--f-red)',
+    border: '1px solid var(--f-border)',
+    color: 'var(--f-text-tertiary)',
+    cursor: 'pointer',
+    transition: 'color 0.15s, border-color 0.15s',
 };
 const btnSecondary = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
 const btnSecondaryStyle = {
@@ -115,9 +117,9 @@ const bodyTextStyle = {
     color: 'var(--f-text-secondary)',
 };
 const labelStyle = {
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '500',
-    color: 'var(--f-text-secondary)',
+    color: 'var(--f-text-tertiary)',
 };
 const monoStyle = {
     fontSize: '13px',
@@ -348,6 +350,8 @@ function OAuthCard({ oauth, onRegenerated }) {
             <div style="margin-top: 12px; display: flex; align-items: center; gap: 12px;">
                 ${!confirmRegen && html`
                     <button class=${btnDanger} style=${btnDangerStyle}
+                        onMouseEnter=${(e) => { e.target.style.color = 'var(--f-red)'; e.target.style.borderColor = 'var(--f-red)'; }}
+                        onMouseLeave=${(e) => { e.target.style.color = 'var(--f-text-tertiary)'; e.target.style.borderColor = 'var(--f-border)'; }}
                         onClick=${() => setConfirmRegen(true)} disabled=${regenerating}>
                         ${regenerating ? 'Regenerating…' : 'Regenerate Secret'}
                     </button>
@@ -355,7 +359,7 @@ function OAuthCard({ oauth, onRegenerated }) {
                 `}
                 ${confirmRegen && html`
                     <span style="font-size: 12px; color: var(--f-red);">Are you sure?</span>
-                    <button class=${btnDanger} style=${btnDangerStyle}
+                    <button class=${btnDanger} style=${{ ...btnDangerStyle, color: 'var(--f-red)', borderColor: 'var(--f-red)' }}
                         onClick=${handleRegenerate}>Yes, regenerate</button>
                     <button class=${btnSecondary} style=${btnSecondaryStyle}
                         onClick=${() => setConfirmRegen(false)}>Cancel</button>
