@@ -179,7 +179,7 @@ function GitFlowLineage({ task, chain }) {
             leftLabel = 'branched from';
             leftHref = routes.task(chain[idx - 1].id);
         } else {
-            leftBranch = task.base_branch || 'main';
+            leftBranch = task.base_branch || task.project_default_branch || 'main';
             leftLabel = 'branched from';
             leftHref = null;
         }
@@ -188,15 +188,15 @@ function GitFlowLineage({ task, chain }) {
             rightLabel = 'merges into';
             rightHref = routes.task(chain[idx + 1].id);
         } else {
-            rightBranch = task.branch_target || 'main';
+            rightBranch = task.branch_target || task.base_branch || task.project_default_branch || 'main';
             rightLabel = 'merges into';
             rightHref = null;
         }
     } else {
-        leftBranch = task.base_branch || 'main';
+        leftBranch = task.base_branch || task.project_default_branch || 'main';
         leftLabel = 'from';
         leftHref = null;
-        rightBranch = task.branch_target || 'main';
+        rightBranch = task.branch_target || task.base_branch || task.project_default_branch || 'main';
         rightLabel = 'into';
         rightHref = null;
     }
@@ -1419,6 +1419,8 @@ function DetailsDrawer({ task }) {
                     ${row('Auto Review', task.auto_review ? 'Yes' : 'No')}
                     ${task.auto_review ? row('Review model', task.review_model === 'sonnet' ? 'Sonnet' : 'Opus') : null}
                     ${row('Auto PR', task.auto_pr ? 'Yes' : 'No')}
+                    ${row('Auto Merge', task.auto_merge ? 'Yes' : 'No')}
+                    ${row('Base Branch', task.base_branch || task.project_default_branch || 'main')}
                     ${row('Worktree', task.worktree_path)}
                     ${row('Created', task.created_at ? new Date(normTs(task.created_at)).toLocaleString() : null)}
                     ${row('Last Activity', relativeTime(task.last_activity))}
