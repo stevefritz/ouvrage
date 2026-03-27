@@ -3,8 +3,11 @@
 import json
 import logging
 import os
+import secrets
 import time
 from urllib.parse import parse_qs, unquote
+
+import httpx
 
 import switchboard.db as db
 import switchboard.dispatch as tasks
@@ -270,6 +273,27 @@ async def handle_request(scope, receive, send):
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
+
+        # ── Settings endpoints ─────────────────────────────────────────────
+        # Instance settings (owner/admin only)
+        if path == "/dashboard/api/settings/instance" and method == "GET":
+            return await _handle_get_instance_settings(scope, send)
+        if path == "/dashboard/api/settings/instance" and method == "PATCH":
+            return await _handle_patch_instance_settings(receive, send, scope)
+        if path == "/dashboard/api/settings/instance/test-github" and method == "POST":
+            return await _handle_test_github(send, scope)
+        if path == "/dashboard/api/settings/instance/regenerate-oauth-secret" and method == "POST":
+            return await _handle_regenerate_oauth_secret(send, scope)
+
+        # User settings (each user sees their own)
+        if path == "/dashboard/api/settings/user" and method == "GET":
+            return await _handle_get_user_settings(scope, send)
+        if path == "/dashboard/api/settings/user" and method == "PATCH":
+            return await _handle_patch_user_settings(receive, send, scope)
+        if path == "/dashboard/api/settings/user/test-anthropic" and method == "POST":
+            return await _handle_test_anthropic(send, scope)
+        if path == "/dashboard/api/settings/user/change-password" and method == "POST":
+            return await _handle_change_password(receive, send, scope)
 
         await _error(send, "Not found", 404)
 
@@ -956,3 +980,247 @@ async def _handle_update_notification_settings(receive, send):
     updates = {k: bool(v) for k, v in data.items() if k in allowed}
     settings = await db.update_notification_settings(**updates)
     await _json_response(send, settings)
+
+
+# ── Settings helpers ──────────────────────────────────────────────────────────
+
+def _is_admin(user: dict) -> bool:
+    return user.get("role") in ("owner", "admin")
+
+
+# ── Instance settings ─────────────────────────────────────────────────────────
+
+async def _handle_get_instance_settings(scope, send):
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    instance = await db.get_instance()
+    if not instance:
+        return await _error(send, "Instance not found", 404)
+
+    # GitHub connection status
+    github_info = {"connected": False}
+    try:
+        pat = await db.get_instance_github_pat()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {pat}"},
+            )
+            if resp.status_code == 200:
+                gh_data = resp.json()
+                github_info = {
+                    "connected": True,
+                    "username": gh_data.get("login"),
+                    "pat_last4": pat[-4:],
+                }
+    except Exception:
+        github_info = {"connected": False}
+
+    # OAuth client secret
+    oauth_info = {}
+    from switchboard.auth.oauth import get_client as _get_oauth_client
+    from switchboard.crypto import decrypt_value, is_fernet_token
+    oauth_client = await _get_oauth_client("claude-mcp")
+    if oauth_client:
+        raw_secret = oauth_client.get("client_secret_encrypted")
+        if raw_secret and is_fernet_token(raw_secret):
+            decrypted_secret = decrypt_value(raw_secret)
+        else:
+            decrypted_secret = raw_secret
+        oauth_info = {
+            "client_id": oauth_client["client_id"],
+            "client_secret": decrypted_secret,
+        }
+
+    await _json_response(send, {
+        "instance": {
+            "name": instance["name"],
+            "slug": instance["slug"],
+            "plan_tier": instance.get("plan_tier"),
+        },
+        "github": github_info,
+        "oauth": oauth_info,
+    })
+
+
+async def _handle_patch_instance_settings(receive, send, scope):
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    if "github_pat" in data:
+        await db.set_instance_github_pat(data["github_pat"])
+
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_test_github(send, scope):
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    try:
+        pat = await db.get_instance_github_pat()
+    except ValueError as e:
+        return await _json_response(send, {"valid": False, "error": str(e)})
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {pat}"},
+            )
+            if resp.status_code == 200:
+                gh_data = resp.json()
+                return await _json_response(send, {"valid": True, "username": gh_data.get("login")})
+            return await _json_response(send, {"valid": False, "error": f"GitHub returned {resp.status_code}"})
+    except Exception as e:
+        return await _json_response(send, {"valid": False, "error": str(e)})
+
+
+async def _handle_regenerate_oauth_secret(send, scope):
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    from switchboard.crypto import encrypt_value
+    new_secret = secrets.token_urlsafe(32)
+    encrypted = encrypt_value(new_secret)
+
+    async with db.get_db() as conn:
+        await conn.execute(
+            "UPDATE oauth_clients SET client_secret_encrypted = ? WHERE client_id = ?",
+            (encrypted, "claude-mcp"),
+        )
+        await conn.commit()
+
+    await _json_response(send, {"client_id": "claude-mcp", "client_secret": new_secret})
+
+
+# ── User settings ─────────────────────────────────────────────────────────────
+
+async def _handle_get_user_settings(scope, send):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    full_user = await db.get_user(user_id)
+    if not full_user:
+        return await _error(send, "User not found", 404)
+
+    creds = await db.get_user_credentials(user_id) or {}
+    ant_key = creds.get("anthropic_api_key")
+    anthropic_info = {
+        "configured": bool(ant_key),
+        "key_last4": ant_key[-4:] if ant_key else None,
+    }
+    notif_prefs = creds.get("notification_preferences") or {}
+
+    await _json_response(send, {
+        "profile": {
+            "name": full_user.get("name"),
+            "email": full_user.get("email"),
+            "timezone": full_user.get("timezone"),
+            "role": full_user.get("role"),
+        },
+        "anthropic": anthropic_info,
+        "notifications": notif_prefs,
+    })
+
+
+async def _handle_patch_user_settings(receive, send, scope):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    # Update users table fields
+    user_updates = {k: data[k] for k in ("name", "email", "timezone") if k in data}
+    if user_updates:
+        await db.update_user(user_id, **user_updates)
+
+    # Update credentials
+    cred_updates = {}
+    if "anthropic_api_key" in data:
+        cred_updates["anthropic_api_key"] = data["anthropic_api_key"]
+    if "notification_preferences" in data:
+        cred_updates["notification_preferences"] = data["notification_preferences"]
+    if cred_updates:
+        await db.update_user_credentials(user_id, **cred_updates)
+
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_test_anthropic(send, scope):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    try:
+        key = await db.get_anthropic_key(user_id)
+    except ValueError as e:
+        return await _json_response(send, {"valid": False, "error": str(e)})
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+            if resp.status_code == 200:
+                return await _json_response(send, {"valid": True})
+            return await _json_response(send, {"valid": False, "error": f"Anthropic returned {resp.status_code}"})
+    except Exception as e:
+        return await _json_response(send, {"valid": False, "error": str(e)})
+
+
+async def _handle_change_password(receive, send, scope):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    user_email = user.get("email")
+    if not user_id or not user_email:
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+    if not current_password or not new_password:
+        return await _error(send, "current_password and new_password are required")
+
+    full_user = await db.get_user_by_email_with_auth(user_email)
+    if not full_user:
+        return await _error(send, "User not found", 404)
+
+    if not full_user.get("password_hash"):
+        return await _error(send, "No password set for this account", 400)
+
+    try:
+        from argon2 import PasswordHasher
+        from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+    except ImportError:
+        return await _error(send, "argon2-cffi not installed", 500)
+
+    ph = PasswordHasher()
+    try:
+        ph.verify(full_user["password_hash"], current_password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return await _error(send, "Current password is incorrect", 401)
+
+    new_hash = ph.hash(new_password)
+    await db.update_user(user_id, password_hash=new_hash)
+    await _json_response(send, {"ok": True})
