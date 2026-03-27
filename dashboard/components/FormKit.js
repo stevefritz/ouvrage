@@ -355,8 +355,8 @@ export function CredentialCard({ icon, name, connected, statusText, maskedValue,
  *   value  — the actual secret string
  *   onCopy — optional async callback(value); defaults to navigator.clipboard
  */
-export function SecretRow({ label, value, onCopy }) {
-    const [visible, setVisible] = useState(false);
+export function SecretRow({ label, value, onCopy, alwaysVisible = false }) {
+    const [visible, setVisible] = useState(alwaysVisible);
     const [copied, setCopied] = useState(false);
     const [hoverShow, setHoverShow] = useState(false);
     const [hoverCopy, setHoverCopy] = useState(false);
@@ -412,12 +412,14 @@ export function SecretRow({ label, value, onCopy }) {
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
             }}>${displayValue}</span>
-            <button
-                style=${smallBtnStyle(hoverShow)}
-                onMouseEnter=${() => setHoverShow(true)}
-                onMouseLeave=${() => setHoverShow(false)}
-                onClick=${() => setVisible(v => !v)}
-            >${visible ? 'Hide' : 'Show'}</button>
+            ${!alwaysVisible && html`
+                <button
+                    style=${smallBtnStyle(hoverShow)}
+                    onMouseEnter=${() => setHoverShow(true)}
+                    onMouseLeave=${() => setHoverShow(false)}
+                    onClick=${() => setVisible(v => !v)}
+                >${visible ? 'Hide' : 'Show'}</button>
+            `}
             <button
                 style=${smallBtnStyle(hoverCopy)}
                 onMouseEnter=${() => setHoverCopy(true)}

@@ -5,6 +5,7 @@ import {
     styles, SectionHeader, FormField, FormRow,
     CredentialCard, SecretRow, Toggle, ConfirmAction,
 } from './FormKit.js';
+import { colors } from '../tokens.js';
 
 // ── Subscribe/unsubscribe logic ───────────────────────────────────────────
 
@@ -76,42 +77,8 @@ const TIMEZONES = [
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const color = type === 'success' ? 'var(--f-green)' : 'var(--f-red)';
+    const color = type === 'success' ? colors.green : colors.red;
     return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
-}
-
-// ── Minimal copy button for always-visible values ─────────────────────────
-
-function CopyButton({ value }) {
-    const [copied, setCopied] = useState(false);
-    const handleCopy = useCallback(async () => {
-        try {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        } catch {
-            const ta = document.createElement('textarea');
-            ta.value = value;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        }
-    }, [value]);
-
-    return html`
-        <button
-            style=${{
-                ...styles.button,
-                padding: '2px 8px',
-                fontSize: '11px',
-                color: copied ? 'var(--f-green)' : undefined,
-            }}
-            onClick=${handleCopy}
-        >${copied ? 'Copied!' : 'Copy'}</button>
-    `;
 }
 
 // ── Notification checkbox row ─────────────────────────────────────────────
@@ -129,10 +96,10 @@ function NotifCheckbox({ label, description, checked, disabled, onChange }) {
                 checked=${checked}
                 disabled=${disabled}
                 onChange=${(e) => onChange(e.target.checked)}
-                style=${{ accentColor: 'var(--f-accent)', flexShrink: 0 }}
+                style=${{ accentColor: colors.accent, flexShrink: 0 }}
             />
-            <span style=${{ fontSize: '13px', fontWeight: '500', color: 'var(--f-text)' }}>${label}</span>
-            <span style=${{ fontSize: '12px', color: 'var(--f-text-tertiary)' }}>${description}</span>
+            <span style=${{ fontSize: '13px', fontWeight: '500', color: colors.text }}>${label}</span>
+            <span style=${{ fontSize: '12px', color: colors.textTertiary }}>${description}</span>
         </label>
     `;
 }
@@ -274,28 +241,12 @@ function OAuthCard({ oauth, onRegenerated }) {
     return html`
         <div style=${styles.card}>
             <div style=${{ ...styles.cardTitle, marginBottom: '4px' }}>OAuth / MCP connection</div>
-            <div style=${{ fontSize: '12px', color: 'var(--f-text-secondary)', marginBottom: '14px' }}>
+            <div style=${{ fontSize: '12px', color: colors.textSecondary, marginBottom: '14px' }}>
                 Use these credentials to connect Claude.ai to your Switchboard instance
             </div>
 
-            <div style=${{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '8px 0',
-                borderBottom: '0.5px solid var(--f-border-subtle)',
-                marginBottom: '4px',
-            }}>
-                <div>
-                    <div style=${{ ...styles.label, marginBottom: '3px' }}>Client ID</div>
-                    <code style=${{ ...styles.mono, fontSize: '13px' }}>${oauth.client_id}</code>
-                </div>
-                <${CopyButton} value=${oauth.client_id} />
-            </div>
-
-            <div style=${{ padding: '8px 0' }}>
-                <${SecretRow} label="Client secret" value=${oauth.client_secret} />
-            </div>
+            <${SecretRow} label="Client ID" value=${oauth.client_id} alwaysVisible=${true} />
+            <${SecretRow} label="Client secret" value=${oauth.client_secret} />
 
             <div style=${{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <${ConfirmAction}
@@ -305,7 +256,7 @@ function OAuthCard({ oauth, onRegenerated }) {
                     onConfirm=${handleRegenerate}
                     danger=${true}
                 />
-                <span style=${{ fontSize: '11px', color: 'var(--f-text-tertiary)' }}>
+                <span style=${{ fontSize: '11px', color: colors.textTertiary }}>
                     Disconnects existing MCP connections
                 </span>
             </div>
@@ -481,7 +432,7 @@ function ProfileCard({ profile, onSaved }) {
 
             <button
                 style=${{
-                    ...styles.buttonPrimary,
+                    ...styles.button,
                     opacity: saving ? 0.5 : 1,
                     cursor: saving ? 'not-allowed' : 'pointer',
                 }}
@@ -564,7 +515,7 @@ function ChangePasswordCard() {
 
             <button
                 style=${{
-                    ...styles.buttonPrimary,
+                    ...styles.button,
                     opacity: (saving || !allFilled) ? 0.5 : 1,
                     cursor: (saving || !allFilled) ? 'not-allowed' : 'pointer',
                 }}
@@ -687,7 +638,7 @@ export function Settings() {
         return html`<div style=${{ padding: '24px', maxWidth: '800px' }}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '12px', padding: '32px 0' }}>
                 <span class="loading-spinner"></span>
-                <span style=${{ fontSize: '13px', color: 'var(--f-text-secondary)' }}>Loading settings…</span>
+                <span style=${{ fontSize: '13px', color: colors.textSecondary }}>Loading settings…</span>
             </div>
         </div>`;
     }
@@ -696,7 +647,7 @@ export function Settings() {
         <div style=${{ padding: '24px', maxWidth: '800px' }}>
 
             ${userError && html`
-                <div style=${{ fontSize: '13px', color: 'var(--f-red)', marginBottom: '16px' }}>
+                <div style=${{ fontSize: '13px', color: colors.red, marginBottom: '16px' }}>
                     Failed to load user settings: ${userError}
                 </div>
             `}
@@ -709,12 +660,12 @@ export function Settings() {
                     ${instanceLoading && html`
                         <div style=${{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 0' }}>
                             <span class="loading-spinner"></span>
-                            <span style=${{ fontSize: '13px', color: 'var(--f-text-secondary)' }}>Loading…</span>
+                            <span style=${{ fontSize: '13px', color: colors.textSecondary }}>Loading…</span>
                         </div>
                     `}
 
                     ${instanceError && html`
-                        <div style=${{ fontSize: '13px', color: 'var(--f-red)', marginBottom: '12px' }}>
+                        <div style=${{ fontSize: '13px', color: colors.red, marginBottom: '12px' }}>
                             ${instanceError}
                         </div>
                     `}
@@ -755,13 +706,13 @@ export function Settings() {
 
                 <div style=${styles.card}>
                     ${!push.supported && html`
-                        <div style=${{ fontSize: '13px', color: 'var(--f-yellow)' }}>
+                        <div style=${{ fontSize: '13px', color: colors.yellow }}>
                             Push notifications are not supported in this browser.
                         </div>
                     `}
 
                     ${push.supported && !push.serverConfigured && html`
-                        <div style=${{ fontSize: '13px', color: 'var(--f-yellow)' }}>
+                        <div style=${{ fontSize: '13px', color: colors.yellow }}>
                             Push notifications require server configuration (VAPID keys not set).
                         </div>
                     `}
@@ -770,7 +721,7 @@ export function Settings() {
                         <div style=${{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
                             <div>
                                 <div style=${styles.cardTitle}>Push notifications</div>
-                                <div style=${{ fontSize: '12px', color: 'var(--f-text-tertiary)', marginTop: '4px' }}>
+                                <div style=${{ fontSize: '12px', color: colors.textTertiary, marginTop: '4px' }}>
                                     Browser notifications when tasks complete, fail, or need attention
                                 </div>
                             </div>
@@ -782,7 +733,7 @@ export function Settings() {
                         </div>
 
                         ${pushError && html`
-                            <div style=${{ fontSize: '12px', color: 'var(--f-red)', marginTop: '8px' }}>
+                            <div style=${{ fontSize: '12px', color: colors.red, marginTop: '8px' }}>
                                 ${pushError}
                             </div>
                         `}
@@ -791,16 +742,16 @@ export function Settings() {
                             <div style=${{
                                 marginTop: '14px',
                                 paddingTop: '12px',
-                                borderTop: '0.5px solid var(--f-border-subtle)',
+                                borderTop: `0.5px solid ${colors.borderSubtle}`,
                                 display: 'flex',
                                 flexDirection: 'column',
                                 gap: '10px',
                             }}>
                                 ${saved && html`
-                                    <span style=${{ fontSize: '11px', color: 'var(--f-green)', alignSelf: 'flex-end' }}>Saved</span>
+                                    <span style=${{ fontSize: '11px', color: colors.green, alignSelf: 'flex-end' }}>Saved</span>
                                 `}
                                 ${settingsError && html`
-                                    <div style=${{ fontSize: '12px', color: 'var(--f-red)' }}>${settingsError}</div>
+                                    <div style=${{ fontSize: '12px', color: colors.red }}>${settingsError}</div>
                                 `}
                                 <${NotifCheckbox}
                                     label="Task failed"
@@ -834,7 +785,7 @@ export function Settings() {
                         `}
 
                         ${!settings && !settingsError && html`
-                            <div style=${{ fontSize: '13px', color: 'var(--f-text-secondary)', marginTop: '12px' }}>
+                            <div style=${{ fontSize: '13px', color: colors.textSecondary, marginTop: '12px' }}>
                                 Loading notification preferences…
                             </div>
                         `}
