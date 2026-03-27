@@ -1,6 +1,10 @@
 import { html } from './utils.js';
-import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
+import {
+    styles, SectionHeader, FormField, FormRow,
+    CredentialCard, SecretRow, Toggle, ConfirmAction,
+} from './FormKit.js';
 
 // ── Subscribe/unsubscribe logic ───────────────────────────────────────────
 
@@ -68,78 +72,15 @@ const TIMEZONES = [
     'Pacific/Auckland', 'UTC',
 ];
 
-// ── Shared styles ─────────────────────────────────────────────────────────
-
-const inputClass = 'w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500';
-const inputStyle = {
-    background: 'var(--f-surface)',
-    border: '1px solid var(--f-border)',
-    color: 'var(--f-text)',
-};
-const btnPrimary = 'px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed';
-const btnDanger = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
-const btnDangerStyle = {
-    background: 'transparent',
-    border: '1px solid var(--f-border)',
-    color: 'var(--f-text-tertiary)',
-    cursor: 'pointer',
-    transition: 'color 0.15s, border-color 0.15s',
-};
-const btnSecondary = 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
-const btnSecondaryStyle = {
-    background: 'var(--f-surface)',
-    border: '1px solid var(--f-border)',
-    color: 'var(--f-text-secondary)',
-};
-const cardStyle = {
-    background: 'transparent',
-    border: '0.5px solid var(--f-border)',
-    borderRadius: '8px',
-    padding: '16px',
-    marginBottom: '12px',
-};
-const sectionLabelStyle = {
-    fontSize: '11px',
-    fontWeight: '500',
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-    color: 'var(--f-text-tertiary)',
-    marginBottom: '12px',
-};
-const cardTitleStyle = {
-    fontSize: '14px',
-    fontWeight: '500',
-    color: 'var(--f-text)',
-    margin: '0',
-};
-const bodyTextStyle = {
-    fontSize: '13px',
-    color: 'var(--f-text-secondary)',
-};
-const labelStyle = {
-    fontSize: '11px',
-    fontWeight: '500',
-    color: 'var(--f-text-tertiary)',
-};
-const monoStyle = {
-    fontSize: '13px',
-    fontFamily: 'monospace',
-    color: 'var(--f-text-secondary)',
-    background: 'var(--f-surface)',
-    border: '1px solid var(--f-border)',
-    borderRadius: '6px',
-    padding: '6px 10px',
-};
-
 // ── Feedback banner ───────────────────────────────────────────────────────
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
     const color = type === 'success' ? 'var(--f-green)' : 'var(--f-red)';
-    return html`<div style="font-size: 12px; color: ${color}; margin-top: 8px;">${message}</div>`;
+    return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
 }
 
-// ── Copy button ───────────────────────────────────────────────────────────
+// ── Minimal copy button for always-visible values ─────────────────────────
 
 function CopyButton({ value }) {
     const [copied, setCopied] = useState(false);
@@ -160,21 +101,44 @@ function CopyButton({ value }) {
         }
     }, [value]);
 
-    return html`<button onClick=${handleCopy}
-        style=${{
-            padding: '2px 8px',
-            fontSize: '11px',
-            borderRadius: '4px',
-            background: 'var(--f-surface)',
-            border: '1px solid var(--f-border)',
-            color: copied ? 'var(--f-green)' : 'var(--f-text-tertiary)',
-            cursor: 'pointer',
-        }}
-        >${copied ? 'Copied!' : 'Copy'}</button>`;
+    return html`
+        <button
+            style=${{
+                ...styles.button,
+                padding: '2px 8px',
+                fontSize: '11px',
+                color: copied ? 'var(--f-green)' : undefined,
+            }}
+            onClick=${handleCopy}
+        >${copied ? 'Copied!' : 'Copy'}</button>
+    `;
+}
+
+// ── Notification checkbox row ─────────────────────────────────────────────
+
+function NotifCheckbox({ label, description, checked, disabled, onChange }) {
+    return html`
+        <label style=${{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            opacity: disabled ? 0.5 : 1,
+        }}>
+            <input type="checkbox"
+                checked=${checked}
+                disabled=${disabled}
+                onChange=${(e) => onChange(e.target.checked)}
+                style=${{ accentColor: 'var(--f-accent)', flexShrink: 0 }}
+            />
+            <span style=${{ fontSize: '13px', fontWeight: '500', color: 'var(--f-text)' }}>${label}</span>
+            <span style=${{ fontSize: '12px', color: 'var(--f-text-tertiary)' }}>${description}</span>
+        </label>
+    `;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Compact credential card (GitHub / Anthropic pattern)
+// GitHub credential card
 // ══════════════════════════════════════════════════════════════════════════
 
 function GitHubCard({ github, onSaved }) {
@@ -218,60 +182,60 @@ function GitHubCard({ github, onSaved }) {
         }
     }, []);
 
+    const statusText = !editing
+        ? (github.connected
+            ? `Connected${github.username ? ` as ${github.username}` : ''}`
+            : (github.pat_last4 ? 'Not connected' : undefined))
+        : undefined;
+    const maskedValue = (!editing && github.pat_last4) ? `····${github.pat_last4}` : undefined;
+
+    const editForm = html`
+        <div style=${{ display: 'flex', gap: '8px' }}>
+            <input type="password"
+                style=${styles.input}
+                placeholder="ghp_xxxxxxxxxxxx"
+                value=${pat}
+                onInput=${(e) => setPat(e.target.value)}
+                onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
+            <button
+                style=${{
+                    ...styles.buttonPrimary,
+                    opacity: (saving || !pat.trim()) ? 0.5 : 1,
+                    cursor: (saving || !pat.trim()) ? 'not-allowed' : 'pointer',
+                    whiteSpace: 'nowrap',
+                }}
+                onClick=${handleSave}
+                disabled=${saving || !pat.trim()}>
+                ${saving ? 'Saving…' : (github.pat_last4 ? 'Update' : 'Connect')}
+            </button>
+            ${github.pat_last4 && html`
+                <button
+                    style=${styles.button}
+                    onClick=${() => { setEditing(false); setPat(''); setFeedback(null); }}>
+                    Cancel
+                </button>
+            `}
+        </div>
+    `;
+
     return html`
-        <div style=${cardStyle}>
-            ${!editing && html`
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span style="font-size: 16px;">🐙</span>
-                        <span style=${cardTitleStyle}>GitHub</span>
-                        ${github.connected && html`
-                            <span style="font-size: 12px; color: var(--f-text-secondary);">Connected${github.username ? ` as ${github.username}` : ''}</span>
-                        `}
-                        ${!github.connected && github.pat_last4 && html`
-                            <span style="font-size: 12px; color: var(--f-yellow);">Not connected</span>
-                        `}
-                        ${github.pat_last4 && html`
-                            <span style="font-size: 12px; font-family: monospace; color: var(--f-text-tertiary);">····${github.pat_last4}</span>
-                        `}
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        ${github.connected && html`
-                            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--f-green);"></span>
-                        `}
-                        <button class=${btnSecondary} style=${btnSecondaryStyle}
-                            onClick=${() => setEditing(true)}>Update</button>
-                        ${github.pat_last4 && html`
-                            <button class=${btnSecondary} style=${btnSecondaryStyle}
-                                onClick=${handleTest} disabled=${testing}>
-                                ${testing ? 'Testing…' : 'Test'}
-                            </button>
-                        `}
-                    </div>
+        <div style=${{ marginBottom: '12px' }}>
+            <${CredentialCard}
+                icon="🐙"
+                name="GitHub"
+                connected=${github.connected}
+                statusText=${statusText}
+                maskedValue=${maskedValue}
+                onUpdate=${editing ? undefined : () => setEditing(true)}
+                onTest=${(!editing && !testing && github.pat_last4) ? handleTest : undefined}
+            >
+                ${editing ? editForm : null}
+            </${CredentialCard}>
+            ${feedback && html`
+                <div style=${{ padding: '4px 16px 0' }}>
+                    <${FeedbackBanner} message=${feedback.message} type=${feedback.type} />
                 </div>
             `}
-
-            ${editing && html`
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                    <span style="font-size: 16px;">🐙</span>
-                    <span style=${cardTitleStyle}>GitHub</span>
-                </div>
-                <div style="display: flex; gap: 8px;">
-                    <input type="password" class=${inputClass} style=${inputStyle}
-                        placeholder="ghp_xxxxxxxxxxxx"
-                        value=${pat} onInput=${(e) => setPat(e.target.value)}
-                        onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
-                    <button class=${btnPrimary} onClick=${handleSave} disabled=${saving || !pat.trim()}>
-                        ${saving ? 'Saving…' : (github.pat_last4 ? 'Update' : 'Connect')}
-                    </button>
-                    ${github.pat_last4 && html`
-                        <button class=${btnSecondary} style=${btnSecondaryStyle}
-                            onClick=${() => { setEditing(false); setPat(''); setFeedback(null); }}>Cancel</button>
-                    `}
-                </div>
-            `}
-
-            <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
         </div>
     `;
 }
@@ -281,13 +245,10 @@ function GitHubCard({ github, onSaved }) {
 // ══════════════════════════════════════════════════════════════════════════
 
 function OAuthCard({ oauth, onRegenerated }) {
-    const [showSecret, setShowSecret] = useState(false);
-    const [confirmRegen, setConfirmRegen] = useState(false);
     const [regenerating, setRegenerating] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
     const handleRegenerate = useCallback(async () => {
-        setConfirmRegen(false);
         setRegenerating(true);
         setFeedback(null);
         try {
@@ -303,67 +264,50 @@ function OAuthCard({ oauth, onRegenerated }) {
 
     if (!oauth.client_id) {
         return html`
-            <div style=${cardStyle}>
-                <div style=${cardTitleStyle}>OAuth / MCP Connection</div>
-                <div style=${{ ...bodyTextStyle, marginTop: '4px' }}>OAuth client not configured.</div>
+            <div style=${styles.card}>
+                <div style=${styles.cardTitle}>OAuth / MCP connection</div>
+                <div style=${{ ...styles.cardSubtitle, marginTop: '4px' }}>OAuth client not configured.</div>
             </div>
         `;
     }
 
-    const maskedSecret = oauth.client_secret ? '•'.repeat(Math.min(oauth.client_secret.length, 32)) : '';
-
     return html`
-        <div style=${cardStyle}>
-            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>OAuth / MCP Connection</div>
+        <div style=${styles.card}>
+            <div style=${{ ...styles.cardTitle, marginBottom: '4px' }}>OAuth / MCP connection</div>
+            <div style=${{ fontSize: '12px', color: 'var(--f-text-secondary)', marginBottom: '14px' }}>
+                Use these credentials to connect Claude.ai to your Switchboard instance
+            </div>
 
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 0.5px solid var(--f-border-subtle);">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style=${labelStyle}>Client ID</span>
-                    <code style="font-size: 13px; font-family: monospace; color: var(--f-text-secondary);">${oauth.client_id}</code>
+            <div style=${{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 0',
+                borderBottom: '0.5px solid var(--f-border-subtle)',
+                marginBottom: '4px',
+            }}>
+                <div>
+                    <div style=${{ ...styles.label, marginBottom: '3px' }}>Client ID</div>
+                    <code style=${{ ...styles.mono, fontSize: '13px' }}>${oauth.client_id}</code>
                 </div>
                 <${CopyButton} value=${oauth.client_id} />
             </div>
 
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0;">
-                <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-                    <span style=${labelStyle}>Client Secret</span>
-                    <code style="font-size: 13px; font-family: monospace; color: var(--f-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        ${showSecret ? oauth.client_secret : maskedSecret}
-                    </code>
-                </div>
-                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                    <button onClick=${() => setShowSecret(!showSecret)}
-                        style=${{
-                            padding: '2px 8px',
-                            fontSize: '11px',
-                            borderRadius: '4px',
-                            background: 'var(--f-surface)',
-                            border: '1px solid var(--f-border)',
-                            color: 'var(--f-text-tertiary)',
-                            cursor: 'pointer',
-                        }}
-                    >${showSecret ? 'Hide' : 'Show'}</button>
-                    <${CopyButton} value=${oauth.client_secret} />
-                </div>
+            <div style=${{ padding: '8px 0' }}>
+                <${SecretRow} label="Client secret" value=${oauth.client_secret} />
             </div>
 
-            <div style="margin-top: 12px; display: flex; align-items: center; gap: 12px;">
-                ${!confirmRegen && html`
-                    <button class=${btnDanger} style=${btnDangerStyle}
-                        onMouseEnter=${(e) => { e.target.style.color = 'var(--f-red)'; e.target.style.borderColor = 'var(--f-red)'; }}
-                        onMouseLeave=${(e) => { e.target.style.color = 'var(--f-text-tertiary)'; e.target.style.borderColor = 'var(--f-border)'; }}
-                        onClick=${() => setConfirmRegen(true)} disabled=${regenerating}>
-                        ${regenerating ? 'Regenerating…' : 'Regenerate Secret'}
-                    </button>
-                    <span style="font-size: 11px; color: var(--f-text-tertiary);">Disconnects existing MCP connections</span>
-                `}
-                ${confirmRegen && html`
-                    <span style="font-size: 12px; color: var(--f-red);">Are you sure?</span>
-                    <button class=${btnDanger} style=${{ ...btnDangerStyle, color: 'var(--f-red)', borderColor: 'var(--f-red)' }}
-                        onClick=${handleRegenerate}>Yes, regenerate</button>
-                    <button class=${btnSecondary} style=${btnSecondaryStyle}
-                        onClick=${() => setConfirmRegen(false)}>Cancel</button>
-                `}
+            <div style=${{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <${ConfirmAction}
+                    label="Regenerate secret"
+                    confirmLabel="Yes, regenerate"
+                    warningText="Are you sure?"
+                    onConfirm=${handleRegenerate}
+                    danger=${true}
+                />
+                <span style=${{ fontSize: '11px', color: 'var(--f-text-tertiary)' }}>
+                    Disconnects existing MCP connections
+                </span>
             </div>
 
             <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
@@ -372,7 +316,7 @@ function OAuthCard({ oauth, onRegenerated }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Anthropic API Key — compact single-line
+// Anthropic API Key card
 // ══════════════════════════════════════════════════════════════════════════
 
 function AnthropicKeyCard({ anthropic, onSaved }) {
@@ -416,57 +360,58 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
         }
     }, []);
 
+    const statusText = !editing
+        ? (anthropic.configured ? 'Configured' : undefined)
+        : undefined;
+    const maskedValue = (!editing && anthropic.key_last4) ? `····${anthropic.key_last4}` : undefined;
+
+    const editForm = html`
+        <div style=${{ display: 'flex', gap: '8px' }}>
+            <input type="password"
+                style=${styles.input}
+                placeholder="sk-ant-xxxxxxxxxxxx"
+                value=${key}
+                onInput=${(e) => setKey(e.target.value)}
+                onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
+            <button
+                style=${{
+                    ...styles.buttonPrimary,
+                    opacity: (saving || !key.trim()) ? 0.5 : 1,
+                    cursor: (saving || !key.trim()) ? 'not-allowed' : 'pointer',
+                    whiteSpace: 'nowrap',
+                }}
+                onClick=${handleSave}
+                disabled=${saving || !key.trim()}>
+                ${saving ? 'Saving…' : 'Save'}
+            </button>
+            ${anthropic.configured && html`
+                <button
+                    style=${styles.button}
+                    onClick=${() => { setEditing(false); setKey(''); setFeedback(null); }}>
+                    Cancel
+                </button>
+            `}
+        </div>
+    `;
+
     return html`
-        <div style=${cardStyle}>
-            ${!editing && html`
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span style="font-size: 16px;">🔑</span>
-                        <span style=${cardTitleStyle}>Anthropic API Key</span>
-                        ${anthropic.configured && html`
-                            <span style="font-size: 12px; color: var(--f-text-secondary);">Configured</span>
-                        `}
-                        ${anthropic.key_last4 && html`
-                            <span style="font-size: 12px; font-family: monospace; color: var(--f-text-tertiary);">····${anthropic.key_last4}</span>
-                        `}
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        ${anthropic.configured && html`
-                            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--f-green);"></span>
-                        `}
-                        <button class=${btnSecondary} style=${btnSecondaryStyle}
-                            onClick=${() => setEditing(true)}>Update</button>
-                        ${anthropic.configured && html`
-                            <button class=${btnSecondary} style=${btnSecondaryStyle}
-                                onClick=${handleTest} disabled=${testing}>
-                                ${testing ? 'Testing…' : 'Test'}
-                            </button>
-                        `}
-                    </div>
+        <div style=${{ marginBottom: '12px' }}>
+            <${CredentialCard}
+                icon="🔑"
+                name="Anthropic API key"
+                connected=${anthropic.configured}
+                statusText=${statusText}
+                maskedValue=${maskedValue}
+                onUpdate=${editing ? undefined : () => setEditing(true)}
+                onTest=${(!editing && !testing && anthropic.configured) ? handleTest : undefined}
+            >
+                ${editing ? editForm : null}
+            </${CredentialCard}>
+            ${feedback && html`
+                <div style=${{ padding: '4px 16px 0' }}>
+                    <${FeedbackBanner} message=${feedback.message} type=${feedback.type} />
                 </div>
             `}
-
-            ${editing && html`
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                    <span style="font-size: 16px;">🔑</span>
-                    <span style=${cardTitleStyle}>Anthropic API Key</span>
-                </div>
-                <div style="display: flex; gap: 8px;">
-                    <input type="password" class=${inputClass} style=${inputStyle}
-                        placeholder="sk-ant-xxxxxxxxxxxx"
-                        value=${key} onInput=${(e) => setKey(e.target.value)}
-                        onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
-                    <button class=${btnPrimary} onClick=${handleSave} disabled=${saving || !key.trim()}>
-                        ${saving ? 'Saving…' : 'Save'}
-                    </button>
-                    ${anthropic.configured && html`
-                        <button class=${btnSecondary} style=${btnSecondaryStyle}
-                            onClick=${() => { setEditing(false); setKey(''); setFeedback(null); }}>Cancel</button>
-                    `}
-                </div>
-            `}
-
-            <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
         </div>
     `;
 }
@@ -506,36 +451,44 @@ function ProfileCard({ profile, onSaved }) {
     }, [name, email, timezone, profile, onSaved]);
 
     return html`
-        <div style=${cardStyle}>
-            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>Profile</div>
+        <div style=${styles.card}>
+            <div style=${{ ...styles.cardTitle, marginBottom: '14px' }}>Profile</div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                <div>
-                    <label style=${labelStyle}>Name</label>
-                    <input type="text" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                        value=${name} onInput=${(e) => setName(e.target.value)} />
-                </div>
-                <div>
-                    <label style=${labelStyle}>Email</label>
-                    <input type="email" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                        value=${email} onInput=${(e) => setEmail(e.target.value)} />
-                </div>
-            </div>
+            <${FormRow}>
+                <${FormField} label="Name">
+                    <input type="text"
+                        style=${styles.input}
+                        value=${name}
+                        onInput=${(e) => setName(e.target.value)} />
+                </${FormField}>
+                <${FormField} label="Email">
+                    <input type="email"
+                        style=${styles.input}
+                        value=${email}
+                        onInput=${(e) => setEmail(e.target.value)} />
+                </${FormField}>
+            </${FormRow}>
 
-            <div style="margin-top: 12px;">
-                <label style=${labelStyle}>Timezone</label>
-                <select class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                    value=${timezone} onChange=${(e) => setTimezone(e.target.value)}>
+            <${FormField} label="Timezone">
+                <select
+                    style=${styles.select}
+                    value=${timezone}
+                    onChange=${(e) => setTimezone(e.target.value)}>
                     <option value="">Select timezone…</option>
                     ${TIMEZONES.map(tz => html`<option key=${tz} value=${tz}>${tz}</option>`)}
                 </select>
-            </div>
+            </${FormField}>
 
-            <div style="margin-top: 14px;">
-                <button class=${btnPrimary} onClick=${handleSave} disabled=${saving}>
-                    ${saving ? 'Saving…' : 'Save profile'}
-                </button>
-            </div>
+            <button
+                style=${{
+                    ...styles.buttonPrimary,
+                    opacity: saving ? 0.5 : 1,
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                }}
+                onClick=${handleSave}
+                disabled=${saving}>
+                ${saving ? 'Saving…' : 'Save profile'}
+            </button>
 
             <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
         </div>
@@ -581,59 +534,47 @@ function ChangePasswordCard() {
         }
     }, [currentPassword, newPassword, confirmPassword]);
 
+    const allFilled = currentPassword && newPassword && confirmPassword;
+
     return html`
-        <div style=${cardStyle}>
-            <div style=${{ ...cardTitleStyle, marginBottom: '12px' }}>Change Password</div>
+        <div style=${styles.card}>
+            <div style=${{ ...styles.cardTitle, marginBottom: '14px' }}>Change password</div>
 
-            <div style="max-width: 280px; display: flex; flex-direction: column; gap: 10px;">
-                <div>
-                    <label style=${labelStyle}>Current Password</label>
-                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                        value=${currentPassword} onInput=${(e) => setCurrentPassword(e.target.value)} />
-                </div>
-                <div>
-                    <label style=${labelStyle}>New Password</label>
-                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                        value=${newPassword} onInput=${(e) => setNewPassword(e.target.value)} />
-                </div>
-                <div>
-                    <label style=${labelStyle}>Confirm New Password</label>
-                    <input type="password" class=${inputClass} style=${{ ...inputStyle, marginTop: '4px' }}
-                        value=${confirmPassword} onInput=${(e) => setConfirmPassword(e.target.value)}
+            <div style=${{ maxWidth: '280px' }}>
+                <${FormField} label="Current password">
+                    <input type="password"
+                        style=${styles.input}
+                        value=${currentPassword}
+                        onInput=${(e) => setCurrentPassword(e.target.value)} />
+                </${FormField}>
+                <${FormField} label="New password">
+                    <input type="password"
+                        style=${styles.input}
+                        value=${newPassword}
+                        onInput=${(e) => setNewPassword(e.target.value)} />
+                </${FormField}>
+                <${FormField} label="Confirm new password">
+                    <input type="password"
+                        style=${styles.input}
+                        value=${confirmPassword}
+                        onInput=${(e) => setConfirmPassword(e.target.value)}
                         onKeyDown=${(e) => e.key === 'Enter' && handleSubmit()} />
-                </div>
+                </${FormField}>
             </div>
 
-            <div style="margin-top: 14px;">
-                <button class=${btnPrimary} onClick=${handleSubmit}
-                    disabled=${saving || !currentPassword || !newPassword || !confirmPassword}>
-                    ${saving ? 'Updating…' : 'Update password'}
-                </button>
-            </div>
+            <button
+                style=${{
+                    ...styles.buttonPrimary,
+                    opacity: (saving || !allFilled) ? 0.5 : 1,
+                    cursor: (saving || !allFilled) ? 'not-allowed' : 'pointer',
+                }}
+                onClick=${handleSubmit}
+                disabled=${saving || !allFilled}>
+                ${saving ? 'Updating…' : 'Update password'}
+            </button>
 
             <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
         </div>
-    `;
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Notification checkbox row
-// ══════════════════════════════════════════════════════════════════════════
-
-function NotifCheckbox({ label, description, checked, disabled, onChange }) {
-    return html`
-        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: ${disabled ? 'not-allowed' : 'pointer'}; opacity: ${disabled ? '0.5' : '1'};">
-            <input type="checkbox"
-                checked=${checked}
-                disabled=${disabled}
-                onChange=${(e) => onChange(e.target.checked)}
-                style="margin-top: 2px; accent-color: var(--f-accent);"
-            />
-            <div>
-                <div style="font-size: 13px; font-weight: 500; color: var(--f-text);">${label}</div>
-                <div style="font-size: 12px; color: var(--f-text-tertiary); margin-top: 1px;">${description}</div>
-            </div>
-        </label>
     `;
 }
 
@@ -699,11 +640,11 @@ export function Settings() {
         if (isAdmin) loadInstanceSettings();
     }, [isAdmin]);
 
-    const handlePushToggle = useCallback(async (enable) => {
+    const handlePushToggle = useCallback(async () => {
         setPushError(null);
         setPushLoading(true);
         try {
-            if (!enable) {
+            if (push.subscribed) {
                 await unsubscribePush(push.subscription);
                 setPush(await getPushState());
             } else {
@@ -728,8 +669,8 @@ export function Settings() {
         setSettings(updated);
         setSettingsSaving(true);
         try {
-            const saved = await api.updateNotificationSettings({ [key]: value });
-            setSettings(saved);
+            const result = await api.updateNotificationSettings({ [key]: value });
+            setSettings(result);
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } catch (e) {
@@ -740,38 +681,42 @@ export function Settings() {
         }
     }, [settings]);
 
-    const notifDisabled = !push.subscribed;
+    const notifDisabled = !push.subscribed || settingsSaving;
 
     if (userLoading) {
-        return html`<div style="padding: 24px; max-width: 800px;">
-            <div style="display: flex; align-items: center; gap: 12px; padding: 32px 0;">
+        return html`<div style=${{ padding: '24px', maxWidth: '800px' }}>
+            <div style=${{ display: 'flex', alignItems: 'center', gap: '12px', padding: '32px 0' }}>
                 <span class="loading-spinner"></span>
-                <span style="font-size: 13px; color: var(--f-text-secondary);">Loading settings…</span>
+                <span style=${{ fontSize: '13px', color: 'var(--f-text-secondary)' }}>Loading settings…</span>
             </div>
         </div>`;
     }
 
     return html`
-        <div style="padding: 24px; max-width: 800px;">
+        <div style=${{ padding: '24px', maxWidth: '800px' }}>
 
             ${userError && html`
-                <div style="font-size: 13px; color: var(--f-red); margin-bottom: 16px;">Failed to load user settings: ${userError}</div>
+                <div style=${{ fontSize: '13px', color: 'var(--f-red)', marginBottom: '16px' }}>
+                    Failed to load user settings: ${userError}
+                </div>
             `}
 
             <!-- ═══ INSTANCE section (admin/owner only) ═══ -->
             ${isAdmin && html`
-                <div style="margin-bottom: 24px;">
-                    <div style=${sectionLabelStyle}>INSTANCE</div>
+                <div style=${{ marginBottom: '28px' }}>
+                    <${SectionHeader} text="Instance" />
 
                     ${instanceLoading && html`
-                        <div style="display: flex; align-items: center; gap: 12px; padding: 16px 0;">
+                        <div style=${{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 0' }}>
                             <span class="loading-spinner"></span>
-                            <span style="font-size: 13px; color: var(--f-text-secondary);">Loading…</span>
+                            <span style=${{ fontSize: '13px', color: 'var(--f-text-secondary)' }}>Loading…</span>
                         </div>
                     `}
 
                     ${instanceError && html`
-                        <div style="font-size: 13px; color: var(--f-red); margin-bottom: 12px;">${instanceError}</div>
+                        <div style=${{ fontSize: '13px', color: 'var(--f-red)', marginBottom: '12px' }}>
+                            ${instanceError}
+                        </div>
                     `}
 
                     ${instanceSettings && html`
@@ -788,98 +733,110 @@ export function Settings() {
             `}
 
             <!-- ═══ ACCOUNT section ═══ -->
-            <div style="margin-bottom: 24px;">
-                <div style=${sectionLabelStyle}>ACCOUNT</div>
+            <div style=${{ marginBottom: '28px' }}>
+                <${SectionHeader} text="Account" />
 
                 ${userSettings && html`
                     <${AnthropicKeyCard}
                         anthropic=${userSettings.anthropic}
                         onSaved=${loadUserSettings}
                     />
-
                     <${ProfileCard}
                         profile=${userSettings.profile}
                         onSaved=${loadUserSettings}
                     />
-
                     <${ChangePasswordCard} />
                 `}
             </div>
 
             <!-- ═══ NOTIFICATIONS section ═══ -->
-            <div style="margin-bottom: 24px;">
-                <div style=${sectionLabelStyle}>NOTIFICATIONS</div>
+            <div style=${{ marginBottom: '28px' }}>
+                <${SectionHeader} text="Notifications" />
 
-                <div style=${cardStyle}>
-                    <!-- Push toggle -->
+                <div style=${styles.card}>
                     ${!push.supported && html`
-                        <div style="font-size: 13px; color: var(--f-yellow);">
+                        <div style=${{ fontSize: '13px', color: 'var(--f-yellow)' }}>
                             Push notifications are not supported in this browser.
                         </div>
                     `}
 
                     ${push.supported && !push.serverConfigured && html`
-                        <div style="font-size: 13px; color: var(--f-yellow);">
+                        <div style=${{ fontSize: '13px', color: 'var(--f-yellow)' }}>
                             Push notifications require server configuration (VAPID keys not set).
                         </div>
                     `}
 
                     ${push.supported && push.serverConfigured && html`
-                        <${NotifCheckbox}
-                            label="Push notifications"
-                            description=${push.subscribed ? 'Active on this device' : 'Receive browser notifications. This device only.'}
-                            checked=${push.subscribed}
-                            disabled=${pushLoading}
-                            onChange=${handlePushToggle}
-                        />
+                        <div style=${{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                            <div>
+                                <div style=${styles.cardTitle}>Push notifications</div>
+                                <div style=${{ fontSize: '12px', color: 'var(--f-text-tertiary)', marginTop: '4px' }}>
+                                    Browser notifications when tasks complete, fail, or need attention
+                                </div>
+                            </div>
+                            <${Toggle}
+                                checked=${push.subscribed}
+                                onChange=${handlePushToggle}
+                                disabled=${pushLoading}
+                            />
+                        </div>
 
                         ${pushError && html`
-                            <div style="font-size: 12px; color: var(--f-red); margin-top: 6px; margin-left: 26px;">${pushError}</div>
+                            <div style=${{ fontSize: '12px', color: 'var(--f-red)', marginTop: '8px' }}>
+                                ${pushError}
+                            </div>
                         `}
 
-                        ${push.subscribed && settings && html`
-                            <div style="margin-top: 14px; padding-top: 12px; border-top: 0.5px solid var(--f-border-subtle); display: flex; flex-direction: column; gap: 10px;">
-                                ${saved && html`<span style="font-size: 11px; color: var(--f-green); align-self: flex-end;">Saved</span>`}
+                        ${settings && html`
+                            <div style=${{
+                                marginTop: '14px',
+                                paddingTop: '12px',
+                                borderTop: '0.5px solid var(--f-border-subtle)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px',
+                            }}>
+                                ${saved && html`
+                                    <span style=${{ fontSize: '11px', color: 'var(--f-green)', alignSelf: 'flex-end' }}>Saved</span>
+                                `}
                                 ${settingsError && html`
-                                    <div style="font-size: 12px; color: var(--f-red);">${settingsError}</div>
+                                    <div style=${{ fontSize: '12px', color: 'var(--f-red)' }}>${settingsError}</div>
                                 `}
                                 <${NotifCheckbox}
                                     label="Task failed"
-                                    description="Task ends with an error or exception."
+                                    description="Error or exception"
                                     checked=${!!settings.notify_failed}
-                                    disabled=${settingsSaving}
+                                    disabled=${notifDisabled}
                                     onChange=${(v) => handleSettingToggle('notify_failed', v)}
                                 />
                                 <${NotifCheckbox}
                                     label="Needs review"
-                                    description="Task timed out, lost its process, or ended without a result."
+                                    description="Timed out or lost process"
                                     checked=${!!settings.notify_needs_review}
-                                    disabled=${settingsSaving}
+                                    disabled=${notifDisabled}
                                     onChange=${(v) => handleSettingToggle('notify_needs_review', v)}
                                 />
                                 <${NotifCheckbox}
                                     label="CC posted a question"
-                                    description="Task is paused waiting for your input."
+                                    description="Waiting for your input"
                                     checked=${!!settings.notify_question}
-                                    disabled=${settingsSaving}
+                                    disabled=${notifDisabled}
                                     onChange=${(v) => handleSettingToggle('notify_question', v)}
                                 />
                                 <${NotifCheckbox}
                                     label="Task completed"
-                                    description="Task finishes successfully. Off by default to reduce noise."
+                                    description="Off by default to reduce noise"
                                     checked=${!!settings.notify_completed}
-                                    disabled=${settingsSaving}
+                                    disabled=${notifDisabled}
                                     onChange=${(v) => handleSettingToggle('notify_completed', v)}
                                 />
                             </div>
                         `}
 
-                        ${push.subscribed && !settings && !settingsError && html`
-                            <div style="font-size: 13px; color: var(--f-text-secondary); margin-top: 12px;">Loading notification preferences…</div>
-                        `}
-
-                        ${!push.subscribed && html`
-                            <div style="font-size: 12px; color: var(--f-text-tertiary); margin-top: 6px; margin-left: 26px;">Enable push above to configure notification types.</div>
+                        ${!settings && !settingsError && html`
+                            <div style=${{ fontSize: '13px', color: 'var(--f-text-secondary)', marginTop: '12px' }}>
+                                Loading notification preferences…
+                            </div>
                         `}
                     `}
                 </div>
