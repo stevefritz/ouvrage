@@ -254,14 +254,22 @@ export function CredentialCard({ icon, name, connected, statusText, maskedValue,
     const rowStyle = {
         display: 'flex',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: spacing[2],
     };
 
-    const leftStyle = {
+    const nameStyle = {
         display: 'flex',
         alignItems: 'center',
         gap: spacing[2],
-        flex: 1,
+        flexShrink: 0,
+    };
+
+    const statusStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        gap: spacing[2],
+        flex: '1 1 200px',
         minWidth: 0,
     };
 
@@ -270,6 +278,7 @@ export function CredentialCard({ icon, name, connected, statusText, maskedValue,
         alignItems: 'center',
         gap: spacing[2],
         flexShrink: 0,
+        marginLeft: 'auto',
     };
 
     const actionBtnStyle = (hover) => ({
@@ -279,10 +288,12 @@ export function CredentialCard({ icon, name, connected, statusText, maskedValue,
         background: hover ? colors.surfaceHover : 'transparent',
     });
 
+    const hasStatus = statusText || maskedValue;
+
     return html`
         <div style=${cardStyle}>
             <div style=${rowStyle}>
-                <div style=${leftStyle}>
+                <div style=${nameStyle}>
                     ${icon && html`
                         <span style=${{ fontSize: '16px', flexShrink: 0, lineHeight: 1 }}>
                             ${icon}
@@ -292,24 +303,25 @@ export function CredentialCard({ icon, name, connected, statusText, maskedValue,
                         fontSize: typography.size.base,
                         fontWeight: typography.weight.medium,
                         color: colors.text,
-                        flexShrink: 0,
                     }}>${name}</span>
-                    ${statusText && html`
-                        <span style=${{
-                            fontSize: typography.size.xs,
-                            color: colors.textTertiary,
-                            flexShrink: 0,
-                        }}>${statusText}</span>
-                    `}
-                    ${maskedValue && html`
-                        <span style=${{
-                            fontFamily: typography.fontMono,
-                            fontSize: typography.size.xs,
-                            color: colors.textTertiary,
-                            flexShrink: 0,
-                        }}>${maskedValue}</span>
-                    `}
                 </div>
+                ${hasStatus && html`
+                    <div style=${statusStyle}>
+                        ${statusText && html`
+                            <span style=${{
+                                fontSize: typography.size.xs,
+                                color: colors.textTertiary,
+                            }}>${statusText}</span>
+                        `}
+                        ${maskedValue && html`
+                            <span style=${{
+                                fontFamily: typography.fontMono,
+                                fontSize: typography.size.xs,
+                                color: colors.textTertiary,
+                            }}>${maskedValue}</span>
+                        `}
+                    </div>
+                `}
                 <div style=${rightStyle}>
                     <span style=${styles.dot(dotColor)} />
                     ${onUpdate && html`
