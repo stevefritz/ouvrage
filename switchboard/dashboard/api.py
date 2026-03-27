@@ -1242,6 +1242,11 @@ async def _handle_change_password(receive, send, scope):
 
 # ── File upload constants ──────────────────────────────────────────────────
 
+def _uploads_dir() -> Path:
+    """Return the uploads directory (inside data dir, not home)."""
+    from switchboard.config.settings import DB_PATH
+    return Path(DB_PATH).parent / "uploads"
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 ALLOWED_EXTENSIONS = {
@@ -1389,7 +1394,7 @@ async def _handle_upload_file(scope, receive, send):
 
     # Save to disk
     file_id = str(uuid.uuid4())
-    uploads_dir = Path.home() / "uploads" / file_id
+    uploads_dir = _uploads_dir() / file_id
     uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = uploads_dir / filename
     dest.write_bytes(file_data)
@@ -1458,7 +1463,7 @@ async def _handle_delete_file(send, file_id: str, scope):
     # Remove UUID directory from disk
     stored = Path(record["stored_path"])
     uuid_dir = stored.parent
-    if uuid_dir.exists() and uuid_dir.parent == (Path.home() / "uploads"):
+    if uuid_dir.exists() and uuid_dir.parent == _uploads_dir():
         shutil.rmtree(uuid_dir, ignore_errors=True)
 
     await db.delete_file(file_id)

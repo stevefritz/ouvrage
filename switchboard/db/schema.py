@@ -642,6 +642,7 @@ async def init_db():
 
         await conn.commit()
 
-    # Ensure ~/uploads/ directory exists for file storage
-    uploads_dir = Path.home() / "uploads"
-    uploads_dir.mkdir(exist_ok=True)
+    # Ensure uploads/ directory exists for file storage (inside data dir)
+    from switchboard.config.settings import DB_PATH
+    uploads_dir = Path(DB_PATH).parent / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
