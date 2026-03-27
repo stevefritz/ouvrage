@@ -109,7 +109,12 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         fetch_url = await _resolve_push_url(project["id"])
     except (ValueError, Exception):
         fetch_url = "origin"  # fallback to SSH
-    _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", fetch_url)
+    # When fetching by URL (not remote name), must pass refspec explicitly
+    # or git only fetches HEAD without updating origin/* tracking refs
+    fetch_args = ["git", "-C", bare_path, "fetch", fetch_url]
+    if fetch_url != "origin":
+        fetch_args.append("+refs/heads/*:refs/remotes/origin/*")
+    _, fetch_err, fetch_rc = await _run_as_worker(*fetch_args)
     if fetch_rc != 0:
         log.warning(f"git fetch failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
 
