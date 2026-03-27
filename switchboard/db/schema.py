@@ -596,4 +596,35 @@ async def init_db():
                             "Migrated GitHub PAT from user credentials to instance level."
                         )
 
+        # Migrate projects: normalize SSH repo URLs to HTTPS
+        # git@github.com:owner/repo.git → https://github.com/owner/repo.git
+        import re as _re
+        import logging as _logging2
+        _ssh_pat = _re.compile(r"^git@github\.com:([^/]+)/(.+?)(?:\.git)?$")
+        _schema_log = _logging2.getLogger(__name__)
+        project_rows = await conn.execute_fetchall("SELECT id, repo, working_dir FROM projects")
+        for row in project_rows:
+            m = _ssh_pat.match(row["repo"])
+            if m:
+                owner, repo_name = m.group(1), m.group(2)
+                https_url = f"https://github.com/{owner}/{repo_name}.git"
+                await conn.execute(
+                    "UPDATE projects SET repo = ? WHERE id = ?",
+                    (https_url, row["id"]),
+                )
+                _schema_log.info(f"Migrated repo URL for project '{row['id']}': {row['repo']} → {https_url}")
+                # Also update the bare repo remote if it exists
+                bare_path = _os.path.join(row["working_dir"], ".bare")
+                if _os.path.exists(bare_path):
+                    import asyncio as _asyncio
+                    proc = await _asyncio.create_subprocess_exec(
+                        "git", "-C", bare_path, "remote", "set-url", "origin", https_url,
+                        stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode == 0:
+                        _schema_log.info(f"Updated bare repo remote for project '{row['id']}' to {https_url}")
+                    else:
+                        _schema_log.warning(f"Failed to update bare repo remote for '{row['id']}': {stderr.decode().strip()}")
+
         await conn.commit()
