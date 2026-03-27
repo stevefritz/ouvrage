@@ -189,80 +189,71 @@ class TestSetupCredentialHelper:
             p.stop()
 
     @pytest.mark.asyncio
-    async def test_helper_file_created(self):
+    async def test_helper_path_returned(self):
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             result = await setup_credential_helper(self.worktree, self.project_id)
         assert result is not None
-        assert os.path.exists(result)
-
-    @pytest.mark.asyncio
-    async def test_helper_file_in_worktree(self):
-        from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
-            result = await setup_credential_helper(self.worktree, self.project_id)
         assert result.startswith(self.worktree)
+        assert result.endswith(".git-credential-helper.sh")
 
     @pytest.mark.asyncio
-    async def test_helper_file_contains_pat(self):
+    async def test_helper_written_via_run_as_worker(self):
+        """Helper script is written via _run_as_worker bash, not open()."""
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
-            result = await setup_credential_helper(self.worktree, self.project_id)
-        content = open(result).read()
-        assert self.pat in content
-        assert "username=oauth2" in content
-        assert "password=" in content
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
+            await setup_credential_helper(self.worktree, self.project_id)
+        bash_calls = [c for c in self.mock_run.call_args_list if c.args[0] == "bash"]
+        assert len(bash_calls) >= 1
+        assert "username=oauth2" in str(bash_calls[0].args)
 
     @pytest.mark.asyncio
-    async def test_helper_file_is_executable(self):
+    async def test_chmod_700_called(self):
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
-            result = await setup_credential_helper(self.worktree, self.project_id)
-        mode = os.stat(result).st_mode
-        assert mode & stat.S_IXUSR, "Helper script must be executable by owner"
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
+            await setup_credential_helper(self.worktree, self.project_id)
+        chmod_calls = [c for c in self.mock_run.call_args_list if c.args[0] == "chmod"]
+        assert len(chmod_calls) == 1
+        assert "700" in chmod_calls[0].args
 
     @pytest.mark.asyncio
-    async def test_helper_file_mode_700(self):
+    async def test_credential_helper_worktree_scoped(self):
+        """credential.helper must use --worktree scope to avoid bare repo pollution."""
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
-            result = await setup_credential_helper(self.worktree, self.project_id)
-        mode = os.stat(result).st_mode & 0o777
-        assert mode == 0o700, f"Expected mode 700, got {oct(mode)}"
-
-    @pytest.mark.asyncio
-    async def test_git_config_credential_helper_set(self):
-        from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
-            result = await setup_credential_helper(self.worktree, self.project_id)
-
-        # Find the git config call for credential.helper
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
+            await setup_credential_helper(self.worktree, self.project_id)
         config_calls = [
             c for c in self.mock_run.call_args_list
             if "config" in c.args and "credential.helper" in c.args
         ]
         assert len(config_calls) == 1
-        assert result in config_calls[0].args
+        assert "--worktree" in config_calls[0].args
 
     @pytest.mark.asyncio
-    async def test_remote_set_to_https(self):
+    async def test_remote_url_worktree_scoped(self):
+        """remote.origin.url must use --worktree scope."""
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             await setup_credential_helper(self.worktree, self.project_id)
-
-        # Find remote set-url call
         remote_calls = [
             c for c in self.mock_run.call_args_list
-            if "remote" in c.args and "set-url" in c.args
+            if "config" in c.args and "remote.origin.url" in c.args
         ]
         assert len(remote_calls) == 1
+        assert "--worktree" in remote_calls[0].args
         assert "https://github.com/acme/widgets.git" in remote_calls[0].args
+
+    @pytest.mark.asyncio
+    async def test_worktree_config_extension_enabled(self):
+        """extensions.worktreeConfig must be set on bare repo."""
+        from switchboard.git.worktree import setup_credential_helper
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
+            await setup_credential_helper(self.worktree, self.project_id)
+        ext_calls = [
+            c for c in self.mock_run.call_args_list
+            if "extensions.worktreeConfig" in c.args
+        ]
+        assert len(ext_calls) == 1
 
     @pytest.mark.asyncio
     async def test_no_pat_returns_none(self):
@@ -283,17 +274,15 @@ class TestSetupCredentialHelper:
         self.mock_run.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_pat_not_in_git_config(self):
-        """PAT must NOT appear in any git config or remote URL calls."""
+    async def test_pat_not_in_git_config_commands(self):
+        """PAT must NOT appear in git config calls (only in bash write)."""
         from switchboard.git.worktree import setup_credential_helper
-        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat), \
-             patch("os.chown"):
+        with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             await setup_credential_helper(self.worktree, self.project_id)
-
-        # Check that no git command args contain the PAT
         for c in self.mock_run.call_args_list:
-            for arg in c.args:
-                assert self.pat not in str(arg), f"PAT found in git command: {c.args}"
+            if c.args[0] == "git":
+                for arg in c.args:
+                    assert self.pat not in str(arg), f"PAT found in git command: {c.args}"
 
 
 # ---------------------------------------------------------------------------
