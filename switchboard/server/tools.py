@@ -54,16 +54,26 @@ CONVERSATION_TOOLS = [
     ),
     Tool(
         name="read",
-        description="Get messages from a conversation. Pinned message always shown at top. Returns a cursor for polling — pass it back as 'after' to get only new messages.",
+        description=(
+            "Get messages from a conversation. Supports pagination (offset/limit), "
+            "single-message lookup (message_id), and summary mode for lightweight browsing. "
+            "When last_n is set, offset/limit are ignored (backward compat). "
+            "Default limit is 50 messages."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "conversation_id": {"type": "string", "description": "Which conversation to read"},
+                "message_id": {"type": "integer", "description": "Fetch a single message by ID with full content. When set, all other params are ignored."},
                 "after": {"type": "integer", "description": "Cursor: return only messages with id > this value. Use the cursor from a previous read response."},
-                "last_n": {"type": "integer", "description": "Return only the N most recent messages"},
+                "last_n": {"type": "integer", "description": "Return only the N most recent messages (pinned shown at top). When set, offset/limit are ignored."},
                 "since": {"type": "string", "description": "ISO timestamp, return messages after this time"},
                 "author": {"type": "string", "description": "Filter by author"},
                 "type": {"type": "string", "description": "Filter by message type"},
+                "pinned_only": {"type": "boolean", "description": "Return only pinned messages", "default": False},
+                "offset": {"type": "integer", "description": "Skip this many messages (default 0). Messages ordered by created_at ASC.", "default": 0},
+                "limit": {"type": "integer", "description": "Max messages to return (default 50, max 50).", "default": 50},
+                "summary": {"type": "boolean", "description": "When true, return lightweight objects with id, title, type, author, created_at, pinned, char_count, preview (first 150 chars). Full content omitted.", "default": False},
             },
             "required": ["conversation_id"],
         },
@@ -433,15 +443,23 @@ TASK_TOOLS = [
     ),
     Tool(
         name="read_task_messages",
-        description="Read messages from a task's thread. Supports cursor-based polling.",
+        description=(
+            "Read messages from a task's thread. Supports pagination (offset/limit), "
+            "single-message lookup (message_id), summary mode, and attempt filtering. "
+            "Default limit is 50 messages."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID"},
-                "after": {"type": "integer", "description": "Cursor for polling"},
-                "last_n": {"type": "integer", "description": "Return only N most recent"},
-                "type": {"type": "string", "description": "Filter by message type"},
                 "message_id": {"type": "integer", "description": "Fetch a single message by ID with full untruncated content. When provided, all other params are ignored."},
+                "after": {"type": "integer", "description": "Cursor for polling"},
+                "last_n": {"type": "integer", "description": "Return only N most recent (pinned at top). When set, offset/limit are ignored."},
+                "type": {"type": "string", "description": "Filter by message type"},
+                "attempt": {"type": "integer", "description": "Filter to messages from this attempt number only."},
+                "offset": {"type": "integer", "description": "Skip this many messages (default 0). Messages ordered by created_at ASC.", "default": 0},
+                "limit": {"type": "integer", "description": "Max messages to return (default 50, max 50).", "default": 50},
+                "summary": {"type": "boolean", "description": "When true, return lightweight objects with id, title, type, author, created_at, pinned, char_count, preview. Full content omitted.", "default": False},
             },
             "required": ["task_id"],
         },

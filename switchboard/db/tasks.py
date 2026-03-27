@@ -358,7 +358,8 @@ async def post_task_message(
 
 async def read_task_messages(
     task_id: str, last_n: int | None = None, after: int | None = None,
-    type: str | None = None,
+    type: str | None = None, offset: int | None = None,
+    limit: int | None = None, attempt: int | None = None,
 ) -> dict:
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
@@ -368,6 +369,7 @@ async def read_task_messages(
     return await _read_messages(
         filter_column="task_id", filter_value=task_id,
         last_n=last_n, after=after, type=type,
+        offset=offset, limit=limit, attempt=attempt,
     )
 
 

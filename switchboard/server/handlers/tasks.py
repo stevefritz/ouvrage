@@ -383,18 +383,33 @@ async def _handle_post_task_message(arguments):
 
 
 async def _handle_read_task_messages(arguments):
+    task_id = arguments["task_id"]
+
+    # Single message lookup — ignores all other params
     message_id = arguments.get("message_id")
     if message_id is not None:
         msg = await db.get_message_by_id(message_id)
         if msg is None:
             return {"error": f"Message {message_id} not found"}
+        if msg.get("task_id") != task_id:
+            return {"error": f"Message {message_id} does not belong to task '{task_id}'"}
         return {"message": msg}
-    return await db.read_task_messages(
-        task_id=arguments["task_id"],
+
+    result = await db.read_task_messages(
+        task_id=task_id,
         after=arguments.get("after"),
         last_n=arguments.get("last_n"),
         type=arguments.get("type"),
+        offset=arguments.get("offset"),
+        limit=arguments.get("limit"),
+        attempt=arguments.get("attempt"),
     )
+
+    if arguments.get("summary"):
+        from switchboard.server.handlers.conversations import _summarize_messages
+        result = _summarize_messages(result)
+
+    return result
 
 
 def _resolve_log_dir(task: dict, project: dict | None, attempt: int | None) -> tuple[str | None, str | None]:
