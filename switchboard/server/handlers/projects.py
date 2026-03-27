@@ -5,6 +5,7 @@ import os
 import switchboard.db as db
 import switchboard.dispatch as task_engine
 from switchboard.server.context import get_request_user_id
+from switchboard.git.operations import normalize_repo_url
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 
@@ -27,8 +28,9 @@ def _resolve_working_dir(repo: str, folder_name: str | None = None) -> str:
 
 
 async def _handle_create_project(arguments):
+    repo = normalize_repo_url(arguments["repo"])
     working_dir = arguments.get("working_dir") or _resolve_working_dir(
-        arguments["repo"], arguments.get("folder_name")
+        repo, arguments.get("folder_name")
     )
     # Enforce worktree base — no escaping
     resolved = os.path.realpath(working_dir)
@@ -47,7 +49,7 @@ async def _handle_create_project(arguments):
 
     return await db.create_project(
         id=arguments["id"],
-        repo=arguments["repo"],
+        repo=repo,
         working_dir=resolved,
         default_branch=arguments.get("default_branch", "main"),
         setup_command=arguments.get("setup_command"),
@@ -73,6 +75,8 @@ async def _handle_update_project(arguments):
     fields = {k: v for k, v in arguments.items() if k != "id"}
     if not fields:
         return {"error": "No fields to update"}
+    if "repo" in fields:
+        fields["repo"] = normalize_repo_url(fields["repo"])
     return await db.update_project(project_id, **fields)
 
 

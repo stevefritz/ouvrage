@@ -35,6 +35,7 @@ from switchboard.config.constants import DEFAULT_MODEL
 from switchboard.git.worktree import (
     _run_as_worker,
     setup_worktree,
+    setup_credential_helper,
     cleanup_worktree,
     run_setup_command,
 )
@@ -577,6 +578,9 @@ async def dispatch_task(
     worktree_path = await setup_worktree(project, short_name, effective_branch,
                                          depends_on=task.get("depends_on"),
                                          base_branch=task.get("base_branch"))
+
+    # Configure credential helper so CC's direct git pushes use PAT auth
+    await setup_credential_helper(worktree_path, project_id)
 
     # Run setup command
     await run_setup_command(project, worktree_path)

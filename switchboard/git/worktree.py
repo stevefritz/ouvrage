@@ -9,6 +9,7 @@ import shlex
 
 import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
+from switchboard.db.users import get_github_pat
 
 log = logging.getLogger(__name__)
 
@@ -208,6 +209,48 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
             "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
         )
         log.info(f"Appended env overrides to {env_path}")
+
+
+async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:
+    """Write a git credential helper script in the worktree for CC's direct git pushes.
+
+    Resolves the GitHub PAT (project override → instance → skip if none), writes a
+    bash script that outputs username/password, and configures the worktree's git
+    credential.helper to use it. Also sets the remote to HTTPS so CC's git push works.
+
+    Returns the path to the helper script, or None if no PAT is configured.
+    The script lives inside the worktree and is deleted when the worktree is removed.
+    """
+    # Lazy import to avoid circular dependency (operations.py imports worktree.py)
+    from switchboard.git.operations import normalize_repo_url
+
+    try:
+        pat = await get_github_pat(project_id)
+    except ValueError:
+        log.info(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
+        return None
+
+    # Write credential helper script as worker user (worktree is owned by worker)
+    helper_path = os.path.join(worktree_path, ".git-credential-helper.sh")
+    script_content = f"#!/bin/bash\necho 'username=oauth2'\necho 'password={pat}'\n"
+    await _run_as_worker("bash", "-c", f"cat > {helper_path} << 'CREDEOF'\n{script_content}CREDEOF")
+    await _run_as_worker("chmod", "700", helper_path)
+
+    # Configure git in the worktree to use the helper
+    await _run_as_worker(
+        "git", "-C", worktree_path, "config", "credential.helper", helper_path,
+    )
+
+    # Ensure remote is HTTPS (not SSH)
+    project = await db.get_project(project_id)
+    if project and project.get("repo"):
+        https_url = normalize_repo_url(project["repo"])
+        await _run_as_worker(
+            "git", "-C", worktree_path, "remote", "set-url", "origin", https_url,
+        )
+
+    log.info(f"Configured credential helper for worktree {worktree_path}")
+    return helper_path
 
 
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
