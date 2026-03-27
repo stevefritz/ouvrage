@@ -44,7 +44,12 @@ async def post_message(conversation_id: str, author: str, content: str, type: st
         return {"id": msg_id, "conversation_id": conversation_id, "author": author, "type": type, "title": title, "content": content, "pinned": pinned, "user_id": user_id, "created_at": ts}
 
 
-async def read_messages(conversation_id: str, last_n: int | None = None, since: str | None = None, after: int | None = None, author: str | None = None, type: str | None = None) -> dict:
+async def read_messages(
+    conversation_id: str, last_n: int | None = None, since: str | None = None,
+    after: int | None = None, author: str | None = None, type: str | None = None,
+    offset: int | None = None, limit: int | None = None,
+    pinned_only: bool = False,
+) -> dict:
     async with get_db() as db:
         # Verify conversation exists
         row = await db.execute_fetchall("SELECT id FROM conversations WHERE id = ?", (conversation_id,))
@@ -54,6 +59,7 @@ async def read_messages(conversation_id: str, last_n: int | None = None, since: 
     return await _read_messages(
         filter_column="conversation_id", filter_value=conversation_id,
         last_n=last_n, since=since, after=after, author=author, type=type,
+        offset=offset, limit=limit, pinned_only=pinned_only,
     )
 
 

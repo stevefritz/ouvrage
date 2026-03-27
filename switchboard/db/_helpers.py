@@ -22,15 +22,98 @@ async def _read_messages(
     last_n: int | None = None, since: str | None = None,
     after: int | None = None, author: str | None = None,
     type: str | None = None,
+    offset: int | None = None, limit: int | None = None,
+    pinned_only: bool = False, attempt: int | None = None,
 ) -> dict:
-    """Shared implementation for read_messages() and read_task_messages()."""
+    """Shared implementation for read_messages() and read_task_messages().
+
+    Two modes:
+    - **last_n mode** (backward compat): when last_n is set, ignores offset/limit,
+      returns pinned messages at top followed by last N non-pinned messages.
+    - **paginated mode** (default): uses offset/limit with natural created_at ASC
+      ordering. Returns total count and has_more for pagination.
+    """
+    from switchboard.db.connection import get_db
+
+    # last_n takes precedence — backward compat path
+    if last_n is not None:
+        return await _read_messages_last_n(
+            filter_column, filter_value, last_n=last_n, since=since,
+            after=after, author=author, type=type, attempt=attempt,
+        )
+
+    # Paginated path
+    effective_limit = min(limit or 50, 50)
+    effective_offset = offset or 0
+
+    async with get_db() as db:
+        conditions = [f"{filter_column} = ?"]
+        params: list = [filter_value]
+
+        if after is not None:
+            conditions.append("id > ?")
+            params.append(after)
+        if since:
+            conditions.append("created_at > ?")
+            params.append(since)
+        if author:
+            conditions.append("author = ?")
+            params.append(author)
+        if type:
+            conditions.append("type = ?")
+            params.append(type)
+        if pinned_only:
+            conditions.append("pinned = TRUE")
+        if attempt is not None:
+            conditions.append("attempt_number = ?")
+            params.append(attempt)
+
+        where = " AND ".join(conditions)
+
+        # Total count for pagination metadata
+        count_row = await db.execute_fetchall(
+            f"SELECT COUNT(*) as cnt FROM messages WHERE {where}", params,
+        )
+        total = count_row[0]["cnt"] if count_row else 0
+
+        # Fetch page
+        query = (
+            f"SELECT * FROM messages WHERE {where} "
+            f"ORDER BY created_at ASC LIMIT ? OFFSET ?"
+        )
+        rows = await db.execute_fetchall(query, params + [effective_limit, effective_offset])
+        messages = [_strip_embedding(dict(r)) for r in rows]
+
+        cursor = max((m["id"] for m in messages), default=after or 0)
+        has_more = (effective_offset + len(messages)) < total
+
+        return {
+            "messages": messages,
+            "cursor": cursor,
+            "total": total,
+            "has_more": has_more,
+        }
+
+
+async def _read_messages_last_n(
+    filter_column: str, filter_value: str,
+    last_n: int, since: str | None = None,
+    after: int | None = None, author: str | None = None,
+    type: str | None = None, attempt: int | None = None,
+) -> dict:
+    """Backward-compat path: pinned at top + last N non-pinned messages."""
     from switchboard.db.connection import get_db
 
     async with get_db() as db:
         # Get pinned messages first
+        pinned_conds = [f"{filter_column} = ?", "pinned = TRUE"]
+        pinned_params: list = [filter_value]
+        if attempt is not None:
+            pinned_conds.append("attempt_number = ?")
+            pinned_params.append(attempt)
         pinned_rows = await db.execute_fetchall(
-            f"SELECT * FROM messages WHERE {filter_column} = ? AND pinned = TRUE",
-            (filter_value,),
+            f"SELECT * FROM messages WHERE {' AND '.join(pinned_conds)}",
+            pinned_params,
         )
         pinned = [_strip_embedding(dict(r)) for r in pinned_rows]
         pinned_ids = {m["id"] for m in pinned}
@@ -51,13 +134,16 @@ async def _read_messages(
         if type:
             conditions.append("type = ?")
             params.append(type)
+        if attempt is not None:
+            conditions.append("attempt_number = ?")
+            params.append(attempt)
 
         where = " AND ".join(conditions)
-        query = f"SELECT * FROM messages WHERE {where} ORDER BY created_at ASC"
-
-        if last_n:
-            query = f"SELECT * FROM (SELECT * FROM messages WHERE {where} ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
-            params.append(last_n)
+        query = (
+            f"SELECT * FROM (SELECT * FROM messages WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+        )
+        params.append(last_n)
 
         rows = await db.execute_fetchall(query, params)
         messages = [_strip_embedding(dict(r)) for r in rows if r["id"] not in pinned_ids]

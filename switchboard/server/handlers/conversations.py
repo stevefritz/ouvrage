@@ -108,15 +108,57 @@ async def _handle_post(arguments):
     return result
 
 
+def _summarize_messages(result: dict) -> dict:
+    """Transform messages to summary mode: replace content with preview + char_count."""
+    summarized = []
+    for m in result["messages"]:
+        content = m.get("content") or ""
+        preview = content[:150]
+        if len(content) > 150:
+            preview += "..."
+        summarized.append({
+            "id": m["id"],
+            "title": m.get("title"),
+            "type": m.get("type"),
+            "author": m.get("author"),
+            "created_at": m.get("created_at"),
+            "pinned": m.get("pinned", False),
+            "char_count": len(content),
+            "preview": preview,
+        })
+    result["messages"] = summarized
+    return result
+
+
 async def _handle_read(arguments):
-    return await db.read_messages(
-        conversation_id=arguments["conversation_id"],
+    conversation_id = arguments["conversation_id"]
+
+    # Single message lookup — ignores all other params
+    message_id = arguments.get("message_id")
+    if message_id is not None:
+        msg = await db.get_message_by_id(message_id)
+        if msg is None:
+            return {"error": f"Message {message_id} not found"}
+        if msg.get("conversation_id") != conversation_id:
+            return {"error": f"Message {message_id} does not belong to conversation '{conversation_id}'"}
+        return {"message": msg}
+
+    result = await db.read_messages(
+        conversation_id=conversation_id,
         after=arguments.get("after"),
         last_n=arguments.get("last_n"),
         since=arguments.get("since"),
         author=arguments.get("author"),
         type=arguments.get("type"),
+        offset=arguments.get("offset"),
+        limit=arguments.get("limit"),
+        pinned_only=arguments.get("pinned_only", False),
     )
+
+    if arguments.get("summary"):
+        result = _summarize_messages(result)
+
+    return result
 
 
 async def _handle_get_pinned(arguments):
