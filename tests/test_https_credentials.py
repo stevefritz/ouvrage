@@ -169,7 +169,22 @@ class TestSetupCredentialHelper:
         self.project_id = "test-proj"
         self.pat = "ghp_test_token_12345"
 
-        self.mock_run = AsyncMock(return_value=(b"", b"", 0))
+        # side_effect that simulates file creation for bash heredoc + chmod
+        async def _simulate_run(*args, **kwargs):
+            cmd_str = " ".join(str(a) for a in args)
+            if args[0] == "bash" and args[1] == "-c" and "cat >" in args[2]:
+                # Extract path and content from the heredoc command
+                import re
+                m = re.search(r"cat > (\S+) << 'CREDEOF'\n(.*?)CREDEOF", args[2], re.DOTALL)
+                if m:
+                    path, content = m.group(1), m.group(2)
+                    with open(path, "w") as f:
+                        f.write(content)
+            elif args[0] == "chmod" and args[1] == "700":
+                os.chmod(args[2], 0o700)
+            return (b"", b"", 0)
+
+        self.mock_run = AsyncMock(side_effect=_simulate_run)
         self.mock_get_pat = AsyncMock(return_value=self.pat)
         self.mock_get_project = AsyncMock(return_value={
             "id": self.project_id,
@@ -290,8 +305,14 @@ class TestSetupCredentialHelper:
              patch("os.chown"):
             await setup_credential_helper(self.worktree, self.project_id)
 
-        # Check that no git command args contain the PAT
-        for c in self.mock_run.call_args_list:
+        # Check that no git command (config, remote) args contain the PAT.
+        # The bash heredoc that writes the credential file legitimately contains
+        # the PAT — only check actual git invocations.
+        git_calls = [
+            c for c in self.mock_run.call_args_list
+            if c.args and c.args[0] == "git"
+        ]
+        for c in git_calls:
             for arg in c.args:
                 assert self.pat not in str(arg), f"PAT found in git command: {c.args}"
 
