@@ -138,4 +138,25 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
     }),
+
+    // Instance settings (owner/admin only)
+    getInstanceSettings: () => request('/settings/instance'),
+    patchInstanceSettings: (data) => request('/settings/instance', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+    }),
+    testGithub: () => request('/settings/instance/test-github', { method: 'POST' }),
+    regenerateOAuthSecret: () => request('/settings/instance/regenerate-oauth-secret', { method: 'POST' }),
+
+    // User settings
+    getUserSettings: () => request('/settings/user'),
+    patchUserSettings: (data) => request('/settings/user', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+    }),
+    testAnthropic: () => request('/settings/user/test-anthropic', { method: 'POST' }),
+    changePassword: (data) => request('/settings/user/change-password', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
 };
