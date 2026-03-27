@@ -46,7 +46,17 @@ export function LoginView() {
                 setError('Invalid email or password.');
             } else {
                 // Success — redirect
-                window.location.href = data.redirect || nextUrl;
+                const target = data.redirect || nextUrl;
+                if (target.startsWith('/oauth/')) {
+                    // OAuth flow — navigate to authorize endpoint (which redirects
+                    // to Claude.ai callback). Claude Desktop handles the callback
+                    // and this tab ends up on claude.ai doing nothing.
+                    // Open OAuth in a popup, keep this tab on the dashboard.
+                    window.open(target, '_blank', 'width=500,height=600');
+                    window.location.href = '/foreman/';
+                    return;
+                }
+                window.location.href = target;
             }
         } catch (err) {
             setError('Connection error. Please try again.');

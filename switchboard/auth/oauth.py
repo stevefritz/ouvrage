@@ -493,12 +493,11 @@ async def handle_authorize(scope, receive, send):
     if not user_id:
         # No session — redirect to login page with next= pointing back here
         from urllib.parse import quote
-        base = _get_base_url()
-        # Reconstruct the full authorize URL
-        authorize_url = f"{base}/oauth/authorize"
+        # Use relative path so _safe_next_url accepts it (no scheme/netloc)
+        authorize_path = "/oauth/authorize"
         if qs:
-            authorize_url = f"{authorize_url}?{qs}"
-        login_url = f"/foreman/login?next={quote(authorize_url, safe='')}"
+            authorize_path = f"{authorize_path}?{qs}"
+        login_url = f"/foreman/login?next={quote(authorize_path, safe='')}"
         await _send_redirect(send, login_url)
         return
 
