@@ -715,6 +715,148 @@ class TestCheckStalledTasksRouting:
 
 
 # ---------------------------------------------------------------------------
+# check_stalled_tasks — chain advancement recovery respects held flag
+# ---------------------------------------------------------------------------
+
+class TestCheckStalledTasksHeldChain:
+    """Recovery sweep must NOT dispatch held tasks even when parent has gate-passed."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_list_tasks = AsyncMock(return_value=[])
+        self.mock_get_task = AsyncMock()
+        self.mock_update_task = AsyncMock()
+        self.mock_post_msg = AsyncMock()
+        self.mock_read_msgs = AsyncMock(return_value={"messages": []})
+        self.mock_recover = AsyncMock()
+        self.mock_notify = AsyncMock()
+        self.mock_notify.task_heartbeat = AsyncMock()
+        self.mock_sleep = AsyncMock()
+        self.mock_retry = AsyncMock()
+        self.mock_get_project = AsyncMock(return_value=None)
+        self.mock_get_component = AsyncMock(return_value=None)
+
+        patches = [
+            patch("switchboard.db.list_tasks", self.mock_list_tasks),
+            patch("switchboard.db.get_task", self.mock_get_task),
+            patch("switchboard.db.update_task", self.mock_update_task),
+            patch("switchboard.db.post_task_message", self.mock_post_msg),
+            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
+            patch("switchboard.db.get_project", self.mock_get_project),
+            patch("switchboard.db.get_component", self.mock_get_component),
+            patch("switchboard.dispatch.recovery._recover_single_task", self.mock_recover),
+            patch("switchboard.dispatch.recovery.notify", self.mock_notify),
+            patch("switchboard.dispatch.recovery.asyncio.sleep", self.mock_sleep),
+            # retry_task is imported locally in recovery.py — patch at the source module
+            patch("switchboard.dispatch.engine.retry_task", self.mock_retry),
+        ]
+        started = []
+        try:
+            for p in patches:
+                p.start()
+                started.append(p)
+        except Exception:
+            for p in started:
+                p.stop()
+            raise
+        yield
+        for p in started:
+            p.stop()
+
+    async def test_held_child_skipped_when_parent_gate_passed(self):
+        """Recovery sweep must NOT dispatch a held child even when parent gate-passed."""
+        from switchboard.dispatch.recovery import check_stalled_tasks
+
+        parent = {"id": "proj/parent", "gate_passed_at": "2026-01-01", "auto_merge": None, "pr_status": None}
+        child = {
+            "id": "proj/child", "status": "ready", "depends_on": "proj/parent",
+            "project_id": "proj", "component_id": None, "held": True,
+        }
+
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [child] if status == "ready" else []
+        )
+        self.mock_get_task.return_value = parent
+
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+
+        self.mock_retry.assert_not_awaited()
+
+    async def test_non_held_child_dispatched_when_parent_gate_passed(self):
+        """Recovery sweep MUST dispatch a non-held child when parent gate-passed."""
+        from switchboard.dispatch.recovery import check_stalled_tasks
+
+        parent = {"id": "proj/parent", "gate_passed_at": "2026-01-01", "auto_merge": None, "pr_status": None}
+        child = {
+            "id": "proj/child", "status": "ready", "depends_on": "proj/parent",
+            "project_id": "proj", "component_id": None, "held": False,
+        }
+
+        self.mock_list_tasks.side_effect = lambda status=None: (
+            [child] if status == "ready" else []
+        )
+        self.mock_get_task.return_value = parent
+
+        import asyncio as _asyncio
+        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
+        try:
+            await check_stalled_tasks()
+        except _asyncio.CancelledError:
+            pass
+
+        self.mock_retry.assert_awaited_once_with("proj/child")
+
+
+# ---------------------------------------------------------------------------
+# approve_task — held child dispatches after parent gate-passed
+# ---------------------------------------------------------------------------
+
+class TestApproveHeldChainChild:
+    """approve_task on a held child whose parent already gate-passed must dispatch it."""
+
+    async def test_approve_held_child_dispatches_when_parent_passed(self, db, sample_project):
+        """After parent gate-passes, approving the held child must trigger dispatch."""
+        from switchboard.dispatch.engine import approve_task
+
+        # Create parent task that has gate-passed
+        await db.create_task(
+            id="test-project/approve-parent", project_id="test-project",
+            goal="Parent",
+        )
+        await db.update_task("test-project/approve-parent",
+            status="completed", gate_status="passed",
+            gate_passed_at=db.now_iso(),
+        )
+
+        # Create held child task
+        await db.create_task(
+            id="test-project/approve-child", project_id="test-project",
+            goal="Child to approve", depends_on="test-project/approve-parent",
+        )
+        await db.update_task("test-project/approve-child", held=True)
+
+        # Approve the child
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={
+            "task_id": "test-project/approve-child", "status": "working",
+        })) as mock_dispatch:
+            result = await approve_task("test-project/approve-child")
+
+        # dispatch_task must have been called
+        mock_dispatch.assert_awaited_once()
+        call_kwargs = mock_dispatch.await_args.kwargs
+        assert call_kwargs["task_id"] == "test-project/approve-child"
+
+        # held flag must be cleared in DB
+        task = await db.get_task("test-project/approve-child")
+        assert not task["held"], "held flag should be cleared after approval"
+
+
+# ---------------------------------------------------------------------------
 # _ensure_branch_pushed — git push logic
 # ---------------------------------------------------------------------------
 

@@ -491,6 +491,10 @@ async def check_stalled_tasks():
                         comp = await db.get_component(task["component_id"])
                         if comp and comp.get("paused"):
                             continue
+                    # Skip held tasks — they require manual approval before dispatch
+                    if task.get("held"):
+                        log.info(f"Health check: skipping held task {task['id']} — requires manual approval")
+                        continue
                     log.warning(f"Health check: ready task {task['id']} has passed parent {parent['id']}, dispatching")
                     await db.post_task_message(
                         task_id=task["id"], author="dispatcher", type="status",
