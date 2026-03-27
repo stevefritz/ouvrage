@@ -1,0 +1,67 @@
+[
+  {
+    "id": "mcp-switchboard",
+    "name": "mcp-switchboard",
+    "repo_url": "https://github.com/stevefritz/mcp-switchboard",
+    "status": "active",
+    "model": "opus",
+    "task_count": 12,
+    "completed_count": 9,
+    "working_count": 2,
+    "failed_count": 1,
+    "last_activity": "2026-03-27T18:42:00Z",
+    "created_at": "2026-01-15T10:00:00Z"
+  },
+  {
+    "id": "laura-storefront",
+    "name": "laura-storefront",
+    "repo_url": "https://github.com/stevefritz/laura-storefront",
+    "status": "active",
+    "model": "sonnet",
+    "task_count": 7,
+    "completed_count": 5,
+    "working_count": 1,
+    "failed_count": 0,
+    "last_activity": "2026-03-27T14:30:00Z",
+    "created_at": "2026-02-01T09:00:00Z"
+  },
+  {
+    "id": "ledger-app",
+    "name": "ledger-app",
+    "repo_url": "https://github.com/stevefritz/ledger-app",
+    "status": "active",
+    "model": "opus",
+    "task_count": 4,
+    "completed_count": 4,
+    "working_count": 0,
+    "failed_count": 0,
+    "last_activity": "2026-03-25T22:15:00Z",
+    "created_at": "2026-02-20T11:00:00Z"
+  },
+  {
+    "id": "shopify-extensions",
+    "name": "shopify-extensions",
+    "repo_url": "https://github.com/stevefritz/shopify-extensions",
+    "status": "paused",
+    "model": "sonnet",
+    "task_count": 3,
+    "completed_count": 2,
+    "working_count": 0,
+    "failed_count": 1,
+    "last_activity": "2026-03-20T16:00:00Z",
+    "created_at": "2026-03-01T08:00:00Z"
+  },
+  {
+    "id": "graphiti-memory",
+    "name": "graphiti-memory",
+    "repo_url": "https://github.com/stevefritz/graphiti-memory",
+    "status": "idle",
+    "model": "opus",
+    "task_count": 1,
+    "completed_count": 1,
+    "working_count": 0,
+    "failed_count": 0,
+    "last_activity": "2026-03-10T12:00:00Z",
+    "created_at": "2026-03-05T14:00:00Z"
+  }
+]

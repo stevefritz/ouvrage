@@ -1,0 +1,34 @@
+{
+  "serve_dir": ".",
+  "pages": {
+    "settings": {
+      "url": "/foreman#/settings",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json"
+      },
+      "reference": "fixtures/visual/ref-settings.png",
+      "wait_ms": 1500
+    },
+    "settings-mobile": {
+      "url": "/foreman#/settings",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json"
+      },
+      "reference": "fixtures/visual/ref-settings-mobile.png",
+      "wait_ms": 1500
+    },
+    "landing": {
+      "url": "/foreman#/",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects": "fixtures/visual/projects.json"
+      },
+      "reference": "fixtures/visual/ref-landing.png",
+      "wait_ms": 1500
+    }
+  }
+}

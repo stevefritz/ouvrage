@@ -239,6 +239,22 @@ The Foreman SPA lives in `dashboard/`. Tech stack:
 
 Do NOT add a build step, bundler, or node_modules. Keep it CDN-loaded ES modules.
 
+## Visual Verification (Dashboard Tasks)
+
+When working on dashboard UI, use the visual check tool to see what your changes look like:
+
+```bash
+python3 scripts/visual-check.py settings              # desktop settings
+python3 scripts/visual-check.py settings-mobile        # mobile settings
+python3 scripts/visual-check.py landing                # projects page
+```
+
+This renders the page with mock data via Playwright and saves a screenshot to /tmp/.
+Read the screenshot and compare to the reference image in fixtures/visual/.
+Iterate until your output matches the reference.
+
+Adding new pages: add an entry to scripts/visual-config.json and create mock fixtures.
+
 ## Things NOT to do
 
 - Don't add frameworks (FastAPI, Flask, Django) — this is raw ASGI by design
