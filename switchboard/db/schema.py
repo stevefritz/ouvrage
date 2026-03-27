@@ -259,6 +259,7 @@ async def init_db():
                 stored_path TEXT NOT NULL,
                 mime_type TEXT,
                 size_bytes INTEGER,
+                task_id TEXT REFERENCES tasks(id),
                 uploaded_by INTEGER REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP
@@ -484,6 +485,16 @@ async def init_db():
         push_col_names = [c["name"] for c in push_columns]
         if "user_id" not in push_col_names:
             await conn.execute("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER REFERENCES users(id)")
+
+        # Migrate files: add task_id FK
+        files_table = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+        )
+        if files_table:
+            files_columns = await conn.execute_fetchall("PRAGMA table_info(files)")
+            files_col_names = [c["name"] for c in files_columns]
+            if "task_id" not in files_col_names:
+                await conn.execute("ALTER TABLE files ADD COLUMN task_id TEXT REFERENCES tasks(id)")
 
         # ---------------------------------------------------------------------------
         # Bootstrap migration: seed default owner user and instance if users is empty.
