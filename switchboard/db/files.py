@@ -41,12 +41,12 @@ async def list_files() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def update_file(id: str, filename: str, stored_path: str) -> dict | None:
+async def update_file(id: str, filename: str, stored_path: str, mime_type: str | None = None) -> dict | None:
     ts = now_iso()
     async with get_db() as conn:
         await conn.execute(
-            "UPDATE files SET filename = ?, stored_path = ?, updated_at = ? WHERE id = ?",
-            (filename, stored_path, ts, id),
+            "UPDATE files SET filename = ?, stored_path = ?, mime_type = ?, updated_at = ? WHERE id = ?",
+            (filename, stored_path, mime_type, ts, id),
         )
         await conn.commit()
     return await get_file(id)

@@ -238,6 +238,21 @@ class TestUploadFile:
         assert stored.parent.parent == tmp_uploads
         assert stored.name == "data.json"
 
+    async def test_upload_path_traversal_stripped(self, db, tmp_uploads):
+        """Path traversal in upload filename is neutralized."""
+        file_data = b"evil"
+        body, boundary = _make_multipart("../../evil.txt", file_data)
+        scope = _upload_scope("../../evil.txt", body, boundary)
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 201
+        data = resp.json()
+        # filename should be stripped to just "evil.txt"
+        assert data["filename"] == "evil.txt"
+        stored = Path(data["stored_path"])
+        # File must be inside the uploads dir, not escaped
+        assert tmp_uploads in stored.parents
+
 
 # ── Type validation ────────────────────────────────────────────────────────
 
@@ -399,6 +414,31 @@ class TestRenameFile:
         resp = _Capture()
         await handle_request(scope, _make_receive(body), resp)
         assert resp.status == 400
+
+    async def test_rename_path_traversal_stripped(self, db, tmp_uploads):
+        """Path traversal in rename filename is neutralized."""
+        fid, old_path = await self._insert_file(tmp_uploads)
+        body = json.dumps({"filename": "../../evil.txt"}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}", "PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 200
+        # Should have stripped to just "evil.txt" in the same UUID dir
+        data = resp.json()
+        assert data["filename"] == "evil.txt"
+        assert Path(data["stored_path"]).parent == old_path.parent
+
+    async def test_rename_updates_mime_type(self, db, tmp_uploads):
+        """Renaming to a different extension updates mime_type in DB."""
+        fid, _ = await self._insert_file(tmp_uploads)
+        # Rename from .txt to .md — mime_type should update
+        body = json.dumps({"filename": "renamed.md"}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}", "PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["mime_type"] == "text/markdown"
 
 
 # ── DELETE /dashboard/api/files/{id} ──────────────────────────────────────

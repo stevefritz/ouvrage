@@ -1369,6 +1369,11 @@ async def _handle_upload_file(scope, receive, send):
     if filename is None or file_data is None:
         return await _error(send, "No file found in request", 400)
 
+    # Sanitize filename — strip all directory components to prevent path traversal
+    filename = Path(filename).name
+    if not filename:
+        return await _error(send, "Invalid filename", 400)
+
     # Check actual file data size
     if len(file_data) > MAX_FILE_SIZE:
         return await _error(send, "File too large. Maximum 10MB.", 413)
@@ -1416,6 +1421,11 @@ async def _handle_rename_file(receive, send, file_id: str, scope):
     if not new_name:
         return await _error(send, "filename is required")
 
+    # Sanitize filename — strip all directory components to prevent path traversal
+    new_name = Path(new_name).name
+    if not new_name:
+        return await _error(send, "Invalid filename", 400)
+
     # Validate extension of new name
     ext = new_name.rsplit(".", 1)[-1].lower() if "." in new_name else ""
     if ext not in ALLOWED_EXTENSIONS:
@@ -1431,7 +1441,8 @@ async def _handle_rename_file(receive, send, file_id: str, scope):
     if old_path != new_path:
         old_path.rename(new_path)
 
-    updated = await db.update_file(file_id, new_name, str(new_path))
+    new_mime = MIME_TYPES.get(ext)
+    updated = await db.update_file(file_id, new_name, str(new_path), mime_type=new_mime)
     await _json_response(send, updated)
 
 
