@@ -18,6 +18,7 @@ _USER_MUTABLE_FIELDS = frozenset({
 })
 _INSTANCE_MUTABLE_FIELDS = frozenset({
     "name", "slug", "stripe_customer_id", "plan_tier", "owner_user_id",
+    "github_pat_encrypted",
 })
 _CREDENTIALS_MUTABLE_FIELDS = frozenset({
     "anthropic_api_key", "github_pat", "slack_webhook_url",
@@ -139,6 +140,28 @@ async def update_instance(**fields) -> dict:
         if not rows:
             raise ValueError("Instance row not found")
         return dict(rows[0])
+
+
+async def set_instance_github_pat(pat: str) -> None:
+    """Encrypt and store a GitHub PAT on the instance row."""
+    encrypted = encrypt_value(pat)
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE instance SET github_pat_encrypted = ? WHERE id = 1",
+            (encrypted,),
+        )
+        await db.commit()
+
+
+async def get_instance_github_pat() -> str:
+    """Return the decrypted instance-level GitHub PAT. Raises ValueError if not set."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT github_pat_encrypted FROM instance WHERE id = 1"
+        )
+    if not rows or not rows[0]["github_pat_encrypted"]:
+        raise ValueError("No GitHub PAT configured. Add one in settings.")
+    return decrypt_value(rows[0]["github_pat_encrypted"])
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +313,7 @@ async def list_api_tokens(user_id: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 async def get_github_pat(project_id: str) -> str:
-    """Resolve GitHub PAT: project.github_pat_override → owner's github_pat → error.
+    """Resolve GitHub PAT: project.github_pat_override → instance.github_pat_encrypted → error.
 
     Decrypts the value before returning.
     """
@@ -302,12 +325,10 @@ async def get_github_pat(project_id: str) -> str:
         override = project["github_pat_override"]
         return decrypt_value(override) if is_fernet_token(override) else override
 
-    instance = await get_instance()
-    if not instance:
-        raise ValueError("No GitHub PAT configured. Add one in settings or on the project.")
-    creds = await get_user_credentials(instance["owner_user_id"])
-    if creds and creds.get("github_pat"):
-        return creds["github_pat"]  # already decrypted by get_user_credentials
+    try:
+        return await get_instance_github_pat()
+    except ValueError:
+        pass
     raise ValueError("No GitHub PAT configured. Add one in settings or on the project.")
 
 
