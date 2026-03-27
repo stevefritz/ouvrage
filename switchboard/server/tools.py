@@ -1029,6 +1029,21 @@ TOKEN_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Files Tools
+# ---------------------------------------------------------------------------
+
+FILES_TOOLS = [
+    Tool(
+        name="list_files",
+        description="List all uploaded files with their absolute paths on disk. CC uses this to discover available reference files.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Full tools list
 # ---------------------------------------------------------------------------
 
@@ -1042,4 +1057,5 @@ TOOLS = (
     + CONTROL_TOOLS
     + RAG_TOOLS
     + TOKEN_TOOLS
+    + FILES_TOOLS
 )

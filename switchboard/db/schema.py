@@ -1,4 +1,6 @@
 """Database schema initialization and migrations."""
+from pathlib import Path
+
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import now_iso
 
@@ -249,6 +251,17 @@ async def init_db():
                 access_token_expires_at INTEGER,
                 refresh_token_expires_at INTEGER,
                 revoked INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                mime_type TEXT,
+                size_bytes INTEGER,
+                uploaded_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP
             );
         """)
 
@@ -628,3 +641,7 @@ async def init_db():
                         _schema_log.warning(f"Failed to update bare repo remote for '{row['id']}': {stderr.decode().strip()}")
 
         await conn.commit()
+
+    # Ensure ~/uploads/ directory exists for file storage
+    uploads_dir = Path.home() / "uploads"
+    uploads_dir.mkdir(exist_ok=True)
