@@ -392,40 +392,44 @@ export function SecretRow({ label, value, onCopy, alwaysVisible = false }) {
 
     return html`
         <div style=${{
-            display: 'flex',
-            alignItems: 'center',
-            gap: spacing[2],
+            border: `0.5px solid ${colors.border}`,
+            borderRadius: layout.borderRadius.md,
+            padding: `${spacing[2]} ${spacing[3]}`,
             marginBottom: spacing[2],
         }}>
-            <span style=${{
-                ...styles.label,
-                marginBottom: 0,
-                flexShrink: 0,
-                minWidth: '88px',
-            }}>${label}</span>
+            <div style=${{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '4px',
+            }}>
+                <span style=${{ ...styles.label, marginBottom: 0 }}>${label}</span>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: spacing[1] }}>
+                    ${!alwaysVisible && html`
+                        <button
+                            style=${smallBtnStyle(hoverShow)}
+                            onMouseEnter=${() => setHoverShow(true)}
+                            onMouseLeave=${() => setHoverShow(false)}
+                            onClick=${() => setVisible(v => !v)}
+                        >${visible ? 'Hide' : 'Show'}</button>
+                    `}
+                    <button
+                        style=${smallBtnStyle(hoverCopy)}
+                        onMouseEnter=${() => setHoverCopy(true)}
+                        onMouseLeave=${() => setHoverCopy(false)}
+                        onClick=${handleCopy}
+                    >${copied ? 'Copied!' : 'Copy'}</button>
+                </div>
+            </div>
             <span style=${{
                 fontFamily: typography.fontMono,
                 fontSize: typography.size.sm,
                 color: colors.textSecondary,
-                flex: 1,
+                display: 'block',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
             }}>${displayValue}</span>
-            ${!alwaysVisible && html`
-                <button
-                    style=${smallBtnStyle(hoverShow)}
-                    onMouseEnter=${() => setHoverShow(true)}
-                    onMouseLeave=${() => setHoverShow(false)}
-                    onClick=${() => setVisible(v => !v)}
-                >${visible ? 'Hide' : 'Show'}</button>
-            `}
-            <button
-                style=${smallBtnStyle(hoverCopy)}
-                onMouseEnter=${() => setHoverCopy(true)}
-                onMouseLeave=${() => setHoverCopy(false)}
-                onClick=${handleCopy}
-            >${copied ? 'Copied!' : 'Copy'}</button>
         </div>
     `;
 }
