@@ -324,7 +324,6 @@ async def _maybe_create_pr(task_id: str) -> None:
 
     worktree = task.get("worktree_path")
     branch = task.get("branch")
-    default_branch = project["default_branch"]
 
     if not worktree or not branch:
         return
@@ -349,11 +348,14 @@ async def _maybe_create_pr(task_id: str) -> None:
     title = task["goal"][:70]
     body = "## Summary\n" + "\n".join(f"- {g}" for g in goals)
 
-    log.info(f"Auto-creating PR for {task_id}: {branch} → {default_branch}")
+    # Resolve base: task.base_branch → component.base_branch → project.default_branch → 'main'
+    base = await resolve_branch_target(task)
+
+    log.info(f"Auto-creating PR for {task_id}: {branch} → {base}")
     try:
         result = await create_github_pr(
             pat=pat, owner=owner, repo=repo,
-            head=branch, base=default_branch,
+            head=branch, base=base,
             title=title, body=body,
         )
         pr_url = result["url"]
