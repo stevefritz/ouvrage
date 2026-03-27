@@ -139,31 +139,24 @@ export const api = {
         body: JSON.stringify(data),
     }),
 
-    // Profile
-    getProfile: () => request('/settings/profile'),
-    updateProfile: (data) => request('/settings/profile', {
-        method: 'POST',
+    // Instance settings (owner/admin only)
+    getInstanceSettings: () => request('/settings/instance'),
+    patchInstanceSettings: (data) => request('/settings/instance', {
+        method: 'PATCH',
         body: JSON.stringify(data),
     }),
+    testGithub: () => request('/settings/instance/test-github', { method: 'POST' }),
+    regenerateOAuthSecret: () => request('/settings/instance/regenerate-oauth-secret', { method: 'POST' }),
 
-    // Credentials
-    getCredentials: () => request('/settings/credentials'),
-    updateCredential: (field, value) => request('/settings/credentials', {
-        method: 'POST',
-        body: JSON.stringify({ field, value }),
+    // User settings
+    getUserSettings: () => request('/settings/user'),
+    patchUserSettings: (data) => request('/settings/user', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
     }),
-    testCredential: (field) => request('/settings/credentials/test', {
+    testAnthropic: () => request('/settings/user/test-anthropic', { method: 'POST' }),
+    changePassword: (data) => request('/settings/user/change-password', {
         method: 'POST',
-        body: JSON.stringify({ field }),
-    }),
-
-    // OAuth
-    getOAuth: () => request('/settings/oauth'),
-    regenerateOAuthSecret: () => request('/settings/oauth/regenerate', { method: 'POST' }),
-
-    // Password
-    changePassword: (current_password, new_password, confirm_password) => request('/settings/password', {
-        method: 'POST',
-        body: JSON.stringify({ current_password, new_password, confirm_password }),
+        body: JSON.stringify(data),
     }),
 };

@@ -1,7 +1,6 @@
 import { html } from './utils.js';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { colors } from '../tokens.js';
 
 // ── Shared styles ────────────────────────────────────────────────────────
 
@@ -81,13 +80,13 @@ const styles = {
         width: '6px',
         height: '6px',
         borderRadius: '50%',
-        background: colors.green,
+        background: 'var(--f-green)',
         display: 'inline-block',
         flexShrink: 0,
     },
-    successText: { color: colors.green, fontSize: '12px' },
-    errorText: { color: colors.red, fontSize: '12px' },
-    savedBadge: { color: colors.green, fontSize: '11px', fontWeight: 500 },
+    successText: { color: 'var(--f-green)', fontSize: '12px' },
+    errorText: { color: 'var(--f-red)', fontSize: '12px' },
+    savedBadge: { color: 'var(--f-green)', fontSize: '11px', fontWeight: 500 },
 };
 
 
@@ -121,7 +120,7 @@ function Toggle({ checked, onChange, disabled = false }) {
 
 // ── Credential card (GitHub / Anthropic) ─────────────────────────────────
 
-function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
+function CredentialCard({ name, icon, connected, masked, onUpdate, onTest, testLabel }) {
     const [editing, setEditing] = useState(false);
     const [value, setValue] = useState('');
     const [saving, setSaving] = useState(false);
@@ -129,8 +128,6 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
     const [testResult, setTestResult] = useState(null);
     const [error, setError] = useState(null);
     const inputRef = useRef(null);
-
-    const connected = !!masked;
 
     useEffect(() => {
         if (editing && inputRef.current) inputRef.current.focus();
@@ -141,7 +138,7 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
         setSaving(true);
         setError(null);
         try {
-            await onUpdate(field, value.trim());
+            await onUpdate(value.trim());
             setValue('');
             setEditing(false);
         } catch (e) {
@@ -155,10 +152,10 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
         setTesting(true);
         setTestResult(null);
         try {
-            const result = await onTest(field);
+            const result = await onTest();
             setTestResult(result);
         } catch (e) {
-            setTestResult({ ok: false, error: e.message });
+            setTestResult({ valid: false, error: e.message });
         } finally {
             setTesting(false);
         }
@@ -176,14 +173,14 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
                             <span style=${{ fontSize: '12px', color: 'var(--f-text-tertiary)' }}>Connected</span>
                         </span>
                     `}
-                    ${connected && html`
-                        <span style=${{ ...styles.mono, color: 'var(--f-text-tertiary)' }}>${masked}</span>
+                    ${masked && html`
+                        <span style=${{ ...styles.mono, color: 'var(--f-text-tertiary)' }}>••••${masked}</span>
                     `}
                 </div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                     ${connected && html`
                         <button style=${styles.btnSecondary} onClick=${handleTest} disabled=${testing}>
-                            ${testing ? 'Testing…' : 'Test'}
+                            ${testing ? 'Testing…' : (testLabel || 'Test')}
                         </button>
                     `}
                     <button style=${styles.btnSecondary} onClick=${() => { setEditing(!editing); setError(null); setTestResult(null); }}>
@@ -194,8 +191,8 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
 
             ${testResult && html`
                 <div style=${{ marginTop: '8px' }}>
-                    ${testResult.ok
-                        ? html`<span style=${styles.successText}>${testResult.detail || 'Valid'}</span>`
+                    ${testResult.valid
+                        ? html`<span style=${styles.successText}>${testResult.username ? 'Valid — ' + testResult.username : 'Valid'}</span>`
                         : html`<span style=${styles.errorText}>${testResult.error || 'Failed'}</span>`
                     }
                 </div>
@@ -206,7 +203,7 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
                     <input
                         ref=${inputRef}
                         type="password"
-                        placeholder=${field === 'github_pat' ? 'ghp_...' : 'sk-ant-...'}
+                        placeholder=${name === 'GitHub' ? 'ghp_...' : 'sk-ant-...'}
                         value=${value}
                         onInput=${e => setValue(e.target.value)}
                         onKeyDown=${e => e.key === 'Enter' && handleSave()}
@@ -228,12 +225,20 @@ function CredentialCard({ name, icon, field, masked, onUpdate, onTest }) {
 
 function OAuthCard({ oauth, onRegenerate }) {
     const [showSecret, setShowSecret] = useState(false);
-    const [fullSecret, setFullSecret] = useState(null);
     const [confirmRegen, setConfirmRegen] = useState(false);
     const [regenerating, setRegenerating] = useState(false);
+    const [regenError, setRegenError] = useState(null);
     const [copied, setCopied] = useState(null);
+    // Track the latest secret (from initial load or regeneration)
+    const [currentSecret, setCurrentSecret] = useState(oauth?.client_secret || null);
+
+    // Sync when oauth prop updates (initial load)
+    useEffect(() => {
+        if (oauth?.client_secret) setCurrentSecret(oauth.client_secret);
+    }, [oauth?.client_secret]);
 
     const copyToClipboard = async (text, label) => {
+        if (!text) return;
         try {
             await navigator.clipboard.writeText(text);
             setCopied(label);
@@ -243,21 +248,24 @@ function OAuthCard({ oauth, onRegenerate }) {
 
     const handleRegenerate = async () => {
         setRegenerating(true);
+        setRegenError(null);
         try {
             const result = await onRegenerate();
-            setFullSecret(result.client_secret);
+            setCurrentSecret(result.client_secret);
             setShowSecret(true);
             setConfirmRegen(false);
         } catch (e) {
-            // error handling
+            setRegenError(e.message || 'Failed to regenerate secret');
         } finally {
             setRegenerating(false);
         }
     };
 
-    const secretDisplay = showSecret && fullSecret
-        ? fullSecret
-        : (oauth?.client_secret_masked || '••••••••••••');
+    const secretDisplay = showSecret && currentSecret
+        ? currentSecret
+        : '••••••••••••••••••••••';
+
+    const hasSecret = !!currentSecret;
 
     return html`
         <div style=${styles.card}>
@@ -288,15 +296,15 @@ function OAuthCard({ oauth, onRegenerate }) {
                         <span style=${{ ...styles.mono, color: 'var(--f-text-secondary)', wordBreak: 'break-all' }}>${secretDisplay}</span>
                     </div>
                     <div style=${{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                        ${fullSecret && html`
+                        ${hasSecret && html`
                             <button style=${styles.btnSecondary} onClick=${() => setShowSecret(!showSecret)}>
                                 ${showSecret ? 'Hide' : 'Show'}
                             </button>
                         `}
                         <button
                             style=${styles.btnSecondary}
-                            onClick=${() => copyToClipboard(fullSecret || '', 'secret')}
-                            disabled=${!fullSecret}
+                            onClick=${() => copyToClipboard(currentSecret, 'secret')}
+                            disabled=${!hasSecret}
                         >${copied === 'secret' ? 'Copied!' : 'Copy'}</button>
                     </div>
                 </div>
@@ -304,6 +312,7 @@ function OAuthCard({ oauth, onRegenerate }) {
 
             <!-- Regenerate -->
             <div style=${{ marginTop: '14px', borderTop: '0.5px solid var(--f-border)', paddingTop: '12px' }}>
+                ${regenError && html`<div style=${{ ...styles.errorText, marginBottom: '8px' }}>${regenError}</div>`}
                 ${!confirmRegen
                     ? html`
                         <button style=${styles.btnDanger} onClick=${() => setConfirmRegen(true)}>
@@ -319,7 +328,7 @@ function OAuthCard({ oauth, onRegenerate }) {
                             <button style=${styles.btnDanger} onClick=${handleRegenerate} disabled=${regenerating}>
                                 ${regenerating ? 'Regenerating…' : 'Yes, regenerate'}
                             </button>
-                            <button style=${styles.btnSecondary} onClick=${() => setConfirmRegen(false)}>Cancel</button>
+                            <button style=${styles.btnSecondary} onClick=${() => { setConfirmRegen(false); setRegenError(null); }}>Cancel</button>
                         </div>
                     `
                 }
@@ -351,8 +360,7 @@ function ProfileCard({ profile: initial, onSave }) {
         setSaving(true);
         setError(null);
         try {
-            const updated = await onSave(profile);
-            setProfile(updated);
+            await onSave(profile);
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } catch (e) {
@@ -420,10 +428,14 @@ function PasswordCard() {
     const [result, setResult] = useState(null);
 
     const handleSubmit = async () => {
+        if (newPw !== confirm) {
+            setResult({ ok: false, error: 'New passwords do not match' });
+            return;
+        }
         setSaving(true);
         setResult(null);
         try {
-            await api.changePassword(current, newPw, confirm);
+            await api.changePassword({ current_password: current, new_password: newPw });
             setResult({ ok: true });
             setCurrent('');
             setNewPw('');
@@ -547,23 +559,29 @@ export function Settings() {
     const [pushError, setPushError] = useState(null);
 
     // Notification types
-    const [settings, setSettings] = useState(null);
-    const [settingsSaving, setSettingsSaving] = useState(false);
-    const [settingsError, setSettingsError] = useState(null);
+    const [notifSettings, setNotifSettings] = useState(null);
+    const [notifSaving, setNotifSaving] = useState(false);
+    const [notifError, setNotifError] = useState(null);
 
-    // Profile, credentials, oauth
-    const [profile, setProfile] = useState(null);
-    const [credentials, setCredentials] = useState(null);
-    const [oauth, setOAuth] = useState(null);
+    // Instance settings (github, oauth)
+    const [instanceData, setInstanceData] = useState(null);
+
+    // User settings (profile, anthropic)
+    const [userData, setUserData] = useState(null);
 
     // Load all data on mount
     useEffect(() => {
         getPushState().then(setPush);
-        api.getNotificationSettings().then(setSettings).catch(e => setSettingsError(e.message));
-        api.getProfile().then(setProfile).catch(() => {});
-        api.getCredentials().then(setCredentials).catch(() => {});
-        api.getOAuth().then(setOAuth).catch(() => {});
+        api.getNotificationSettings().then(setNotifSettings).catch(e => setNotifError(e.message));
+        api.getInstanceSettings().then(setInstanceData).catch(() => {});
+        api.getUserSettings().then(setUserData).catch(() => {});
     }, []);
+
+    // Derived data
+    const github = instanceData?.github || {};
+    const oauth = instanceData?.oauth || {};
+    const profile = userData?.profile || null;
+    const anthropic = userData?.anthropic || {};
 
     const handlePushToggle = useCallback(async () => {
         setPushError(null);
@@ -584,39 +602,62 @@ export function Settings() {
         }
     }, [push]);
 
-    const handleSettingToggle = useCallback(async (key, value) => {
-        setSettingsError(null);
-        const prev = settings;
-        setSettings({ ...settings, [key]: value });
-        setSettingsSaving(true);
+    const handleNotifToggle = useCallback(async (key, value) => {
+        setNotifError(null);
+        const prev = notifSettings;
+        setNotifSettings({ ...notifSettings, [key]: value });
+        setNotifSaving(true);
         try {
             const saved = await api.updateNotificationSettings({ [key]: value });
-            setSettings(saved);
+            setNotifSettings(saved);
         } catch (e) {
-            setSettingsError(e.message);
-            setSettings(prev);
+            setNotifError(e.message);
+            setNotifSettings(prev);
         } finally {
-            setSettingsSaving(false);
+            setNotifSaving(false);
         }
-    }, [settings]);
+    }, [notifSettings]);
 
-    const handleUpdateCredential = async (field, value) => {
-        const updated = await api.updateCredential(field, value);
-        setCredentials(updated);
+    // GitHub PAT update
+    const handleUpdateGithub = async (value) => {
+        await api.patchInstanceSettings({ github_pat: value });
+        // Reload instance settings to get fresh connection status
+        const fresh = await api.getInstanceSettings();
+        setInstanceData(fresh);
     };
 
-    const handleTestCredential = async (field) => {
-        return await api.testCredential(field);
+    // GitHub test
+    const handleTestGithub = async () => {
+        return await api.testGithub();
     };
 
+    // Anthropic key update
+    const handleUpdateAnthropic = async (value) => {
+        await api.patchUserSettings({ anthropic_api_key: value });
+        const fresh = await api.getUserSettings();
+        setUserData(fresh);
+    };
+
+    // Anthropic test
+    const handleTestAnthropic = async () => {
+        return await api.testAnthropic();
+    };
+
+    // Profile save
     const handleSaveProfile = async (data) => {
-        const updated = await api.updateProfile(data);
-        return updated;
+        await api.patchUserSettings({ name: data.name, email: data.email, timezone: data.timezone });
+        const fresh = await api.getUserSettings();
+        setUserData(fresh);
     };
 
+    // OAuth regenerate
     const handleRegenerateSecret = async () => {
         const result = await api.regenerateOAuthSecret();
-        setOAuth({ client_id: result.client_id, client_secret_masked: null });
+        // Update instance data with new secret
+        setInstanceData(prev => ({
+            ...prev,
+            oauth: { client_id: result.client_id, client_secret: result.client_secret },
+        }));
         return result;
     };
 
@@ -630,22 +671,25 @@ export function Settings() {
 
             <${OAuthCard} oauth=${oauth} onRegenerate=${handleRegenerateSecret} />
 
+            <${CredentialCard}
+                name="GitHub" icon="🐙"
+                connected=${github.connected}
+                masked=${github.pat_last4}
+                onUpdate=${handleUpdateGithub}
+                onTest=${handleTestGithub}
+            />
+
             <div style=${{ marginBottom: '28px' }} />
 
             <!-- ── ACCOUNT ───────────────────────────────────── -->
             <div style=${styles.sectionLabel}>Account</div>
 
             <${CredentialCard}
-                name="GitHub" icon="🐙" field="github_pat"
-                masked=${credentials?.github_pat}
-                onUpdate=${handleUpdateCredential}
-                onTest=${handleTestCredential}
-            />
-            <${CredentialCard}
-                name="Anthropic" icon="🔑" field="anthropic_api_key"
-                masked=${credentials?.anthropic_api_key}
-                onUpdate=${handleUpdateCredential}
-                onTest=${handleTestCredential}
+                name="Anthropic" icon="🔑"
+                connected=${anthropic.configured}
+                masked=${anthropic.key_last4}
+                onUpdate=${handleUpdateAnthropic}
+                onTest=${handleTestAnthropic}
             />
 
             <${ProfileCard} profile=${profile} onSave=${handleSaveProfile} />
@@ -683,41 +727,41 @@ export function Settings() {
 
                 ${push.subscribed && html`
                     <div style=${{ borderTop: '0.5px solid var(--f-border)', marginTop: '12px', paddingTop: '12px' }}>
-                        ${settingsError && html`<div style=${{ ...styles.errorText, marginBottom: '8px' }}>${settingsError}</div>`}
+                        ${notifError && html`<div style=${{ ...styles.errorText, marginBottom: '8px' }}>${notifError}</div>`}
 
-                        ${!settings && !settingsError && html`
+                        ${!notifSettings && !notifError && html`
                             <div style=${{ fontSize: '13px', color: 'var(--f-text-tertiary)' }}>Loading…</div>
                         `}
 
-                        ${settings && html`
+                        ${notifSettings && html`
                             <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 <${NotifRow}
                                     label="Task failed"
                                     description="Task ends with an error or exception."
-                                    checked=${!!settings.notify_failed}
-                                    disabled=${settingsSaving}
-                                    onChange=${v => handleSettingToggle('notify_failed', v)}
+                                    checked=${!!notifSettings.notify_failed}
+                                    disabled=${notifSaving}
+                                    onChange=${v => handleNotifToggle('notify_failed', v)}
                                 />
                                 <${NotifRow}
                                     label="Needs review"
                                     description="Task timed out, lost its process, or ended without a result."
-                                    checked=${!!settings.notify_needs_review}
-                                    disabled=${settingsSaving}
-                                    onChange=${v => handleSettingToggle('notify_needs_review', v)}
+                                    checked=${!!notifSettings.notify_needs_review}
+                                    disabled=${notifSaving}
+                                    onChange=${v => handleNotifToggle('notify_needs_review', v)}
                                 />
                                 <${NotifRow}
                                     label="CC posted a question"
                                     description="Task is paused waiting for your input."
-                                    checked=${!!settings.notify_question}
-                                    disabled=${settingsSaving}
-                                    onChange=${v => handleSettingToggle('notify_question', v)}
+                                    checked=${!!notifSettings.notify_question}
+                                    disabled=${notifSaving}
+                                    onChange=${v => handleNotifToggle('notify_question', v)}
                                 />
                                 <${NotifRow}
                                     label="Task completed"
                                     description="Task finishes successfully. Off by default to reduce noise."
-                                    checked=${!!settings.notify_completed}
-                                    disabled=${settingsSaving}
-                                    onChange=${v => handleSettingToggle('notify_completed', v)}
+                                    checked=${!!notifSettings.notify_completed}
+                                    disabled=${notifSaving}
+                                    onChange=${v => handleNotifToggle('notify_completed', v)}
                                 />
                             </div>
                         `}
