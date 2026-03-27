@@ -148,6 +148,24 @@ export const api = {
     testGithub: () => request('/settings/instance/test-github', { method: 'POST' }),
     regenerateOAuthSecret: () => request('/settings/instance/regenerate-oauth-secret', { method: 'POST' }),
 
+    // Files
+    getFiles: () => request('/files'),
+    renameFile: (id, filename) => request(`/files/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ filename }),
+    }),
+    deleteFile: (id) => request(`/files/${id}`, { method: 'DELETE' }),
+    uploadFile: async (file) => {
+        const form = new FormData();
+        form.append('file', file);
+        const resp = await fetch(BASE + '/files', { method: 'POST', body: form });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: resp.statusText }));
+            throw new Error(err.error || resp.statusText);
+        }
+        return resp.json();
+    },
+
     // User settings
     getUserSettings: () => request('/settings/user'),
     patchUserSettings: (data) => request('/settings/user', {
