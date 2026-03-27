@@ -12,6 +12,23 @@ worktrees, test gates, review gates, dependency chains, and crash recovery.
 - Run targeted tests (specific files/functions) during development, the gate handles the full suite
 - If you need to stop a background process, use `timeout` on the original command instead
 
+## Git environment — READ THIS
+
+You are working in a **git worktree**, not a regular clone. Your worktree is linked to a
+shared bare repo. This has implications:
+
+- **Do NOT modify git config** — `git config` writes to the shared bare repo config and
+  affects all other worktrees. Never run `git config` directly.
+- **Pushing works automatically** — a credential helper is pre-configured. Just `git push origin <branch>`.
+  Do not set up your own credentials, SSH keys, or remotes.
+- **Your remote is HTTPS** — not SSH. Don't change it.
+- **Your branch is yours** — commit freely, push when ready. The branch was created for this task.
+- **Don't touch other branches** — don't checkout main, don't merge main into your branch,
+  don't rebase. Switchboard handles merging after your task passes gates.
+- **Don't run `git worktree` commands** — the worktree lifecycle is managed by Switchboard.
+
+If you need to see what's on main, use `git log origin/main` (read-only). Do not checkout or merge it.
+
 ## Running tests
 
 ```bash
