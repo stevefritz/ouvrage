@@ -77,6 +77,15 @@ anyio.open_process = _isolated_open_process
 # Prompt Building
 # ---------------------------------------------------------------------------
 
+def _human_size_prompt(size_bytes: int) -> str:
+    """Format byte count as human-readable string for prompt injection."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f}MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    return f"{size_bytes}B"
+
+
 async def _build_task_prompt(project: dict, task: dict, spec_content: str | None,
                              checklist: list[dict] | None = None,
                              escalation_criteria: str | None = None,
@@ -137,6 +146,19 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         for item in checklist:
             status = "✅" if item.get("done") else "⬜"
             parts.append(f"- {status} (item_id={item['id']}) {item['item']}")
+        parts.append("")
+
+    # Inject task-attached reference files
+    task_files = await db.list_files(task_id=task["id"])
+    if task_files:
+        parts.append("## Reference Files")
+        parts.append("The following files were uploaded for this task:")
+        for f in task_files:
+            size_bytes = f.get("size_bytes") or 0
+            human_size = _human_size_prompt(size_bytes)
+            parts.append(f"- {f['stored_path']} ({f.get('mime_type', 'unknown')}, {human_size})")
+        parts.append("")
+        parts.append("Read these files when relevant to your task.")
         parts.append("")
 
     parts.append("## Instructions")
