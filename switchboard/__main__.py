@@ -61,6 +61,13 @@ def _migrate_auth(args):
     else:
         print(f"\nMigration complete. Owner user id={result['owner_id']}")
 
+    # Force exit — aiosqlite singleton connection doesn't close cleanly on asyncio.run() shutdown
+    import sys as _sys
+    _sys.stdout.flush()
+    _sys.stderr.flush()
+    import os as _os
+    _os._exit(0)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "generate-key":
