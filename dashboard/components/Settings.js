@@ -202,44 +202,58 @@ function GitHubCard({ github, onSaved }) {
 
     return html`
         <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">GitHub Connection</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Connect a GitHub Personal Access Token to enable repository operations.
-            </p>
-
             ${github.connected && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span style="font-size: 16px;">🐙</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">GitHub</span>
+                    <span class="text-sm" style="color: var(--text-muted)">· Connected as <strong style="color: var(--text-primary)">${github.username}</strong></span>
+                    <span class="text-xs font-mono" style="color: var(--text-muted)">····${github.pat_last4}</span>
                     <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">Connected as <strong>${github.username}</strong></span>
-                    <span class="text-xs" style="color: var(--text-muted)">PAT ****${github.pat_last4}</span>
-                </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
+                    <div class="flex gap-2 ml-auto">
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${() => setEditing(true)}>Update</button>
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${handleTest} disabled=${testing}>
+                            ${testing ? 'Testing...' : 'Test'}
+                        </button>
+                    </div>
                 </div>
             `}
 
             ${!github.connected && github.pat_last4 && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span style="font-size: 16px;">🐙</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">GitHub</span>
+                    <span class="text-sm" style="color: var(--text-muted)">· PAT configured (····${github.pat_last4}) but connection failed</span>
                     <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">PAT configured (****${github.pat_last4}) but connection failed</span>
+                    <div class="flex gap-2 ml-auto">
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${() => setEditing(true)}>Update</button>
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${handleTest} disabled=${testing}>
+                            ${testing ? 'Testing...' : 'Test'}
+                        </button>
+                    </div>
                 </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
+            `}
+
+            ${!github.pat_last4 && !editing && html`
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span style="font-size: 16px;">🐙</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">GitHub</span>
+                    <span class="text-sm" style="color: var(--text-muted)">· Not connected</span>
+                    <div class="ml-auto">
+                        <button class=${btnPrimary} onClick=${() => setEditing(true)}>Connect</button>
+                    </div>
                 </div>
             `}
 
             ${editing && html`
-                <div class="flex gap-2 mb-2">
+                <div class="flex items-center gap-3 mb-2 flex-wrap">
+                    <span style="font-size: 16px;">🐙</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">GitHub</span>
+                </div>
+                <div class="flex gap-2">
                     <input type="password" class=${inputClass} style=${inputStyle}
                         placeholder="ghp_xxxxxxxxxxxx"
                         value=${pat} onInput=${(e) => setPat(e.target.value)}
@@ -301,8 +315,8 @@ function OAuthCard({ oauth, onRegenerated }) {
 
             <div class="space-y-3">
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Client ID</label>
-                    <div class="flex items-center gap-2 mt-1">
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Client ID</label>
+                    <div class="flex items-center gap-2">
                         <code class="flex-1 px-3 py-2 rounded-md text-sm font-mono"
                             style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-primary);"
                             >${oauth.client_id}</code>
@@ -311,8 +325,8 @@ function OAuthCard({ oauth, onRegenerated }) {
                 </div>
 
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Client Secret</label>
-                    <div class="flex items-center gap-2 mt-1">
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Client Secret</label>
+                    <div class="flex items-center gap-2">
                         <code class="flex-1 px-3 py-2 rounded-md text-sm font-mono"
                             style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-primary); word-break: break-all;"
                             >${oauth.client_secret}</code>
@@ -321,10 +335,15 @@ function OAuthCard({ oauth, onRegenerated }) {
                 </div>
             </div>
 
-            <div class="mt-4">
-                <button class=${btnDanger} onClick=${() => setShowConfirm(true)} disabled=${regenerating}>
+            <div class="mt-4 flex items-center gap-3">
+                <button class="px-3 py-1.5 text-xs rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    style="color: var(--text-muted); border: 1px solid var(--border-primary); background: transparent;"
+                    onMouseOver=${(e) => { e.target.style.color = 'var(--text-primary)'; e.target.style.borderColor = 'var(--text-muted)'; }}
+                    onMouseOut=${(e) => { e.target.style.color = 'var(--text-muted)'; e.target.style.borderColor = 'var(--border-primary)'; }}
+                    onClick=${() => setShowConfirm(true)} disabled=${regenerating}>
                     ${regenerating ? 'Regenerating...' : 'Regenerate Secret'}
                 </button>
+                <span class="text-xs" style="color: var(--text-muted)">Disconnects existing MCP connections</span>
             </div>
 
             <${FeedbackBanner} message=${feedback?.message} type=${feedback?.type} />
@@ -388,29 +407,41 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
 
     return html`
         <div class=${cardClass} style=${cardStyle}>
-            <h2 class="text-base font-medium mb-1" style="color: var(--text-primary)">Anthropic API Key</h2>
-            <p class="text-sm mb-4" style="color: var(--text-muted)">
-                Your personal API key for Claude model access.
-            </p>
-
             ${anthropic.configured && !editing && html`
-                <div class="flex items-center gap-2 mb-3">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span style="font-size: 16px;">🔑</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">Anthropic API Key</span>
+                    <span class="text-sm" style="color: var(--text-muted)">· Configured</span>
+                    <span class="text-xs font-mono" style="color: var(--text-muted)">····${anthropic.key_last4}</span>
                     <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <span class="text-sm" style="color: var(--text-primary)">Configured</span>
-                    <span class="text-xs" style="color: var(--text-muted)">****${anthropic.key_last4}</span>
+                    <div class="flex gap-2 ml-auto">
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${() => setEditing(true)}>Update</button>
+                        <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
+                            onClick=${handleTest} disabled=${testing}>
+                            ${testing ? 'Testing...' : 'Test'}
+                        </button>
+                    </div>
                 </div>
-                <div class="flex gap-2">
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${() => setEditing(true)}>Update</button>
-                    <button class=${btnSecondary} style="background: var(--bg-secondary); border: 1px solid var(--border-primary);"
-                        onClick=${handleTest} disabled=${testing}>
-                        ${testing ? 'Testing...' : 'Test Connection'}
-                    </button>
+            `}
+
+            ${!anthropic.configured && !editing && html`
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span style="font-size: 16px;">🔑</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">Anthropic API Key</span>
+                    <span class="text-sm" style="color: var(--text-muted)">· Not configured</span>
+                    <div class="ml-auto">
+                        <button class=${btnPrimary} onClick=${() => setEditing(true)}>Configure</button>
+                    </div>
                 </div>
             `}
 
             ${editing && html`
-                <div class="flex gap-2 mb-2">
+                <div class="flex items-center gap-3 mb-2 flex-wrap">
+                    <span style="font-size: 16px;">🔑</span>
+                    <span class="text-sm font-medium" style="color: var(--text-primary)">Anthropic API Key</span>
+                </div>
+                <div class="flex gap-2">
                     <input type="password" class=${inputClass} style=${inputStyle}
                         placeholder="sk-ant-xxxxxxxxxxxx"
                         value=${key} onInput=${(e) => setKey(e.target.value)}
@@ -471,25 +502,25 @@ function ProfileCard({ profile, onSaved }) {
                 Your account information.
             </p>
 
-            <div class="space-y-3">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Name</label>
-                    <input type="text" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Name</label>
+                    <input type="text" class=${inputClass} style=${inputStyle}
                         value=${name} onInput=${(e) => setName(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Email</label>
-                    <input type="email" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Email</label>
+                    <input type="email" class=${inputClass} style=${inputStyle}
                         value=${email} onInput=${(e) => setEmail(e.target.value)} />
                 </div>
-                <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Timezone</label>
-                    <select class=${inputClass + ' mt-1'} style=${inputStyle}
-                        value=${timezone} onChange=${(e) => setTimezone(e.target.value)}>
-                        <option value="">Select timezone...</option>
-                        ${TIMEZONES.map(tz => html`<option key=${tz} value=${tz}>${tz}</option>`)}
-                    </select>
-                </div>
+            </div>
+            <div>
+                <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Timezone</label>
+                <select class=${inputClass} style=${inputStyle}
+                    value=${timezone} onChange=${(e) => setTimezone(e.target.value)}>
+                    <option value="">Select timezone...</option>
+                    ${TIMEZONES.map(tz => html`<option key=${tz} value=${tz}>${tz}</option>`)}
+                </select>
             </div>
 
             <div class="mt-4">
@@ -549,20 +580,20 @@ function ChangePasswordCard() {
                 Update your login password.
             </p>
 
-            <div class="space-y-3" style="max-width: 400px;">
+            <div style="max-width: 280px; display: flex; flex-direction: column; gap: 12px;">
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Current Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Current Password</label>
+                    <input type="password" class=${inputClass} style=${inputStyle}
                         value=${currentPassword} onInput=${(e) => setCurrentPassword(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">New Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">New Password</label>
+                    <input type="password" class=${inputClass} style=${inputStyle}
                         value=${newPassword} onInput=${(e) => setNewPassword(e.target.value)} />
                 </div>
                 <div>
-                    <label class="text-xs font-medium" style="color: var(--text-muted)">Confirm New Password</label>
-                    <input type="password" class=${inputClass + ' mt-1'} style=${inputStyle}
+                    <label class="block font-medium" style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Confirm New Password</label>
+                    <input type="password" class=${inputClass} style=${inputStyle}
                         value=${confirmPassword} onInput=${(e) => setConfirmPassword(e.target.value)}
                         onKeyDown=${(e) => e.key === 'Enter' && handleSubmit()} />
                 </div>
