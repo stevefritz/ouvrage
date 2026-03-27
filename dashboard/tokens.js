@@ -103,6 +103,7 @@ export const animation = {
 export const statusColors = {
     working:         colors.yellow,
     completed:       colors.blue,
+    merged:          colors.green,
     failed:          colors.red,
     'needs-review':  colors.yellow,
     cancelled:       colors.textTertiary,
@@ -115,6 +116,7 @@ export const statusColors = {
 export const statusBgs = {
     working:         colors.yellowBg,
     completed:       colors.blueBg,
+    merged:          colors.greenBg,
     failed:          colors.redBg,
     'needs-review':  colors.yellowBg,
     cancelled:       'rgba(120, 120, 128, 0.12)',
