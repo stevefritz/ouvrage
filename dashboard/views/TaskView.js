@@ -1728,13 +1728,9 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         return () => { mountedRef.current = false; };
     }, [id]);
 
-    // Polling — task status at 5s when active, attempts at 10s only while working
+    // Polling — task status at 5s always while view is open, attempts at 10s only while working
     useEffect(() => {
         if (!task) return;
-        const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
-        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'reopened' || gateActive;
-        if (!shouldPoll) return;
-
         const taskTimer = setInterval(loadTask, 5000);
         // Only poll attempts while actively working (expensive — re-reads all messages)
         const attemptTimer = (task.status === 'working' || task.status === 'reopened')
@@ -1744,7 +1740,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             clearInterval(taskTimer);
             if (attemptTimer) clearInterval(attemptTimer);
         };
-    }, [task?.status, task?.gate_status, loadTask, loadAttempts]);
+    }, [task?.id, task?.status, loadTask, loadAttempts]);
 
     // Action handler
     const handleAction = useCallback((action, taskId) => {
