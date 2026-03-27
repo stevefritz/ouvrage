@@ -230,20 +230,11 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
         log.info(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
         return None
 
-    # Write credential helper script — owner-only (mode 700)
+    # Write credential helper script as worker user (worktree is owned by worker)
     helper_path = os.path.join(worktree_path, ".git-credential-helper.sh")
     script_content = f"#!/bin/bash\necho 'username=oauth2'\necho 'password={pat}'\n"
-    # Write as worker user to ensure correct ownership
-    uid, gid = _get_worker_ids()
-
-    def _write_helper():
-        with open(helper_path, "w") as f:
-            f.write(script_content)
-        os.chmod(helper_path, 0o700)
-        os.chown(helper_path, uid, gid)
-
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _write_helper)
+    await _run_as_worker("bash", "-c", f"cat > {helper_path} << 'CREDEOF'\n{script_content}CREDEOF")
+    await _run_as_worker("chmod", "700", helper_path)
 
     # Configure git in the worktree to use the helper
     await _run_as_worker(
