@@ -429,6 +429,44 @@ class TestMaybeCreatePr:
         await _maybe_create_pr("test-project/pr-no-wt")
         self.mock_create_pr.assert_not_awaited()
 
+    async def test_pr_targets_task_base_branch_when_set(self, db, sample_project):
+        """PR base must be task.base_branch, not project default_branch."""
+        from switchboard.git.operations import _maybe_create_pr
+
+        task = await db.create_task(
+            id="test-project/pr-base-override", project_id="test-project",
+            goal="Feature on saas branch", auto_pr=True,
+            base_branch="foreman-saas",
+        )
+        await db.update_task(task["id"],
+            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
+            worktree_path="/tmp/fake-worktree", branch="pr-base-override",
+        )
+
+        await _maybe_create_pr("test-project/pr-base-override")
+        self.mock_create_pr.assert_awaited_once()
+        call_kwargs = self.mock_create_pr.await_args.kwargs
+        assert call_kwargs["base"] == "foreman-saas"
+
+    async def test_pr_falls_back_to_default_branch_when_base_branch_null(self, db, sample_project):
+        """PR base falls back to project.default_branch when task.base_branch is null."""
+        from switchboard.git.operations import _maybe_create_pr
+
+        task = await db.create_task(
+            id="test-project/pr-default-branch", project_id="test-project",
+            goal="Feature on default branch", auto_pr=True,
+            base_branch=None,
+        )
+        await db.update_task(task["id"],
+            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
+            worktree_path="/tmp/fake-worktree", branch="pr-default-branch",
+        )
+
+        await _maybe_create_pr("test-project/pr-default-branch")
+        self.mock_create_pr.assert_awaited_once()
+        call_kwargs = self.mock_create_pr.await_args.kwargs
+        assert call_kwargs["base"] == "main"  # sample_project.default_branch
+
     async def test_auto_release_before_pr_causes_silent_skip(self, db, sample_project):
         """Integration: _check_and_dispatch_dependents releases worktree before PR creation.
 
