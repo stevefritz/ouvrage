@@ -8,10 +8,14 @@ import time
 from urllib.parse import parse_qs, unquote
 
 import httpx
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 import switchboard.db as db
 import switchboard.dispatch as tasks
+from switchboard.auth.oauth import get_client as _get_oauth_client
 from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
+from switchboard.crypto import decrypt_value, encrypt_value, is_fernet_token
 from switchboard.notifications import web_push
 
 logger = logging.getLogger(__name__)
@@ -1003,25 +1007,25 @@ async def _handle_get_instance_settings(scope, send):
     github_info = {"connected": False}
     try:
         pat = await db.get_instance_github_pat()
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                "https://api.github.com/user",
-                headers={"Authorization": f"Bearer {pat}"},
-            )
-            if resp.status_code == 200:
-                gh_data = resp.json()
-                github_info = {
-                    "connected": True,
-                    "username": gh_data.get("login"),
-                    "pat_last4": pat[-4:],
-                }
+        # PAT exists — always expose last4 regardless of GitHub reachability
+        github_info["pat_last4"] = pat[-4:]
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.github.com/user",
+                    headers={"Authorization": f"Bearer {pat}"},
+                )
+                if resp.status_code == 200:
+                    gh_data = resp.json()
+                    github_info["connected"] = True
+                    github_info["username"] = gh_data.get("login")
+        except Exception:
+            pass  # PAT exists but GitHub unreachable — connected stays False
     except Exception:
-        github_info = {"connected": False}
+        pass  # No PAT configured
 
     # OAuth client secret
     oauth_info = {}
-    from switchboard.auth.oauth import get_client as _get_oauth_client
-    from switchboard.crypto import decrypt_value, is_fernet_token
     oauth_client = await _get_oauth_client("claude-mcp")
     if oauth_client:
         raw_secret = oauth_client.get("client_secret_encrypted")
@@ -1088,16 +1092,17 @@ async def _handle_regenerate_oauth_secret(send, scope):
     if not _is_admin(user):
         return await _error(send, "Forbidden", 403)
 
-    from switchboard.crypto import encrypt_value
     new_secret = secrets.token_urlsafe(32)
     encrypted = encrypt_value(new_secret)
 
     async with db.get_db() as conn:
-        await conn.execute(
+        cursor = await conn.execute(
             "UPDATE oauth_clients SET client_secret_encrypted = ? WHERE client_id = ?",
             (encrypted, "claude-mcp"),
         )
         await conn.commit()
+        if cursor.rowcount == 0:
+            return await _error(send, "OAuth client not found", 404)
 
     await _json_response(send, {"client_id": "claude-mcp", "client_secret": new_secret})
 
@@ -1208,12 +1213,6 @@ async def _handle_change_password(receive, send, scope):
 
     if not full_user.get("password_hash"):
         return await _error(send, "No password set for this account", 400)
-
-    try:
-        from argon2 import PasswordHasher
-        from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
-    except ImportError:
-        return await _error(send, "argon2-cffi not installed", 500)
 
     ph = PasswordHasher()
     try:

@@ -130,6 +130,8 @@ class TestGetInstanceSettings:
         assert resp.status == 200
         data = resp.json()
         assert data["github"]["connected"] is False
+        # PAT IS stored — last4 should still be visible even when GitHub rejects it
+        assert data["github"]["pat_last4"] == "oken"
 
     async def test_includes_oauth_info(self, db):
         from switchboard.dashboard.api import handle_request
@@ -284,6 +286,9 @@ class TestRegenerateOAuthSecret:
 
     async def test_owner_gets_new_secret(self, db):
         from switchboard.dashboard.api import handle_request
+        from switchboard.auth.oauth import seed_default_client, init_oauth_keys
+        init_oauth_keys()
+        await seed_default_client()
 
         scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
                             method="POST")
@@ -296,6 +301,17 @@ class TestRegenerateOAuthSecret:
         assert data["client_id"] == "claude-mcp"
         assert "client_secret" in data
         assert len(data["client_secret"]) > 10
+
+    async def test_returns_404_when_oauth_client_not_seeded(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
+                            method="POST")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        assert resp.status == 404
 
     async def test_new_secret_is_different_from_old(self, db):
         from switchboard.dashboard.api import handle_request
@@ -393,7 +409,7 @@ class TestGetUserSettings:
 
         data = resp.json()
         assert data["anthropic"]["configured"] is True
-        assert data["anthropic"]["key_last4"] == "3mABC"[-4:]  # last 4 chars
+        assert data["anthropic"]["key_last4"] == "mABC"
 
     async def test_full_key_not_returned(self, db):
         from switchboard.dashboard.api import handle_request
