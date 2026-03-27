@@ -346,18 +346,36 @@ class TestEncryption:
         with pytest.raises(ValueError, match="Anthropic API key"):
             await db.get_anthropic_key(user["id"])
 
-    async def test_get_github_pat_from_owner_credentials(self, db):
-        """get_github_pat falls back to instance owner's github_pat."""
-        # The bootstrap migration creates owner@localhost as the instance owner
-        inst = await db.get_instance()
-        await db.update_user_credentials(inst["owner_user_id"], github_pat="ghp_ownertoken")
+    async def test_get_github_pat_from_instance(self, db):
+        """get_github_pat falls back to instance.github_pat_encrypted."""
+        await db.set_instance_github_pat("ghp_instancetoken")
         pat = await db.get_github_pat("nonexistent-project")
-        assert pat == "ghp_ownertoken"
+        assert pat == "ghp_instancetoken"
 
     async def test_get_github_pat_raises_if_not_configured(self, db):
         """get_github_pat raises ValueError when no PAT is found."""
         with pytest.raises(ValueError, match="GitHub PAT"):
             await db.get_github_pat("some-project")
+
+    async def test_set_and_get_instance_github_pat(self, db):
+        """set_instance_github_pat stores encrypted, get_instance_github_pat decrypts."""
+        import switchboard.db.connection as _conn
+        await db.set_instance_github_pat("ghp_testpat")
+        # Raw value in DB should be encrypted
+        async with _conn.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT github_pat_encrypted FROM instance WHERE id = 1"
+            )
+        from switchboard.crypto import is_fernet_token
+        assert is_fernet_token(rows[0]["github_pat_encrypted"])
+        # Reading back returns plaintext
+        pat = await db.get_instance_github_pat()
+        assert pat == "ghp_testpat"
+
+    async def test_get_instance_github_pat_raises_if_not_set(self, db):
+        """get_instance_github_pat raises ValueError when not configured."""
+        with pytest.raises(ValueError, match="GitHub PAT"):
+            await db.get_instance_github_pat()
 
     async def test_encryption_migration_encrypts_plaintext_values(self, db):
         """init_db() re-run encrypts any pre-existing plaintext credential values."""

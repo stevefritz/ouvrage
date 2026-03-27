@@ -25,6 +25,7 @@ async def init_db():
                 stripe_customer_id TEXT,
                 plan_tier TEXT DEFAULT 'free',
                 owner_user_id INTEGER REFERENCES users(id),
+                github_pat_encrypted TEXT,
                 created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
 
@@ -437,6 +438,12 @@ async def init_db():
         if "github_pat_override" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN github_pat_override TEXT")
 
+        # Migrate instance: add github_pat_encrypted column
+        instance_columns = await conn.execute_fetchall("PRAGMA table_info(instance)")
+        instance_col_names = [c["name"] for c in instance_columns]
+        if "github_pat_encrypted" not in instance_col_names:
+            await conn.execute("ALTER TABLE instance ADD COLUMN github_pat_encrypted TEXT")
+
         # Migrate components: add created_by FK
         if comp_table:
             if "created_by" not in comp_col_names:
@@ -545,7 +552,7 @@ async def init_db():
         # Only runs if SWITCHBOARD_MASTER_KEY is set — skipped silently otherwise.
         import os as _os
         if _os.environ.get("SWITCHBOARD_MASTER_KEY"):
-            from switchboard.crypto import maybe_encrypt, is_fernet_token
+            from switchboard.crypto import maybe_encrypt, is_fernet_token, encrypt_value, decrypt_value
             cred_rows = await conn.execute_fetchall(
                 "SELECT user_id, anthropic_api_key, github_pat FROM user_credentials"
             )
@@ -561,5 +568,63 @@ async def init_db():
                         f"UPDATE user_credentials SET {set_clause} WHERE user_id = ?",
                         list(updates.values()) + [row["user_id"]],
                     )
+
+            # PAT migration: if instance.github_pat_encrypted is null but owner's
+            # user_credentials.github_pat is set, copy it to instance level.
+            inst_rows = await conn.execute_fetchall(
+                "SELECT id, owner_user_id, github_pat_encrypted FROM instance LIMIT 1"
+            )
+            if inst_rows:
+                inst = inst_rows[0]
+                if not inst["github_pat_encrypted"] and inst["owner_user_id"]:
+                    owner_cred = await conn.execute_fetchall(
+                        "SELECT github_pat FROM user_credentials WHERE user_id = ?",
+                        (inst["owner_user_id"],),
+                    )
+                    if owner_cred and owner_cred[0]["github_pat"]:
+                        raw_pat = owner_cred[0]["github_pat"]
+                        # Decrypt if already encrypted, then re-encrypt for instance column
+                        if is_fernet_token(raw_pat):
+                            raw_pat = decrypt_value(raw_pat)
+                        encrypted = encrypt_value(raw_pat)
+                        await conn.execute(
+                            "UPDATE instance SET github_pat_encrypted = ? WHERE id = ?",
+                            (encrypted, inst["id"]),
+                        )
+                        import logging as _logging
+                        _logging.getLogger(__name__).info(
+                            "Migrated GitHub PAT from user credentials to instance level."
+                        )
+
+        # Migrate projects: normalize SSH repo URLs to HTTPS
+        # git@github.com:owner/repo.git → https://github.com/owner/repo.git
+        import re as _re
+        import logging as _logging2
+        _ssh_pat = _re.compile(r"^git@github\.com:([^/]+)/(.+?)(?:\.git)?$")
+        _schema_log = _logging2.getLogger(__name__)
+        project_rows = await conn.execute_fetchall("SELECT id, repo, working_dir FROM projects")
+        for row in project_rows:
+            m = _ssh_pat.match(row["repo"])
+            if m:
+                owner, repo_name = m.group(1), m.group(2)
+                https_url = f"https://github.com/{owner}/{repo_name}.git"
+                await conn.execute(
+                    "UPDATE projects SET repo = ? WHERE id = ?",
+                    (https_url, row["id"]),
+                )
+                _schema_log.info(f"Migrated repo URL for project '{row['id']}': {row['repo']} → {https_url}")
+                # Also update the bare repo remote if it exists
+                bare_path = _os.path.join(row["working_dir"], ".bare")
+                if _os.path.exists(bare_path):
+                    import asyncio as _asyncio
+                    proc = await _asyncio.create_subprocess_exec(
+                        "git", "-C", bare_path, "remote", "set-url", "origin", https_url,
+                        stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode == 0:
+                        _schema_log.info(f"Updated bare repo remote for project '{row['id']}' to {https_url}")
+                    else:
+                        _schema_log.warning(f"Failed to update bare repo remote for '{row['id']}': {stderr.decode().strip()}")
 
         await conn.commit()

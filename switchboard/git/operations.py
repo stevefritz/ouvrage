@@ -40,6 +40,17 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     raise ValueError(f"Cannot parse GitHub owner/repo from URL: {url}")
 
 
+def normalize_repo_url(url: str) -> str:
+    """Normalize any GitHub repo URL to canonical HTTPS format.
+
+    git@github.com:owner/repo.git  → https://github.com/owner/repo.git
+    git@github.com:owner/repo      → https://github.com/owner/repo.git
+    https://github.com/owner/repo  → https://github.com/owner/repo.git
+    """
+    owner, repo = parse_repo_url(url)
+    return f"https://github.com/{owner}/{repo}.git"
+
+
 def _build_authenticated_url(pat: str, repo_url: str) -> str:
     """Build an HTTPS push URL with PAT embedded. Never store this — use at call time only."""
     owner, repo = parse_repo_url(repo_url)
