@@ -138,4 +138,32 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
     }),
+
+    // Profile
+    getProfile: () => request('/settings/profile'),
+    updateProfile: (data) => request('/settings/profile', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }),
+
+    // Credentials
+    getCredentials: () => request('/settings/credentials'),
+    updateCredential: (field, value) => request('/settings/credentials', {
+        method: 'POST',
+        body: JSON.stringify({ field, value }),
+    }),
+    testCredential: (field) => request('/settings/credentials/test', {
+        method: 'POST',
+        body: JSON.stringify({ field }),
+    }),
+
+    // OAuth
+    getOAuth: () => request('/settings/oauth'),
+    regenerateOAuthSecret: () => request('/settings/oauth/regenerate', { method: 'POST' }),
+
+    // Password
+    changePassword: (current_password, new_password, confirm_password) => request('/settings/password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password, new_password, confirm_password }),
+    }),
 };
