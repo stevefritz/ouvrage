@@ -77,6 +77,28 @@ def _make_multipart(filename: str, file_data: bytes, field_name: str = "file") -
     return body, boundary
 
 
+def _make_multipart_with_fields(filename: str, file_data: bytes, extra_fields: dict | None = None) -> tuple[bytes, bytes]:
+    """Build a multipart/form-data body with optional extra form fields. Returns (body, boundary)."""
+    boundary = b"testboundary1234567890"
+    parts = b""
+    # Add extra form fields first
+    for field_name, field_value in (extra_fields or {}).items():
+        parts += (
+            b"--" + boundary + b"\r\n"
+            b'Content-Disposition: form-data; name="' + field_name.encode() + b'"\r\n'
+            b"\r\n" + field_value.encode() + b"\r\n"
+        )
+    # Add file part
+    parts += (
+        b"--" + boundary + b"\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="' + filename.encode() + b'"\r\n'
+        b"Content-Type: application/octet-stream\r\n"
+        b"\r\n" + file_data + b"\r\n"
+        b"--" + boundary + b"--\r\n"
+    )
+    return parts, boundary
+
+
 def _upload_scope(filename: str, body: bytes, boundary: bytes, user_id: int = 1) -> dict:
     ct = b"multipart/form-data; boundary=" + boundary
     return {
@@ -524,3 +546,313 @@ class TestListFilesTool:
         assert len(result["files"]) == 1
         assert result["files"][0]["stored_path"] == "/home/user/uploads/abc/ref.pdf"
         assert result["files"][0]["filename"] == "ref.pdf"
+
+    async def test_list_files_filter_by_task_id(self, db, sample_task):
+        from switchboard.server.handlers.files_handler import _handle_list_files
+        task_id = sample_task["id"]
+        fid1 = str(uuid.uuid4())
+        fid2 = str(uuid.uuid4())
+        await db.create_file(
+            id=fid1, filename="task_file.txt", stored_path="/tmp/task_file.txt",
+            mime_type="text/plain", size_bytes=100, uploaded_by=None, task_id=task_id,
+        )
+        await db.create_file(
+            id=fid2, filename="global_file.txt", stored_path="/tmp/global_file.txt",
+            mime_type="text/plain", size_bytes=200, uploaded_by=None, task_id=None,
+        )
+        result = await _handle_list_files({"task_id": task_id})
+        assert len(result["files"]) == 1
+        assert result["files"][0]["id"] == fid1
+
+    async def test_list_files_no_filter_returns_all(self, db, sample_task):
+        from switchboard.server.handlers.files_handler import _handle_list_files
+        fid1 = str(uuid.uuid4())
+        fid2 = str(uuid.uuid4())
+        await db.create_file(
+            id=fid1, filename="task_file.txt", stored_path="/tmp/f1.txt",
+            mime_type="text/plain", size_bytes=100, uploaded_by=None, task_id=sample_task["id"],
+        )
+        await db.create_file(
+            id=fid2, filename="global_file.txt", stored_path="/tmp/f2.txt",
+            mime_type="text/plain", size_bytes=200, uploaded_by=None, task_id=None,
+        )
+        result = await _handle_list_files({})
+        assert len(result["files"]) == 2
+
+
+# ── Task-level file attachment tests ──────────────────────────────────────
+
+
+class TestUploadWithTaskId:
+
+    async def test_upload_with_task_id_stores_association(self, db, sample_task, tmp_uploads):
+        task_id = sample_task["id"]
+        file_data = b"task reference content"
+        body, boundary = _make_multipart_with_fields("ref.txt", file_data, {"task_id": task_id})
+        scope = _upload_scope("ref.txt", body, boundary)
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 201
+        data = resp.json()
+        assert data["task_id"] == task_id
+
+    async def test_upload_with_task_id_stored_in_db(self, db, sample_task, tmp_uploads):
+        task_id = sample_task["id"]
+        file_data = b"hello"
+        body, boundary = _make_multipart_with_fields("note.txt", file_data, {"task_id": task_id})
+        scope = _upload_scope("note.txt", body, boundary)
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 201
+        file_id = resp.json()["id"]
+        record = await db.get_file(file_id)
+        assert record["task_id"] == task_id
+
+    async def test_upload_with_invalid_task_id_returns_404(self, db, tmp_uploads):
+        file_data = b"data"
+        body, boundary = _make_multipart_with_fields("x.txt", file_data, {"task_id": "nonexistent/task"})
+        scope = _upload_scope("x.txt", body, boundary)
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 404
+
+    async def test_upload_without_task_id_is_global(self, db, tmp_uploads):
+        file_data = b"global file"
+        body, boundary = _make_multipart("global.txt", file_data)
+        scope = _upload_scope("global.txt", body, boundary)
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 201
+        assert resp.json()["task_id"] is None
+
+
+class TestListFilesByTaskId:
+
+    async def test_list_files_with_task_id_filter(self, db, sample_task):
+        task_id = sample_task["id"]
+        fid1 = str(uuid.uuid4())
+        fid2 = str(uuid.uuid4())
+        await db.create_file(
+            id=fid1, filename="t.txt", stored_path="/tmp/t.txt",
+            mime_type="text/plain", size_bytes=10, uploaded_by=None, task_id=task_id,
+        )
+        await db.create_file(
+            id=fid2, filename="g.txt", stored_path="/tmp/g.txt",
+            mime_type="text/plain", size_bytes=20, uploaded_by=None, task_id=None,
+        )
+        scope = _make_scope("/dashboard/api/files", "GET")
+        scope["query_string"] = f"task_id={task_id}".encode()
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        files = resp.json()
+        assert len(files) == 1
+        assert files[0]["id"] == fid1
+
+    async def test_list_files_without_filter_returns_all(self, db, sample_task):
+        task_id = sample_task["id"]
+        fid1 = str(uuid.uuid4())
+        fid2 = str(uuid.uuid4())
+        await db.create_file(
+            id=fid1, filename="t.txt", stored_path="/tmp/t1.txt",
+            mime_type="text/plain", size_bytes=10, uploaded_by=None, task_id=task_id,
+        )
+        await db.create_file(
+            id=fid2, filename="g.txt", stored_path="/tmp/g1.txt",
+            mime_type="text/plain", size_bytes=20, uploaded_by=None, task_id=None,
+        )
+        scope = _make_scope("/dashboard/api/files", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        assert len(resp.json()) == 2
+
+
+class TestTaskFilesEndpoint:
+
+    async def test_get_task_files_empty(self, db, sample_task):
+        task_id = sample_task["id"]
+        scope = _make_scope(f"/dashboard/api/tasks/{task_id}/files", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        assert resp.json() == []
+
+    async def test_get_task_files_returns_task_files(self, db, sample_task):
+        task_id = sample_task["id"]
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="spec.md", stored_path="/tmp/spec.md",
+            mime_type="text/markdown", size_bytes=500, uploaded_by=None, task_id=task_id,
+        )
+        scope = _make_scope(f"/dashboard/api/tasks/{task_id}/files", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        files = resp.json()
+        assert len(files) == 1
+        assert files[0]["id"] == fid
+        assert files[0]["task_id"] == task_id
+
+    async def test_get_task_files_excludes_other_task_files(self, db, sample_task, sample_project):
+        task_id = sample_task["id"]
+        other_task = await db.create_task(
+            id="test-project/other-task",
+            project_id="test-project",
+            goal="Another task",
+        )
+        fid_mine = str(uuid.uuid4())
+        fid_other = str(uuid.uuid4())
+        await db.create_file(
+            id=fid_mine, filename="mine.txt", stored_path="/tmp/mine.txt",
+            mime_type="text/plain", size_bytes=10, uploaded_by=None, task_id=task_id,
+        )
+        await db.create_file(
+            id=fid_other, filename="other.txt", stored_path="/tmp/other.txt",
+            mime_type="text/plain", size_bytes=10, uploaded_by=None, task_id=other_task["id"],
+        )
+        scope = _make_scope(f"/dashboard/api/tasks/{task_id}/files", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        ids = [f["id"] for f in resp.json()]
+        assert fid_mine in ids
+        assert fid_other not in ids
+
+    async def test_get_task_files_nonexistent_task(self, db):
+        scope = _make_scope("/dashboard/api/tasks/no-such-task/files", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+
+class TestPromptInjection:
+
+    async def test_prompt_includes_reference_files(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        task_id = sample_task["id"]
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="design.md", stored_path="/data/uploads/abc/design.md",
+            mime_type="text/markdown", size_bytes=2048, uploaded_by=None, task_id=task_id,
+        )
+        prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
+        assert "## Reference Files" in prompt
+        assert "/data/uploads/abc/design.md" in prompt
+        assert "text/markdown" in prompt
+        assert "2.0KB" in prompt
+        assert "Read these files when relevant" in prompt
+
+    async def test_prompt_no_reference_files_section_when_none(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
+        assert "## Reference Files" not in prompt
+
+    async def test_prompt_excludes_global_files(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="global.txt", stored_path="/data/uploads/xyz/global.txt",
+            mime_type="text/plain", size_bytes=100, uploaded_by=None, task_id=None,
+        )
+        prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
+        # Global files should NOT appear in task prompt
+        assert "## Reference Files" not in prompt
+
+    async def test_prompt_multiple_files(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        task_id = sample_task["id"]
+        for i, name in enumerate(["a.txt", "b.pdf"]):
+            fid = str(uuid.uuid4())
+            await db.create_file(
+                id=fid, filename=name, stored_path=f"/data/uploads/{i}/{name}",
+                mime_type="text/plain", size_bytes=1024 * (i + 1), uploaded_by=None, task_id=task_id,
+            )
+        prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
+        assert "a.txt" in prompt
+        assert "b.pdf" in prompt
+
+
+class TestReactiveInjection:
+
+    async def test_working_task_gets_notification(self, db, sample_task, tmp_uploads):
+        """Upload to a working task should post a task message."""
+        import asyncio
+        task_id = sample_task["id"]
+        assert sample_task["status"] == "working"
+
+        file_data = b"important reference"
+        body, boundary = _make_multipart_with_fields("ref.txt", file_data, {"task_id": task_id})
+        scope = _upload_scope("ref.txt", body, boundary)
+
+        mock_post = AsyncMock(return_value={"id": 999})
+        with patch("switchboard.db.post_task_message", mock_post):
+            resp = _Capture()
+            await handle_request(scope, _make_receive(body), resp)
+            # Give the background task a chance to run
+            await asyncio.sleep(0)
+
+        assert resp.status == 201
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args.kwargs
+        assert call_kwargs["task_id"] == task_id
+        assert call_kwargs["author"] == "switchboard"
+        assert call_kwargs["type"] == "note"
+        assert "📎" in call_kwargs["content"]
+        assert "ref.txt" in call_kwargs["content"]
+
+    async def test_working_task_message_visible_in_thread(self, db, sample_task, tmp_uploads):
+        """The reactive message actually appears in the task thread."""
+        import asyncio
+        task_id = sample_task["id"]
+        file_data = b"data"
+        body, boundary = _make_multipart_with_fields("doc.txt", file_data, {"task_id": task_id})
+        scope = _upload_scope("doc.txt", body, boundary)
+
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        # Give the background task enough time to complete (aiosqlite uses background threads)
+        await asyncio.sleep(0.2)
+
+        assert resp.status == 201
+        # Check the message appears in the task thread
+        thread = await db.read_task_messages(task_id)
+        notes = [m for m in thread.get("messages", []) if m.get("type") == "note" and m.get("author") == "switchboard"]
+        assert len(notes) == 1
+        assert "📎" in notes[0]["content"]
+        assert "doc.txt" in notes[0]["content"]
+
+    async def test_non_working_task_no_notification(self, db, sample_project, tmp_uploads):
+        """Upload to a non-working task should NOT post a task message."""
+        ready_task = await db.create_task(
+            id="test-project/ready-task",
+            project_id="test-project",
+            goal="Ready task",
+        )
+        assert ready_task["status"] == "ready"
+
+        file_data = b"file"
+        body, boundary = _make_multipart_with_fields("x.txt", file_data, {"task_id": ready_task["id"]})
+        scope = _upload_scope("x.txt", body, boundary)
+
+        mock_post = AsyncMock(return_value={"id": 1})
+        with patch("switchboard.db.post_task_message", mock_post):
+            resp = _Capture()
+            await handle_request(scope, _make_receive(body), resp)
+
+        assert resp.status == 201
+        mock_post.assert_not_called()
+
+    async def test_no_task_id_no_notification(self, db, tmp_uploads):
+        """Upload without task_id should NOT post any task message."""
+        file_data = b"file"
+        body, boundary = _make_multipart("y.txt", file_data)
+        scope = _upload_scope("y.txt", body, boundary)
+
+        mock_post = AsyncMock(return_value={"id": 1})
+        with patch("switchboard.db.post_task_message", mock_post):
+            resp = _Capture()
+            await handle_request(scope, _make_receive(body), resp)
+
+        assert resp.status == 201
+        mock_post.assert_not_called()
