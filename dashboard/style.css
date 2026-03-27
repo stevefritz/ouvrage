@@ -985,6 +985,16 @@ body { background: var(--bg-primary); color: var(--text-primary); }
     flex: 1;
 }
 
+.foreman-header-settings {
+    font-size: 13px;
+    color: #9b9ea6;
+    text-decoration: none;
+}
+
+.foreman-header-settings:hover {
+    color: #e8e9ea;
+}
+
 /* Foreman content area */
 .foreman-content {
     max-width: 900px;

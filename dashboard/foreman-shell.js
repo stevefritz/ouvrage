@@ -19,6 +19,7 @@ export function ForemanHeader({ children }) {
             <a href="#/" class="foreman-header-brand">Foreman</a>
             <span class="foreman-header-version">v5</span>
             <span class="foreman-header-spacer"></span>
+            <a href="#/settings" class="foreman-header-settings">⚙ Settings</a>
             ${children}
         </header>
     `;
