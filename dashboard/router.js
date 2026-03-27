@@ -45,6 +45,11 @@ export function parseRoute() {
         return { view: 'conversation', params: { id: decodeURIComponent(convMatch[1]) } };
     }
 
+    // /settings
+    if (hash === '/settings') {
+        return { view: 'settings', params: {} };
+    }
+
     return { view: 'landing', params: {} };
 }
 
@@ -94,4 +99,5 @@ export const routes = {
     project:      (id) => `#/project/${encodeURIComponent(id)}`,
     task:         (id) => `#/task/${encodeURIComponent(id)}`,
     conversation: (id) => `#/conversation/${encodeURIComponent(id)}`,
+    settings:     () => '#/settings',
 };
