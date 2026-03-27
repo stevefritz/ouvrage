@@ -248,10 +248,15 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
     await _run_as_worker("chmod", "700", helper_path)
 
     # Configure git in the worktree to use the helper — worktree-scoped only
-    # so it doesn't leak into the bare repo config and poison future fetches
+    # so it doesn't leak into the bare repo config and poison future fetches.
+    # Must also set core.bare=false in worktree config because the bare repo
+    # has core.bare=true and worktreeConfig extension would inherit it.
     bare_path = os.path.join(os.path.dirname(worktree_path), ".bare")
     await _run_as_worker(
         "git", "-C", bare_path, "config", "extensions.worktreeConfig", "true",
+    )
+    await _run_as_worker(
+        "git", "-C", worktree_path, "config", "--worktree", "core.bare", "false",
     )
     await _run_as_worker(
         "git", "-C", worktree_path, "config", "--worktree", "credential.helper", helper_path,
