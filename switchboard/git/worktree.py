@@ -102,10 +102,16 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
             "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
         )
 
-    # Fetch latest from remote — all tracking refs updated (origin/main, etc.)
-    _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
+    # Fetch latest from remote — use authenticated URL if available (avoids
+    # dependency on credential.helper which may point to a deleted worktree script)
+    try:
+        from switchboard.git.operations import _resolve_push_url
+        fetch_url = await _resolve_push_url(project["id"])
+    except (ValueError, Exception):
+        fetch_url = "origin"  # fallback to SSH
+    _, fetch_err, fetch_rc = await _run_as_worker("git", "-C", bare_path, "fetch", fetch_url)
     if fetch_rc != 0:
-        log.warning(f"git fetch origin failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
+        log.warning(f"git fetch failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
 
     # Auto-detect default branch from bare clone HEAD if project config is wrong
     default_branch = project["default_branch"]
@@ -236,17 +242,22 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
     await _run_as_worker("bash", "-c", f"cat > {helper_path} << 'CREDEOF'\n{script_content}CREDEOF")
     await _run_as_worker("chmod", "700", helper_path)
 
-    # Configure git in the worktree to use the helper
+    # Configure git in the worktree to use the helper — worktree-scoped only
+    # so it doesn't leak into the bare repo config and poison future fetches
+    bare_path = os.path.join(os.path.dirname(worktree_path), ".bare")
     await _run_as_worker(
-        "git", "-C", worktree_path, "config", "credential.helper", helper_path,
+        "git", "-C", bare_path, "config", "extensions.worktreeConfig", "true",
+    )
+    await _run_as_worker(
+        "git", "-C", worktree_path, "config", "--worktree", "credential.helper", helper_path,
     )
 
-    # Ensure remote is HTTPS (not SSH)
+    # Ensure remote is HTTPS (not SSH) — worktree-scoped
     project = await db.get_project(project_id)
     if project and project.get("repo"):
         https_url = normalize_repo_url(project["repo"])
         await _run_as_worker(
-            "git", "-C", worktree_path, "remote", "set-url", "origin", https_url,
+            "git", "-C", worktree_path, "config", "--worktree", "remote.origin.url", https_url,
         )
 
     log.info(f"Configured credential helper for worktree {worktree_path}")
