@@ -14,6 +14,7 @@ async def create_component(
     id: str, project_id: str, name: str,
     description: str | None = None, phase: str = "planning",
     created_by: int | None = None,
+    base_branch: str | None = None,
     **ignored_fields,
 ) -> dict:
     async with get_db() as db:
@@ -24,8 +25,8 @@ async def create_component(
 
         ts = now_iso()
         await db.execute(
-            "INSERT INTO components (id, project_id, name, description, phase, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [id, project_id, name, description, phase, created_by, ts, ts],
+            "INSERT INTO components (id, project_id, name, description, phase, base_branch, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [id, project_id, name, description, phase, base_branch, created_by, ts, ts],
         )
         await db.commit()
 
