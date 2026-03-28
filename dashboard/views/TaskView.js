@@ -1517,50 +1517,56 @@ function FilesDrawer({ taskId }) {
                     <!-- File list -->
                     ${files.map(f => html`
                         <div key=${f.id} style=${{
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            padding: '6px 0',
+                            padding: '8px 0',
                             borderBottom: `1px solid ${colors.borderSubtle}`,
                         }}>
-                            <span style=${{ fontSize: '14px', flexShrink: 0 }}>${taskFileIcon(f.mime_type)}</span>
-                            <span style=${{
-                                fontSize: typography.size.sm, fontWeight: typography.weight.medium,
-                                color: colors.text, flexShrink: 0, maxWidth: '160px',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>${f.filename}</span>
-                            <span style=${{
-                                fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
-                                fontStyle: 'italic',
-                            }}>${f.uploaded_by ? `📎 uploaded` : `🤖 produced by CC`}</span>
-                            <span style=${{
-                                fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
-                            }}>${formatFileSize(f.size_bytes)}</span>
-                            <span style=${{
-                                fontFamily: typography.fontMono, fontSize: '11px',
-                                color: colors.textSecondary, overflow: 'hidden',
-                                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                minWidth: 0, flex: 1,
-                            }}>${f.stored_path}</span>
-                            <button
-                                style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
-                                onClick=${() => handleCopy(f.id, f.stored_path)}
-                            >${copiedId === f.id ? 'Copied!' : 'Copy'}</button>
-                            <a
-                                href=${`/dashboard/api/files/${f.id}/download`}
-                                target="_blank" rel="noopener"
-                                style=${smallBtn}
-                            >↓</a>
-                            ${deleteConfirm === f.id ? html`
-                                <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-                                    <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
-                                    <button style=${{ ...smallBtn, color: colors.red, borderColor: colors.red }}
-                                        onClick=${() => handleDelete(f.id)}>Yes</button>
-                                    <button style=${smallBtn}
-                                        onClick=${() => setDeleteConfirm(null)}>Cancel</button>
-                                </span>
-                            ` : html`
-                                <button style=${{ ...smallBtn, fontSize: '12px', padding: '1px 6px' }}
-                                    onClick=${() => setDeleteConfirm(f.id)}>✕</button>
-                            `}
+                            <!-- Line 1: icon + filename (truncated) + source label -->
+                            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, marginBottom: '4px' }}>
+                                <span style=${{ fontSize: '14px', flexShrink: 0 }}>${taskFileIcon(f.mime_type)}</span>
+                                <span style=${{
+                                    fontSize: typography.size.sm, fontWeight: typography.weight.medium,
+                                    color: colors.text, overflow: 'hidden',
+                                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    flex: 1, minWidth: 0,
+                                }} title=${f.filename}>${f.filename}</span>
+                                <span style=${{
+                                    fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
+                                    fontStyle: 'italic',
+                                }}>${f.uploaded_by ? `📎 uploaded` : `🤖 CC`}</span>
+                            </div>
+                            <!-- Line 2: size + path (truncated) + action buttons -->
+                            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flexWrap: 'wrap' }}>
+                                <span style=${{
+                                    fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
+                                }}>${formatFileSize(f.size_bytes)}</span>
+                                <span style=${{
+                                    fontFamily: typography.fontMono, fontSize: '11px',
+                                    color: colors.textSecondary, overflow: 'hidden',
+                                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    flex: 1, minWidth: 0,
+                                }} title=${f.stored_path}>${f.stored_path}</span>
+                                <button
+                                    style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
+                                    onClick=${() => handleCopy(f.id, f.stored_path)}
+                                >${copiedId === f.id ? 'Copied!' : 'Copy path'}</button>
+                                <a
+                                    href=${`/dashboard/api/files/${f.id}/download`}
+                                    target="_blank" rel="noopener"
+                                    style=${smallBtn}
+                                >↓ Download</a>
+                                ${deleteConfirm === f.id ? html`
+                                    <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+                                        <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
+                                        <button style=${{ ...smallBtn, color: colors.red, borderColor: colors.red }}
+                                            onClick=${() => handleDelete(f.id)}>Yes</button>
+                                        <button style=${smallBtn}
+                                            onClick=${() => setDeleteConfirm(null)}>Cancel</button>
+                                    </span>
+                                ` : html`
+                                    <button style=${{ ...smallBtn, fontSize: '12px', padding: '1px 6px' }}
+                                        onClick=${() => setDeleteConfirm(f.id)}>✕</button>
+                                `}
+                            </div>
                         </div>
                     `)}
                 </div>
