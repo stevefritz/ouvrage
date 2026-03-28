@@ -14,7 +14,7 @@ async def create_component(
     id: str, project_id: str, name: str,
     description: str | None = None, phase: str = "planning",
     created_by: int | None = None,
-    **config_fields,
+    **ignored_fields,
 ) -> dict:
     async with get_db() as db:
         # Verify project exists
@@ -23,33 +23,17 @@ async def create_component(
             raise ValueError(f"Project '{project_id}' not found")
 
         ts = now_iso()
-        env_json = json.dumps(config_fields.pop("env_overrides")) if "env_overrides" in config_fields and config_fields["env_overrides"] is not None else config_fields.pop("env_overrides", None)
-        secrets_json = json.dumps(config_fields.pop("secrets")) if "secrets" in config_fields and config_fields["secrets"] is not None else config_fields.pop("secrets", None)
-
-        # Filter to valid config fields
-        valid_config = {k: v for k, v in config_fields.items() if k in COMPONENT_CONFIG_FIELDS}
-
-        cols = ["id", "project_id", "name", "description", "phase", "env_overrides", "secrets", "created_by", "created_at", "updated_at"]
-        vals = [id, project_id, name, description, phase, env_json, secrets_json, created_by, ts, ts]
-
-        for k, v in valid_config.items():
-            cols.append(k)
-            vals.append(v)
-
-        placeholders = ", ".join("?" for _ in vals)
-        col_str = ", ".join(cols)
-        await db.execute(f"INSERT INTO components ({col_str}) VALUES ({placeholders})", vals)
+        await db.execute(
+            "INSERT INTO components (id, project_id, name, description, phase, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [id, project_id, name, description, phase, created_by, ts, ts],
+        )
         await db.commit()
 
-        result = {
+        return {
             "id": id, "project_id": project_id, "name": name,
             "description": description, "phase": phase,
-            "env_overrides": json.loads(env_json) if env_json else None,
-            "secrets": json.loads(secrets_json) if secrets_json else None,
             "created_by": created_by, "created_at": ts, "updated_at": ts,
         }
-        result.update(valid_config)
-        return result
 
 
 async def get_component(id: str) -> dict | None:
@@ -58,10 +42,9 @@ async def get_component(id: str) -> dict | None:
         if not rows:
             return None
         c = dict(rows[0])
-        if c.get("env_overrides"):
-            c["env_overrides"] = json.loads(c["env_overrides"])
-        if c.get("secrets"):
-            c["secrets"] = json.loads(c["secrets"])
+        c.pop("secrets", None)
+        if c.get("review_ignore_patterns"):
+            c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
 
         # Task summary + full task list
         task_rows = await db.execute_fetchall(
@@ -155,13 +138,10 @@ async def update_component(id: str, **fields) -> dict:
         if not rows:
             raise ValueError(f"Component '{id}' not found")
 
-        # Handle JSON fields
-        if "env_overrides" in fields:
-            val = fields["env_overrides"]
-            fields["env_overrides"] = json.dumps(val) if isinstance(val, dict) else val
-        if "secrets" in fields:
-            val = fields["secrets"]
-            fields["secrets"] = json.dumps(val) if isinstance(val, dict) else val
+        # Handle JSON field
+        if "review_ignore_patterns" in fields:
+            val = fields["review_ignore_patterns"]
+            fields["review_ignore_patterns"] = json.dumps(val) if isinstance(val, list) else val
 
         # Filter to allowed fields
         fields = {k: v for k, v in fields.items() if k in COMPONENT_MUTABLE_FIELDS}
@@ -174,10 +154,9 @@ async def update_component(id: str, **fields) -> dict:
 
         rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
         c = dict(rows[0])
-        if c.get("env_overrides"):
-            c["env_overrides"] = json.loads(c["env_overrides"])
-        if c.get("secrets"):
-            c["secrets"] = json.loads(c["secrets"])
+        c.pop("secrets", None)
+        if c.get("review_ignore_patterns"):
+            c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
         return c
 
 
@@ -205,10 +184,9 @@ async def list_components(project_id: str | None = None) -> list[dict]:
         for r in rows:
             c = dict(r)
             c["total_cost"] = round(c.get("total_cost", 0), 2)
-            if c.get("env_overrides"):
-                c["env_overrides"] = json.loads(c["env_overrides"])
-            if c.get("secrets"):
-                c["secrets"] = json.loads(c["secrets"])
+            c.pop("secrets", None)
+            if c.get("review_ignore_patterns"):
+                c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
             results.append(c)
         return results
 
@@ -247,10 +225,10 @@ async def get_component_conversations(component_id: str) -> list[str]:
 
 
 async def resolve_config(task_id: str) -> dict:
-    """Resolve effective config for a task: task → component → project → system defaults.
+    """Resolve effective config for a task: task → project → system defaults.
 
     For scalar fields, returns the most-specific non-null value.
-    For env_overrides and secrets, performs shallow merge (most-specific key wins).
+    For env_overrides, returns project-level value (tasks don't have env_overrides).
     """
     async with get_db() as db:
         task_rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -261,18 +239,12 @@ async def resolve_config(task_id: str) -> dict:
         project_rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (task["project_id"],))
         project = dict(project_rows[0]) if project_rows else {}
 
-        component = None
-        if task.get("component_id"):
-            comp_rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (task["component_id"],))
-            if comp_rows:
-                component = dict(comp_rows[0])
-
     resolved = {}
 
     # Boolean fields that need normalization from SQLite 0/1
     bool_fields = {"auto_test", "auto_review", "auto_pr", "auto_merge", "auto_release_worktree"}
 
-    # Scalar config fields: task > component > project > system default
+    # Scalar config fields: task → project → system default
     scalar_fields = [
         "base_branch", "model", "auto_test", "auto_review", "review_model",
         "max_test_retries", "max_review_retries", "auto_pr", "auto_merge",
@@ -282,8 +254,6 @@ async def resolve_config(task_id: str) -> dict:
 
     for field in scalar_fields:
         val = task.get(field)
-        if val is None and component:
-            val = component.get(field)
         if val is None:
             val = project.get(field)
         if val is None:
@@ -293,28 +263,10 @@ async def resolve_config(task_id: str) -> dict:
             val = bool(val)
         resolved[field] = val
 
-    # Shallow merge fields: project (base) ← component ← task (wins)
-    for merge_field in ("env_overrides", "secrets"):
-        merged = {}
-        # Start with project
-        pval = project.get(merge_field)
-        if isinstance(pval, str):
-            pval = json.loads(pval)
-        if pval:
-            merged.update(pval)
-        # Layer component
-        if component:
-            cval = component.get(merge_field)
-            if isinstance(cval, str):
-                cval = json.loads(cval)
-            if cval:
-                merged.update(cval)
-        # Layer task (tasks don't currently have env_overrides/secrets columns, but future-proof)
-        tval = task.get(merge_field)
-        if isinstance(tval, str):
-            tval = json.loads(tval)
-        if tval:
-            merged.update(tval)
-        resolved[merge_field] = merged if merged else None
+    # env_overrides: project-level only (tasks don't have their own env_overrides)
+    pval = project.get("env_overrides")
+    if isinstance(pval, str):
+        pval = json.loads(pval)
+    resolved["env_overrides"] = pval if pval else None
 
     return resolved
