@@ -10,13 +10,14 @@ async def create_file(
     mime_type: str | None,
     size_bytes: int,
     uploaded_by: int | None,
+    task_id: str | None = None,
 ) -> dict:
     ts = now_iso()
     async with get_db() as conn:
         await conn.execute(
-            """INSERT INTO files (id, filename, stored_path, mime_type, size_bytes, uploaded_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (id, filename, stored_path, mime_type, size_bytes, uploaded_by, ts),
+            """INSERT INTO files (id, filename, stored_path, mime_type, size_bytes, task_id, uploaded_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (id, filename, stored_path, mime_type, size_bytes, task_id, uploaded_by, ts),
         )
         await conn.commit()
     return await get_file(id)
@@ -25,7 +26,7 @@ async def create_file(
 async def get_file(id: str) -> dict | None:
     async with get_db() as conn:
         rows = await conn.execute_fetchall(
-            "SELECT id, filename, stored_path, mime_type, size_bytes, uploaded_by, created_at, updated_at FROM files WHERE id = ?",
+            "SELECT id, filename, stored_path, mime_type, size_bytes, task_id, uploaded_by, created_at, updated_at FROM files WHERE id = ?",
             (id,),
         )
     if not rows:
@@ -33,11 +34,17 @@ async def get_file(id: str) -> dict | None:
     return dict(rows[0])
 
 
-async def list_files() -> list[dict]:
+async def list_files(task_id: str | None = None) -> list[dict]:
     async with get_db() as conn:
-        rows = await conn.execute_fetchall(
-            "SELECT id, filename, stored_path, mime_type, size_bytes, uploaded_by, created_at, updated_at FROM files ORDER BY created_at DESC",
-        )
+        if task_id is not None:
+            rows = await conn.execute_fetchall(
+                "SELECT id, filename, stored_path, mime_type, size_bytes, task_id, uploaded_by, created_at, updated_at FROM files WHERE task_id = ? ORDER BY created_at DESC",
+                (task_id,),
+            )
+        else:
+            rows = await conn.execute_fetchall(
+                "SELECT id, filename, stored_path, mime_type, size_bytes, task_id, uploaded_by, created_at, updated_at FROM files ORDER BY created_at DESC",
+            )
     return [dict(r) for r in rows]
 
 

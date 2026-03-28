@@ -1035,10 +1035,15 @@ TOKEN_TOOLS = [
 FILES_TOOLS = [
     Tool(
         name="list_files",
-        description="List all uploaded files with their absolute paths on disk. CC uses this to discover available reference files.",
+        description="List uploaded files with their absolute paths on disk. CC uses this to discover available reference files. Optionally filter by task_id to get only files attached to a specific task.",
         inputSchema={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Filter files by task ID. When set, returns only files attached to that task.",
+                },
+            },
         },
     ),
 ]
