@@ -41,6 +41,7 @@ export const api = {
     getAttempts: (id) => request(`/tasks/${eid(id)}/attempts`),
     getProjects: () => request('/projects'),
     getProject: (id) => request(`/projects/${eid(id)}`),
+    createProject: (params) => request('/projects', { method: 'POST', body: JSON.stringify(params) }),
     getSystem: () => request('/system'),
     getConversations: (params = {}) => {
         const qs = new URLSearchParams(params).toString();

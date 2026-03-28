@@ -6,6 +6,7 @@ import htm from 'https://esm.sh/htm@3.1.1';
 import { useRouter } from './router.js';
 import { ForemanShell } from './foreman-shell.js';
 import { LandingView } from './views/LandingView.js';
+import { ProjectCreateView } from './views/ProjectCreateView.js';
 import { ProjectView } from './views/ProjectView.js';
 import { TaskView } from './views/TaskView.js';
 import { ConversationView } from './views/ConversationView.js';
@@ -27,6 +28,8 @@ function ForemanApp() {
 
     if (view === 'landing') {
         content = html`<${LandingView} />`;
+    } else if (view === 'project-new') {
+        content = html`<${ProjectCreateView} />`;
     } else if (view === 'project') {
         content = html`<${ProjectView} id=${params.id} />`;
     } else if (view === 'task') {

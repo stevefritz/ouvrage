@@ -19,7 +19,11 @@ import switchboard.dispatch as tasks
 from switchboard.auth.oauth import get_client as _get_oauth_client
 from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
 from switchboard.crypto import decrypt_value, encrypt_value, is_fernet_token
+from switchboard.git.operations import normalize_repo_url
 from switchboard.notifications import web_push
+from switchboard.server.context import get_request_user_id
+
+_WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 
 logger = logging.getLogger(__name__)
 _start_time = time.monotonic()
@@ -98,6 +102,10 @@ async def handle_request(scope, receive, send):
         # GET /dashboard/api/projects
         if path == "/dashboard/api/projects" and method == "GET":
             return await _handle_list_projects(send)
+
+        # POST /dashboard/api/projects
+        if path == "/dashboard/api/projects" and method == "POST":
+            return await _handle_create_project(receive, send, scope)
 
         # /dashboard/api/projects/{id}[/pause|resume|stop]
         if path.startswith("/dashboard/api/projects/"):
@@ -356,6 +364,84 @@ async def _handle_list_projects(send):
         p["total_tasks"] = stats["total_tasks"]
         p["total_cost"] = stats["total_cost"]
     await _json_response(send, projects)
+
+
+async def _handle_create_project(receive, send, scope):
+    body = await _read_body(receive)
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return await _error(send, "Invalid JSON body", 400)
+
+    project_id = data.get("id", "").strip()
+    repo_raw = data.get("repo", "").strip()
+
+    if not project_id:
+        return await _error(send, "id is required", 400)
+    if not repo_raw:
+        return await _error(send, "repo is required", 400)
+
+    import re
+    if not re.match(r'^[a-z0-9][a-z0-9-]*$', project_id):
+        return await _error(send, "id must start with alphanumeric and contain only lowercase letters, numbers, and hyphens", 400)
+
+    try:
+        repo = normalize_repo_url(repo_raw)
+    except Exception as exc:
+        return await _error(send, f"Invalid repo URL: {exc}", 400)
+
+    # Derive working_dir from repo URL
+    folder_name = data.get("folder_name")
+    if folder_name:
+        name = folder_name
+    else:
+        name = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        if ":" in name:
+            name = name.rsplit(":", 1)[-1].removesuffix(".git")
+    name = name.replace("/", "").replace("..", "").replace("\\", "")
+    if not name:
+        return await _error(send, "Could not derive folder name from repo URL", 400)
+    working_dir = os.path.join(_WORKTREE_BASE, name)
+    resolved = os.path.realpath(working_dir)
+    base = os.path.realpath(_WORKTREE_BASE)
+    if not resolved.startswith(base + "/") and resolved != base:
+        return await _error(send, f"working_dir must be under {_WORKTREE_BASE}", 400)
+
+    # Check for working_dir collision
+    existing = await db.list_projects()
+    for p in existing:
+        if os.path.realpath(p["working_dir"]) == resolved:
+            return await _error(send, f"working_dir '{resolved}' already belongs to project '{p['id']}' — use folder_name to override", 400)
+
+    REQUIRED = ["model", "review_model", "auto_test", "auto_review", "auto_pr", "auto_merge", "max_turns", "max_wall_clock"]
+    missing = [f for f in REQUIRED if data.get(f) is None]
+    if missing:
+        return await _error(send, f"Missing required config fields: {', '.join(missing)}", 400)
+
+    try:
+        result = await db.create_project(
+            id=project_id,
+            repo=repo,
+            working_dir=resolved,
+            default_branch=data.get("default_branch", "main"),
+            setup_command=data.get("setup_command"),
+            teardown_command=data.get("teardown_command"),
+            test_command=data.get("test_command"),
+            env_overrides=data.get("env_overrides"),
+            max_turns=data.get("max_turns"),
+            max_wall_clock=data.get("max_wall_clock"),
+            model=data.get("model"),
+            review_model=data.get("review_model"),
+            review_ignore_patterns=data.get("review_ignore_patterns"),
+            auto_test=data.get("auto_test"),
+            auto_review=data.get("auto_review"),
+            auto_pr=data.get("auto_pr"),
+            auto_merge=data.get("auto_merge"),
+            created_by=get_request_user_id(),
+        )
+        await _json_response(send, result, 201)
+    except Exception as exc:
+        return await _error(send, str(exc), 400)
 
 
 async def _handle_get_project(send, project_id):
