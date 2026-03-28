@@ -2077,3 +2077,190 @@ class TestReactiveConversationInjection:
         call_kwargs = self.mock_post_task_message.await_args_list[0].kwargs
         assert "Important finding" in call_kwargs["content"]
         assert "Long content" not in call_kwargs["content"]
+
+
+# ---------------------------------------------------------------------------
+# Held default logic — dispatch_task handler applies sensible defaults
+# ---------------------------------------------------------------------------
+
+class TestHeldDefaults:
+    """_handle_dispatch_task applies held defaults: standalone=True, chain=False."""
+
+    async def test_standalone_task_defaults_to_held(self, db, sample_project):
+        """Standalone task (no depends_on) defaults to held=true."""
+        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        result = await _handle_dispatch_task({
+            "project_id": "test-project",
+            "id": "standalone-held",
+            "goal": "Standalone task",
+        })
+        assert result.get("held") is True
+        task = await db.get_task("test-project/standalone-held")
+        assert task["held"]
+
+    async def test_chain_task_defaults_to_held_false(self, db, sample_project):
+        """Chain task (with depends_on) defaults to held=false — waiting on parent."""
+        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        # Parent task not yet gate-passed — child will wait but NOT be held
+        await db.create_task(
+            id="test-project/parent-for-chain", project_id="test-project", goal="Parent",
+        )
+        result = await _handle_dispatch_task({
+            "project_id": "test-project",
+            "id": "chain-not-held",
+            "goal": "Chain task",
+            "depends_on": "parent-for-chain",
+        })
+        # Returns waiting_on (not held)
+        assert result.get("status") == "ready"
+        assert result.get("waiting_on") == "test-project/parent-for-chain"
+        assert not result.get("held")
+        task = await db.get_task("test-project/chain-not-held")
+        assert not task["held"]
+
+    async def test_explicit_held_false_overrides_standalone_default(self, db, sample_project, mock_git):
+        """Explicit held=false overrides the standalone default."""
+        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+            result = await _handle_dispatch_task({
+                "project_id": "test-project",
+                "id": "standalone-explicit-false",
+                "goal": "Standalone but explicitly not held",
+                "held": False,
+            })
+        assert not result.get("held")
+        task = await db.get_task("test-project/standalone-explicit-false")
+        assert not task["held"]
+
+    async def test_explicit_held_true_overrides_chain_default(self, db, sample_project):
+        """Explicit held=true overrides chain default of false."""
+        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        parent = await db.create_task(
+            id="test-project/parent-for-held-chain", project_id="test-project", goal="Parent",
+        )
+        result = await _handle_dispatch_task({
+            "project_id": "test-project",
+            "id": "chain-explicit-held",
+            "goal": "Chain task held explicitly",
+            "depends_on": "parent-for-held-chain",
+            "held": True,
+        })
+        assert result.get("held") is True
+        task = await db.get_task("test-project/chain-explicit-held")
+        assert task["held"]
+
+
+# ---------------------------------------------------------------------------
+# Project create validation — required config fields
+# ---------------------------------------------------------------------------
+
+class TestProjectCreateValidation:
+    """_handle_create_project rejects missing required config fields."""
+
+    async def test_missing_all_required_fields_returns_error(self, db):
+        from switchboard.server.handlers.projects import _handle_create_project
+        result = await _handle_create_project({
+            "id": "new-proj",
+            "repo": "git@github.com:acme/new.git",
+        })
+        assert "error" in result
+        assert "Missing required config fields" in result["error"]
+        for field in ["model", "review_model", "auto_test", "auto_review", "auto_pr", "auto_merge", "max_turns", "max_wall_clock"]:
+            assert field in result["error"]
+
+    async def test_missing_single_field_returns_error(self, db):
+        from switchboard.server.handlers.projects import _handle_create_project
+        result = await _handle_create_project({
+            "id": "new-proj2",
+            "repo": "git@github.com:acme/new2.git",
+            "model": "sonnet",
+            "review_model": "opus",
+            "auto_test": True,
+            "auto_review": True,
+            "auto_pr": False,
+            "auto_merge": False,
+            "max_turns": 200,
+            # max_wall_clock missing
+        })
+        assert "error" in result
+        assert "max_wall_clock" in result["error"]
+        assert "model" not in result["error"]
+
+    async def test_all_required_fields_present_proceeds(self, db):
+        from switchboard.server.handlers.projects import _handle_create_project
+        result = await _handle_create_project({
+            "id": "valid-proj",
+            "repo": "git@github.com:acme/valid.git",
+            "folder_name": "valid-proj-test",
+            "model": "sonnet",
+            "review_model": "opus",
+            "auto_test": True,
+            "auto_review": True,
+            "auto_pr": False,
+            "auto_merge": False,
+            "max_turns": 200,
+            "max_wall_clock": 30,
+        })
+        # No error — proceeds to db.create_project
+        assert "error" not in result
+        assert result["id"] == "valid-proj"
+
+
+# ---------------------------------------------------------------------------
+# Component handler — phase and review_ignore_patterns stripped
+# ---------------------------------------------------------------------------
+
+class TestComponentHandlerStrippedFields:
+    """_handle_create_component and _handle_update_component ignore phase/review_ignore_patterns."""
+
+    async def test_create_component_ignores_phase_argument(self, db, sample_project):
+        from switchboard.server.handlers.components import _handle_create_component
+        result = await _handle_create_component({
+            "project_id": "test-project",
+            "id": "handler-no-phase",
+            "name": "No Phase",
+            "phase": "building",  # should be ignored by handler
+        })
+        assert "error" not in result
+        # Phase not set via handler (DB default applies)
+        assert result.get("id") == "handler-no-phase"
+
+    async def test_create_component_ignores_review_ignore_patterns_argument(self, db, sample_project):
+        from switchboard.server.handlers.components import _handle_create_component
+        result = await _handle_create_component({
+            "project_id": "test-project",
+            "id": "handler-no-patterns",
+            "name": "No Patterns",
+            "review_ignore_patterns": ["*.lock"],  # should be ignored by handler
+        })
+        assert "error" not in result
+        assert result.get("id") == "handler-no-patterns"
+
+    async def test_update_component_ignores_phase_argument(self, db, sample_project):
+        from switchboard.server.handlers.components import _handle_create_component, _handle_update_component
+        await _handle_create_component({
+            "project_id": "test-project",
+            "id": "handler-update-phase",
+            "name": "Before",
+        })
+        result = await _handle_update_component({
+            "id": "handler-update-phase",
+            "name": "After",
+            "phase": "deployed",  # ignored by handler
+        })
+        assert "error" not in result
+        assert result["name"] == "After"
+
+    async def test_update_component_ignores_review_ignore_patterns_argument(self, db, sample_project):
+        from switchboard.server.handlers.components import _handle_create_component, _handle_update_component
+        await _handle_create_component({
+            "project_id": "test-project",
+            "id": "handler-update-patterns",
+            "name": "Before",
+        })
+        result = await _handle_update_component({
+            "id": "handler-update-patterns",
+            "review_ignore_patterns": ["*.lock"],  # ignored — no-op update
+        })
+        # No update fields remain after stripping, so should return error
+        assert "error" in result

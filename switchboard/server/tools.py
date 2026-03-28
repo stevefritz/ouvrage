@@ -174,21 +174,21 @@ PROJECT_TOOLS = [
                 },
                 "max_turns": {
                     "type": "integer",
-                    "description": "Default limit on Claude Code conversation turns per task dispatch. Higher = more autonomy, more cost. Default: 200",
+                    "description": "Required. Default limit on Claude Code conversation turns per task dispatch. Higher = more autonomy, more cost.",
                 },
                 "max_wall_clock": {
                     "type": "integer",
-                    "description": "Default time limit in minutes per task dispatch. Task is paused when exceeded. Default: 30",
+                    "description": "Required. Default time limit in minutes per task dispatch. Task is paused when exceeded.",
                 },
                 "model": {
                     "type": "string",
                     "enum": ["sonnet", "opus"],
-                    "description": "Default Claude model for tasks. 'sonnet' is faster/cheaper, 'opus' is more capable. Default: sonnet",
+                    "description": "Required. Default Claude model for tasks. 'sonnet' is faster/cheaper, 'opus' is more capable.",
                 },
                 "review_model": {
                     "type": "string",
                     "enum": ["sonnet", "opus"],
-                    "description": "Default model for self-review subtasks for tasks in this project. Default: opus",
+                    "description": "Required. Default model for self-review subtasks for tasks in this project.",
                 },
                 "review_ignore_patterns": {
                     "type": "array",
@@ -197,19 +197,19 @@ PROJECT_TOOLS = [
                 },
                 "auto_test": {
                     "type": ["boolean", "null"],
-                    "description": "Project-level default for auto_test gate on dispatched tasks. Overridden per-task.",
+                    "description": "Required. Project-level default for auto_test gate on dispatched tasks. Overridden per-task.",
                 },
                 "auto_review": {
                     "type": ["boolean", "null"],
-                    "description": "Project-level default for auto_review gate on dispatched tasks. Overridden per-task.",
+                    "description": "Required. Project-level default for auto_review gate on dispatched tasks. Overridden per-task.",
                 },
                 "auto_pr": {
                     "type": ["boolean", "null"],
-                    "description": "Project-level default for auto_pr on dispatched tasks. Overridden per-task.",
+                    "description": "Required. Project-level default for auto_pr on dispatched tasks. Overridden per-task.",
                 },
                 "auto_merge": {
                     "type": ["boolean", "null"],
-                    "description": "Project-level default for auto_merge on dispatched tasks. Overridden per-task.",
+                    "description": "Required. Project-level default for auto_merge on dispatched tasks. Overridden per-task.",
                 },
                 "state_definitions": {
                     "type": "object",
@@ -301,7 +301,7 @@ TASK_TOOLS = [
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
                 "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
                 "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
-                "held": {"type": "boolean", "description": "Create task but don't dispatch — requires manual approval first. Use for chain checkpoints. IMPORTANT: If the spec says to hold/wait/pause before dispatching, you MUST set held=true — the spec text alone does nothing. Default: false", "default": False},
+                "held": {"type": "boolean", "description": "Standalone tasks default to held=true (require approval). Chain tasks (with depends_on) default to held=false. Set explicitly to override."},
             },
             "required": ["project_id", "id", "goal"],
         },
@@ -715,7 +715,7 @@ TASK_TOOLS = [
 COMPONENT_TOOLS = [
     Tool(
         name="create_component",
-        description="Create a new component (feature/epic) within a project. Components are organizational containers — they group tasks, hold punchlist items, link conversations, and track phase. Config fields like model and test_command are set on the project or individual tasks, not on components.",
+        description="Create a new component within a project. Components are organizational containers — id, name, description. They group tasks, hold punchlist items, and link conversations.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -723,23 +723,19 @@ COMPONENT_TOOLS = [
                 "id": {"type": "string", "description": "Component slug, e.g. chatbot-discovery"},
                 "name": {"type": "string", "description": "Human-readable name"},
                 "description": {"type": "string", "description": "What this component is about"},
-                "phase": {"type": "string", "description": "Lifecycle phase: planning, building, testing, polish, review, deployed, archived", "default": "planning"},
-                "review_ignore_patterns": {"type": ["array", "null"], "items": {"type": "string"}, "description": "File patterns to exclude from the review diff, e.g. ['*.lock', 'vendor/']"},
             },
             "required": ["project_id", "id", "name"],
         },
     ),
     Tool(
         name="update_component",
-        description="Update a component's fields. Components are organizational containers — use this to update name, description, phase, or review_ignore_patterns. Config fields like model and test_command belong on the project or individual tasks.",
+        description="Update a component's fields. Components are organizational containers — id, name, description. They group tasks, hold punchlist items, and link conversations.",
         inputSchema={
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Component ID"},
                 "name": {"type": "string", "description": "Human-readable name"},
                 "description": {"type": ["string", "null"], "description": "Description"},
-                "phase": {"type": "string", "description": "Lifecycle phase"},
-                "review_ignore_patterns": {"type": ["array", "null"], "items": {"type": "string"}, "description": "File patterns to exclude from the review diff, e.g. ['*.lock', 'vendor/']"},
             },
             "required": ["id"],
         },

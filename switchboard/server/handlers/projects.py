@@ -47,6 +47,11 @@ async def _handle_create_project(arguments):
                 f"— use folder_name to override"
             )
 
+    REQUIRED_PROJECT_CONFIG = ["model", "review_model", "auto_test", "auto_review", "auto_pr", "auto_merge", "max_turns", "max_wall_clock"]
+    missing = [f for f in REQUIRED_PROJECT_CONFIG if arguments.get(f) is None]
+    if missing:
+        return {"error": f"Missing required config fields: {', '.join(missing)}. All config must be explicitly set at project creation."}
+
     return await db.create_project(
         id=arguments["id"],
         repo=repo,
