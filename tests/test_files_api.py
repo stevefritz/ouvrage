@@ -772,6 +772,12 @@ class TestPromptInjection:
         assert "a.txt" in prompt
         assert "b.pdf" in prompt
 
+    async def test_prompt_includes_producing_files_section(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
+        assert "## Producing Files" in prompt
+        assert "add_task_file" in prompt
+
 
 class TestReactiveInjection:
 
@@ -856,3 +862,176 @@ class TestReactiveInjection:
 
         assert resp.status == 201
         mock_post.assert_not_called()
+
+
+# ── add_task_file MCP tool ─────────────────────────────────────────────────
+
+
+class TestAddTaskFile:
+    """Tests for the add_task_file worker MCP tool."""
+
+    @pytest.fixture(autouse=True)
+    def patch_uploads_dir(self, tmp_path, monkeypatch):
+        """Redirect uploads to a temp directory."""
+        uploads = tmp_path / "uploads"
+        uploads.mkdir(exist_ok=True)
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler._uploads_dir",
+            lambda: uploads,
+        )
+        self._uploads = uploads
+
+    @pytest.fixture(autouse=True)
+    def patch_worker_context(self, monkeypatch):
+        """Default: pretend we are on the worker endpoint."""
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            lambda: True,
+        )
+
+    async def _make_worktree(self, tmp_path: Path) -> Path:
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        return wt
+
+    async def test_successful_copy(self, db, sample_task, tmp_path):
+        """File is copied to uploads dir and DB record is created."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        src = wt / "report.txt"
+        src.write_text("hello output")
+
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        result = await _handle_add_task_file({
+            "task_id": sample_task["id"],
+            "source_path": str(src),
+        })
+
+        assert result["filename"] == "report.txt"
+        assert result["size_bytes"] == len(b"hello output")
+        assert Path(result["stored_path"]).exists()
+        assert Path(result["stored_path"]).read_text() == "hello output"
+
+        record = await db.get_file(result["id"])
+        assert record is not None
+        assert record["task_id"] == sample_task["id"]
+        assert record["uploaded_by"] is None
+        assert record["filename"] == "report.txt"
+
+    async def test_custom_filename(self, db, sample_task, tmp_path):
+        """Custom filename parameter is used as display name."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        src = wt / "output.json"
+        src.write_text("{}")
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        result = await _handle_add_task_file({
+            "task_id": sample_task["id"],
+            "source_path": str(src),
+            "filename": "analysis-results.json",
+        })
+
+        assert result["filename"] == "analysis-results.json"
+        assert Path(result["stored_path"]).name == "analysis-results.json"
+
+    async def test_path_traversal_rejected(self, db, sample_task, tmp_path):
+        """Source path outside worktree is rejected."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        outside = tmp_path / "secret.txt"
+        outside.write_text("sensitive")
+
+        with pytest.raises(ValueError, match="within the worktree"):
+            await _handle_add_task_file({
+                "task_id": sample_task["id"],
+                "source_path": str(outside),
+            })
+
+    async def test_bad_extension_rejected(self, db, sample_task, tmp_path):
+        """Files with disallowed extensions are rejected."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        src = wt / "script.sh"
+        src.write_text("#!/bin/bash")
+
+        with pytest.raises(ValueError, match="not allowed"):
+            await _handle_add_task_file({
+                "task_id": sample_task["id"],
+                "source_path": str(src),
+            })
+
+    async def test_size_limit_rejected(self, db, sample_task, tmp_path):
+        """Files exceeding 10MB are rejected."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        src = wt / "big.txt"
+        src.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+
+        with pytest.raises(ValueError, match="10MB"):
+            await _handle_add_task_file({
+                "task_id": sample_task["id"],
+                "source_path": str(src),
+            })
+
+    async def test_file_not_found(self, db, sample_task, tmp_path):
+        """Non-existent source path raises an error."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        with pytest.raises(ValueError, match="File not found"):
+            await _handle_add_task_file({
+                "task_id": sample_task["id"],
+                "source_path": str(wt / "nonexistent.txt"),
+            })
+
+    async def test_worker_only_enforced(self, db, sample_task, tmp_path, monkeypatch):
+        """Tool raises ValueError when called from a non-worker context."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            lambda: False,
+        )
+
+        wt = await self._make_worktree(tmp_path)
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+        src = wt / "file.txt"
+        src.write_text("content")
+
+        with pytest.raises(ValueError, match="worker endpoint"):
+            await _handle_add_task_file({
+                "task_id": sample_task["id"],
+                "source_path": str(src),
+            })
+
+    async def test_uploaded_by_is_null(self, db, sample_task, tmp_path):
+        """Files added via add_task_file have uploaded_by=None."""
+        from switchboard.server.handlers.files_handler import _handle_add_task_file
+
+        wt = await self._make_worktree(tmp_path)
+        src = wt / "output.md"
+        src.write_text("# Report")
+        await db.update_task(sample_task["id"], worktree_path=str(wt))
+
+        result = await _handle_add_task_file({
+            "task_id": sample_task["id"],
+            "source_path": str(src),
+        })
+
+        record = await db.get_file(result["id"])
+        assert record["uploaded_by"] is None

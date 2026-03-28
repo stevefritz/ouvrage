@@ -161,6 +161,17 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("Read these files when relevant to your task.")
         parts.append("")
 
+    parts.append("## Producing Files")
+    parts.append(
+        "If your task produces files the user should see (reports, screenshots, analyses, exports), "
+        "use the add_task_file tool to persist them. Pass the absolute file path within your worktree."
+    )
+    parts.append(
+        f"  `mcp__switchboard__add_task_file(task_id='{task['id']}', source_path='/absolute/path/in/worktree/file.pdf')`"
+    )
+    parts.append("The file will be saved permanently and appear in the task's Files section for download.")
+    parts.append("")
+
     parts.append("## Instructions")
     parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
     parts.append("- Use the switchboard MCP tools to report progress:")
