@@ -327,7 +327,7 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         # Refresh task to get current retry count
         task = await db.get_task(task_id)
         retries = (task.get("gate_retries") or 0) + 1
-        max_retries = task.get("max_gate_retries") or 3
+        max_retries = task.get("max_test_retries") or task.get("max_gate_retries") or 3
         await db.update_task(task_id, gate_status="test-failed", gate_retries=retries)
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
@@ -519,7 +519,7 @@ If changes needed: title="CHANGES REQUESTED" and list specific issues
             log.warning(f"Review subtask failed for {task_id}: {subtask.get('error', 'unknown')}")
             task = await db.get_task(task_id)
             retries = (task.get("gate_retries") or 0) + 1
-            max_retries = task.get("max_gate_retries") or 3
+            max_retries = task.get("max_review_retries") or task.get("max_gate_retries") or 3
             await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
@@ -537,7 +537,7 @@ If changes needed: title="CHANGES REQUESTED" and list specific issues
         log.error(f"Failed to run review subtask for {task_id}: {e}")
         task = await db.get_task(task_id)
         retries = (task.get("gate_retries") or 0) + 1
-        max_retries = task.get("max_gate_retries") or 3
+        max_retries = task.get("max_review_retries") or task.get("max_gate_retries") or 3
         await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
         if retries < max_retries:
             try:
@@ -568,7 +568,7 @@ async def _process_review_result_inline(task_id: str) -> None:
     else:
         task = await db.get_task(task_id)
         retries = (task.get("gate_retries") or 0) + 1
-        max_retries = task.get("max_gate_retries") or 3
+        max_retries = task.get("max_review_retries") or task.get("max_gate_retries") or 3
         await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
         log.warning(f"Review failed for {task_id} (attempt {retries}/{max_retries})")
 
@@ -597,7 +597,7 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
     else:
         parent = await db.get_task(parent_task_id)
         retries = (parent.get("gate_retries") or 0) + 1
-        max_retries = parent.get("max_gate_retries") or 3
+        max_retries = parent.get("max_review_retries") or parent.get("max_gate_retries") or 3
         await db.update_task(parent_task_id, gate_status="review-failed", gate_retries=retries)
         log.warning(f"Review failed for {parent_task_id} (attempt {retries}/{max_retries})")
 

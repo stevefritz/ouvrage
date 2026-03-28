@@ -1,5 +1,6 @@
 """Tests for v5 components: CRUD, config inheritance, conversations, dispatch integration."""
 
+from unittest.mock import AsyncMock, patch
 import pytest
 
 
@@ -316,3 +317,181 @@ class TestComponentSchema:
             cols = await conn.execute_fetchall("PRAGMA table_info(projects)")
             col_names = [c["name"] for c in cols]
             assert "connectors" in col_names
+
+    async def test_projects_has_new_config_columns(self, db):
+        """Projects table should have review_model and boolean config columns."""
+        async with db.get_db() as conn:
+            cols = await conn.execute_fetchall("PRAGMA table_info(projects)")
+            col_names = [c["name"] for c in cols]
+            for col in ("review_model", "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge"):
+                assert col in col_names, f"Missing column: {col}"
+
+
+# ---------------------------------------------------------------------------
+# Project config fields: create/update/resolve
+# ---------------------------------------------------------------------------
+
+class TestProjectConfigFields:
+    async def test_create_project_with_review_model(self, db):
+        p = await db.create_project(
+            id="rmodel-proj", repo="https://github.com/x/y.git",
+            working_dir="/work/rmodel", review_model="sonnet",
+        )
+        assert p["review_model"] == "sonnet"
+        fetched = await db.get_project("rmodel-proj")
+        assert fetched["review_model"] == "sonnet"
+
+    async def test_create_project_with_review_ignore_patterns(self, db):
+        p = await db.create_project(
+            id="rip-proj", repo="https://github.com/x/y.git",
+            working_dir="/work/rip",
+            review_ignore_patterns=["*.lock", "vendor/"],
+        )
+        assert p["review_ignore_patterns"] == ["*.lock", "vendor/"]
+        fetched = await db.get_project("rip-proj")
+        assert fetched["review_ignore_patterns"] == ["*.lock", "vendor/"]
+
+    async def test_update_project_model(self, db):
+        """model field is settable on update_project."""
+        await db.create_project(
+            id="upd-model", repo="https://github.com/x/y.git", working_dir="/work/upd-model",
+        )
+        updated = await db.update_project("upd-model", model="opus")
+        assert updated["model"] == "opus"
+
+    async def test_update_project_review_model(self, db):
+        await db.create_project(
+            id="upd-rmodel", repo="https://github.com/x/y.git", working_dir="/work/upd-rmodel",
+        )
+        updated = await db.update_project("upd-rmodel", review_model="sonnet")
+        assert updated["review_model"] == "sonnet"
+
+    async def test_update_project_review_ignore_patterns(self, db):
+        await db.create_project(
+            id="upd-rip", repo="https://github.com/x/y.git", working_dir="/work/upd-rip",
+        )
+        updated = await db.update_project("upd-rip", review_ignore_patterns=["*.log"])
+        assert updated["review_ignore_patterns"] == ["*.log"]
+
+    async def test_update_project_auto_pr(self, db):
+        await db.create_project(
+            id="upd-autopr", repo="https://github.com/x/y.git", working_dir="/work/upd-autopr",
+        )
+        updated = await db.update_project("upd-autopr", auto_pr=True)
+        assert updated["auto_pr"] == 1 or updated["auto_pr"] is True
+
+    async def test_project_review_model_falls_through_to_task(self, db):
+        """project.review_model is used when task has no review_model."""
+        p = await db.create_project(
+            id="rm-inherit", repo="https://github.com/x/y.git",
+            working_dir="/work/rm-inherit", review_model="sonnet",
+        )
+        task = await db.create_task(
+            id="rm-inherit/task1", project_id="rm-inherit", goal="Test",
+        )
+        resolved = await db.resolve_config(task["id"])
+        assert resolved["review_model"] == "sonnet"
+
+    async def test_project_auto_pr_falls_through_to_task(self, db):
+        """project.auto_pr=True is stored as resolved value when dispatch_task has no explicit auto_pr."""
+        await db.create_project(
+            id="autopr-proj", repo="https://github.com/x/y.git",
+            working_dir="/work/autopr-proj",
+        )
+        await db.update_project("autopr-proj", auto_pr=True)
+
+        # Use dispatch_task with concurrency full so it creates-but-queues the task.
+        # This exercises the config resolution path before create_task.
+        import switchboard.db as _db
+        for i in range(_db.DEFAULT_MAX_CONCURRENT):
+            t = await db.create_task(
+                id=f"autopr-proj/filler-{i}", project_id="autopr-proj", goal=f"Filler {i}",
+            )
+            await db.update_task(t["id"], status="working")
+
+        from switchboard.dispatch.engine import dispatch_task
+        with patch("switchboard.dispatch.engine.notify", AsyncMock()):
+            result = await dispatch_task(
+                project_id="autopr-proj",
+                task_id="autopr-proj/task1",
+                goal="Test project auto_pr inheritance",
+            )
+
+        assert result["queued"] is True
+        task = await db.get_task("autopr-proj/task1")
+        # auto_pr should have been resolved from project (True) since none was passed
+        assert task["auto_pr"] == 1 or task["auto_pr"] is True
+
+    async def test_task_review_model_overrides_project(self, db):
+        """task.review_model wins over project.review_model."""
+        await db.create_project(
+            id="rm-override", repo="https://github.com/x/y.git",
+            working_dir="/work/rm-override", review_model="sonnet",
+        )
+        task = await db.create_task(
+            id="rm-override/task1", project_id="rm-override", goal="Test",
+            review_model="opus",
+        )
+        resolved = await db.resolve_config(task["id"])
+        assert resolved["review_model"] == "opus"
+
+
+# ---------------------------------------------------------------------------
+# update_task: new settable fields
+# ---------------------------------------------------------------------------
+
+class TestUpdateTaskNewFields:
+    async def test_update_task_max_turns(self, db, sample_project):
+        task = await db.create_task(
+            id="test-project/turns-task", project_id="test-project", goal="Test",
+        )
+        updated = await db.update_task(task["id"], max_turns=50)
+        assert updated["max_turns"] == 50
+
+    async def test_update_task_max_wall_clock(self, db, sample_project):
+        task = await db.create_task(
+            id="test-project/wc-task", project_id="test-project", goal="Test",
+        )
+        updated = await db.update_task(task["id"], max_wall_clock=120)
+        assert updated["max_wall_clock"] == 120
+
+    async def test_update_task_review_model(self, db, sample_project):
+        task = await db.create_task(
+            id="test-project/rm-task", project_id="test-project", goal="Test",
+        )
+        updated = await db.update_task(task["id"], review_model="sonnet")
+        assert updated["review_model"] == "sonnet"
+
+
+# ---------------------------------------------------------------------------
+# max_test_retries / max_review_retries gate wiring
+# ---------------------------------------------------------------------------
+
+class TestGateRetryFields:
+    async def test_max_test_retries_column_exists(self, db, sample_project):
+        """max_test_retries column exists on tasks table."""
+        async with db.get_db() as conn:
+            cols = await conn.execute_fetchall("PRAGMA table_info(tasks)")
+            col_names = [c["name"] for c in cols]
+            assert "max_test_retries" in col_names
+
+    async def test_max_review_retries_column_exists(self, db, sample_project):
+        """max_review_retries column exists on tasks table."""
+        async with db.get_db() as conn:
+            cols = await conn.execute_fetchall("PRAGMA table_info(tasks)")
+            col_names = [c["name"] for c in cols]
+            assert "max_review_retries" in col_names
+
+    async def test_max_test_retries_updatable(self, db, sample_project):
+        task = await db.create_task(
+            id="test-project/upd-retry", project_id="test-project", goal="Test",
+        )
+        updated = await db.update_task(task["id"], max_test_retries=2)
+        assert updated["max_test_retries"] == 2
+
+    async def test_max_review_retries_updatable(self, db, sample_project):
+        task = await db.create_task(
+            id="test-project/upd-rev-retry", project_id="test-project", goal="Test",
+        )
+        updated = await db.update_task(task["id"], max_review_retries=3)
+        assert updated["max_review_retries"] == 3

@@ -70,8 +70,9 @@ _SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
 _UPDATE_TASK_FIELDS = {
     "component_id", "base_branch", "branch_target", "tags",
     "auto_test", "auto_review", "auto_merge", "auto_pr",
+    "max_turns", "max_wall_clock",
     "max_test_retries", "max_review_retries",
-    "model", "jira_ticket", "conversation_id", "claude_chat_url",
+    "model", "review_model", "jira_ticket", "conversation_id", "claude_chat_url",
     "held",
 }
 
@@ -106,11 +107,11 @@ async def _handle_dispatch_task(arguments):
         jira_ticket=arguments.get("jira_ticket"),
         conversation_id=arguments.get("conversation_id"),
         model=arguments.get("model"),
-        auto_test=arguments.get("auto_test", True),
-        auto_review=arguments.get("auto_review", True),
+        auto_test=arguments.get("auto_test"),
+        auto_review=arguments.get("auto_review"),
         review_model=arguments.get("review_model"),
-        auto_pr=arguments.get("auto_pr", False),
-        auto_merge=arguments.get("auto_merge", False),
+        auto_pr=arguments.get("auto_pr"),
+        auto_merge=arguments.get("auto_merge"),
         auto_release_worktree=arguments.get("auto_release_worktree", True),
         base_branch=arguments.get("base_branch"),
         component_id=arguments.get("component_id"),

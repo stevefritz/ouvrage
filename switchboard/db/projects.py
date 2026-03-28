@@ -12,21 +12,30 @@ async def create_project(
     max_turns: int | None = None, max_wall_clock: int | None = None,
     claude_md_path: str | None = None, model: str | None = None,
     state_definitions: dict | None = None,
+    review_model: str | None = None,
+    review_ignore_patterns: list | None = None,
+    auto_test: bool | None = None,
+    auto_review: bool | None = None,
+    auto_pr: bool | None = None,
+    auto_merge: bool | None = None,
     created_by: int | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
         env_json = json.dumps(env_overrides) if env_overrides else None
         state_json = json.dumps(state_definitions) if state_definitions else None
+        rip_json = json.dumps(review_ignore_patterns) if review_ignore_patterns else None
         await db.execute(
             """INSERT INTO projects
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
                 test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
-                state_definitions, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                state_definitions, review_model, review_ignore_patterns,
+                auto_test, auto_review, auto_pr, auto_merge, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
              test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
-             state_json, created_by, ts),
+             state_json, review_model, rip_json,
+             auto_test, auto_review, auto_pr, auto_merge, created_by, ts),
         )
         await db.commit()
         return {
@@ -36,8 +45,22 @@ async def create_project(
             "env_overrides": env_overrides, "max_turns": max_turns,
             "max_wall_clock": max_wall_clock, "claude_md_path": claude_md_path,
             "model": model, "state_definitions": state_definitions,
+            "review_model": review_model, "review_ignore_patterns": review_ignore_patterns,
+            "auto_test": auto_test, "auto_review": auto_review,
+            "auto_pr": auto_pr, "auto_merge": auto_merge,
             "created_by": created_by, "created_at": ts,
         }
+
+
+def _decode_project(p: dict) -> dict:
+    """Decode JSON fields in a project row dict."""
+    if p.get("env_overrides"):
+        p["env_overrides"] = json.loads(p["env_overrides"])
+    if p.get("state_definitions"):
+        p["state_definitions"] = json.loads(p["state_definitions"])
+    if p.get("review_ignore_patterns"):
+        p["review_ignore_patterns"] = json.loads(p["review_ignore_patterns"])
+    return p
 
 
 async def get_project(id: str) -> dict | None:
@@ -45,12 +68,7 @@ async def get_project(id: str) -> dict | None:
         rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (id,))
         if not rows:
             return None
-        p = dict(rows[0])
-        if p.get("env_overrides"):
-            p["env_overrides"] = json.loads(p["env_overrides"])
-        if p.get("state_definitions"):
-            p["state_definitions"] = json.loads(p["state_definitions"])
-        return p
+        return _decode_project(dict(rows[0]))
 
 
 async def update_project(project_id: str, **fields) -> dict:
@@ -63,6 +81,8 @@ async def update_project(project_id: str, **fields) -> dict:
             fields["env_overrides"] = json.dumps(fields["env_overrides"])
         if "state_definitions" in fields and isinstance(fields["state_definitions"], dict):
             fields["state_definitions"] = json.dumps(fields["state_definitions"])
+        if "review_ignore_patterns" in fields and isinstance(fields["review_ignore_patterns"], list):
+            fields["review_ignore_patterns"] = json.dumps(fields["review_ignore_patterns"])
 
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [project_id]
@@ -70,23 +90,10 @@ async def update_project(project_id: str, **fields) -> dict:
         await db.commit()
 
         rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (project_id,))
-        p = dict(rows[0])
-        if p.get("env_overrides"):
-            p["env_overrides"] = json.loads(p["env_overrides"])
-        if p.get("state_definitions"):
-            p["state_definitions"] = json.loads(p["state_definitions"])
-        return p
+        return _decode_project(dict(rows[0]))
 
 
 async def list_projects() -> list[dict]:
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM projects ORDER BY created_at DESC")
-        projects = []
-        for r in rows:
-            p = dict(r)
-            if p.get("env_overrides"):
-                p["env_overrides"] = json.loads(p["env_overrides"])
-            if p.get("state_definitions"):
-                p["state_definitions"] = json.loads(p["state_definitions"])
-            projects.append(p)
-        return projects
+        return [_decode_project(dict(r)) for r in rows]

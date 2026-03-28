@@ -59,6 +59,12 @@ async def _handle_create_project(arguments):
         max_turns=arguments.get("max_turns"),
         max_wall_clock=arguments.get("max_wall_clock"),
         model=arguments.get("model"),
+        review_model=arguments.get("review_model"),
+        review_ignore_patterns=arguments.get("review_ignore_patterns"),
+        auto_test=arguments.get("auto_test"),
+        auto_review=arguments.get("auto_review"),
+        auto_pr=arguments.get("auto_pr"),
+        auto_merge=arguments.get("auto_merge"),
         state_definitions=arguments.get("state_definitions"),
         created_by=get_request_user_id(),
     )
