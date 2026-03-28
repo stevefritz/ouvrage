@@ -1,5 +1,13 @@
 # Switchboard — Developer Guide for CC Workers
 
+## Dashboard
+
+The dashboard is Foreman. Entry point: `foreman.html` → `dashboard/foreman-app.js` → `dashboard/views/`.
+There is NO separate dashboard app.
+NEVER create `dashboard/app.js` or `dashboard/index.html` — these are legacy files that were purged.
+Foreman views live in `dashboard/views/`. Shared components live in `dashboard/components/`.
+If a component in `dashboard/components/` is not imported by any view or `foreman-app.js`, it should not exist.
+
 Switchboard (branded "Foreman" in the dashboard) is an AI task orchestration platform.
 It's an MCP server that dispatches Claude Code sessions to work on git repos with isolated
 worktrees, test gates, review gates, dependency chains, and crash recovery.
