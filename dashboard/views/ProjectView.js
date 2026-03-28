@@ -215,79 +215,297 @@ function RecentActivity({ projectId }) {
 // Component drawer — knowledge card for a component
 // ---------------------------------------------------------------------------
 
-function PunchlistSection({ componentId }) {
+function PunchlistSection({ componentId, componentName }) {
     const [items, setItems] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [newText, setNewText] = useState('');
+    const [adding, setAdding] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const [busyIds, setBusyIds] = useState(new Set());
+    const [error, setError] = useState(null);
 
-    useEffect(() => {
+    const loadItems = useCallback(() => {
         api.getPunchlist(componentId)
             .then(data => { setItems(data); setLoading(false); })
             .catch(() => { setItems([]); setLoading(false); });
     }, [componentId]);
 
-    if (loading) {
-        return html`<div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, padding: '4px 0' }}>Loading punchlist…</div>`;
-    }
-    if (!items || items.length === 0) {
-        return html`<div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, fontStyle: 'italic' }}>No punchlist items</div>`;
-    }
+    useEffect(() => { loadItems(); }, [loadItems]);
 
-    const openCount = items.filter(i => i.status !== 'resolved').length;
-    const displayItems = items;
+    const nextStatus = (s) => {
+        if (s === 'open') return 'claimed';
+        if (s === 'claimed') return 'done';
+        return 'open';
+    };
 
     const statusColor = (s) => {
-        if (s === 'resolved') return colors.blue;
+        if (s === 'done') return colors.green;
         if (s === 'claimed') return colors.yellow;
         return colors.textTertiary;
     };
 
     const statusIcon = (s) => {
-        if (s === 'resolved') return '✓';
-        if (s === 'claimed') return '●';
+        if (s === 'done') return '✓';
+        if (s === 'claimed') return '◉';
         return '○';
+    };
+
+    const handleToggleStatus = useCallback(async (item) => {
+        if (busyIds.has(item.id)) return;
+        const next = nextStatus(item.status);
+        setBusyIds(prev => new Set([...prev, item.id]));
+        try {
+            await api.updatePunchlistStatus(componentId, item.id, next);
+            setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: next } : i));
+            if (next !== 'open') {
+                setSelectedIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
+            }
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setBusyIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
+        }
+    }, [componentId, busyIds]);
+
+    const handleAdd = useCallback(async () => {
+        const text = newText.trim();
+        if (!text || adding) return;
+        setAdding(true);
+        setError(null);
+        try {
+            const item = await api.addPunchlistItem(componentId, text);
+            setItems(prev => [...(prev || []), item]);
+            setNewText('');
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setAdding(false);
+        }
+    }, [componentId, newText, adding]);
+
+    const handleDelete = useCallback(async (itemId) => {
+        setBusyIds(prev => new Set([...prev, itemId]));
+        setError(null);
+        try {
+            await api.deletePunchlistItem(componentId, itemId);
+            setItems(prev => prev.filter(i => i.id !== itemId));
+            setSelectedIds(prev => { const s = new Set(prev); s.delete(itemId); return s; });
+            setConfirmDeleteId(null);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setBusyIds(prev => { const s = new Set(prev); s.delete(itemId); return s; });
+        }
+    }, [componentId]);
+
+    const handleToggleSelect = useCallback((itemId) => {
+        setSelectedIds(prev => {
+            const s = new Set(prev);
+            if (s.has(itemId)) s.delete(itemId); else s.add(itemId);
+            return s;
+        });
+    }, []);
+
+    const handleCreateTask = useCallback(() => {
+        const selectedItems = (items || []).filter(i => selectedIds.has(i.id));
+        const scaffold = {
+            componentId,
+            componentName: componentName || componentId,
+            items: selectedItems.map(i => ({ id: i.id, text: i.item || i.text || '' })),
+        };
+        sessionStorage.setItem('foreman-punchlist-scaffold', JSON.stringify(scaffold));
+        window.location.hash = '#/task/new';
+    }, [items, selectedIds, componentId, componentName]);
+
+    const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') handleAdd();
+    }, [handleAdd]);
+
+    if (loading) {
+        return html`<div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, padding: '4px 0' }}>Loading punchlist…</div>`;
+    }
+
+    const displayItems = items || [];
+    const openCount = displayItems.filter(i => i.status === 'open').length;
+    const selectedCount = selectedIds.size;
+
+    const btnBase = {
+        background: 'transparent',
+        border: `1px solid ${colors.border}`,
+        borderRadius: '4px',
+        color: colors.textTertiary,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontSize: typography.size.xs,
+        padding: '2px 8px',
+        lineHeight: '18px',
+    };
+
+    const btnPrimary = {
+        ...btnBase,
+        background: colors.accent,
+        border: `1px solid ${colors.accent}`,
+        color: '#fff',
+    };
+
+    const btnDanger = {
+        ...btnBase,
+        color: colors.red,
+        borderColor: colors.red,
     };
 
     return html`
         <div>
+            <!-- Header row with count + multi-select button -->
             <div style=${{
-                fontSize: typography.size.sm,
-                fontWeight: typography.weight.semibold,
-                color: colors.textSecondary,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
                 marginBottom: '8px',
-            }}>Punchlist · ${openCount} open</div>
-        <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            ${displayItems.map(item => html`
-                <div key=${item.id} style=${{
-                    display: 'flex',
-                    alignItems: 'baseline',
-                    gap: '8px',
+            }}>
+                <div style=${{
                     fontSize: typography.size.sm,
-                }}>
-                    <span style=${{
-                        color: statusColor(item.status),
-                        fontSize: typography.size.xs,
-                        flexShrink: 0,
-                        width: '12px',
-                        textAlign: 'center',
-                    }}>${statusIcon(item.status)}</span>
-                    <span style=${{
-                        color: item.status === 'resolved' ? colors.textTertiary : colors.textSecondary,
-                        textDecoration: item.status === 'resolved' ? 'line-through' : 'none',
-                        flex: 1,
-                        lineHeight: 1.4,
-                    }}>${item.text || item.item || item.description}</span>
-                    ${item.task_id ? html`
-                        <a href=${routes.task(item.task_id)} style=${{
-                            fontFamily: typography.fontMono,
-                            fontSize: typography.size.xs,
-                            color: colors.accent,
-                            textDecoration: 'none',
-                            flexShrink: 0,
-                        }}>↗</a>
-                    ` : null}
+                    fontWeight: typography.weight.semibold,
+                    color: colors.textSecondary,
+                }}>Punchlist · ${openCount} open</div>
+                ${selectedCount > 0 ? html`
+                    <button
+                        style=${btnPrimary}
+                        onClick=${handleCreateTask}
+                        title="Opens the Task Create form with selected items pre-filled as spec + checklist. Component auto-assigned."
+                    >Create task from ${selectedCount} selected</button>
+                ` : null}
+            </div>
+
+            ${error ? html`<div style=${{
+                fontSize: typography.size.xs,
+                color: colors.red,
+                marginBottom: '6px',
+            }}>${error}</div>` : null}
+
+            <!-- Item list -->
+            ${displayItems.length === 0 ? html`
+                <div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, fontStyle: 'italic', marginBottom: '8px' }}>No punchlist items</div>
+            ` : html`
+                <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                    ${displayItems.map(item => html`
+                        <div key=${item.id} style=${{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            fontSize: typography.size.sm,
+                        }}>
+                            <!-- Checkbox (open items only) -->
+                            ${item.status === 'open' ? html`
+                                <input
+                                    type="checkbox"
+                                    checked=${selectedIds.has(item.id)}
+                                    onChange=${() => handleToggleSelect(item.id)}
+                                    style=${{ accentColor: colors.accent, flexShrink: 0, cursor: 'pointer', margin: 0 }}
+                                />
+                            ` : html`<span style=${{ width: '13px', flexShrink: 0 }}></span>`}
+
+                            <!-- Status icon (clickable) -->
+                            <span
+                                onClick=${() => handleToggleStatus(item)}
+                                title="Click to cycle status"
+                                style=${{
+                                    color: busyIds.has(item.id) ? colors.textTertiary : statusColor(item.status),
+                                    fontSize: typography.size.xs,
+                                    flexShrink: 0,
+                                    width: '14px',
+                                    textAlign: 'center',
+                                    cursor: 'pointer',
+                                    userSelect: 'none',
+                                    opacity: busyIds.has(item.id) ? 0.5 : 1,
+                                }}
+                            >${statusIcon(item.status)}</span>
+
+                            <!-- Item text -->
+                            <span style=${{
+                                color: item.status === 'done' ? colors.textTertiary : colors.textSecondary,
+                                textDecoration: item.status === 'done' ? 'line-through' : 'none',
+                                flex: 1,
+                                lineHeight: 1.4,
+                                minWidth: 0,
+                            }}>${item.item || item.text || item.description}</span>
+
+                            <!-- Task link -->
+                            ${item.task_id ? html`
+                                <a href=${routes.task(item.task_id)} style=${{
+                                    fontFamily: typography.fontMono,
+                                    fontSize: typography.size.xs,
+                                    color: colors.accent,
+                                    textDecoration: 'none',
+                                    flexShrink: 0,
+                                }}>↗</a>
+                            ` : null}
+
+                            <!-- Delete button / confirm -->
+                            ${confirmDeleteId === item.id ? html`
+                                <span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                    <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>Delete?</span>
+                                    <button
+                                        style=${btnDanger}
+                                        onClick=${() => handleDelete(item.id)}
+                                        disabled=${busyIds.has(item.id)}
+                                    >Yes</button>
+                                    <button
+                                        style=${btnBase}
+                                        onClick=${() => setConfirmDeleteId(null)}
+                                    >Cancel</button>
+                                </span>
+                            ` : html`
+                                <button
+                                    style=${{
+                                        ...btnBase,
+                                        padding: '1px 5px',
+                                        fontSize: '10px',
+                                        opacity: 0.4,
+                                        flexShrink: 0,
+                                    }}
+                                    onClick=${() => setConfirmDeleteId(item.id)}
+                                    title="Delete item"
+                                >×</button>
+                            `}
+                        </div>
+                    `)}
                 </div>
-            `)}
-        </div>
+            `}
+
+            <!-- Add item input -->
+            <div style=${{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                    type="text"
+                    value=${newText}
+                    onInput=${(e) => setNewText(e.target.value)}
+                    onKeyDown=${handleKeyDown}
+                    placeholder="Add punchlist item…"
+                    style=${{
+                        flex: 1,
+                        background: 'transparent',
+                        border: `1px solid ${colors.border}`,
+                        borderRadius: '4px',
+                        color: colors.text,
+                        fontFamily: 'inherit',
+                        fontSize: typography.size.xs,
+                        padding: '3px 8px',
+                        outline: 'none',
+                        minWidth: 0,
+                    }}
+                />
+                <button
+                    style=${{
+                        ...btnBase,
+                        opacity: newText.trim() ? 1 : 0.4,
+                        cursor: newText.trim() ? 'pointer' : 'default',
+                    }}
+                    onClick=${handleAdd}
+                    disabled=${!newText.trim() || adding}
+                    title="Add punchlist item"
+                >${adding ? '…' : 'Add'}</button>
+            </div>
         </div>
     `;
 }
@@ -539,7 +757,7 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
                     ` : null}
 
                     <!-- Punchlist -->
-                    <${PunchlistSection} componentId=${component.id} />
+                    <${PunchlistSection} componentId=${component.id} componentName=${component.name} />
 
                     <!-- Tasks -->
                     <div>

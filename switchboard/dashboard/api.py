@@ -897,7 +897,7 @@ async def _handle_get_component_activity(send, component_id):
 # ── Punchlist ─────────────────────────────────────────────────────────────
 
 async def _handle_list_punchlist(send, component_id):
-    items = await db.list_punchlist(component_id)
+    items = await db.list_punchlist(component_id, include_done=True)
     await _json_response(send, items)
 
 
@@ -905,9 +905,10 @@ async def _handle_create_punchlist_item(receive, send, component_id):
     body = await _read_body(receive)
     data = json.loads(body) if body else {}
     item_text = data.get("item", "").strip()
+    author = data.get("author")
     if not item_text:
         return await _error(send, "item is required")
-    result = await db.create_punchlist_item(component_id, item_text)
+    result = await db.add_punchlist_item(component_id, item_text, author)
     await _json_response(send, result, 201)
 
 
