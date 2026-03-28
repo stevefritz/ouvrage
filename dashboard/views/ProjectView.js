@@ -1792,6 +1792,25 @@ export function ProjectView({ id }) {
             <div style=${headerStyle}>
                 <h1 style=${titleStyle}>${project?.id || id}</h1>
                 ${repoShort ? html`<span style=${repoTagStyle}>${repoShort}</span>` : null}
+                <a
+                    href=${routes.taskNew(id)}
+                    style=${{
+                        marginLeft: 'auto',
+                        padding: '6px 14px',
+                        borderRadius: layout.borderRadius.md,
+                        background: colors.blue,
+                        border: 'none',
+                        color: '#fff',
+                        fontSize: typography.size.sm,
+                        fontFamily: typography.fontBody,
+                        fontWeight: typography.weight.medium,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        whiteSpace: 'nowrap',
+                        textDecoration: 'none',
+                        display: 'inline-block',
+                    }}
+                >+ New Task</a>
             </div>
 
             <!-- Recent Activity -->

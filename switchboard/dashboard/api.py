@@ -199,6 +199,10 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/tasks" and method == "GET":
             return await _handle_list_tasks(scope, send)
 
+        # POST /dashboard/api/tasks — create a new task
+        if path == "/dashboard/api/tasks" and method == "POST":
+            return await _handle_create_task(receive, send)
+
         # Task-specific routes: /dashboard/api/tasks/{task_id}[/action]
         if path.startswith("/dashboard/api/tasks/"):
             rest = path[len("/dashboard/api/tasks/"):]
@@ -664,6 +668,67 @@ async def _handle_resume(send, task_id):
 async def _handle_approve(send, task_id):
     result = await tasks.approve_task(task_id)
     await _json_response(send, result)
+
+
+async def _handle_create_task(receive, send):
+    """Create a new task via the dashboard form. Held by default."""
+    body = await _read_body(receive)
+    if not body:
+        return await _error(send, "Request body required")
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return await _error(send, "Invalid JSON")
+
+    project_id = data.get("project_id", "").strip()
+    task_id = data.get("id", "").strip()
+    goal = data.get("goal", "").strip()
+
+    if not project_id:
+        return await _error(send, "project_id is required")
+    if not task_id:
+        return await _error(send, "id is required")
+    if not goal:
+        return await _error(send, "goal is required")
+
+    # Check for duplicate task ID
+    existing = await db.get_task(task_id)
+    if existing:
+        return await _error(send, f"Task '{task_id}' already exists", 409)
+
+    try:
+        result = await tasks.dispatch_task(
+            project_id=project_id,
+            task_id=task_id,
+            goal=goal,
+            spec=data.get("spec") or None,
+            checklist=data.get("checklist") or None,
+            held=data.get("held", True),
+            model=data.get("model") or None,
+            review_model=data.get("review_model") or None,
+            auto_test=data.get("auto_test"),
+            auto_review=data.get("auto_review"),
+            auto_pr=data.get("auto_pr"),
+            auto_merge=data.get("auto_merge"),
+            max_turns=data.get("max_turns") or None,
+            max_wall_clock=data.get("max_wall_clock") or None,
+            max_test_retries=data.get("max_test_retries") or None,
+            max_review_retries=data.get("max_review_retries") or None,
+            component_id=data.get("component_id") or None,
+            depends_on=data.get("depends_on") or None,
+            base_branch=data.get("base_branch") or None,
+            escalation_criteria=data.get("escalation_criteria") or None,
+        )
+        # Store tags separately (dispatch_task doesn't accept tags param)
+        tags = data.get("tags")
+        if tags and isinstance(tags, list):
+            await db.update_task(task_id, tags=tags)
+        await _json_response(send, {"task_id": task_id, "project_id": project_id, **result}, 201)
+    except ValueError as e:
+        await _error(send, str(e))
+    except Exception as e:
+        logger.exception("Error creating task")
+        await _error(send, str(e), 500)
 
 
 async def _handle_dispatch(send, task_id):

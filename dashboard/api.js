@@ -55,6 +55,12 @@ export const api = {
         return request('/activity' + (qs ? '?' + qs : ''));
     },
 
+    // Create a new task (held by default)
+    createTask: (params) => request('/tasks', {
+        method: 'POST',
+        body: JSON.stringify(params),
+    }),
+
     // Actions
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
     retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {

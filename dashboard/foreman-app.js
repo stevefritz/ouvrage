@@ -8,6 +8,7 @@ import { ForemanShell } from './foreman-shell.js';
 import { LandingView } from './views/LandingView.js';
 import { ProjectView } from './views/ProjectView.js';
 import { TaskView } from './views/TaskView.js';
+import { TaskCreateView } from './views/TaskCreateView.js';
 import { ConversationView } from './views/ConversationView.js';
 import { LoginView } from './views/LoginView.js';
 import { Settings } from './components/Settings.js';
@@ -29,6 +30,8 @@ function ForemanApp() {
         content = html`<${LandingView} />`;
     } else if (view === 'project') {
         content = html`<${ProjectView} id=${params.id} />`;
+    } else if (view === 'task-new') {
+        content = html`<${TaskCreateView} project=${params.project} />`;
     } else if (view === 'task') {
         content = html`<${TaskView} id=${params.id} />`;
     } else if (view === 'conversation') {
