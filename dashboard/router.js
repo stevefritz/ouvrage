@@ -27,6 +27,11 @@ export function parseRoute() {
         return { view: 'landing', params: {} };
     }
 
+    // /project/new — must come before /project/:id
+    if (hash === '/project/new') {
+        return { view: 'project-new', params: {} };
+    }
+
     // /project/:id
     const projectMatch = hash.match(/^\/project\/(.+)$/);
     if (projectMatch) {
@@ -111,6 +116,7 @@ export function useRouter() {
  */
 export const routes = {
     landing:      () => '#/',
+    projectNew:   () => '#/project/new',
     project:      (id) => `#/project/${encodeURIComponent(id)}`,
     task:         (id) => `#/task/${encodeURIComponent(id)}`,
     taskNew:      (projectId) => projectId ? `#/task/new?project=${encodeURIComponent(projectId)}` : '#/task/new',

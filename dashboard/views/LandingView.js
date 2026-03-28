@@ -5,7 +5,7 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout } from '../tokens.js';
-import { routes } from '../router.js';
+import { routes, navigate } from '../router.js';
 import { api } from '../api.js';
 
 const html = htm.bind(h);
@@ -410,11 +410,27 @@ export function LandingView() {
         <div style=${pageStyle}>
             <div style=${headerStyle}>
                 <h1 style=${titleStyle}>Projects</h1>
-                ${lastRefresh ? html`
-                    <span style=${subtitleStyle}>
-                        ${projects ? `${projects.length} project${projects.length !== 1 ? 's' : ''}` : ''}
-                    </span>
-                ` : null}
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    ${lastRefresh ? html`
+                        <span style=${subtitleStyle}>
+                            ${projects ? `${projects.length} project${projects.length !== 1 ? 's' : ''}` : ''}
+                        </span>
+                    ` : null}
+                    <a
+                        href=${routes.projectNew()}
+                        style=${{
+                            padding: '6px 14px',
+                            borderRadius: layout.borderRadius.md,
+                            background: colors.accent,
+                            color: '#fff',
+                            fontSize: typography.size.sm,
+                            fontWeight: typography.weight.medium,
+                            fontFamily: typography.fontBody,
+                            textDecoration: 'none',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >+ New Project</a>
+                </div>
             </div>
 
             ${error ? html`

@@ -50,6 +50,19 @@
       "wait_ms": 2000,
       "click": [".foreman-attempt-header:has-text('Files')"]
     },
+    "project-create": {
+      "url": "/foreman#/project/new",
+      "viewport": { "width": 1280, "height": 1200 },
+      "mocks": {},
+      "wait_ms": 1000
+    },
+    "project-create-optional": {
+      "url": "/foreman#/project/new",
+      "viewport": { "width": 1280, "height": 1800 },
+      "mocks": {},
+      "wait_ms": 1000,
+      "click": ["button:has-text('OPTIONAL')"]
+    },
     "task-detail-mobile": {
       "url": "/foreman#/task/implement-auth",
       "viewport": { "width": 375, "height": 812 },
