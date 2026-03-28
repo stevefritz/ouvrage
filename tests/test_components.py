@@ -56,6 +56,24 @@ class TestComponentCRUD:
     async def test_get_component_not_found(self, db):
         assert await db.get_component("nope") is None
 
+    async def test_dead_fields_absent_from_responses(self, db, sample_project):
+        """env_overrides and secrets must not appear in component API responses."""
+        await db.create_component(
+            id="dead-fields", project_id="test-project", name="Dead Fields",
+        )
+        comp = await db.get_component("dead-fields")
+        assert "env_overrides" not in comp
+        assert "secrets" not in comp
+
+        updated = await db.update_component("dead-fields", name="Dead Fields 2")
+        assert "env_overrides" not in updated
+        assert "secrets" not in updated
+
+        comps = await db.list_components(project_id="test-project")
+        for c in comps:
+            assert "env_overrides" not in c
+            assert "secrets" not in c
+
     async def test_update_component(self, db, sample_project):
         await db.create_component(
             id="updatable", project_id="test-project", name="Before",

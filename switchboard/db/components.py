@@ -14,6 +14,10 @@ async def create_component(
     id: str, project_id: str, name: str,
     description: str | None = None, phase: str = "planning",
     created_by: int | None = None,
+    # base_branch is not exposed in the MCP tool schema but is kept here because
+    # git/operations.py:resolve_branch_target() reads component.base_branch to
+    # determine the merge target. Internal callers (e.g. tests, migrations) may
+    # still pass it directly.
     base_branch: str | None = None,
     **ignored_fields,
 ) -> dict:
@@ -44,6 +48,7 @@ async def get_component(id: str) -> dict | None:
             return None
         c = dict(rows[0])
         c.pop("secrets", None)
+        c.pop("env_overrides", None)
         if c.get("review_ignore_patterns"):
             c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
 
@@ -156,6 +161,7 @@ async def update_component(id: str, **fields) -> dict:
         rows = await db.execute_fetchall("SELECT * FROM components WHERE id = ?", (id,))
         c = dict(rows[0])
         c.pop("secrets", None)
+        c.pop("env_overrides", None)
         if c.get("review_ignore_patterns"):
             c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
         return c
@@ -186,6 +192,7 @@ async def list_components(project_id: str | None = None) -> list[dict]:
             c = dict(r)
             c["total_cost"] = round(c.get("total_cost", 0), 2)
             c.pop("secrets", None)
+            c.pop("env_overrides", None)
             if c.get("review_ignore_patterns"):
                 c["review_ignore_patterns"] = json.loads(c["review_ignore_patterns"])
             results.append(c)
