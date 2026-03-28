@@ -237,6 +237,28 @@ class TestProcessReviewResultInline:
         # With no review message, review_msg is None, condition fails → rejection path
         self.mock_retry.assert_awaited_once()
 
+    async def test_not_approved_title_does_not_pass_gate(self):
+        """'NOT APPROVED' must not trigger approval — exact match only."""
+        from switchboard.dispatch.gates import _process_review_result_inline
+        self.mock_read_msgs.return_value = {
+            "messages": [
+                {"type": "review", "title": "NOT APPROVED", "content": "Issues found"},
+            ]
+        }
+        self.mock_get_task.return_value = {
+            "id": "task-1",
+            "goal": "test",
+            "gate_retries": 0,
+            "max_gate_retries": 3,
+        }
+        await _process_review_result_inline("task-1")
+        # Must NOT pass the gate
+        assert not any(
+            call.kwargs.get("gate_status") == "passed"
+            for call in self.mock_update_task.await_args_list
+        )
+        self.mock_check_deps.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # _check_and_dispatch_dependents — routing logic

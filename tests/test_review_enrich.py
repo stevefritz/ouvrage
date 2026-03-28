@@ -142,13 +142,10 @@ def base_project():
 async def _run_dispatch_review(task, project, captured, fake_run_subtask):
     """Helper: patches everything and runs _dispatch_review, returns captured prompt."""
     from switchboard.dispatch.gates import _dispatch_review
-    import switchboard.db as db_module
 
-    with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/src/app.py b/src/app.py\n+new line\n")), \
-         patch("switchboard.db.update_task", AsyncMock()), \
+    with patch("switchboard.db.update_task", AsyncMock()), \
          patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
          patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-         patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
          patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
          patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
          patch("switchboard.dispatch.gates._run_subtask", fake_run_subtask), \
@@ -165,18 +162,16 @@ class TestDispatchReviewComponentContext:
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
+        project = {"id": "test-project", "default_branch": "main", "test_command": "pytest"}
         captured = {}
 
         async def fake_subtask(task_id, subtask_type, prompt, model):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
@@ -190,11 +185,10 @@ class TestDispatchReviewComponentContext:
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "auth",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
+        project = {"id": "test-project", "default_branch": "main", "test_command": "pytest"}
         fake_component = {
             "id": "auth", "name": "Auth Service",
             "description": "Handles authentication", "phase": "implementing",
-            "review_ignore_patterns": None,
         }
         captured = {}
 
@@ -202,11 +196,9 @@ class TestDispatchReviewComponentContext:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
@@ -219,75 +211,107 @@ class TestDispatchReviewComponentContext:
         assert "implementing" in prompt
 
 
-class TestDispatchReviewIgnorePatterns:
-    async def test_default_ignores_applied(self, tmp_db):
+class TestDispatchReviewPromptStructure:
+    """Tests for the new reviewer prompt structure: identity, lifecycle, self-run diff."""
+
+    async def _run(self, task_overrides=None, project_overrides=None):
         from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
+            "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
-        diff_with_lockfile = (
-            "diff --git a/src/app.py b/src/app.py\n+good line\n"
-            "diff --git a/package-lock.json b/package-lock.json\n+lock stuff\n"
-        )
+        if task_overrides:
+            task.update(task_overrides)
+        project = {"id": "test-project", "test_command": "pytest -v", **(project_overrides or {})}
         captured = {}
 
         async def fake_subtask(task_id, subtask_type, prompt, model):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value=diff_with_lockfile)), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
-        prompt = captured["prompt"]
-        assert "+good line" in prompt
-        assert "+lock stuff" not in prompt
+        return captured.get("prompt", "")
 
-    async def test_component_ignore_patterns_override_defaults(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
-        task = {
-            "id": "test-project/my-task", "goal": "Do thing", "component_id": "ui",
-            "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
-        }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
-        # Component ignores only "custom_ignore.txt"
-        fake_component = {
-            "id": "ui", "name": "UI", "description": None, "phase": "dev",
-            "review_ignore_patterns": json.dumps(["custom_ignore.txt"]),
-        }
-        diff = (
-            "diff --git a/custom_ignore.txt b/custom_ignore.txt\n+ignored\n"
-            "diff --git a/package-lock.json b/package-lock.json\n+lock stuff\n"
-        )
-        captured = {}
+    async def test_reviewer_identity_present(self, tmp_db):
+        prompt = await self._run()
+        assert "You are a Foreman code reviewer" in prompt
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
-            captured["prompt"] = prompt
-            return {"status": "completed"}
+    async def test_lifecycle_section_present(self, tmp_db):
+        prompt = await self._run()
+        assert "Task Lifecycle" in prompt
+        assert "Test gate" in prompt
+        assert "final gate before code ships" in prompt
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value=diff)), \
-             patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
-            await _dispatch_review(task["id"], project, task)
+    async def test_test_command_injected(self, tmp_db):
+        prompt = await self._run()
+        assert "pytest -v" in prompt
 
-        prompt = captured["prompt"]
-        # custom_ignore.txt stripped, but package-lock.json kept (not in component's list)
-        assert "+ignored" not in prompt
-        assert "+lock stuff" in prompt
+    async def test_self_run_diff_instruction_present(self, tmp_db):
+        prompt = await self._run()
+        assert "git diff" in prompt
+        assert "main...HEAD" in prompt
+
+    async def test_no_pre_built_diff_injected(self, tmp_db):
+        prompt = await self._run()
+        # Prompt should not contain a raw diff blob (no diff header lines)
+        assert "diff --git" not in prompt
+
+    async def test_base_branch_in_diff_instruction(self, tmp_db):
+        prompt = await self._run({"base_branch": "develop"})
+        assert "develop...HEAD" in prompt
+
+    async def test_base_branch_defaults_to_main(self, tmp_db):
+        prompt = await self._run({"base_branch": None})
+        assert "main...HEAD" in prompt
+
+    async def test_worktree_path_in_prompt(self, tmp_db):
+        prompt = await self._run({"worktree_path": "/work/some-task"})
+        assert "/work/some-task" in prompt
+
+    async def test_task_goal_in_prompt(self, tmp_db):
+        prompt = await self._run({"goal": "Add OAuth login"})
+        assert "Add OAuth login" in prompt
+
+    async def test_exact_title_guidance_present(self, tmp_db):
+        prompt = await self._run()
+        assert '"APPROVED"' in prompt or "APPROVED" in prompt
+        assert "CHANGES REQUESTED" in prompt
+
+    async def test_severity_calibration_present(self, tmp_db):
+        prompt = await self._run()
+        assert "Request changes when" in prompt
+        assert "Approve when" in prompt
+
+    async def test_feedback_format_blockers_present(self, tmp_db):
+        prompt = await self._run()
+        assert "BLOCKER" in prompt
+        assert "SUGGESTION" in prompt
+
+    async def test_no_retry_leniency_on_first_attempt(self, tmp_db):
+        prompt = await self._run({"current_attempt": 1})
+        assert "This is a retry" not in prompt
+
+    async def test_retry_leniency_on_second_attempt(self, tmp_db):
+        prompt = await self._run({"current_attempt": 2})
+        assert "This is a retry" in prompt
+        assert "cosmetic issues" in prompt
+
+    async def test_tests_passed_stated_as_fact(self, tmp_db):
+        prompt = await self._run()
+        assert "tests passed (exit code 0) or you would not be running" in prompt
+
+    async def test_ignore_guidance_hardcoded(self, tmp_db):
+        prompt = await self._run()
+        assert "lockfiles" in prompt
+        assert ".switchboard/" in prompt
 
 
 class TestDispatchReviewPunchlistClaims:
@@ -297,10 +321,9 @@ class TestDispatchReviewPunchlistClaims:
             "id": "test-project/my-task", "goal": "Fix bugs", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
+        project = {"id": "test-project", "test_command": "pytest"}
         fake_component = {
             "id": "api", "name": "API", "description": None, "phase": "dev",
-            "review_ignore_patterns": None,
         }
         claimed_items = [
             {"id": 1, "item": "Fix null pointer in login handler", "status": "claimed"},
@@ -312,11 +335,9 @@ class TestDispatchReviewPunchlistClaims:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
@@ -336,10 +357,9 @@ class TestDispatchReviewPunchlistClaims:
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
+        project = {"id": "test-project", "test_command": "pytest"}
         fake_component = {
             "id": "api", "name": "API", "description": None, "phase": "dev",
-            "review_ignore_patterns": None,
         }
         captured = {}
 
@@ -347,11 +367,9 @@ class TestDispatchReviewPunchlistClaims:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=[])), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
@@ -361,25 +379,35 @@ class TestDispatchReviewPunchlistClaims:
         assert "None." in captured["prompt"]
 
 
-class TestDispatchReviewTagGuidance:
-    async def _run_with_tags(self, tags):
+class TestDispatchReviewPriorReviewHistory:
+    """Tests for prior review carry-forward in the reviewer prompt."""
+
+    async def _run_with_prior_reviews(self, prior_msgs, current_attempt=2):
         from switchboard.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
+            "project_id": "test-project", "base_branch": "main",
+            "current_attempt": current_attempt,
         }
-        project = {"id": "test-project", "default_branch": "main", "review_ignore_patterns": None}
+        project = {"id": "test-project", "test_command": "pytest"}
         captured = {}
+
+        # Build messages: prior reviews have type="review", author="cc-worker", attempt_number < current
+        all_msgs = prior_msgs
+
+        def _read_messages_side_effect(task_id, type=None):
+            if type == "review":
+                return {"messages": [m for m in all_msgs if m.get("type") == "review"]}
+            return {"messages": [m for m in all_msgs if m.get("type") != "review"]}
 
         async def fake_subtask(task_id, subtask_type, prompt, model):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._get_branch_diff", AsyncMock(return_value="diff --git a/f.py b/f.py\n")), \
-             patch("switchboard.db.update_task", AsyncMock()), \
+        with patch("switchboard.db.update_task", AsyncMock()), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_task_tags", AsyncMock(return_value=tags)), \
+             patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
              patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
@@ -387,22 +415,55 @@ class TestDispatchReviewTagGuidance:
 
         return captured.get("prompt", "")
 
-    async def test_backend_tag_adds_security_focus(self, tmp_db):
-        prompt = await self._run_with_tags(["backend"])
-        assert "error handling" in prompt.lower() or "security" in prompt.lower()
+    async def test_no_prior_reviews_no_section(self, tmp_db):
+        prompt = await self._run_with_prior_reviews([], current_attempt=1)
+        assert "Prior Review History" not in prompt
 
-    async def test_frontend_tag_adds_accessibility_focus(self, tmp_db):
-        prompt = await self._run_with_tags(["frontend"])
-        assert "accessibility" in prompt.lower()
+    async def test_prior_review_section_included(self, tmp_db):
+        prior = [{"type": "review", "author": "cc-worker", "attempt_number": 1,
+                  "content": "Missing error handling in auth module"}]
+        prompt = await self._run_with_prior_reviews(prior, current_attempt=2)
+        assert "Prior Review History" in prompt
+        assert "Missing error handling in auth module" in prompt
 
-    async def test_testing_tag_adds_coverage_focus(self, tmp_db):
-        prompt = await self._run_with_tags(["testing"])
-        assert "coverage" in prompt.lower()
+    async def test_carry_forward_instruction_present(self, tmp_db):
+        prior = [{"type": "review", "author": "cc-worker", "attempt_number": 1,
+                  "content": "Some review content"}]
+        prompt = await self._run_with_prior_reviews(prior, current_attempt=2)
+        assert "Do NOT re-flag resolved issues" in prompt
+        assert "carry-forward requirements" in prompt
 
-    async def test_no_tags_uses_default_guidance(self, tmp_db):
-        prompt = await self._run_with_tags([])
-        assert "balanced" in prompt.lower()
+    async def test_course_corrections_override_language(self, tmp_db):
+        from switchboard.dispatch.gates import _dispatch_review
+        task = {
+            "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
+            "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
+            "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
+        }
+        project = {"id": "test-project", "test_command": "pytest"}
+        captured = {}
 
-    async def test_unknown_tag_uses_default_guidance(self, tmp_db):
-        prompt = await self._run_with_tags(["unicorn"])
-        assert "balanced" in prompt.lower()
+        human_msg = {"type": "note", "author": "stephen", "title": "Scope change",
+                     "content": "Skip the frontend part"}
+
+        def _read_messages_side_effect(task_id, type=None):
+            if type == "review":
+                return {"messages": []}
+            return {"messages": [human_msg]}
+
+        async def fake_subtask(task_id, subtask_type, prompt, model):
+            captured["prompt"] = prompt
+            return {"status": "completed"}
+
+        with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
+             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+            await _dispatch_review(task["id"], project, task)
+
+        prompt = captured["prompt"]
+        assert "Course Corrections" in prompt
+        assert "override the original spec where they conflict" in prompt
+        assert "Skip the frontend part" in prompt
