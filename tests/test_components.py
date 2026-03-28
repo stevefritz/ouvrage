@@ -1,5 +1,6 @@
 """Tests for v5 components: CRUD, config inheritance, conversations, dispatch integration."""
 
+import json
 import pytest
 
 
@@ -17,25 +18,30 @@ class TestComponentCRUD:
         assert comp["name"] == "Widget Sorting"
         assert comp["phase"] == "planning"
 
-    async def test_create_component_with_description_and_phase(self, db, sample_project):
+    async def test_create_component_with_config(self, db, sample_project):
         comp = await db.create_component(
             id="full-config", project_id="test-project", name="Full Config",
             description="Everything set",
             phase="building",
+            base_branch="feature/full",
+            model="opus",
+            auto_test=True,
+            auto_review=False,
+            review_model="sonnet",
+            max_test_retries=5,
+            max_review_retries=1,
+            auto_pr=True,
+            auto_merge=False,
+            max_turns=100,
+            max_wall_clock=30,
+            env_overrides={"DB": "sqlite"},
+            secrets={"API_KEY": "secret123"},
         )
-        assert comp["description"] == "Everything set"
-        assert comp["phase"] == "building"
-
-    async def test_create_component_ignores_dead_config_fields(self, db, sample_project):
-        """Dead config fields (model, max_turns, env_overrides, etc.) are silently ignored."""
-        comp = await db.create_component(
-            id="ignore-config", project_id="test-project", name="Ignore Config",
-            model="opus", max_turns=100, env_overrides={"DB": "sqlite"},
-        )
-        assert comp["id"] == "ignore-config"
-        # Dead fields are not present in return value
-        assert "model" not in comp or comp.get("model") is None
-        assert "max_turns" not in comp or comp.get("max_turns") is None
+        assert comp["model"] == "opus"
+        assert comp["base_branch"] == "feature/full"
+        assert comp["env_overrides"] == {"DB": "sqlite"}
+        assert comp["secrets"] == {"API_KEY": "secret123"}
+        assert comp["max_turns"] == 100
 
     async def test_create_component_bad_project(self, db):
         with pytest.raises(ValueError, match="not found"):
@@ -56,38 +62,21 @@ class TestComponentCRUD:
     async def test_get_component_not_found(self, db):
         assert await db.get_component("nope") is None
 
-    async def test_dead_fields_absent_from_responses(self, db, sample_project):
-        """env_overrides and secrets must not appear in component API responses."""
-        await db.create_component(
-            id="dead-fields", project_id="test-project", name="Dead Fields",
-        )
-        comp = await db.get_component("dead-fields")
-        assert "env_overrides" not in comp
-        assert "secrets" not in comp
-
-        updated = await db.update_component("dead-fields", name="Dead Fields 2")
-        assert "env_overrides" not in updated
-        assert "secrets" not in updated
-
-        comps = await db.list_components(project_id="test-project")
-        for c in comps:
-            assert "env_overrides" not in c
-            assert "secrets" not in c
-
     async def test_update_component(self, db, sample_project):
         await db.create_component(
             id="updatable", project_id="test-project", name="Before",
         )
-        updated = await db.update_component("updatable", name="After", phase="building")
+        updated = await db.update_component("updatable", name="After", phase="building", model="opus")
         assert updated["name"] == "After"
         assert updated["phase"] == "building"
+        assert updated["model"] == "opus"
 
-    async def test_update_component_review_ignore_patterns(self, db, sample_project):
+    async def test_update_component_env_overrides(self, db, sample_project):
         await db.create_component(
-            id="patterns-test", project_id="test-project", name="Patterns",
+            id="env-test", project_id="test-project", name="Env",
         )
-        updated = await db.update_component("patterns-test", review_ignore_patterns=["*.lock", "vendor/"])
-        assert updated["review_ignore_patterns"] == ["*.lock", "vendor/"]
+        updated = await db.update_component("env-test", env_overrides={"FOO": "bar"})
+        assert updated["env_overrides"] == {"FOO": "bar"}
 
     async def test_update_component_not_found(self, db):
         with pytest.raises(ValueError, match="not found"):
@@ -185,23 +174,44 @@ class TestComponentConversations:
 # ---------------------------------------------------------------------------
 
 class TestConfigInheritance:
-    async def test_task_overrides_project(self, db, sample_project):
-        """Task value > project value."""
+    async def test_task_overrides_component_overrides_project(self, db, sample_project):
+        """Task value > component value > project value."""
+        await db.create_component(
+            id="mid-layer", project_id="test-project", name="Mid",
+            model="sonnet", max_turns=80,
+        )
         task = await db.create_task(
             id="test-project/override", project_id="test-project",
-            goal="Override test",
-            model="sonnet",  # task overrides project's "opus"
+            goal="Override test", component_id="mid-layer",
+            model="opus",  # task overrides component's "sonnet"
         )
         resolved = await db.resolve_config(task["id"])
-        assert resolved["model"] == "sonnet"  # task wins
-        assert resolved["max_turns"] == 150  # from project (task has none)
+        assert resolved["model"] == "opus"  # task wins
+        assert resolved["max_turns"] == 80  # component wins over project (150)
 
-    async def test_null_task_falls_through_to_project(self, db, sample_project):
-        """When task has no value, project's value is used."""
-        # sample_project has model="opus", max_turns=150
+    async def test_null_task_falls_through_to_component(self, db, sample_project):
+        """When task has no value, component's value is used."""
+        await db.create_component(
+            id="fallthrough", project_id="test-project", name="Fallthrough",
+            model="sonnet", max_turns=77,
+        )
         task = await db.create_task(
             id="test-project/fallthrough", project_id="test-project",
-            goal="Fallthrough",
+            goal="Fallthrough", component_id="fallthrough",
+        )
+        resolved = await db.resolve_config(task["id"])
+        assert resolved["model"] == "sonnet"  # from component
+        assert resolved["max_turns"] == 77  # from component (project has 150)
+
+    async def test_null_component_falls_through_to_project(self, db, sample_project):
+        """When component has no value, project's value is used."""
+        # sample_project has model="opus", max_turns=150
+        await db.create_component(
+            id="empty-comp", project_id="test-project", name="Empty",
+        )
+        task = await db.create_task(
+            id="test-project/empty-comp-task", project_id="test-project",
+            goal="Empty comp", component_id="empty-comp",
         )
         resolved = await db.resolve_config(task["id"])
         assert resolved["model"] == "opus"  # from project
@@ -209,10 +219,13 @@ class TestConfigInheritance:
         assert resolved["test_command"] == "python -m pytest tests/ -v"  # from project
 
     async def test_falls_through_to_system_defaults(self, db, sample_project):
-        """When neither task nor project set a value, system defaults are used."""
+        """When nobody sets a value, system defaults are used."""
+        await db.create_component(
+            id="defaults-comp", project_id="test-project", name="Defaults",
+        )
         task = await db.create_task(
             id="test-project/defaults-task", project_id="test-project",
-            goal="Defaults",
+            goal="Defaults", component_id="defaults-comp",
         )
         resolved = await db.resolve_config(task["id"])
         assert resolved["auto_test"] is True  # system default
@@ -223,30 +236,55 @@ class TestConfigInheritance:
         assert resolved["auto_pr"] is False  # system default
         assert resolved["auto_merge"] is False  # system default
 
-    async def test_env_overrides_from_project(self, db, sample_project):
-        """env_overrides come from project level."""
+    async def test_env_overrides_shallow_merge(self, db, sample_project):
+        """env_overrides: project base ← component ← task (per-key wins)."""
         # sample_project has env_overrides={"NODE_ENV": "test", "DEBUG": "1"}
+        await db.create_component(
+            id="env-merge", project_id="test-project", name="Env Merge",
+            env_overrides={"NODE_ENV": "development", "EXTRA": "from-component"},
+        )
         task = await db.create_task(
-            id="test-project/env-task", project_id="test-project",
-            goal="Env task",
+            id="test-project/env-merge-task", project_id="test-project",
+            goal="Env merge", component_id="env-merge",
         )
         resolved = await db.resolve_config(task["id"])
         env = resolved["env_overrides"]
-        assert env["NODE_ENV"] == "test"
+        # Component overrides project's NODE_ENV
+        assert env["NODE_ENV"] == "development"
+        # Project's DEBUG preserved
         assert env["DEBUG"] == "1"
+        # Component adds EXTRA
+        assert env["EXTRA"] == "from-component"
 
-    async def test_task_with_component_still_resolves(self, db, sample_project):
-        """Tasks with a component_id resolve from task → project → defaults (no component layer)."""
+    async def test_secrets_shallow_merge(self, db, sample_project):
+        """secrets: same shallow merge behavior as env_overrides."""
+        # Project has no secrets by default, so set one
+        await db.update_project("test-project", env_overrides={"NODE_ENV": "test"})
+
         await db.create_component(
-            id="org-comp", project_id="test-project", name="Org Component",
+            id="secret-merge", project_id="test-project", name="Secret Merge",
+            secrets={"API_KEY": "component-key", "DB_PASS": "comp-pass"},
         )
         task = await db.create_task(
-            id="test-project/comp-task", project_id="test-project",
-            goal="With component", component_id="org-comp",
+            id="test-project/secret-merge-task", project_id="test-project",
+            goal="Secret merge", component_id="secret-merge",
         )
         resolved = await db.resolve_config(task["id"])
+        assert resolved["secrets"]["API_KEY"] == "component-key"
+        assert resolved["secrets"]["DB_PASS"] == "comp-pass"
+
+    async def test_task_without_component_backward_compat(self, db, sample_project):
+        """Tasks without component_id work exactly as before."""
+        task = await db.create_task(
+            id="test-project/no-comp", project_id="test-project",
+            goal="No component",
+        )
+        resolved = await db.resolve_config(task["id"])
+        # Should fall through to project and system defaults
         assert resolved["model"] == "opus"  # from project
         assert resolved["max_turns"] == 150  # from project
+        assert resolved["auto_test"] is True  # system default
+        assert resolved["env_overrides"] == {"NODE_ENV": "test", "DEBUG": "1"}  # from project
 
     async def test_resolve_config_not_found(self, db):
         with pytest.raises(ValueError, match="not found"):
