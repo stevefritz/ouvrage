@@ -11,7 +11,7 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { colors, typography, statusColors, statusBgs, layout } from '../tokens.js';
+import { colors, typography, statusColors, statusBgs, layout, animation } from '../tokens.js';
 import { StatusDot } from '../components/StatusDot.js';
 import { GateDots } from '../components/GateDots.js';
 import { Tag } from '../components/Tag.js';
@@ -1357,6 +1357,214 @@ function ChecklistDrawer({ task }) {
     `;
 }
 
+// ── Files Drawer ────────────────────────────────────────────
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function taskFileIcon(mime) {
+    if (!mime) return '📄';
+    if (mime.startsWith('image/')) return '🖼️';
+    if (mime === 'application/pdf') return '📑';
+    if (mime.startsWith('text/')) return '📄';
+    return '📎';
+}
+
+function FilesDrawer({ taskId }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [files, setFiles] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [dragOver, setDragOver] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [error, setError] = useState(null);
+    const [deleteConfirm, setDeleteConfirm] = useState(null);
+    const [copiedId, setCopiedId] = useState(null);
+    const inputRef = useRef(null);
+
+    const loadFiles = useCallback(async () => {
+        try {
+            const data = await api.getTaskFiles(taskId);
+            const list = data.files || data || [];
+            list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            setFiles(list);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    }, [taskId]);
+
+    useEffect(() => { loadFiles(); }, [loadFiles]);
+
+    const handleUpload = useCallback(async (fileList) => {
+        if (!fileList || fileList.length === 0) return;
+        setError(null);
+        setUploading(true);
+        try {
+            for (const file of fileList) {
+                await api.uploadTaskFile(taskId, file);
+            }
+            await loadFiles();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setUploading(false);
+        }
+    }, [taskId, loadFiles]);
+
+    const handleDelete = useCallback(async (fileId) => {
+        try {
+            await api.deleteFile(fileId);
+            setFiles(prev => prev.filter(f => f.id !== fileId));
+            setDeleteConfirm(null);
+        } catch (e) {
+            setError(e.message);
+        }
+    }, []);
+
+    const handleCopy = useCallback(async (fileId, path) => {
+        try {
+            await navigator.clipboard.writeText(path);
+            setCopiedId(fileId);
+            setTimeout(() => setCopiedId(null), 1500);
+        } catch (_) { /* ignore */ }
+    }, []);
+
+    const onDrop = useCallback((e) => {
+        e.preventDefault();
+        setDragOver(false);
+        handleUpload(e.dataTransfer.files);
+    }, [handleUpload]);
+
+    const fileCount = loading ? '…' : files.length;
+
+    const smallBtn = {
+        fontSize: '11px', padding: '2px 8px',
+        borderRadius: layout.borderRadius.sm,
+        border: `1px solid ${colors.border}`,
+        background: 'transparent', color: colors.textTertiary,
+        cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+        textDecoration: 'none',
+    };
+
+    return html`
+        <div style=${{
+            border: `1px solid ${colors.borderSubtle}`,
+            borderRadius: layout.borderRadius.md,
+            marginTop: '8px', overflow: 'hidden',
+        }}>
+            <div
+                onClick=${() => setIsOpen(!isOpen)}
+                style=${{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '8px 14px', cursor: 'pointer',
+                }}
+                class="foreman-attempt-header"
+            >
+                <span style=${{ fontSize: '10px', color: colors.textTertiary }}>
+                    ${isOpen ? '▾' : '▸'}
+                </span>
+                <span style=${{
+                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                    color: colors.textSecondary,
+                }}>Files</span>
+                <span style=${{
+                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                }}>
+                    (${fileCount})
+                </span>
+            </div>
+
+            ${isOpen ? html`
+                <div style=${{ padding: '4px 14px 12px' }}>
+                    <!-- Drop zone -->
+                    <div
+                        style=${{
+                            border: `1px dashed ${dragOver ? colors.accent : colors.border}`,
+                            borderRadius: layout.borderRadius.md,
+                            padding: '8px', textAlign: 'center',
+                            cursor: uploading ? 'wait' : 'pointer',
+                            transition: `border-color ${animation.durationNormal}`,
+                            background: dragOver ? colors.accentBg : 'transparent',
+                            marginBottom: files.length > 0 ? '8px' : 0,
+                        }}
+                        onClick=${() => !uploading && inputRef.current?.click()}
+                        onDrop=${onDrop}
+                        onDragOver=${(e) => { e.preventDefault(); setDragOver(true); }}
+                        onDragLeave=${() => setDragOver(false)}
+                    >
+                        <input
+                            ref=${inputRef}
+                            type="file"
+                            multiple
+                            style=${{ display: 'none' }}
+                            onChange=${(e) => { handleUpload(e.target.files); e.target.value = ''; }}
+                        />
+                        ${uploading
+                            ? html`<span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>Uploading…</span>`
+                            : html`<span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>Drop files here or click to upload</span>`
+                        }
+                    </div>
+
+                    ${error ? html`
+                        <div style=${{ fontSize: typography.size.xs, color: colors.red, marginTop: '4px' }}>${error}</div>
+                    ` : null}
+
+                    <!-- File list -->
+                    ${files.map(f => html`
+                        <div key=${f.id} style=${{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '6px 0',
+                            borderBottom: `1px solid ${colors.borderSubtle}`,
+                        }}>
+                            <span style=${{ fontSize: '14px', flexShrink: 0 }}>${taskFileIcon(f.mime_type)}</span>
+                            <span style=${{
+                                fontSize: typography.size.sm, fontWeight: typography.weight.medium,
+                                color: colors.text, flexShrink: 0, maxWidth: '160px',
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>${f.filename}</span>
+                            <span style=${{
+                                fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
+                            }}>${formatFileSize(f.size_bytes)}</span>
+                            <span style=${{
+                                fontFamily: typography.fontMono, fontSize: '11px',
+                                color: colors.textSecondary, overflow: 'hidden',
+                                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                minWidth: 0, flex: 1,
+                            }}>${f.stored_path}</span>
+                            <button
+                                style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
+                                onClick=${() => handleCopy(f.id, f.stored_path)}
+                            >${copiedId === f.id ? 'Copied!' : 'Copy'}</button>
+                            <a
+                                href=${`/dashboard/api/files/${f.id}/download`}
+                                target="_blank" rel="noopener"
+                                style=${smallBtn}
+                            >↓</a>
+                            ${deleteConfirm === f.id ? html`
+                                <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+                                    <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
+                                    <button style=${{ ...smallBtn, color: colors.red, borderColor: colors.red }}
+                                        onClick=${() => handleDelete(f.id)}>Yes</button>
+                                    <button style=${smallBtn}
+                                        onClick=${() => setDeleteConfirm(null)}>Cancel</button>
+                                </span>
+                            ` : html`
+                                <button style=${{ ...smallBtn, fontSize: '12px', padding: '1px 6px' }}
+                                    onClick=${() => setDeleteConfirm(f.id)}>✕</button>
+                            `}
+                        </div>
+                    `)}
+                </div>
+            ` : null}
+        </div>
+    `;
+}
+
 // ── Details Drawer ──────────────────────────────────────────
 
 function DetailsDrawer({ task }) {
@@ -2125,6 +2333,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GateActivityPanel} task=${task} />
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />
+            <${FilesDrawer} taskId=${id} />
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />

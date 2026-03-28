@@ -165,6 +165,18 @@ export const api = {
         }
         return resp.json();
     },
+    getTaskFiles: (taskId) => request(`/tasks/${eid(taskId)}/files`),
+    uploadTaskFile: async (taskId, file) => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('task_id', taskId);
+        const resp = await fetch(BASE + '/files', { method: 'POST', body: form });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: resp.statusText }));
+            throw new Error(err.error || resp.statusText);
+        }
+        return resp.json();
+    },
 
     // User settings
     getUserSettings: () => request('/settings/user'),
