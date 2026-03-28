@@ -1946,12 +1946,13 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         return () => { mountedRef.current = false; };
     }, [id]);
 
-    // Polling — task status at 5s always while view is open, attempts at 10s only while working
+    // Polling — task status at 5s always while view is open, attempts at 10s for all non-terminal states
     useEffect(() => {
         if (!task) return;
         const taskTimer = setInterval(loadTask, 5000);
-        // Only poll attempts while actively working (expensive — re-reads all messages)
-        const attemptTimer = (task.status === 'working' || task.status === 'reopened')
+        // Poll attempts for any non-terminal status so review feedback and gate results appear live
+        const shouldPollAttempts = !['completed', 'merged', 'cancelled'].includes(task.status);
+        const attemptTimer = shouldPollAttempts
             ? setInterval(loadAttempts, 10000)
             : null;
         return () => {
