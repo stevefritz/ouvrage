@@ -1,0 +1,30 @@
+[
+  {
+    "id": "mcp-switchboard/control-buttons",
+    "project_id": "mcp-switchboard",
+    "component_id": "foreman-hardening",
+    "goal": "Wire pause/resume/stop buttons for projects and components",
+    "status": "working",
+    "phase": "implementing",
+    "branch": "control-buttons",
+    "created_at": "2026-03-28T22:00:00Z",
+    "updated_at": "2026-03-28T22:10:00Z",
+    "last_activity": "2026-03-28T22:10:00Z",
+    "depends_on": null,
+    "model": "sonnet"
+  },
+  {
+    "id": "mcp-switchboard/task-create-form",
+    "project_id": "mcp-switchboard",
+    "component_id": "foreman-hardening",
+    "goal": "Add TaskCreateView and POST /dashboard/api/tasks endpoint",
+    "status": "completed",
+    "phase": null,
+    "branch": "task-create-form",
+    "created_at": "2026-03-27T10:00:00Z",
+    "updated_at": "2026-03-27T18:00:00Z",
+    "last_activity": "2026-03-27T18:00:00Z",
+    "depends_on": null,
+    "model": "sonnet"
+  }
+]

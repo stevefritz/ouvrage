@@ -74,6 +74,32 @@
       },
       "wait_ms": 2000,
       "click": [".foreman-attempt-header:has-text('Files')"]
+    },
+    "project-view": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
+      },
+      "wait_ms": 2000
+    },
+    "project-view-component-panel": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/components/foreman-hardening": "fixtures/visual/component-detail.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
+      },
+      "wait_ms": 2000,
+      "click": ["text=Foreman Hardening"]
     }
   }
 }

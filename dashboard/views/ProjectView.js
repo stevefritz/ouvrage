@@ -19,6 +19,129 @@ const POLL_INTERVAL_MS = 15_000;
 const ACTIVITY_LIMIT = 15;
 
 // ---------------------------------------------------------------------------
+// ControlButtons — pause / resume / stop for project or component
+// ---------------------------------------------------------------------------
+
+function ControlButtons({ paused, onPause, onResume, onStop, entityType = 'project' }) {
+    const [confirmStop, setConfirmStop] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    const handlePause = async () => {
+        setBusy(true);
+        try { await onPause(); } finally { setBusy(false); }
+    };
+
+    const handleResume = async () => {
+        setBusy(true);
+        try { await onResume(); } finally { setBusy(false); }
+    };
+
+    const handleStop = async () => {
+        setBusy(true);
+        setConfirmStop(false);
+        try { await onStop(); } finally { setBusy(false); }
+    };
+
+    const btnBase = {
+        display: 'inline-flex', alignItems: 'center',
+        padding: '4px 10px', borderRadius: layout.borderRadius.sm,
+        fontSize: typography.size.xs, fontWeight: typography.weight.medium,
+        fontFamily: typography.fontBody, cursor: busy ? 'not-allowed' : 'pointer',
+        border: '1px solid', lineHeight: 1.4, whiteSpace: 'nowrap',
+        opacity: busy ? 0.6 : 1, transition: 'opacity 0.15s',
+    };
+
+    const pauseBtn = {
+        ...btnBase,
+        color: colors.yellow,
+        background: colors.yellowBg,
+        borderColor: `${colors.yellow}44`,
+    };
+
+    const resumeBtn = {
+        ...btnBase,
+        color: colors.green,
+        background: colors.greenBg,
+        borderColor: `${colors.green}44`,
+    };
+
+    const stopBtn = {
+        ...btnBase,
+        color: colors.red,
+        background: colors.redBg,
+        borderColor: `${colors.red}44`,
+    };
+
+    const label = entityType.charAt(0).toUpperCase() + entityType.slice(1);
+
+    return html`
+        <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            ${!paused ? html`
+                <button
+                    style=${pauseBtn}
+                    disabled=${busy}
+                    onClick=${handlePause}
+                    title=${`Pause ${entityType} — blocks new task dispatches. Running tasks finish naturally.`}
+                >⏸ Pause</button>
+            ` : html`
+                <button
+                    style=${resumeBtn}
+                    disabled=${busy}
+                    onClick=${handleResume}
+                    title=${`Resume ${entityType} — allows task dispatches again.`}
+                >▶ Resume</button>
+            `}
+            <button
+                style=${stopBtn}
+                disabled=${busy}
+                onClick=${() => setConfirmStop(true)}
+                title=${`Stop ${entityType} — pauses AND cancels all running tasks immediately.`}
+            >⏹ Stop</button>
+
+            ${confirmStop ? html`
+                <div onClick=${() => setConfirmStop(false)} style=${{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div onClick=${e => e.stopPropagation()} style=${{
+                        background: colors.surface, border: `1px solid ${colors.border}`,
+                        borderRadius: layout.borderRadius.lg,
+                        padding: '24px', maxWidth: '400px', width: '90%',
+                    }}>
+                        <h3 style=${{
+                            fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                            fontWeight: typography.weight.semibold, color: colors.text,
+                            margin: '0 0 8px',
+                        }}>Stop ${label}?</h3>
+                        <p style=${{
+                            fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                            color: colors.textSecondary, margin: '0 0 20px',
+                            lineHeight: typography.lineHeight.normal,
+                        }}>This will cancel all running tasks. Continue?</p>
+                        <div style=${{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button onClick=${() => setConfirmStop(false)} style=${{
+                                padding: '6px 16px', borderRadius: layout.borderRadius.sm,
+                                background: colors.surface, border: `1px solid ${colors.border}`,
+                                color: colors.textSecondary, cursor: 'pointer',
+                                fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                            }}>Cancel</button>
+                            <button onClick=${handleStop} style=${{
+                                padding: '6px 16px', borderRadius: layout.borderRadius.sm,
+                                background: colors.red, border: 'none',
+                                color: '#fff', cursor: 'pointer',
+                                fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                                fontWeight: typography.weight.medium,
+                            }}>Stop ${label}</button>
+                        </div>
+                    </div>
+                </div>
+            ` : null}
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
 // Chain position map — computed from depends_on graph
 // ---------------------------------------------------------------------------
 
@@ -586,8 +709,19 @@ function ComponentCard({ component, allTasks, onClick }) {
     `;
 }
 
-function ComponentPanel({ component, conversations, allTasks, onClose, onFilterByComponent }) {
+function ComponentPanel({ component: componentProp, conversations, allTasks, onClose, onFilterByComponent }) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+    const [component, setComponent] = useState(componentProp);
+
+    useEffect(() => { setComponent(componentProp); }, [componentProp]);
+
+    const refreshComponent = useCallback(async () => {
+        if (!componentProp) return;
+        try {
+            const updated = await api.getComponent(componentProp.id);
+            setComponent(updated);
+        } catch (_) { /* ignore */ }
+    }, [componentProp]);
 
     useEffect(() => {
         const check = () => setIsMobile(window.innerWidth < 640);
@@ -711,6 +845,13 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
                             background: phaseColor + '18',
                         }}>${component.phase}</span>
                     ` : null}
+                    <${ControlButtons}
+                        paused=${component.paused}
+                        onPause=${async () => { await api.pauseComponent(component.id); await refreshComponent(); }}
+                        onResume=${async () => { await api.resumeComponent(component.id); await refreshComponent(); }}
+                        onStop=${async () => { await api.stopComponent(component.id); await refreshComponent(); }}
+                        entityType="component"
+                    />
                     <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
                 </div>
 
@@ -1704,7 +1845,7 @@ export function ProjectView({ id }) {
 
     const headerStyle = {
         display: 'flex',
-        alignItems: 'baseline',
+        alignItems: 'center',
         justifyContent: 'space-between',
         paddingBottom: '16px',
         borderBottom: `1px solid ${colors.border}`,
@@ -1792,25 +1933,32 @@ export function ProjectView({ id }) {
             <div style=${headerStyle}>
                 <h1 style=${titleStyle}>${project?.id || id}</h1>
                 ${repoShort ? html`<span style=${repoTagStyle}>${repoShort}</span>` : null}
-                <a
-                    href=${routes.taskNew(id)}
-                    style=${{
-                        marginLeft: 'auto',
-                        padding: '6px 14px',
-                        borderRadius: layout.borderRadius.md,
-                        background: colors.blue,
-                        border: 'none',
-                        color: '#fff',
-                        fontSize: typography.size.sm,
-                        fontFamily: typography.fontBody,
-                        fontWeight: typography.weight.medium,
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                        whiteSpace: 'nowrap',
-                        textDecoration: 'none',
-                        display: 'inline-block',
-                    }}
-                >+ New Task</a>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
+                    <${ControlButtons}
+                        paused=${project.paused}
+                        onPause=${async () => { await api.pauseProject(id); await load(); }}
+                        onResume=${async () => { await api.resumeProject(id); await load(); }}
+                        onStop=${async () => { await api.stopProject(id); await load(); }}
+                        entityType="project"
+                    />
+                    <a
+                        href=${routes.taskNew(id)}
+                        style=${{
+                            padding: '6px 14px',
+                            borderRadius: layout.borderRadius.md,
+                            background: colors.blue,
+                            border: 'none',
+                            color: '#fff',
+                            fontSize: typography.size.sm,
+                            fontFamily: typography.fontBody,
+                            fontWeight: typography.weight.medium,
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            textDecoration: 'none',
+                            display: 'inline-block',
+                        }}
+                    >+ New Task</a>
+                </div>
             </div>
 
             <!-- Recent Activity -->
