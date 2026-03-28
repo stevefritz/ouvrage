@@ -361,13 +361,9 @@ export function TaskDetail({ taskId, jiraBaseUrl, onAction }) {
 
     useEffect(() => {
         if (!task) return;
-        const gateActive = ['testing', 'test-passed', 'reviewing'].includes(task.gate_status);
-        const shouldPoll = task.status === 'working' || task.status === 'needs-review' || task.status === 'turns-exhausted' || gateActive;
-        if (!shouldPoll) return;
-
         const timer = setInterval(loadTask, 5000);
         return () => clearInterval(timer);
-    }, [task?.status, task?.gate_status, loadTask]);
+    }, [task?.id, loadTask]);
 
     if (error) {
         return html`<div class="p-6">
