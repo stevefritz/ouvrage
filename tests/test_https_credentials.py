@@ -80,6 +80,17 @@ class TestCreateProjectNormalizesUrl:
         for p in self.patches:
             p.stop()
 
+    _REQUIRED_CONFIG = {
+        "model": "sonnet",
+        "review_model": "sonnet",
+        "auto_test": True,
+        "auto_review": True,
+        "auto_pr": False,
+        "auto_merge": False,
+        "max_turns": 50,
+        "max_wall_clock": 3600,
+    }
+
     @pytest.mark.asyncio
     async def test_ssh_url_normalized_to_https(self):
         from switchboard.server.handlers.projects import _handle_create_project
@@ -87,6 +98,7 @@ class TestCreateProjectNormalizesUrl:
             "id": "test-proj",
             "repo": "git@github.com:acme/widgets.git",
             "working_dir": "/work/widgets",
+            **self._REQUIRED_CONFIG,
         })
         assert self.created_args["repo"] == "https://github.com/acme/widgets.git"
 
@@ -97,6 +109,7 @@ class TestCreateProjectNormalizesUrl:
             "id": "test-proj",
             "repo": "https://github.com/acme/widgets.git",
             "working_dir": "/work/widgets",
+            **self._REQUIRED_CONFIG,
         })
         assert self.created_args["repo"] == "https://github.com/acme/widgets.git"
 

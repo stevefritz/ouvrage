@@ -455,7 +455,7 @@ async def dispatch_task(
     max_test_retries: int | None = None,
     max_review_retries: int | None = None,
     base_branch: str | None = None,
-    held: bool = False,
+    held: bool | None = None,
     created_by: int | None = None,
     dispatched_by: int | None = None,
 ) -> dict:
@@ -498,6 +498,19 @@ async def dispatch_task(
     resolved_max_test_retries = _resolve_limit(max_test_retries, project.get("max_test_retries"), SYSTEM_DEFAULTS["max_test_retries"])
     resolved_max_review_retries = _resolve_limit(max_review_retries, project.get("max_review_retries"), SYSTEM_DEFAULTS["max_review_retries"])
 
+    # Track which fields were inherited from project (task param was None but project provided a value)
+    _inherited_fields = {}
+    if model is None and project.get("model") is not None:
+        _inherited_fields["model"] = project.get("model")
+    if auto_test is None and project.get("auto_test") is not None:
+        _inherited_fields["auto_test"] = project.get("auto_test")
+    if auto_review is None and project.get("auto_review") is not None:
+        _inherited_fields["auto_review"] = project.get("auto_review")
+    if auto_pr is None and project.get("auto_pr") is not None:
+        _inherited_fields["auto_pr"] = project.get("auto_pr")
+    if auto_merge is None and project.get("auto_merge") is not None:
+        _inherited_fields["auto_merge"] = project.get("auto_merge")
+
     # Create or get task
     task = await db.get_task(task_id)
     is_resume = False
@@ -524,6 +537,14 @@ async def dispatch_task(
             )
         if checklist:
             await db.create_checklist_items(task_id, checklist)
+
+        # Post inheritance note if any config fields came from project
+        if _inherited_fields:
+            parts = ", ".join(f"{k}={v}" for k, v in _inherited_fields.items())
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                content=f"Config inherited from project: {parts}",
+            )
 
         # Persist held flag BEFORE dependency check — the depends_on branch
         # returns early, so held must be saved to DB here or it's silently dropped.

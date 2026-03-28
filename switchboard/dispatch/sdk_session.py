@@ -345,6 +345,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     # ── 12. What NOT to do ────────────────────────────────────────────────────
     parts.append("## What NOT To Do")
     parts.append("- No `kill`/`pkill`/`killall` — use `timeout` for process management.")
+    parts.append("- Don't run `gh` CLI commands — PRs are created automatically by the gate pipeline. Never run `gh pr create` or any `gh` command.")
     if task.get("auto_test") and project.get("test_command"):
         parts.append("- No running the full test suite — the gate handles it. Run targeted tests only.")
     parts.append("- No `git config` changes — config is shared across all worktrees.")

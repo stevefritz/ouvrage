@@ -93,6 +93,13 @@ async def _handle_dispatch_task(arguments):
     raw_id = arguments["id"]
     task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
     caller_user_id = get_request_user_id()
+
+    # Resolve held default: standalone tasks held=true, chain tasks held=false
+    held = arguments.get("held")
+    if held is None:
+        depends_on_raw = arguments.get("depends_on")
+        held = False if depends_on_raw else True
+
     result = await task_engine.dispatch_task(
         project_id=project_id,
         task_id=task_id,
@@ -121,7 +128,7 @@ async def _handle_dispatch_task(arguments):
         depends_on=(f"{project_id}/{arguments['depends_on']}"
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
                     else arguments.get("depends_on")),
-        held=arguments.get("held", False),
+        held=held,
         created_by=caller_user_id,
         dispatched_by=caller_user_id,
     )

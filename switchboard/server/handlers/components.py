@@ -9,7 +9,7 @@ async def _handle_create_component(arguments):
     component_id = arguments["id"]
     project_id = arguments["project_id"]
     name = arguments["name"]
-    extras = {k: v for k, v in arguments.items() if k in ("description", "phase", "review_ignore_patterns")}
+    extras = {k: v for k, v in arguments.items() if k in ("description",)}
     return await db.create_component(
         id=component_id, project_id=project_id, name=name,
         created_by=get_request_user_id(), **extras,
@@ -18,7 +18,7 @@ async def _handle_create_component(arguments):
 
 async def _handle_update_component(arguments):
     component_id = arguments["id"]
-    allowed = {"name", "description", "phase", "review_ignore_patterns"}
+    allowed = {"name", "description"}
     fields = {k: v for k, v in arguments.items() if k in allowed}
     if not fields:
         return {"error": "No fields to update"}
