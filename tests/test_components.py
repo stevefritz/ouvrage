@@ -495,3 +495,81 @@ class TestGateRetryFields:
         )
         updated = await db.update_task(task["id"], max_review_retries=3)
         assert updated["max_review_retries"] == 3
+
+    async def test_max_test_retries_settable_at_creation(self, db, sample_project):
+        """max_test_retries can be set at task creation time (e.g. from dispatch)."""
+        task = await db.create_task(
+            id="test-project/create-retry", project_id="test-project", goal="Test",
+            max_test_retries=5,
+        )
+        assert task["max_test_retries"] == 5
+        fetched = await db.get_task(task["id"])
+        assert fetched["max_test_retries"] == 5
+
+    async def test_max_review_retries_settable_at_creation(self, db, sample_project):
+        """max_review_retries can be set at task creation time."""
+        task = await db.create_task(
+            id="test-project/create-rev-retry", project_id="test-project", goal="Test",
+            max_review_retries=1,
+        )
+        assert task["max_review_retries"] == 1
+
+
+# ---------------------------------------------------------------------------
+# dispatch_task: boolean schema fix — auto_release_worktree resolves via engine
+# ---------------------------------------------------------------------------
+
+class TestAutoReleaseWorktreeResolution:
+    @pytest.fixture(autouse=True)
+    def mock_git(self):
+        with patch("switchboard.dispatch.engine._run_as_worker") as mock_worker, \
+             patch("switchboard.dispatch.engine.setup_worktree") as mock_setup, \
+             patch("switchboard.dispatch.engine.cleanup_worktree") as mock_cleanup:
+            mock_setup.return_value = "/tmp/fake-worktree"
+            mock_worker.return_value = None
+            mock_cleanup.return_value = None
+            yield
+
+    async def test_auto_release_worktree_defaults_true_via_resolution(self, db, sample_project):
+        """When auto_release_worktree not passed, resolves to system default True."""
+        from switchboard.dispatch.engine import dispatch_task
+        await dispatch_task(
+            project_id="test-project", task_id="test-project/arw-default",
+            goal="Test", held=True,
+        )
+        task = await db.get_task("test-project/arw-default")
+        assert task["auto_release_worktree"] == 1 or task["auto_release_worktree"] is True
+
+    async def test_auto_release_worktree_explicit_false(self, db, sample_project):
+        """Explicit False is respected and not overridden."""
+        from switchboard.dispatch.engine import dispatch_task
+        await dispatch_task(
+            project_id="test-project", task_id="test-project/arw-false",
+            goal="Test", held=True, auto_release_worktree=False,
+        )
+        task = await db.get_task("test-project/arw-false")
+        assert task["auto_release_worktree"] == 0 or task["auto_release_worktree"] is False
+
+
+# ---------------------------------------------------------------------------
+# create_component: review_ignore_patterns settable at creation
+# ---------------------------------------------------------------------------
+
+class TestCreateComponentReviewIgnorePatterns:
+    async def test_review_ignore_patterns_at_creation(self, db, sample_project):
+        """review_ignore_patterns can be set when creating a component."""
+        comp = await db.create_component(
+            id="ignore-comp", project_id="test-project", name="Test",
+            review_ignore_patterns=["*.lock", "vendor/"],
+        )
+        assert comp["review_ignore_patterns"] == ["*.lock", "vendor/"]
+        fetched = await db.get_component("ignore-comp")
+        assert fetched["review_ignore_patterns"] == ["*.lock", "vendor/"]
+
+    async def test_review_ignore_patterns_none_by_default(self, db, sample_project):
+        """review_ignore_patterns is absent when not set at creation."""
+        comp = await db.create_component(
+            id="no-ignore-comp", project_id="test-project", name="Test",
+        )
+        fetched = await db.get_component("no-ignore-comp")
+        assert not fetched.get("review_ignore_patterns")

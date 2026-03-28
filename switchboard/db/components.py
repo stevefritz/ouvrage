@@ -13,6 +13,7 @@ from switchboard.db._helpers import now_iso
 async def create_component(
     id: str, project_id: str, name: str,
     description: str | None = None, phase: str = "planning",
+    review_ignore_patterns: list | None = None,
     created_by: int | None = None,
     # base_branch is not exposed in the MCP tool schema but is kept here because
     # git/operations.py:resolve_branch_target() reads component.base_branch to
@@ -28,15 +29,17 @@ async def create_component(
             raise ValueError(f"Project '{project_id}' not found")
 
         ts = now_iso()
+        rip = json.dumps(review_ignore_patterns) if isinstance(review_ignore_patterns, list) else None
         await db.execute(
-            "INSERT INTO components (id, project_id, name, description, phase, base_branch, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [id, project_id, name, description, phase, base_branch, created_by, ts, ts],
+            "INSERT INTO components (id, project_id, name, description, phase, review_ignore_patterns, base_branch, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [id, project_id, name, description, phase, rip, base_branch, created_by, ts, ts],
         )
         await db.commit()
 
         return {
             "id": id, "project_id": project_id, "name": name,
             "description": description, "phase": phase,
+            "review_ignore_patterns": review_ignore_patterns,
             "created_by": created_by, "created_at": ts, "updated_at": ts,
         }
 

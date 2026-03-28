@@ -451,7 +451,9 @@ async def dispatch_task(
     component_id: str | None = None,
     claude_chat_url: str | None = None,
     auto_merge: bool | None = None,
-    auto_release_worktree: bool = True,
+    auto_release_worktree: bool | None = None,
+    max_test_retries: int | None = None,
+    max_review_retries: int | None = None,
     base_branch: str | None = None,
     held: bool = False,
     created_by: int | None = None,
@@ -492,6 +494,9 @@ async def dispatch_task(
     resolved_auto_pr = _resolve_limit(auto_pr, project.get("auto_pr"), SYSTEM_DEFAULTS["auto_pr"])
     resolved_auto_merge = _resolve_limit(auto_merge, project.get("auto_merge"), SYSTEM_DEFAULTS["auto_merge"])
     resolved_review_model = _resolve_limit(review_model, project.get("review_model"), SYSTEM_DEFAULTS["review_model"])
+    resolved_auto_release = _resolve_limit(auto_release_worktree, project.get("auto_release_worktree"), SYSTEM_DEFAULTS["auto_release_worktree"])
+    resolved_max_test_retries = _resolve_limit(max_test_retries, project.get("max_test_retries"), SYSTEM_DEFAULTS["max_test_retries"])
+    resolved_max_review_retries = _resolve_limit(max_review_retries, project.get("max_review_retries"), SYSTEM_DEFAULTS["max_review_retries"])
 
     # Create or get task
     task = await db.get_task(task_id)
@@ -507,7 +512,8 @@ async def dispatch_task(
             auto_review=resolved_auto_review, review_model=resolved_review_model,
             parent_task_id=parent_task_id, auto_pr=resolved_auto_pr,
             component_id=component_id, claude_chat_url=claude_chat_url,
-            auto_merge=resolved_auto_merge, auto_release_worktree=auto_release_worktree,
+            auto_merge=resolved_auto_merge, auto_release_worktree=resolved_auto_release,
+            max_test_retries=resolved_max_test_retries, max_review_retries=resolved_max_review_retries,
             base_branch=base_branch,
             created_by=created_by, dispatched_by=dispatched_by,
         )

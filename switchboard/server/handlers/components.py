@@ -9,7 +9,7 @@ async def _handle_create_component(arguments):
     component_id = arguments["id"]
     project_id = arguments["project_id"]
     name = arguments["name"]
-    extras = {k: v for k, v in arguments.items() if k in ("description", "phase")}
+    extras = {k: v for k, v in arguments.items() if k in ("description", "phase", "review_ignore_patterns")}
     return await db.create_component(
         id=component_id, project_id=project_id, name=name,
         created_by=get_request_user_id(), **extras,
