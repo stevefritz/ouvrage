@@ -267,6 +267,8 @@ async def main():
                 asyncio.create_task(tasks.check_stalled_tasks())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
+                # Poll GitHub for PR status changes every 60s
+                asyncio.create_task(tasks._pr_status_sweep())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     # Mark all working tasks for recovery before event loop dies
