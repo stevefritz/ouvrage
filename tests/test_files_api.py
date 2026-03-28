@@ -521,6 +521,89 @@ class TestDeleteFile:
         assert resp.status == 404
 
 
+# ── GET /dashboard/api/files/{id}/download ────────────────────────────────
+
+
+class _CaptureWithHeaders(_Capture):
+    """Capture that also stores response headers."""
+    def __init__(self):
+        super().__init__()
+        self.headers = {}
+
+    async def __call__(self, message):
+        if message["type"] == "http.response.start":
+            for k, v in message.get("headers", []):
+                self.headers[k.decode()] = v.decode()
+        await super().__call__(message)
+
+
+class TestDownloadFile:
+
+    async def _insert_file(self, tmp_uploads, content: bytes = b"file content") -> tuple[str, Path]:
+        fid = str(uuid.uuid4())
+        uuid_dir = tmp_uploads / fid
+        uuid_dir.mkdir()
+        dest = uuid_dir / "report.txt"
+        dest.write_bytes(content)
+        await db.create_file(
+            id=fid,
+            filename="report.txt",
+            stored_path=str(dest),
+            mime_type="text/plain",
+            size_bytes=len(content),
+            uploaded_by=1,
+        )
+        return fid, dest
+
+    async def test_download_serves_file(self, db, tmp_uploads):
+        content = b"hello world file content"
+        fid, _ = await self._insert_file(tmp_uploads, content)
+        scope = _make_scope(f"/dashboard/api/files/{fid}/download", "GET")
+        resp = _CaptureWithHeaders()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        assert resp.body == content
+        assert "text/plain" in resp.headers.get("content-type", "")
+        assert "attachment" in resp.headers.get("content-disposition", "")
+        assert "report.txt" in resp.headers.get("content-disposition", "")
+
+    async def test_download_requires_auth(self, db, tmp_uploads):
+        fid, _ = await self._insert_file(tmp_uploads)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": f"/dashboard/api/files/{fid}/download",
+            "query_string": b"",
+            "headers": [],
+        }
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 401
+
+    async def test_download_file_not_found(self, db, tmp_uploads):
+        scope = _make_scope("/dashboard/api/files/nonexistent-id/download", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_download_disk_file_missing(self, db, tmp_uploads):
+        fid, dest = await self._insert_file(tmp_uploads)
+        dest.unlink()  # Remove file from disk
+        scope = _make_scope(f"/dashboard/api/files/{fid}/download", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_download_sets_content_length(self, db, tmp_uploads):
+        content = b"exactly this many bytes"
+        fid, _ = await self._insert_file(tmp_uploads, content)
+        scope = _make_scope(f"/dashboard/api/files/{fid}/download", "GET")
+        resp = _CaptureWithHeaders()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        assert resp.headers.get("content-length") == str(len(content))
+
+
 # ── MCP list_files tool ────────────────────────────────────────────────────
 
 
