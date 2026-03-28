@@ -30,14 +30,8 @@ from claude_agent_sdk.types import TextBlock, ToolUseBlock
 
 import switchboard.db as db
 from switchboard.notifications import slack as notify
-from switchboard.config.constants import (
-    _DEFAULT_REVIEW_IGNORE_PATTERNS,
-    _TAG_REVIEW_GUIDANCE,
-    _DEFAULT_REVIEW_GUIDANCE,
-)
 from switchboard.config.settings import WORKER_USER
 from switchboard.git.worktree import _run_as_worker
-from switchboard.git.operations import _get_branch_diff, _filter_diff_by_ignore_patterns
 from switchboard.dispatch.sdk_session import _open_shared
 
 log = logging.getLogger(__name__)
@@ -354,8 +348,6 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
 
     await db.update_task(task_id, gate_status="reviewing")
 
-    diff_output = await _get_branch_diff(task)
-
     # --- Component context ---
     component = None
     if task.get("component_id"):
@@ -368,27 +360,6 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
             f"**Description:** {component.get('description') or '(none)'}\n"
             f"**Phase:** {component.get('phase') or 'unknown'}"
         )
-
-    # --- Ignore patterns ---
-    ignore_patterns = _DEFAULT_REVIEW_IGNORE_PATTERNS[:]
-    # Component-level patterns override/extend defaults
-    if component and component.get("review_ignore_patterns"):
-        raw = component["review_ignore_patterns"]
-        if isinstance(raw, str):
-            import json as _json
-            raw = _json.loads(raw)
-        if isinstance(raw, list):
-            ignore_patterns = raw
-    elif project.get("review_ignore_patterns"):
-        raw = project["review_ignore_patterns"]
-        if isinstance(raw, str):
-            import json as _json
-            raw = _json.loads(raw)
-        if isinstance(raw, list):
-            ignore_patterns = raw
-
-    filtered_diff = _filter_diff_by_ignore_patterns(diff_output, ignore_patterns)
-    ignore_section = "\n".join(f"- `{p}`" for p in ignore_patterns)
 
     # --- Punchlist claims ---
     punchlist_section = "None."
@@ -405,14 +376,6 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
                 lines.append(f"- #{it['id']}: {it['item']}")
             punchlist_section = "\n".join(lines)
 
-    # --- Tag-based review focus ---
-    tags = await db.get_task_tags(task_id)
-    review_focus = _DEFAULT_REVIEW_GUIDANCE
-    for tag in tags:
-        if tag in _TAG_REVIEW_GUIDANCE:
-            review_focus = _TAG_REVIEW_GUIDANCE[tag]
-            break  # first matching tag wins
-
     # --- Spec content ---
     pinned = await db.get_task_pinned(task_id)
     spec_content = pinned["content"] if pinned else "(no spec)"
@@ -421,7 +384,7 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     thread = await db.read_task_messages(task_id)
     thread_msgs = thread.get("messages", [])
     human_msgs = [m for m in thread_msgs if m.get("author") not in ("dispatcher", "cc-worker")]
-    thread_context = ""
+    course_corrections_section = ""
     if human_msgs:
         thread_lines = []
         for m in human_msgs:
@@ -429,14 +392,13 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
             title = m.get("title", "")
             content = m.get("content", "")
             thread_lines.append(f"**[{author}]** {(title + ': ') if title else ''}{content}")
-        thread_context = f"""
-
-## Course Corrections / Notes from User
-The following messages were posted during development. These override or refine
-the original spec — treat them as authoritative when they conflict with the spec.
-
-{chr(10).join(thread_lines)}
-"""
+        course_corrections_section = (
+            "\n\n## Course Corrections / Notes from User\n"
+            "The following messages were posted during development. "
+            "These override the original spec where they conflict — treat them as authoritative.\n\n"
+            + "\n".join(thread_lines)
+            + "\n"
+        )
 
     # --- Prior review history ---
     prior_reviews_thread = await db.read_task_messages(task_id, type="review")
@@ -453,12 +415,9 @@ the original spec — treat them as authoritative when they conflict with the sp
     prior_review_section = ""
     if prior_review_msgs:
         review_history_lines = [
-            "## Prior review history for this task",
+            "## Prior Review History",
             "",
-            "The following reviews were written for previous attempts. Read them carefully:",
-            "- Check if issues flagged in prior reviews have been resolved",
-            "- Do not re-flag issues that have already been addressed",
-            "- Note any prior concerns that were NOT addressed and treat them as carry-forward requirements",
+            "Do NOT re-flag resolved issues. Treat unresolved prior issues as carry-forward requirements.",
             "",
         ]
         for m in prior_review_msgs:
@@ -468,40 +427,144 @@ the original spec — treat them as authoritative when they conflict with the sp
             review_history_lines.append("")
         prior_review_section = "\n".join(review_history_lines) + "\n"
 
-    review_prompt = f"""# Code Review: {task['goal']}
+    # --- Attempt-based leniency ---
+    retry_leniency_section = ""
+    if current_attempt > 1:
+        retry_leniency_section = (
+            "\nThis is a retry. Prior attempts already consumed resources.\n"
+            "Only request changes for: bugs, unmet spec requirements, security issues, missing tests.\n"
+            "Do NOT reject for style, naming, or cosmetic issues on retries.\n"
+        )
 
-{prior_review_section}## Component Context
+    base_branch = task.get("base_branch") or "main"
+    worktree_path = task.get("worktree_path") or "(unknown)"
+    test_command = project.get("test_command") or "(none configured)"
+
+    review_prompt = f"""# You are a Foreman code reviewer
+
+You were dispatched to review task `{task_id}` on project `{task.get('project_id')}`.
+Branch: `{task.get('branch')}` | Base: `{base_branch}` | Worktree: `{worktree_path}`
+This is attempt **{current_attempt}** of this task.
+
+## Task Lifecycle — Your Place In It
+
+1. User dispatches a task with a spec and checklist
+2. CC worker implements in an isolated worktree — commits, pushes
+3. **Test gate** runs `{test_command}` — tests passed (exit code 0) or you would not be running
+4. **Review gate (you)** — you evaluate the work against the spec
+5. If you approve → PR created or branch merged, dependent tasks dispatch
+6. If you request changes → worker is retried with your feedback as revision instructions — this costs real time and money
+
+You are the final gate before code ships.
+
+{prior_review_section}## Task Spec
+
+**Goal:** {task.get('goal')}
+
+{spec_content}
+{course_corrections_section}
+## Component Context
 {component_section}
-
-## Ignore These Files
-The following patterns were excluded from the diff below:
-{ignore_section}
 
 ## Punchlist Items Claimed
 {punchlist_section}
 
-## Original Spec
-{spec_content}
-{thread_context}
-## Changes to Review
-```
-{filtered_diff[:10000]}
-```
+## Reviewing the Changes
 
-## Review Focus
-{review_focus}
+You have full filesystem access to the worktree at `{worktree_path}`.
 
-## Review Criteria
-- Do changes match the spec AND any course corrections above? Every requirement addressed?
-- Are tests testing the RIGHT things? (assertions match spec, not code output)
-- Any obvious bugs, edge cases, or security issues?
-- Code quality: naming, structure, unnecessary complexity?
+1. Run `git diff {base_branch}...HEAD` to see all changes
+2. Read the diff carefully — if it's large, review file by file: `git diff {base_branch}...HEAD -- path/to/file`
+3. When you need context beyond the diff, read the full file
+4. Check test files alongside implementation files
+5. If the task added images or non-text files, verify they exist: `ls -la path/`
 
-Post your review on the task:
-mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', ...)
+Do NOT rely on a pre-built diff. Investigate the code yourself.
 
-If clean: title="APPROVED"
-If changes needed: title="CHANGES REQUESTED" and list specific issues
+Ignore in review: lockfiles, .switchboard/ artifacts, auto-generated files.
+
+## Review Criteria — Priority Order
+
+**1. Spec compliance (critical)**
+Does the code fulfill every requirement in the spec? Are all checklist items addressed?
+If course corrections exist, they override the original spec where they conflict.
+
+**2. Correctness (critical)**
+Logic bugs, off-by-one errors, race conditions, unhandled edge cases, error paths.
+Security: injection, XSS, auth bypass, secret exposure.
+
+**3. Test quality (important)**
+Tests must assert spec requirements, not mirror code output.
+Failure paths tested, not just happy paths.
+New functionality must have corresponding tests.
+
+**4. Punchlist verification (if applicable)**
+Claimed punchlist items must be actually addressed — not partial or superficial fixes.
+
+**5. Code quality (advisory only)**
+Naming, complexity, dead code. Do NOT request changes solely for style.
+
+## Severity Calibration
+{retry_leniency_section}
+**Request changes when:**
+- Spec requirements are unmet
+- Logic bugs that cause incorrect behavior
+- Security vulnerabilities
+- Missing tests for new functionality
+- Incorrect test assertions
+- Claimed punchlist items not actually fixed
+
+**Approve when:**
+- All spec requirements met
+- Code correct, reasonable edge cases handled
+- Tests exist and test the right things
+- No security issues
+- Minor style nits acceptable — note them but approve
+
+**Approve with notes:**
+Title="APPROVED", include suggestions in body. Visible but won't trigger retry.
+
+## Writing Feedback
+
+When requesting changes, your feedback becomes the worker's revision instructions.
+
+**DO:**
+- Reference specific files and line numbers
+- State what's wrong AND what the fix should be
+- Mark blockers vs suggestions: "**BLOCKER:** ..." / "**SUGGESTION:** ..."
+- Group related issues
+
+**DON'T:**
+- Say "needs improvement" without specifics
+- Re-flag issues resolved in prior attempts
+- Request changes to code not modified in this task
+- Suggest features beyond spec scope
+- Request stylistic changes that don't affect correctness
+
+## Output
+
+Post exactly one review message:
+
+For approval:
+- title="APPROVED"
+- type="review"
+- Content: brief summary of what passes. Optional non-blocking notes.
+
+For changes requested:
+- title="CHANGES REQUESTED"
+- type="review"
+- Content:
+  ### Blockers
+  1. **[file:line]** Issue → expected fix
+  2. **[file:line]** Issue → expected fix
+
+  ### Suggestions (non-blocking)
+  - Optional improvements
+
+The title field is the gate signal. Use exactly "APPROVED" or "CHANGES REQUESTED". Nothing else.
+
+Post your review:
+mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', title='APPROVED' or 'CHANGES REQUESTED', content='...')
 """
 
     log.info(f"Running subtask review for {task_id}")
