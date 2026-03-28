@@ -177,7 +177,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
             punchlist = await db.list_punchlist(task["component_id"])
             if punchlist:
                 parts.append("")
-                parts.append("**Open punchlist items for this component:**")
+                parts.append("**Punchlist items for this component:**")
                 for p in punchlist:
                     status_label = p.get("status", "open")
                     parts.append(f"- (id={p['id']}) [{status_label}] {p['item']}")
@@ -366,16 +366,6 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append(f"6. Post your implementation plan as a type='plan' message with file-level detail: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='plan', content='...')`")
         parts.append("7. Then begin coding")
         parts.append("")
-
-    parts.append("## Finding context in linked conversations")
-    parts.append("")
-    parts.append(
-        "If you need more detail from a linked conversation beyond what's in the spec above, "
-        "use the `search_message_chunks` tool. It searches at the paragraph level within "
-        "conversations — more precise than `search_conversations` which operates at the message level. "
-        "Use it when you need a specific section of a design doc or prior decision that isn't fully captured in the spec."
-    )
-    parts.append("")
 
     return "\n".join(parts)
 
