@@ -1008,6 +1008,192 @@ class TestBuildTaskPrompt:
             "build the API")
         assert "parent" in result.lower() or "feat-parent" in result
 
+    async def test_identity_section_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(),
+            self._make_task(dispatched_by="stephen", worktree_path="/work/t1"),
+            "do the thing")
+        assert "Foreman worker" in result
+        assert "stephen" in result
+        assert "/work/t1" in result
+
+    async def test_identity_section_defaults_for_missing_fields(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        # dispatched_by and worktree_path absent — should not crash
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "Foreman worker" in result
+        assert "system" in result  # default dispatched_by fallback
+
+    async def test_component_context_included(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        mock_get_component = AsyncMock(return_value={
+            "id": "comp-1", "name": "Auth Module",
+            "description": "Handles login flows", "phase": "implementing",
+        })
+        mock_list_punchlist = AsyncMock(return_value=[])
+        with patch("switchboard.db.get_component", mock_get_component), \
+             patch("switchboard.db.list_punchlist", mock_list_punchlist):
+            result = await _build_task_prompt(
+                self._make_project(),
+                self._make_task(component_id="comp-1"),
+                "do the thing")
+        assert "Auth Module" in result
+        assert "Handles login flows" in result
+        assert "implementing" in result
+
+    async def test_component_punchlist_included(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        mock_get_component = AsyncMock(return_value={
+            "id": "comp-1", "name": "Auth Module",
+            "description": None, "phase": None,
+        })
+        mock_list_punchlist = AsyncMock(return_value=[
+            {"id": 42, "item": "Fix logout bug", "status": "open"},
+            {"id": 43, "item": "Token refresh", "status": "claimed"},
+        ])
+        with patch("switchboard.db.get_component", mock_get_component), \
+             patch("switchboard.db.list_punchlist", mock_list_punchlist):
+            result = await _build_task_prompt(
+                self._make_project(),
+                self._make_task(component_id="comp-1"),
+                "do the thing")
+        assert "Fix logout bug" in result
+        assert "Token refresh" in result
+        # Header should say "Punchlist items" (not "Open punchlist items")
+        assert "Punchlist items for this component" in result
+        assert "Open punchlist items" not in result
+
+    async def test_no_component_context_when_no_component_id(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        mock_get_component = AsyncMock()
+        with patch("switchboard.db.get_component", mock_get_component):
+            result = await _build_task_prompt(
+                self._make_project(), self._make_task(), "do the thing")
+        mock_get_component.assert_not_called()
+        assert "Component Context" not in result
+
+    async def test_tool_inventory_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "update_task_checklist" in result
+        assert "post_task_message" in result
+        assert "search_message_chunks" in result
+        assert "Context Discovery" in result
+        assert "Progress Reporting" in result
+
+    async def test_pipeline_awareness_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "Gate Pipeline" in result or "gate" in result.lower()
+        assert "review gate" in result.lower() or "Review gate" in result
+
+    async def test_escalation_protocol_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "Escalation Protocol" in result
+        assert "Ambiguous spec" in result
+
+    async def test_custom_escalation_criteria_injected(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing",
+            escalation_criteria="Always post question if touching prod DB.")
+        assert "Always post question if touching prod DB." in result
+
+    async def test_prohibitions_section_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "What NOT To Do" in result
+        assert "git config" in result
+        assert "committing secrets" in result.lower() or "secrets" in result
+
+    async def test_prohibitions_no_full_suite_when_auto_test_disabled(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(auto_test=False), "do the thing")
+        assert "full test suite" not in result
+
+    async def test_prohibitions_includes_no_full_suite_when_auto_test_enabled(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(auto_test=True), "do the thing")
+        assert "full test suite" in result or "full suite" in result
+
+
+# ---------------------------------------------------------------------------
+# _build_resume_prompt — resume prompt construction
+# ---------------------------------------------------------------------------
+
+class TestBuildResumePrompt:
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        self.mock_get_task = AsyncMock(return_value=None)
+        self.mock_get_checklist = AsyncMock(return_value=[])
+
+        patches = [
+            patch("switchboard.db.get_task", self.mock_get_task),
+            patch("switchboard.db.get_checklist", self.mock_get_checklist),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    def _make_task(self, **overrides):
+        t = {"id": "t1", "goal": "build the API", "branch": "feat-t1"}
+        t.update(overrides)
+        return t
+
+    async def test_task_exists_includes_id_branch_goal(self):
+        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        self.mock_get_task.return_value = self._make_task(
+            id="task-xyz", branch="feat-xyz", goal="Refactor auth module")
+        result = await _build_resume_prompt("task-xyz")
+        assert "task-xyz" in result
+        assert "feat-xyz" in result
+        assert "Refactor auth module" in result
+
+    async def test_task_not_found_returns_fallback_with_task_id(self):
+        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        self.mock_get_task.return_value = None
+        result = await _build_resume_prompt("missing-task")
+        assert "missing-task" in result
+        # Should be a short fallback, not crash
+        assert len(result) > 0
+
+    async def test_no_checklist_omits_checklist_section(self):
+        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_checklist.return_value = []
+        result = await _build_resume_prompt("t1")
+        assert "Checklist" not in result
+
+    async def test_checklist_renders_done_and_undone(self):
+        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        self.mock_get_task.return_value = self._make_task()
+        self.mock_get_checklist.return_value = [
+            {"id": 1, "item": "Write tests", "done": True},
+            {"id": 2, "item": "Update docs", "done": False},
+        ]
+        result = await _build_resume_prompt("t1")
+        assert "✅" in result
+        assert "⬜" in result
+        assert "Write tests" in result
+        assert "Update docs" in result
+
+    async def test_includes_read_task_messages_instruction(self):
+        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        self.mock_get_task.return_value = self._make_task(id="task-abc")
+        result = await _build_resume_prompt("task-abc")
+        assert "read_task_messages" in result
+
 
 # ---------------------------------------------------------------------------
 # _rebase_and_redispatch — rebase logic (mocked git)
