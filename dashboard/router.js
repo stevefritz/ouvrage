@@ -33,6 +33,16 @@ export function parseRoute() {
         return { view: 'project', params: { id: decodeURIComponent(projectMatch[1]) } };
     }
 
+    // /task/new — must come before /task/:id
+    if (hash === '/task/new' || hash.startsWith('/task/new?')) {
+        const query = {};
+        const qIndex = hash.indexOf('?');
+        if (qIndex !== -1) {
+            new URLSearchParams(hash.slice(qIndex + 1)).forEach((v, k) => { query[k] = v; });
+        }
+        return { view: 'task-new', params: query };
+    }
+
     // /task/:id
     const taskMatch = hash.match(/^\/task\/(.+)$/);
     if (taskMatch) {
@@ -103,6 +113,7 @@ export const routes = {
     landing:      () => '#/',
     project:      (id) => `#/project/${encodeURIComponent(id)}`,
     task:         (id) => `#/task/${encodeURIComponent(id)}`,
+    taskNew:      (projectId) => projectId ? `#/task/new?project=${encodeURIComponent(projectId)}` : '#/task/new',
     conversation: (id) => `#/conversation/${encodeURIComponent(id)}`,
     files:        () => '#/files',
     settings:     () => '#/settings',

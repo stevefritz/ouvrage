@@ -55,6 +55,12 @@ export const api = {
         return request('/activity' + (qs ? '?' + qs : ''));
     },
 
+    // Create a new task (held by default)
+    createTask: (params) => request('/tasks', {
+        method: 'POST',
+        body: JSON.stringify(params),
+    }),
+
     // Actions
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
     retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {
@@ -99,10 +105,13 @@ export const api = {
     // Punchlist
     getPunchlist: (componentId) => request(`/punchlist/${eid(componentId)}`),
     addPunchlistItem: (componentId, item) => request(`/punchlist/${eid(componentId)}`, {
-        method: 'POST', body: JSON.stringify({ item }),
+        method: 'POST', body: JSON.stringify({ item, author: 'dashboard' }),
     }),
     updatePunchlistItem: (componentId, itemId, data) => request(`/punchlist/${eid(componentId)}/${itemId}`, {
         method: 'PATCH', body: JSON.stringify(data),
+    }),
+    updatePunchlistStatus: (componentId, itemId, status) => request(`/punchlist/${eid(componentId)}/${itemId}`, {
+        method: 'PATCH', body: JSON.stringify({ status }),
     }),
     deletePunchlistItem: (componentId, itemId) => request(`/punchlist/${eid(componentId)}/${itemId}`, {
         method: 'DELETE',
