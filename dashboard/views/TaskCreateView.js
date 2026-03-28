@@ -357,7 +357,7 @@ export function TaskCreateView({ project: initialProject }) {
 
         try {
             await api.createTask(payload);
-            navigate(`/task/${encodeURIComponent(payload.project_id + '/' + payload.id)}`);
+            navigate(`/task/${encodeURIComponent(payload.id)}`);
         } catch (err) {
             setError(err.message || 'Failed to create task');
             setSubmitting(false);
