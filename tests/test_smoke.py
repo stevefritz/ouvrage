@@ -46,9 +46,11 @@ class TestPromptBuilding:
     def _setup_patches(self):
         self.mock_get_task = AsyncMock(return_value=None)
         self.mock_read_msgs = AsyncMock(return_value={"messages": []})
+        self.mock_list_files = AsyncMock(return_value=[])
         patches = [
             patch("switchboard.db.get_task", self.mock_get_task),
             patch("switchboard.db.read_task_messages", self.mock_read_msgs),
+            patch("switchboard.db.list_files", self.mock_list_files),
         ]
         for p in patches:
             p.start()

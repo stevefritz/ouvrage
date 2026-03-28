@@ -277,6 +277,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/gate-session-log"):
                     task_id = rest[:-len("/gate-session-log")]
                     return await _handle_gate_session_log(scope, send, task_id)
+                if rest.endswith("/files"):
+                    task_id = rest[:-len("/files")]
+                    return await _handle_task_files(send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -304,7 +307,7 @@ async def handle_request(scope, receive, send):
 
         # ── Files endpoints ────────────────────────────────────────────────
         if path == "/dashboard/api/files" and method == "GET":
-            return await _handle_list_files(send)
+            return await _handle_list_files(scope, send)
         if path == "/dashboard/api/files" and method == "POST":
             return await _handle_upload_file(scope, receive, send)
         if path.startswith("/dashboard/api/files/"):
@@ -1242,6 +1245,15 @@ async def _handle_change_password(receive, send, scope):
 
 # ── File upload constants ──────────────────────────────────────────────────
 
+def _human_size(size_bytes: int) -> str:
+    """Format byte count as human-readable string."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f}MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    return f"{size_bytes}B"
+
+
 def _uploads_dir() -> Path:
     """Return the uploads directory (inside data dir, not home)."""
     from switchboard.config.settings import DB_PATH
@@ -1272,8 +1284,11 @@ def _get_header(scope, name: bytes) -> bytes | None:
     return None
 
 
-def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | None]:
-    """Parse a multipart body and return (filename, file_data) from the first file field."""
+def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | None, dict]:
+    """Parse a multipart body and return (filename, file_data, form_fields).
+
+    form_fields maps field names (str) to their string values for non-file parts.
+    """
     from python_multipart.multipart import MultipartParser, parse_options_header
 
     filename_holder = [None]
@@ -1282,6 +1297,9 @@ def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | 
     current_header_field = [b""]
     current_header_value = [b""]
     headers = [{}]
+    form_fields = {}
+    current_field_name = [None]
+    field_chunks = []
 
     def on_header_field(data, start, end):
         current_header_field[0] += data[start:end]
@@ -1300,17 +1318,26 @@ def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | 
         cd = headers[0].get(b"content-disposition", b"")
         _, params = parse_options_header(cd)
         fname = params.get(b"filename")
+        field_name = params.get(b"name")
         if fname is not None:
             filename_holder[0] = fname.decode("utf-8", errors="replace")
             in_file[0] = True
+            current_field_name[0] = None
         else:
             in_file[0] = False
+            current_field_name[0] = field_name.decode("utf-8", errors="replace") if field_name else None
+            field_chunks.clear()
 
     def on_part_data(data, start, end):
         if in_file[0]:
             data_chunks.append(bytes(data[start:end]))
+        elif current_field_name[0] is not None:
+            field_chunks.append(bytes(data[start:end]))
 
     def on_part_end():
+        if not in_file[0] and current_field_name[0] is not None:
+            form_fields[current_field_name[0]] = b"".join(field_chunks).decode("utf-8", errors="replace")
+            field_chunks.clear()
         in_file[0] = False
         headers[0] = {}
 
@@ -1328,15 +1355,25 @@ def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | 
     parser.finalize()
 
     if filename_holder[0] is None:
-        return None, None
+        return None, None, form_fields
 
-    return filename_holder[0], b"".join(data_chunks)
+    return filename_holder[0], b"".join(data_chunks), form_fields
 
 
 # ── File handlers ──────────────────────────────────────────────────────────
 
-async def _handle_list_files(send):
-    files = await db.list_files()
+async def _handle_list_files(scope, send):
+    params = _parse_qs(scope)
+    task_id = params.get("task_id") or None
+    files = await db.list_files(task_id=task_id)
+    await _json_response(send, files)
+
+
+async def _handle_task_files(send, task_id: str):
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+    files = await db.list_files(task_id=task_id)
     await _json_response(send, files)
 
 
@@ -1370,7 +1407,7 @@ async def _handle_upload_file(scope, receive, send):
 
     body = await _read_body(receive)
 
-    filename, file_data = _parse_multipart(body, boundary)
+    filename, file_data, form_fields = _parse_multipart(body, boundary)
     if filename is None or file_data is None:
         return await _error(send, "No file found in request", 400)
 
@@ -1392,6 +1429,13 @@ async def _handle_upload_file(scope, receive, send):
             400,
         )
 
+    # Optional task_id from form fields
+    task_id = form_fields.get("task_id") or None
+    if task_id:
+        task = await db.get_task(task_id)
+        if not task:
+            return await _error(send, f"Task '{task_id}' not found", 404)
+
     # Save to disk
     file_id = str(uuid.uuid4())
     uploads_dir = _uploads_dir() / file_id
@@ -1407,7 +1451,22 @@ async def _handle_upload_file(scope, receive, send):
         mime_type=mime_type,
         size_bytes=len(file_data),
         uploaded_by=user_id,
+        task_id=task_id,
     )
+
+    # Reactive injection: notify CC if task is currently working
+    if task_id and task.get("status") == "working":
+        human_size = _human_size(len(file_data))
+        try:
+            await db.post_task_message(
+                task_id=task_id,
+                author="switchboard",
+                type="note",
+                content=f"📎 File uploaded: {dest} ({mime_type}, {human_size})\nRead this file if relevant to your current work.",
+            )
+        except Exception:
+            pass  # Non-blocking — upload still succeeds
+
     await _json_response(send, record, status=201)
 
 
