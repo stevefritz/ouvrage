@@ -108,6 +108,7 @@ export const api = {
     getComponents: (projectId) => request(`/components?project_id=${encodeURIComponent(projectId)}`),
     getComponent: (id) => request(`/components/${eid(id)}`),
     getComponentActivity: (id) => request(`/components/${eid(id)}/activity`),
+    createComponent: (params) => request('/components', { method: 'POST', body: JSON.stringify(params) }),
 
     // Punchlist
     getPunchlist: (componentId) => request(`/punchlist/${eid(componentId)}`),

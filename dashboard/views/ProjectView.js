@@ -991,15 +991,66 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
     `;
 }
 
-function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter }) {
-    const [selectedComponent, setSelectedComponent] = useState(null);
+function slugifyComponent(text) {
+    return text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+}
 
-    if (components.length === 0) return null;
+function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter, projectId, onComponentCreated }) {
+    const [selectedComponent, setSelectedComponent] = useState(null);
+    const [showForm, setShowForm] = useState(false);
+    const [formName, setFormName] = useState('');
+    const [formDesc, setFormDesc] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [formError, setFormError] = useState(null);
+    const [showNameTip, setShowNameTip] = useState(false);
+
+    const derivedId = slugifyComponent(formName);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!formName.trim()) return;
+        setSubmitting(true);
+        setFormError(null);
+        try {
+            const result = await api.createComponent({
+                id: derivedId,
+                project_id: projectId,
+                name: formName.trim(),
+                description: formDesc.trim() || undefined,
+            });
+            onComponentCreated(result);
+            setFormName('');
+            setFormDesc('');
+            setShowForm(false);
+        } catch (err) {
+            setFormError(err.message || 'Failed to create component');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleCancel = () => {
+        setShowForm(false);
+        setFormName('');
+        setFormDesc('');
+        setFormError(null);
+    };
 
     const sectionStyle = {
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
+    };
+
+    const headerRowStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: '4px',
     };
 
     const headerStyle = {
@@ -1008,7 +1059,19 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
         color: colors.textSecondary,
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
-        marginBottom: '4px',
+    };
+
+    const newBtnStyle = {
+        fontSize: typography.size.xs,
+        fontFamily: typography.fontBody,
+        fontWeight: typography.weight.medium,
+        color: colors.accent,
+        background: 'transparent',
+        border: `1px solid ${colors.accent}`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '3px 10px',
+        cursor: 'pointer',
+        lineHeight: '1.4',
     };
 
     const gridStyle = {
@@ -1017,19 +1080,190 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
         gap: '8px',
     };
 
+    const formBoxStyle = {
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        marginTop: '4px',
+    };
+
+    const inputStyle = {
+        width: '100%',
+        background: colors.bg,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        color: colors.text,
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        padding: '7px 10px',
+        boxSizing: 'border-box',
+        outline: 'none',
+    };
+
+    const textareaStyle = {
+        ...inputStyle,
+        resize: 'vertical',
+        minHeight: '72px',
+    };
+
+    const labelStyle = {
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.medium,
+        color: colors.textSecondary,
+        marginBottom: '5px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+    };
+
+    const hintStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        marginTop: '3px',
+    };
+
+    const formActionsStyle = {
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'center',
+    };
+
+    const submitBtnStyle = {
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        background: colors.accent,
+        color: '#fff',
+        border: 'none',
+        borderRadius: layout.borderRadius.sm,
+        padding: '7px 16px',
+        cursor: submitting ? 'not-allowed' : 'pointer',
+        opacity: submitting ? 0.7 : 1,
+    };
+
+    const cancelBtnStyle = {
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        background: 'transparent',
+        color: colors.textSecondary,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '7px 14px',
+        cursor: 'pointer',
+    };
+
+    const tipStyle = {
+        position: 'absolute',
+        bottom: '120%',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        padding: '8px 10px',
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        whiteSpace: 'normal',
+        width: '220px',
+        zIndex: 100,
+        pointerEvents: 'none',
+        lineHeight: typography.lineHeight.relaxed,
+    };
+
+    const questionIconStyle = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '15px',
+        height: '15px',
+        borderRadius: '50%',
+        border: `1px solid ${colors.border}`,
+        fontSize: '9px',
+        color: colors.textTertiary,
+        cursor: 'pointer',
+        position: 'relative',
+        flexShrink: 0,
+    };
+
+    if (components.length === 0 && !showForm) {
+        return html`
+            <div style=${sectionStyle}>
+                <div style=${headerRowStyle}>
+                    <div style=${headerStyle}>Components</div>
+                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
+                </div>
+            </div>
+        `;
+    }
+
     return html`
         <div style=${sectionStyle}>
-            <div style=${headerStyle}>Components</div>
-            <div style=${gridStyle}>
-                ${components.map(comp => html`
-                    <${ComponentCard}
-                        key=${comp.id}
-                        component=${comp}
-                        allTasks=${tasks}
-                        onClick=${setSelectedComponent}
-                    />
-                `)}
+            <div style=${headerRowStyle}>
+                <div style=${headerStyle}>Components</div>
+                ${!showForm ? html`
+                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
+                ` : null}
             </div>
+            ${components.length > 0 ? html`
+                <div style=${gridStyle}>
+                    ${components.map(comp => html`
+                        <${ComponentCard}
+                            key=${comp.id}
+                            component=${comp}
+                            allTasks=${tasks}
+                            onClick=${setSelectedComponent}
+                        />
+                    `)}
+                </div>
+            ` : null}
+
+            ${showForm ? html`
+                <form style=${formBoxStyle} onSubmit=${handleSubmit}>
+                    <div>
+                        <div style=${labelStyle}>
+                            <span>Name</span>
+                            <span
+                                style=${questionIconStyle}
+                                onMouseEnter=${() => setShowNameTip(true)}
+                                onMouseLeave=${() => setShowNameTip(false)}
+                            >?
+                                ${showNameTip ? html`<div style=${tipStyle}>The display name for this component. Used to group tasks under a shared feature or epic. Keep it short and descriptive (e.g. "Auth Revamp", "Billing Flow").</div>` : null}
+                            </span>
+                        </div>
+                        <input
+                            style=${inputStyle}
+                            type="text"
+                            placeholder="e.g. Auth Revamp"
+                            value=${formName}
+                            onInput=${e => setFormName(e.target.value)}
+                            required
+                            autoFocus
+                        />
+                        ${derivedId ? html`<div style=${hintStyle}>ID: ${derivedId}</div>` : null}
+                    </div>
+                    <div>
+                        <div style=${labelStyle}>Description <span style=${{ fontWeight: 400, color: colors.textTertiary }}>(optional)</span></div>
+                        <textarea
+                            style=${textareaStyle}
+                            placeholder="What is this component about?"
+                            value=${formDesc}
+                            onInput=${e => setFormDesc(e.target.value)}
+                        />
+                    </div>
+                    ${formError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${formError}</div>` : null}
+                    <div style=${formActionsStyle}>
+                        <button type="submit" style=${submitBtnStyle} disabled=${submitting || !formName.trim()}>
+                            ${submitting ? 'Creating…' : 'Create'}
+                        </button>
+                        <button type="button" style=${cancelBtnStyle} onClick=${handleCancel}>Cancel</button>
+                    </div>
+                </form>
+            ` : null}
         </div>
 
         <${ComponentPanel}
@@ -1971,6 +2205,8 @@ export function ProjectView({ id }) {
                 tasks=${tasks}
                 componentFilter=${componentFilter}
                 onComponentFilter=${setComponentFilter}
+                projectId=${id}
+                onComponentCreated=${(comp) => setComponents(prev => [...prev, comp])}
             />
 
             <!-- Project-level conversations (unlinked only) -->

@@ -76,6 +76,19 @@
       "wait_ms": 2000,
       "click": [".foreman-edit-task-btn"]
     },
+    "project-view-new-component": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 1280, "height": 1200 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
+      },
+      "click": ["button:has-text('New Component')"],
+      "wait_ms": 2000
+    },
     "task-detail-mobile": {
       "url": "/foreman#/task/implement-auth",
       "viewport": { "width": 375, "height": 812 },

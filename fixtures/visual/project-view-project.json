@@ -1,0 +1,20 @@
+{
+  "id": "mcp-switchboard",
+  "name": "mcp-switchboard",
+  "repo_url": "https://github.com/stevefritz/mcp-switchboard",
+  "status": "active",
+  "model": "opus",
+  "review_model": "opus",
+  "auto_test": true,
+  "auto_review": true,
+  "auto_pr": true,
+  "auto_merge": false,
+  "max_turns": 200,
+  "max_wall_clock": 60,
+  "task_count": 3,
+  "completed_count": 2,
+  "working_count": 1,
+  "failed_count": 0,
+  "last_activity": "2026-03-28T20:00:00Z",
+  "created_at": "2026-01-15T10:00:00Z"
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "mcp-switchboard/component-create-form",
+    "project_id": "mcp-switchboard",
+    "component_id": "mcp-switchboard/foreman-hardening",
+    "goal": "Add inline component create form to ProjectView",
+    "status": "working",
+    "phase": "implementing",
+    "branch": "component-create-form",
+    "model": "sonnet",
+    "auto_test": true,
+    "auto_review": true,
+    "auto_pr": true,
+    "auto_merge": false,
+    "gate_status": null,
+    "depends_on": null,
+    "conversation_id": null,
+    "last_activity": "2026-03-28T22:00:00Z",
+    "created_at": "2026-03-28T22:00:00Z",
+    "updated_at": "2026-03-28T22:00:00Z"
+  },
+  {
+    "id": "mcp-switchboard/task-create-form",
+    "project_id": "mcp-switchboard",
+    "component_id": "mcp-switchboard/foreman-hardening",
+    "goal": "Add TaskCreateView with inline form",
+    "status": "completed",
+    "phase": null,
+    "branch": "task-create-form",
+    "model": "sonnet",
+    "auto_test": true,
+    "auto_review": true,
+    "auto_pr": true,
+    "auto_merge": false,
+    "gate_status": "passed",
+    "depends_on": null,
+    "conversation_id": null,
+    "last_activity": "2026-03-27T12:00:00Z",
+    "created_at": "2026-03-27T10:00:00Z",
+    "updated_at": "2026-03-27T12:00:00Z"
+  }
+]
