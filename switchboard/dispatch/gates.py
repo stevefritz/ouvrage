@@ -624,7 +624,7 @@ async def _process_review_result_inline(task_id: str) -> None:
         None,
     )
 
-    if review_msg and "APPROVED" in (review_msg.get("title") or "").upper():
+    if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {task_id}")
         await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
         await _check_and_dispatch_dependents(task_id)
@@ -653,7 +653,7 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
         None,
     )
 
-    if review_msg and "APPROVED" in (review_msg.get("title") or "").upper():
+    if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {parent_task_id}")
         await db.update_task(parent_task_id, gate_status="passed", gate_passed_at=db.now_iso())
         await _check_and_dispatch_dependents(parent_task_id)
