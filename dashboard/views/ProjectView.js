@@ -709,19 +709,37 @@ function ComponentCard({ component, allTasks, onClick }) {
     `;
 }
 
-function ComponentPanel({ component: componentProp, conversations, allTasks, onClose, onFilterByComponent }) {
+function ComponentPanel({ component, conversations, allTasks, onClose, onFilterByComponent, onComponentUpdated }) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
-    const [component, setComponent] = useState(componentProp);
+    const [localComponent, setLocalComponent] = useState(null);
+    const [editingField, setEditingField] = useState(null); // 'name' | 'description'
+    const [editingValue, setEditingValue] = useState('');
+    const [editSaving, setEditSaving] = useState(false);
+    const [editError, setEditError] = useState(null);
+    const nameInputRef = useRef(null);
+    const descTextareaRef = useRef(null);
+    const justCancelled = useRef(false);
 
-    useEffect(() => { setComponent(componentProp); }, [componentProp]);
+    useEffect(() => { setLocalComponent(component); }, [component]);
+
+    useEffect(() => {
+        if (editingField === 'name' && nameInputRef.current) {
+            nameInputRef.current.focus();
+            nameInputRef.current.select();
+        }
+        if (editingField === 'description' && descTextareaRef.current) {
+            descTextareaRef.current.focus();
+        }
+    }, [editingField]);
 
     const refreshComponent = useCallback(async () => {
-        if (!componentProp) return;
+        if (!component) return;
         try {
-            const updated = await api.getComponent(componentProp.id);
-            setComponent(updated);
+            const updated = await api.getComponent(component.id);
+            setLocalComponent(updated);
+            if (onComponentUpdated) onComponentUpdated(updated);
         } catch (_) { /* ignore */ }
-    }, [componentProp]);
+    }, [component, onComponentUpdated]);
 
     useEffect(() => {
         const check = () => setIsMobile(window.innerWidth < 640);
@@ -735,11 +753,53 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);
 
+    const startEdit = (field) => {
+        setEditingField(field);
+        const cur = localComponent || component;
+        setEditingValue(field === 'name' ? (cur.name || '') : (cur.description || ''));
+        setEditError(null);
+    };
+
+    const cancelEdit = () => {
+        justCancelled.current = true;
+        setEditingField(null);
+        setEditingValue('');
+        setEditError(null);
+    };
+
+    const saveEdit = async (field, value) => {
+        if (justCancelled.current) { justCancelled.current = false; return; }
+        if (!field) return;
+        if (field === 'name' && !value.trim()) { cancelEdit(); return; }
+        setEditSaving(true);
+        try {
+            const compId = (localComponent || component).id;
+            await api.updateComponent(compId, { [field]: value });
+            const updated = await api.getComponent(compId);
+            setLocalComponent(updated);
+            if (onComponentUpdated) onComponentUpdated(updated);
+            setEditingField(null);
+            setEditingValue('');
+        } catch (err) {
+            setEditError(err.message || 'Save failed');
+        } finally {
+            setEditSaving(false);
+        }
+    };
+
+    const handleEditKeyDown = (e, field, value) => {
+        if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); return; }
+        if (e.key === 'Enter' && field === 'name') { e.preventDefault(); saveEdit(field, value); }
+    };
+
     if (!component) return null;
 
-    const linkedConvs = conversations.filter(c => c.component_id === component.id).slice(0, 5);
+    // eff: use locally-updated state after a save, fall back to prop before first save
+    const eff = localComponent || component;
+
+    const linkedConvs = conversations.filter(c => c.component_id === eff.id).slice(0, 5);
     const componentTasks = allTasks
-        .filter(t => t.component_id === component.id)
+        .filter(t => t.component_id === eff.id)
         .sort((a, b) => {
             const ta = a.last_activity || a.updated_at || '';
             const tb = b.last_activity || b.updated_at || '';
@@ -761,7 +821,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
         building: colors.green,
         polish: colors.blue,
         deployed: colors.textSecondary,
-    }[component.phase] || colors.textTertiary;
+    }[eff.phase] || colors.textTertiary;
 
     const panelStyle = isMobile ? {
         position: 'fixed', left: 0, right: 0, bottom: 0,
@@ -808,7 +868,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
     };
 
     // Config overrides — check for non-default values
-    const config = component.config || {};
+    const config = eff.config || {};
     const hasOverrides = config.model || config.auto_test === false || config.auto_review === false
         || config.max_turns || config.max_wall_clock || config.test_command || config.setup_command;
 
@@ -823,6 +883,12 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     from { transform: translateY(100%); opacity: 0; }
                     to   { transform: translateY(0);    opacity: 1; }
                 }
+                .comp-edit-wrap { display: flex; align-items: center; gap: 6px; }
+                .comp-edit-pencil { background: none; border: none; color: #888; cursor: pointer; padding: 0 2px; font-size: 13px; opacity: 0; transition: opacity 0.15s; line-height: 1; flex-shrink: 0; }
+                .comp-edit-wrap:hover .comp-edit-pencil { opacity: 0.7; }
+                .comp-edit-pencil:hover { opacity: 1 !important; }
+                .comp-edit-name-wrap { flex: 1; overflow: hidden; }
+                .comp-edit-desc-wrap { min-height: 20px; }
             `}</style>
             <div style=${{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 499 }}
                  onClick=${onClose} />
@@ -832,18 +898,40 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     display: 'flex', alignItems: 'center', gap: '10px',
                     padding: '12px 16px', borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
                 }}>
-                    <span style=${{
-                        fontFamily: typography.fontBody, fontSize: typography.size.lg,
-                        fontWeight: typography.weight.semibold, color: colors.text,
-                        flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>${component.name || component.id}</span>
-                    ${component.phase ? html`
+                    <div class="comp-edit-wrap comp-edit-name-wrap" style=${{ flex: 1, overflow: 'hidden' }}>
+                        ${editingField === 'name' ? html`
+                            <input
+                                ref=${nameInputRef}
+                                value=${editingValue}
+                                onInput=${e => setEditingValue(e.target.value)}
+                                onKeyDown=${e => handleEditKeyDown(e, 'name', editingValue)}
+                                onBlur=${() => saveEdit('name', editingValue)}
+                                disabled=${editSaving}
+                                style=${{
+                                    fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                                    fontWeight: typography.weight.semibold, color: colors.text,
+                                    background: colors.bg, border: `1px solid ${colors.border}`,
+                                    borderRadius: layout.borderRadius.sm, padding: '2px 6px',
+                                    width: '100%', outline: 'none', boxSizing: 'border-box',
+                                }}
+                            />
+                        ` : html`
+                            <span style=${{
+                                fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                                fontWeight: typography.weight.semibold, color: colors.text,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                display: 'block',
+                            }}>${eff.name || eff.id}</span>
+                            <button class="comp-edit-pencil" onClick=${() => startEdit('name')} title="Edit name">✎</button>
+                        `}
+                    </div>
+                    ${eff.phase ? html`
                         <span style=${{
                             fontSize: typography.size.xs, color: phaseColor,
                             fontWeight: typography.weight.medium,
                             padding: '2px 8px', borderRadius: layout.borderRadius.pill,
                             background: phaseColor + '18',
-                        }}>${component.phase}</span>
+                        }}>${eff.phase}</span>
                     ` : null}
                     <${ControlButtons}
                         paused=${component.paused}
@@ -857,6 +945,37 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
 
                 <!-- Body -->
                 <div style=${{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <!-- Description inline edit -->
+                    <div class="comp-edit-wrap comp-edit-desc-wrap">
+                        ${editingField === 'description' ? html`
+                            <textarea
+                                ref=${descTextareaRef}
+                                value=${editingValue}
+                                onInput=${e => setEditingValue(e.target.value)}
+                                onKeyDown=${e => handleEditKeyDown(e, 'description', editingValue)}
+                                onBlur=${() => saveEdit('description', editingValue)}
+                                disabled=${editSaving}
+                                rows="3"
+                                style=${{
+                                    width: '100%', fontFamily: typography.fontBody,
+                                    fontSize: typography.size.sm, color: colors.text,
+                                    background: colors.bg, border: `1px solid ${colors.border}`,
+                                    borderRadius: layout.borderRadius.sm, padding: '5px 8px',
+                                    outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                                    lineHeight: typography.lineHeight.relaxed,
+                                }}
+                            />
+                        ` : html`
+                            <span style=${{
+                                fontSize: typography.size.sm, flex: 1,
+                                color: eff.description ? colors.textSecondary : colors.textTertiary,
+                                fontStyle: eff.description ? 'normal' : 'italic',
+                            }}>${eff.description || 'Add description…'}</span>
+                            <button class="comp-edit-pencil" onClick=${() => startEdit('description')} title="Edit description">✎</button>
+                        `}
+                    </div>
+                    ${editError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${editError}</div>` : null}
+
                     <!-- Summary -->
                     <div style=${{
                         fontSize: typography.size.sm, color: colors.textSecondary,
@@ -864,7 +983,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
 
                     <!-- Filter tasks button -->
                     <button style=${filterBtnStyle} onClick=${handleFilter}>
-                        ⚡ Filter tasks to ${component.name || component.id}
+                        ⚡ Filter tasks to ${eff.name || eff.id}
                     </button>
 
                     <!-- Linked conversations -->
@@ -898,7 +1017,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     ` : null}
 
                     <!-- Punchlist -->
-                    <${PunchlistSection} componentId=${component.id} componentName=${component.name} />
+                    <${PunchlistSection} componentId=${eff.id} componentName=${eff.name} />
 
                     <!-- Tasks -->
                     <div>
@@ -999,8 +1118,13 @@ function slugifyComponent(text) {
         .slice(0, 60);
 }
 
-function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter, projectId, onComponentCreated }) {
+function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter, projectId, onComponentCreated, onComponentUpdated }) {
     const [selectedComponent, setSelectedComponent] = useState(null);
+
+    const handleComponentUpdated = (comp) => {
+        setSelectedComponent(comp);
+        if (onComponentUpdated) onComponentUpdated(comp);
+    };
     const [showForm, setShowForm] = useState(false);
     const [formName, setFormName] = useState('');
     const [formDesc, setFormDesc] = useState('');
@@ -1272,6 +1396,7 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
             allTasks=${tasks}
             onClose=${() => setSelectedComponent(null)}
             onFilterByComponent=${onComponentFilter}
+            onComponentUpdated=${handleComponentUpdated}
         />
     `;
 }
@@ -2207,6 +2332,7 @@ export function ProjectView({ id }) {
                 onComponentFilter=${setComponentFilter}
                 projectId=${id}
                 onComponentCreated=${(comp) => setComponents(prev => [...prev, comp])}
+                onComponentUpdated=${(comp) => setComponents(prev => prev.map(c => c.id === comp.id ? comp : c))}
             />
 
             <!-- Project-level conversations (unlinked only) -->

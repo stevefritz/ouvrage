@@ -109,6 +109,7 @@ export const api = {
     getComponent: (id) => request(`/components/${eid(id)}`),
     getComponentActivity: (id) => request(`/components/${eid(id)}/activity`),
     createComponent: (params) => request('/components', { method: 'POST', body: JSON.stringify(params) }),
+    updateComponent: (id, fields) => request(`/components/${eid(id)}`, { method: 'PATCH', body: JSON.stringify(fields) }),
 
     // Punchlist
     getPunchlist: (componentId) => request(`/punchlist/${eid(componentId)}`),

@@ -1,0 +1,4 @@
+[
+  { "id": 1, "component_id": "mcp-switchboard/foreman-hardening", "item": "Edit Component inline", "status": "claimed", "claimed_by": "mcp-switchboard/component-edit-inline", "author": "stephen", "created_at": "2026-03-28T10:00:00Z" },
+  { "id": 2, "component_id": "mcp-switchboard/foreman-hardening", "item": "Tooltips on action buttons", "status": "open", "claimed_by": null, "author": "stephen", "created_at": "2026-03-28T10:00:00Z" }
+]
