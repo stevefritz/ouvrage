@@ -1457,13 +1457,15 @@ async def _handle_upload_file(scope, receive, send):
     # Reactive injection: notify CC if task is currently working
     if task_id and task.get("status") == "working":
         human_size = _human_size(len(file_data))
-        import asyncio
-        asyncio.create_task(db.post_task_message(
-            task_id=task_id,
-            author="switchboard",
-            type="note",
-            content=f"📎 File uploaded: {dest} ({mime_type}, {human_size})\nRead this file if relevant to your current work.",
-        ))
+        try:
+            await db.post_task_message(
+                task_id=task_id,
+                author="switchboard",
+                type="note",
+                content=f"📎 File uploaded: {dest} ({mime_type}, {human_size})\nRead this file if relevant to your current work.",
+            )
+        except Exception:
+            pass  # Non-blocking — upload still succeeds
 
     await _json_response(send, record, status=201)
 
