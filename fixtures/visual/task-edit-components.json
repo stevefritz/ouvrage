@@ -1,0 +1,4 @@
+[
+  { "id": "auth-hardening", "name": "Auth Hardening", "project_id": "demo-project", "phase": "active" },
+  { "id": "api-polish",     "name": "API Polish",     "project_id": "demo-project", "phase": "planning" }
+]

@@ -263,6 +263,10 @@ async def handle_request(scope, receive, send):
                     task_id = rest[:-len("/messages")]
                     return await _handle_post_message(receive, send, task_id)
 
+            # PATCH /dashboard/api/tasks/{task_id} — update mutable metadata
+            if method == "PATCH":
+                return await _handle_update_task(receive, send, rest)
+
             # GET sub-resources
             if method == "GET":
                 if rest.endswith("/messages"):
@@ -541,6 +545,27 @@ async def _handle_get_task(send, task_id):
         logger.debug("Failed to get project default_branch for task %s", task_id, exc_info=True)
 
     await _json_response(send, task)
+
+
+async def _handle_update_task(receive, send, task_id):
+    """PATCH /dashboard/api/tasks/{task_id} — update mutable task metadata."""
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    if not data:
+        return await _error(send, "No fields to update")
+
+    try:
+        result = await db.update_task(task_id, **data)
+        await _json_response(send, result)
+    except ValueError as e:
+        await _error(send, str(e), 404)
+    except Exception as e:
+        logger.warning("update_task error for %s: %s", task_id, e)
+        await _error(send, str(e), 400)
 
 
 async def _handle_get_messages(scope, send, task_id):

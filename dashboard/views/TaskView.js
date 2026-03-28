@@ -105,7 +105,7 @@ const GATE_PRIMARY = {
     'reviewing': { label: 'IN REVIEW', color: colors.yellow },
 };
 
-function StatusLine({ task }) {
+function StatusLine({ task, onEdit }) {
     // When gate is actively testing or reviewing, show that as the primary label
     const gatePrimary = task.gate_status ? GATE_PRIMARY[task.gate_status] : null;
 
@@ -153,6 +153,26 @@ function StatusLine({ task }) {
                 color: colors.text, fontWeight: typography.weight.medium,
                 wordBreak: 'break-word', textAlign: 'right',
             }}>${task.goal || shortId(task.id)}</span>
+
+            ${onEdit ? html`
+                <button
+                    onClick=${onEdit}
+                    title="Edit task metadata"
+                    class="foreman-edit-task-btn"
+                    style=${{
+                        background: 'transparent',
+                        border: `1px solid ${colors.borderSubtle}`,
+                        borderRadius: layout.borderRadius.sm,
+                        color: colors.textTertiary,
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        padding: '2px 7px',
+                        lineHeight: 1,
+                        transition: 'color 120ms, border-color 120ms',
+                        flexShrink: 0,
+                    }}
+                >✎</button>
+            ` : null}
         </div>
     `;
 }
@@ -1874,6 +1894,511 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
 
 // ── Main TaskView Component ─────────────────────────────────
 
+// ── EditTaskPanel helpers ────────────────────────────────────
+
+function EditFieldLabel({ label, tooltip }) {
+    const [showTip, setShowTip] = useState(false);
+    return html`
+        <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
+            <label style=${{
+                fontSize: typography.size.sm,
+                fontWeight: typography.weight.medium,
+                color: colors.textSecondary,
+            }}>${label}</label>
+            ${tooltip ? html`
+                <span
+                    style=${{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '15px', height: '15px', borderRadius: '50%',
+                        border: `1px solid ${colors.border}`,
+                        fontSize: '10px', color: colors.textTertiary,
+                        cursor: 'default', position: 'relative', flexShrink: 0,
+                    }}
+                    onMouseEnter=${() => setShowTip(true)}
+                    onMouseLeave=${() => setShowTip(false)}
+                >?
+                    ${showTip ? html`
+                        <div style=${{
+                            position: 'absolute', bottom: '120%', left: '50%',
+                            transform: 'translateX(-50%)',
+                            background: colors.surface, border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.md,
+                            padding: '7px 10px',
+                            fontSize: typography.size.xs, color: colors.textSecondary,
+                            whiteSpace: 'normal', width: '220px',
+                            zIndex: 200, pointerEvents: 'none',
+                            lineHeight: typography.lineHeight.relaxed,
+                        }}>${tooltip}</div>
+                    ` : null}
+                </span>
+            ` : null}
+        </div>
+    `;
+}
+
+const FIELD_TOOLTIPS = {
+    component_id:       'Component this task belongs to within the project.',
+    base_branch:        'Git branch this task was branched from. Usually main or the previous task\'s branch.',
+    branch_target:      'Branch this task\'s PR will merge into.',
+    tags:               'Free-form labels for filtering and grouping tasks.',
+    auto_test:          'Run the test gate automatically after the task completes.',
+    auto_review:        'Run the AI review gate automatically after tests pass.',
+    auto_pr:            'Automatically open a pull request when the gate passes. Mutually exclusive with auto-merge.',
+    auto_merge:         'Automatically merge the PR when gates pass. Mutually exclusive with auto-PR.',
+    max_turns:          'Maximum number of tool-use turns before the CC session is cut off.',
+    max_wall_clock:     'Maximum wall-clock seconds for the CC session (0 = unlimited).',
+    max_test_retries:   'How many times to retry the test gate before failing.',
+    max_review_retries: 'How many times to retry the review gate before failing.',
+    model:              'Claude model for the CC worker session.',
+    review_model:       'Claude model used for the AI review gate.',
+    jira_ticket:        'Associated Jira ticket key (e.g. PROJ-123).',
+    conversation_id:    'Linked Switchboard conversation ID for context injection.',
+    claude_chat_url:    'URL of the Claude.ai chat used to spec this task.',
+};
+
+const MODEL_OPTIONS = [
+    { value: 'sonnet', label: 'Sonnet (fast, efficient)' },
+    { value: 'opus',   label: 'Opus (powerful, thorough)' },
+];
+
+function diffTaskFields(original, form) {
+    const changed = {};
+    for (const [key, value] of Object.entries(form)) {
+        if (key === 'tags') {
+            const orig = (original.tags || []).slice().sort().join(',');
+            const next = (value || []).slice().sort().join(',');
+            if (orig !== next) changed.tags = value;
+        } else if (key === 'component_id') {
+            const orig = original.component_id || null;
+            const next = value || null;
+            if (orig !== next) changed.component_id = next;
+        } else if (['auto_test','auto_review','auto_pr','auto_merge'].includes(key)) {
+            if (Boolean(original[key]) !== Boolean(value)) changed[key] = Boolean(value);
+        } else if (['max_turns','max_wall_clock','max_test_retries','max_review_retries'].includes(key)) {
+            const orig = original[key] != null ? Number(original[key]) : null;
+            const next = value !== '' && value != null ? Number(value) : null;
+            if (orig !== next) changed[key] = next;
+        } else {
+            const orig = original[key] || '';
+            const next = value || '';
+            if (orig !== next) changed[key] = next || null;
+        }
+    }
+    return changed;
+}
+
+// ── EditTaskPanel ────────────────────────────────────────────
+
+function EditTaskPanel({ task, onClose, onSaved }) {
+    const [components, setComponents] = useState([]);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
+    const [tagInput, setTagInput] = useState('');
+
+    // Form state — all mutable fields
+    const [form, setForm] = useState(() => ({
+        component_id:       task.component_id || '',
+        base_branch:        task.base_branch || '',
+        branch_target:      task.branch_target || '',
+        tags:               task.tags ? [...task.tags] : [],
+        auto_test:          Boolean(task.auto_test),
+        auto_review:        Boolean(task.auto_review),
+        auto_pr:            Boolean(task.auto_pr),
+        auto_merge:         Boolean(task.auto_merge),
+        max_turns:          task.max_turns != null ? String(task.max_turns) : '',
+        max_wall_clock:     task.max_wall_clock != null ? String(task.max_wall_clock) : '',
+        max_test_retries:   task.max_test_retries != null ? String(task.max_test_retries) : '',
+        max_review_retries: task.max_review_retries != null ? String(task.max_review_retries) : '',
+        model:              task.model || 'sonnet',
+        review_model:       task.review_model || 'opus',
+        jira_ticket:        task.jira_ticket || '',
+        conversation_id:    task.conversation_id || '',
+        claude_chat_url:    task.claude_chat_url || '',
+    }));
+
+    // Load components for dropdown
+    useEffect(() => {
+        if (!task.project_id) return;
+        api.getComponents(task.project_id)
+            .then(data => {
+                const list = Array.isArray(data) ? data : (data.components || []);
+                setComponents(list);
+            })
+            .catch(() => setComponents([]));
+    }, [task.project_id]);
+
+    const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
+
+    const addTag = () => {
+        const t = tagInput.trim().toLowerCase();
+        if (!t || form.tags.includes(t)) { setTagInput(''); return; }
+        set('tags', [...form.tags, t]);
+        setTagInput('');
+    };
+    const removeTag = (t) => set('tags', form.tags.filter(x => x !== t));
+
+    const handleTagKeyDown = (e) => {
+        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(); }
+    };
+
+    const handleSave = async () => {
+        const changed = diffTaskFields(task, form);
+        if (Object.keys(changed).length === 0) { onClose(); return; }
+        setSaving(true);
+        setError(null);
+        try {
+            await api.updateTask(task.id, changed);
+            onSaved();
+        } catch (e) {
+            setError(e.message || 'Save failed');
+            setSaving(false);
+        }
+    };
+
+    const inputStyle = {
+        width: '100%', boxSizing: 'border-box',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        color: colors.text,
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        padding: '7px 10px',
+        outline: 'none',
+    };
+
+    const toggleStyle = (active) => ({
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+        padding: '5px 12px',
+        borderRadius: layout.borderRadius.sm,
+        border: `1px solid ${active ? colors.accent : colors.border}`,
+        background: active ? colors.accentBg : colors.surface,
+        color: active ? colors.accent : colors.textSecondary,
+        cursor: 'pointer',
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        userSelect: 'none',
+    });
+
+    const sectionStyle = {
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '16px',
+    };
+
+    return html`
+        <!-- Backdrop -->
+        <div
+            style=${{
+                position: 'fixed', inset: 0,
+                background: 'rgba(0,0,0,0.55)',
+                zIndex: 1000,
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                padding: '40px 16px',
+                overflowY: 'auto',
+            }}
+            onClick=${(e) => e.target === e.currentTarget && onClose()}
+        >
+            <div style=${{
+                background: colors.bg,
+                border: `1px solid ${colors.border}`,
+                borderRadius: layout.borderRadius.lg,
+                width: '100%', maxWidth: '680px',
+                boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+            }}>
+                <!-- Header -->
+                <div style=${{
+                    padding: '20px 24px 16px',
+                    borderBottom: `1px solid ${colors.border}`,
+                    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px',
+                }}>
+                    <div style=${{ flex: 1, minWidth: 0 }}>
+                        <div style=${{
+                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                            color: colors.textTertiary, marginBottom: '4px',
+                        }}>${task.id}</div>
+                        <div style=${{
+                            fontSize: typography.size.md, fontWeight: typography.weight.semibold,
+                            color: colors.text, wordBreak: 'break-word',
+                        }}>${task.goal}</div>
+                        <div style=${{
+                            display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap',
+                        }}>
+                            <span style=${{
+                                fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                                fontWeight: typography.weight.semibold,
+                                color: statusColors[task.status] || colors.textSecondary,
+                                textTransform: 'uppercase', letterSpacing: '0.05em',
+                            }}>${(task.status || 'ready').toUpperCase()}</span>
+                            ${task.project_id ? html`
+                                <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
+                                    ${task.project_id}
+                                </span>
+                            ` : null}
+                            ${task.branch ? html`
+                                <span style=${{
+                                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                                    color: colors.accent,
+                                    background: colors.accentBg, borderRadius: '3px',
+                                    padding: '1px 6px',
+                                }}>${task.branch}</span>
+                            ` : null}
+                        </div>
+                    </div>
+                    <button
+                        onClick=${onClose}
+                        style=${{
+                            background: 'transparent', border: 'none',
+                            color: colors.textTertiary, cursor: 'pointer',
+                            fontSize: '18px', padding: '0', lineHeight: 1, flexShrink: 0,
+                        }}
+                    >✕</button>
+                </div>
+
+                <!-- Error banner -->
+                ${error ? html`
+                    <div style=${{
+                        margin: '0', padding: '10px 24px',
+                        background: 'rgba(242, 92, 92, 0.12)',
+                        borderBottom: `1px solid rgba(242, 92, 92, 0.3)`,
+                        color: colors.red,
+                        fontSize: typography.size.sm,
+                    }}>⚠ ${error}</div>
+                ` : null}
+
+                <!-- Form body -->
+                <div style=${{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+                    <!-- Component -->
+                    <div>
+                        <${EditFieldLabel} label="Component" tooltip=${FIELD_TOOLTIPS.component_id} />
+                        <select
+                            value=${form.component_id}
+                            onChange=${e => set('component_id', e.target.value)}
+                            style=${{ ...inputStyle }}
+                        >
+                            <option value="">No component</option>
+                            ${components.map(c => html`
+                                <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
+                            `)}
+                        </select>
+                    </div>
+
+                    <!-- Branch fields -->
+                    <div style=${sectionStyle}>
+                        <div>
+                            <${EditFieldLabel} label="Base branch" tooltip=${FIELD_TOOLTIPS.base_branch} />
+                            <input
+                                type="text"
+                                value=${form.base_branch}
+                                onInput=${e => set('base_branch', e.target.value)}
+                                placeholder="main"
+                                style=${inputStyle}
+                            />
+                        </div>
+                        <div>
+                            <${EditFieldLabel} label="Branch target" tooltip=${FIELD_TOOLTIPS.branch_target} />
+                            <input
+                                type="text"
+                                value=${form.branch_target}
+                                onInput=${e => set('branch_target', e.target.value)}
+                                placeholder="main"
+                                style=${inputStyle}
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Tags -->
+                    <div>
+                        <${EditFieldLabel} label="Tags" tooltip=${FIELD_TOOLTIPS.tags} />
+                        <div style=${{
+                            display: 'flex', flexWrap: 'wrap', gap: '6px',
+                            padding: '6px 8px', minHeight: '38px',
+                            background: colors.surface,
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.sm,
+                        }}>
+                            ${form.tags.map(t => html`
+                                <span key=${t} style=${{
+                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                    background: colors.accentBg,
+                                    border: `1px solid ${colors.accent}`,
+                                    borderRadius: '3px', padding: '2px 7px',
+                                    fontSize: typography.size.xs, color: colors.accent,
+                                    fontFamily: typography.fontMono,
+                                }}>
+                                    ${t}
+                                    <span
+                                        onClick=${() => removeTag(t)}
+                                        style=${{ cursor: 'pointer', opacity: 0.7, marginLeft: '2px' }}
+                                    >✕</span>
+                                </span>
+                            `)}
+                            <input
+                                type="text"
+                                value=${tagInput}
+                                onInput=${e => setTagInput(e.target.value)}
+                                onKeyDown=${handleTagKeyDown}
+                                onBlur=${addTag}
+                                placeholder=${form.tags.length ? '' : 'Add tag…'}
+                                style=${{
+                                    border: 'none', outline: 'none', background: 'transparent',
+                                    color: colors.text, fontSize: typography.size.xs,
+                                    fontFamily: typography.fontMono,
+                                    minWidth: '80px', flex: 1, padding: '2px 4px',
+                                }}
+                            />
+                        </div>
+                        <div style=${{
+                            fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px',
+                        }}>Press Enter or comma to add a tag.</div>
+                    </div>
+
+                    <!-- Automation toggles -->
+                    <div>
+                        <${EditFieldLabel} label="Automation" />
+                        <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            ${[
+                                { key: 'auto_test',   label: 'Auto test',   tooltip: FIELD_TOOLTIPS.auto_test },
+                                { key: 'auto_review', label: 'Auto review', tooltip: FIELD_TOOLTIPS.auto_review },
+                                { key: 'auto_pr',     label: 'Auto PR',     tooltip: FIELD_TOOLTIPS.auto_pr },
+                                { key: 'auto_merge',  label: 'Auto merge',  tooltip: FIELD_TOOLTIPS.auto_merge },
+                            ].map(({ key, label, tooltip }) => html`
+                                <button
+                                    key=${key}
+                                    title=${tooltip}
+                                    onClick=${() => {
+                                        // auto_pr and auto_merge are mutually exclusive
+                                        if (key === 'auto_pr' && !form.auto_pr) {
+                                            setForm(f => ({ ...f, auto_pr: true, auto_merge: false }));
+                                        } else if (key === 'auto_merge' && !form.auto_merge) {
+                                            setForm(f => ({ ...f, auto_merge: true, auto_pr: false }));
+                                        } else {
+                                            set(key, !form[key]);
+                                        }
+                                    }}
+                                    style=${toggleStyle(form[key])}
+                                >
+                                    <span style=${{ fontSize: '11px' }}>${form[key] ? '✓' : '○'}</span>
+                                    ${label}
+                                </button>
+                            `)}
+                        </div>
+                        ${form.auto_pr && form.auto_merge ? html`
+                            <div style=${{
+                                fontSize: typography.size.xs, color: colors.yellow, marginTop: '6px',
+                            }}>⚠ auto-PR and auto-merge are mutually exclusive — only one will apply.</div>
+                        ` : null}
+                    </div>
+
+                    <!-- Limits -->
+                    <div>
+                        <${EditFieldLabel} label="Limits" />
+                        <div style=${sectionStyle}>
+                            ${[
+                                { key: 'max_turns',          label: 'Max turns',          tip: FIELD_TOOLTIPS.max_turns },
+                                { key: 'max_wall_clock',     label: 'Max wall clock (s)', tip: FIELD_TOOLTIPS.max_wall_clock },
+                                { key: 'max_test_retries',   label: 'Max test retries',   tip: FIELD_TOOLTIPS.max_test_retries },
+                                { key: 'max_review_retries', label: 'Max review retries', tip: FIELD_TOOLTIPS.max_review_retries },
+                            ].map(({ key, label, tip }) => html`
+                                <div key=${key}>
+                                    <${EditFieldLabel} label=${label} tooltip=${tip} />
+                                    <input
+                                        type="number"
+                                        value=${form[key]}
+                                        onInput=${e => set(key, e.target.value)}
+                                        min="0"
+                                        placeholder="default"
+                                        style=${inputStyle}
+                                    />
+                                </div>
+                            `)}
+                        </div>
+                    </div>
+
+                    <!-- Models -->
+                    <div style=${sectionStyle}>
+                        <div>
+                            <${EditFieldLabel} label="Worker model" tooltip=${FIELD_TOOLTIPS.model} />
+                            <select value=${form.model} onChange=${e => set('model', e.target.value)} style=${inputStyle}>
+                                ${MODEL_OPTIONS.map(o => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+                            </select>
+                        </div>
+                        <div>
+                            <${EditFieldLabel} label="Review model" tooltip=${FIELD_TOOLTIPS.review_model} />
+                            <select value=${form.review_model} onChange=${e => set('review_model', e.target.value)} style=${inputStyle}>
+                                ${MODEL_OPTIONS.map(o => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- External links -->
+                    <div>
+                        <${EditFieldLabel} label="External links" />
+                        <div style=${{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            ${[
+                                { key: 'jira_ticket',     label: 'Jira ticket',      tip: FIELD_TOOLTIPS.jira_ticket,     ph: 'PROJ-123' },
+                                { key: 'conversation_id', label: 'Conversation ID',  tip: FIELD_TOOLTIPS.conversation_id, ph: 'my-conversation' },
+                                { key: 'claude_chat_url', label: 'Claude chat URL',  tip: FIELD_TOOLTIPS.claude_chat_url, ph: 'https://claude.ai/chat/...' },
+                            ].map(({ key, label, tip, ph }) => html`
+                                <div key=${key}>
+                                    <${EditFieldLabel} label=${label} tooltip=${tip} />
+                                    <input
+                                        type="text"
+                                        value=${form[key]}
+                                        onInput=${e => set(key, e.target.value)}
+                                        placeholder=${ph}
+                                        style=${inputStyle}
+                                    />
+                                </div>
+                            `)}
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Footer -->
+                <div style=${{
+                    padding: '16px 24px',
+                    borderTop: `1px solid ${colors.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px',
+                }}>
+                    <button
+                        onClick=${onClose}
+                        disabled=${saving}
+                        style=${{
+                            background: 'transparent',
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.sm,
+                            color: colors.textSecondary,
+                            cursor: 'pointer', padding: '7px 18px',
+                            fontSize: typography.size.sm,
+                        }}
+                    >Cancel</button>
+                    <button
+                        onClick=${handleSave}
+                        disabled=${saving}
+                        class="foreman-save-task-btn"
+                        style=${{
+                            background: colors.accent,
+                            border: 'none',
+                            borderRadius: layout.borderRadius.sm,
+                            color: '#fff',
+                            cursor: saving ? 'wait' : 'pointer',
+                            padding: '7px 20px',
+                            fontSize: typography.size.sm,
+                            fontWeight: typography.weight.medium,
+                            opacity: saving ? 0.7 : 1,
+                        }}
+                    >${saving ? 'Saving…' : 'Save changes'}</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// ── TaskView ─────────────────────────────────────────────────
+
 export function TaskView({ id, mode = 'expanded', onClose }) {
     const [task, setTask] = useState(null);
     const [attempts, setAttempts] = useState(null);
@@ -1882,6 +2407,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
     const [showStartOverlay, setShowStartOverlay] = useState(false);
+    const [showEditPanel, setShowEditPanel] = useState(false);
     const mountedRef = useRef(true);
     const loadedRef = useRef(false);
 
@@ -2287,7 +2813,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ${backLabel}
             </a>
 
-            <${StatusLine} task=${task} />
+            <${StatusLine} task=${task} onEdit=${() => setShowEditPanel(true)} />
             <${GitFlowLineage} task=${task} chain=${chain} />
             <${ChainStrip} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
@@ -2344,6 +2870,14 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
+
+            ${showEditPanel ? html`
+                <${EditTaskPanel}
+                    task=${task}
+                    onClose=${() => setShowEditPanel(false)}
+                    onSaved=${() => { setShowEditPanel(false); loadTask(); }}
+                />
+            ` : null}
         </div>
     `;
 }
