@@ -9,6 +9,7 @@ Usage:
 """
 
 import json
+import re
 import socket
 import sys
 import threading
@@ -85,7 +86,12 @@ def setup_mock_routes(page, mocks, base_dir):
                 )
             return handler
 
-        page.route(f"**{api_path}", make_handler(content_to_capture))
+        # Use regex matching for paths with encoded characters (%2F etc.)
+        if "%" in api_path:
+            escaped = re.escape(api_path).replace(r"\%", "%")
+            page.route(re.compile(escaped), make_handler(content_to_capture))
+        else:
+            page.route(f"**{api_path}", make_handler(content_to_capture))
 
 
 def screenshot_page(browser, page_name, page_config, base_url, base_dir):
@@ -101,14 +107,18 @@ def screenshot_page(browser, page_name, page_config, base_url, base_dir):
     if mocks:
         setup_mock_routes(page, mocks, base_dir)
 
-    # Navigate — the hash fragment is part of the URL
+    # Navigate — use full URL with hash fragment
     url = base_url + page_config["url"]
-    page.goto(url)
-
-    # Wait for network idle + extra render time
-    page.wait_for_load_state("networkidle")
+    page.goto(url, wait_until="networkidle")
     wait_ms = page_config.get("wait_ms", 1500)
     time.sleep(wait_ms / 1000.0)
+    # Execute any post-load clicks (e.g., expand drawers for screenshots)
+    for selector in page_config.get("click", []):
+        try:
+            page.click(selector, timeout=3000)
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"  Click failed on '{selector}': {e}")
 
     # Take screenshot
     output_path = f"/tmp/visual-check-{page_name}.png"
