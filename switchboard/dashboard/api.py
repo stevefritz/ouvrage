@@ -8,7 +8,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, quote, unquote
 
 import httpx
 from argon2 import PasswordHasher
@@ -312,6 +312,9 @@ async def handle_request(scope, receive, send):
             return await _handle_upload_file(scope, receive, send)
         if path.startswith("/dashboard/api/files/"):
             file_id = path[len("/dashboard/api/files/"):]
+            if file_id.endswith("/download") and method == "GET":
+                actual_id = file_id[:-len("/download")]
+                return await _handle_download_file(send, actual_id, scope)
             if method == "PATCH":
                 return await _handle_rename_file(receive, send, file_id, scope)
             if method == "DELETE":
@@ -1527,3 +1530,34 @@ async def _handle_delete_file(send, file_id: str, scope):
 
     await db.delete_file(file_id)
     await _json_response(send, {"ok": True})
+
+
+async def _handle_download_file(send, file_id: str, scope):
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    record = await db.get_file(file_id)
+    if not record:
+        return await _error(send, f"File '{file_id}' not found", 404)
+
+    stored = Path(record["stored_path"])
+    if not stored.exists():
+        return await _error(send, "File not found on disk", 404)
+
+    data = stored.read_bytes()
+    mime_type = record.get("mime_type") or "application/octet-stream"
+    filename = record["filename"]
+    encoded_name = quote(filename)
+    disposition = f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_name}'
+
+    await send({
+        "type": "http.response.start", "status": 200,
+        "headers": [
+            [b"content-type", mime_type.encode()],
+            [b"content-disposition", disposition.encode()],
+            [b"content-length", str(len(data)).encode()],
+            [b"cache-control", b"private, no-cache"],
+        ],
+    })
+    await send({"type": "http.response.body", "body": data})

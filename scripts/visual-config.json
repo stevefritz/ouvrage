@@ -49,6 +49,18 @@
       },
       "wait_ms": 2000,
       "click": [".foreman-attempt-header:has-text('Files')"]
+    },
+    "task-detail-mobile": {
+      "url": "/foreman#/task/implement-auth",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/implement-auth/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/implement-auth": "fixtures/visual/task-detail-task.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000,
+      "click": [".foreman-attempt-header:has-text('Files')"]
     }
   }
 }
