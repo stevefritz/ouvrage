@@ -169,13 +169,17 @@ async def recover_orphaned_tasks():
             elif gate == "review-failed" and task.get("auto_review"):
                 await _dispatch_review(task["id"], project, task)
 
-    # Find orphaned working tasks
+    # Find orphaned working tasks.
+    # NOTE: pid is never written by current SDK-based dispatch, so it will
+    # almost always be None. The pid check below only has effect if a pid was
+    # set by some other mechanism; in practice all working tasks at startup
+    # are orphans. Do not add logic that treats null pid as meaningful.
     working_tasks = await db.list_tasks(status="working")
     orphans = []
     for task in working_tasks:
         pid = task.get("pid")
-        if pid and _is_pid_alive(pid):
-            continue  # still running
+        if pid is not None and _is_pid_alive(pid):
+            continue  # process is still running (rare: pid is never written by SDK dispatch)
         orphans.append(task)
 
     # Layer 3: Find silently killed tasks — failed with no worker messages

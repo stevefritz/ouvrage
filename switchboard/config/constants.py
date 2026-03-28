@@ -59,14 +59,11 @@ TASK_MUTABLE_FIELDS = {
 }
 
 COMPONENT_CONFIG_FIELDS = {
-    "base_branch", "setup_command", "test_command", "model",
-    "auto_test", "auto_review", "review_model",
-    "max_test_retries", "max_review_retries",
-    "auto_pr", "auto_merge", "max_turns", "max_wall_clock",
+    "review_ignore_patterns",
 }
 
 COMPONENT_MUTABLE_FIELDS = COMPONENT_CONFIG_FIELDS | {
-    "name", "description", "phase", "env_overrides", "secrets",
+    "name", "description", "phase",
 }
 
 SYSTEM_DEFAULTS = {
