@@ -427,6 +427,16 @@ async def init_db():
             await conn.execute("ALTER TABLE projects ADD COLUMN state_definitions TEXT")
         if "review_ignore_patterns" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN review_ignore_patterns TEXT")
+        if "review_model" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN review_model TEXT")
+        if "auto_test" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN auto_test BOOLEAN")
+        if "auto_review" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN auto_review BOOLEAN")
+        if "auto_pr" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN auto_pr BOOLEAN")
+        if "auto_merge" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN auto_merge BOOLEAN")
 
         # Migrate components table
         comp_table = await conn.execute_fetchall(

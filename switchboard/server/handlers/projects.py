@@ -58,8 +58,13 @@ async def _handle_create_project(arguments):
         env_overrides=arguments.get("env_overrides"),
         max_turns=arguments.get("max_turns"),
         max_wall_clock=arguments.get("max_wall_clock"),
-        claude_md_path=arguments.get("claude_md_path"),
         model=arguments.get("model"),
+        review_model=arguments.get("review_model"),
+        review_ignore_patterns=arguments.get("review_ignore_patterns"),
+        auto_test=arguments.get("auto_test"),
+        auto_review=arguments.get("auto_review"),
+        auto_pr=arguments.get("auto_pr"),
+        auto_merge=arguments.get("auto_merge"),
         state_definitions=arguments.get("state_definitions"),
         created_by=get_request_user_id(),
     )
@@ -73,6 +78,7 @@ async def _handle_get_project(arguments):
 async def _handle_update_project(arguments):
     project_id = arguments["id"]
     fields = {k: v for k, v in arguments.items() if k != "id"}
+    fields.pop("claude_md_path", None)
     if not fields:
         return {"error": "No fields to update"}
     if "repo" in fields:
