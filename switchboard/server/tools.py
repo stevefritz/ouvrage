@@ -1046,6 +1046,33 @@ FILES_TOOLS = [
             },
         },
     ),
+    Tool(
+        name="add_task_file",
+        description=(
+            "Persist a file produced during this task. Pass the absolute path to a file in your worktree. "
+            "The file is copied to permanent storage and attached to this task — it will appear in the task's "
+            "Files section for download and review. Use this for reports, screenshots, analyses, exports, "
+            "or any other output the user should see. Worker endpoint only."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The current task ID (from your task context).",
+                },
+                "source_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file within your worktree.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Display name for the file. Defaults to the source file's basename.",
+                },
+            },
+            "required": ["task_id", "source_path"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------

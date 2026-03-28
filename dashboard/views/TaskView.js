@@ -1528,6 +1528,10 @@ function FilesDrawer({ taskId }) {
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             }}>${f.filename}</span>
                             <span style=${{
+                                fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
+                                fontStyle: 'italic',
+                            }}>${f.uploaded_by ? `📎 uploaded` : `🤖 produced by CC`}</span>
+                            <span style=${{
                                 fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
                             }}>${formatFileSize(f.size_bytes)}</span>
                             <span style=${{
