@@ -440,6 +440,21 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     worktree_path = task.get("worktree_path") or "(unknown)"
     test_command = project.get("test_command") or "(none configured)"
 
+    # Fetch origin so the reviewer diffs against the current remote main,
+    # not a stale local ref. Errors are logged but non-fatal.
+    if worktree_path and worktree_path != "(unknown)":
+        try:
+            _stdout, _stderr, _rc = await _run_as_worker(
+                "git", "-C", worktree_path, "fetch", "origin", base_branch
+            )
+            if _rc != 0:
+                log.warning(
+                    f"Task {task_id}: git fetch origin {base_branch} returned rc={_rc}: "
+                    f"{_stderr.decode(errors='replace').strip()}"
+                )
+        except Exception as e:
+            log.warning(f"Task {task_id}: git fetch origin {base_branch} failed: {e}")
+
     review_prompt = f"""# You are a Foreman code reviewer
 
 You were dispatched to review task `{task_id}` on project `{task.get('project_id')}`.
@@ -473,8 +488,8 @@ You are the final gate before code ships.
 
 You have full filesystem access to the worktree at `{worktree_path}`.
 
-1. Run `git diff {base_branch}...HEAD` to see all changes
-2. Read the diff carefully — if it's large, review file by file: `git diff {base_branch}...HEAD -- path/to/file`
+1. Run `git diff origin/{base_branch}...HEAD` to see all changes
+2. Read the diff carefully — if it's large, review file by file: `git diff origin/{base_branch}...HEAD -- path/to/file`
 3. When you need context beyond the diff, read the full file
 4. Check test files alongside implementation files
 5. If the task added images or non-text files, verify they exist: `ls -la path/`
