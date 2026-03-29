@@ -2185,6 +2185,8 @@ function EditProjectPanel({ project, onClose, onSaved }) {
             : (project.env_overrides || '')
     );
     const [envError, setEnvError] = useState(null);
+    // null = unchanged (don't include in PATCH), '' = explicitly cleared, string = new value
+    const [githubPatOverride, setGithubPatOverride] = useState(null);
 
     useEffect(() => {
         const check = () => setIsMobile(window.innerWidth < 640);
@@ -2232,6 +2234,10 @@ function EditProjectPanel({ project, onClose, onSaved }) {
                     : null,
                 env_overrides: parsedEnv !== undefined ? parsedEnv : (envOverrides.trim() ? undefined : null),
             };
+            // Include github_pat_override only if user changed it
+            if (githubPatOverride !== null) {
+                fields.github_pat_override = githubPatOverride || null;
+            }
             // Remove undefined values (keep nulls — they clear the field)
             Object.keys(fields).forEach(k => fields[k] === undefined && delete fields[k]);
 
@@ -2384,6 +2390,43 @@ function EditProjectPanel({ project, onClose, onSaved }) {
                                 placeholder="main"
                             />
                             <div style=${inheritHintStyle}>Inherits to tasks as merge target</div>
+                        </${FormField}>
+                        <${FormField} label="GitHub PAT (project-specific)">
+                            <input
+                                type="password"
+                                value=${githubPatOverride ?? ''}
+                                onInput=${e => setGithubPatOverride(e.target.value)}
+                                style=${fkStyles.input}
+                                placeholder="ghp_… (leave blank to use instance PAT)"
+                                autoComplete="new-password"
+                            />
+                            <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                                ${(() => {
+                                    const patIsSet = githubPatOverride !== null ? Boolean(githubPatOverride) : Boolean(project.github_pat_override);
+                                    return html`
+                                        <span style=${{
+                                            fontSize: '11px',
+                                            color: patIsSet ? colors.accent : colors.textTertiary,
+                                            fontStyle: patIsSet ? 'normal' : 'italic',
+                                            flex: 1,
+                                        }}>
+                                            ${patIsSet ? 'Using project PAT' : 'Using instance PAT (default)'}
+                                        </span>
+                                        ${patIsSet ? html`
+                                            <button
+                                                type="button"
+                                                onClick=${() => setGithubPatOverride('')}
+                                                style=${{
+                                                    background: 'none', border: 'none',
+                                                    color: colors.textTertiary, cursor: 'pointer',
+                                                    fontSize: '11px', padding: '0',
+                                                    textDecoration: 'underline',
+                                                }}
+                                            >Clear</button>
+                                        ` : null}
+                                    `;
+                                })()}
+                            </div>
                         </${FormField}>
                     </div>
 
