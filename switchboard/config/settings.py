@@ -47,6 +47,19 @@ AUTH_REQUIRED_SCOPES = os.environ.get("AUTH_REQUIRED_SCOPES", "").split(",") if 
 RESOURCE_URL = os.environ.get("RESOURCE_URL")  # e.g. https://switchboard.example.dev/mcp
 
 # ---------------------------------------------------------------------------
+# SaaS / Auth Mode
+# ---------------------------------------------------------------------------
+
+# AUTH_MODE controls how unauthenticated dashboard requests are handled.
+# "local" (default): no-session → 401/redirect to local login page.
+# "saas": no-session → 302 redirect to CONTROL_PLANE_URL/login for SSO.
+AUTH_MODE = os.environ.get("AUTH_MODE", "local")
+
+# CONTROL_PLANE_URL is required when AUTH_MODE=saas.
+# Example: https://foreman.dev
+CONTROL_PLANE_URL = os.environ.get("CONTROL_PLANE_URL")
+
+# ---------------------------------------------------------------------------
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------
 
