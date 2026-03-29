@@ -970,7 +970,8 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
                                 fontSize: typography.size.sm, flex: 1,
                                 color: eff.description ? colors.textSecondary : colors.textTertiary,
                                 fontStyle: eff.description ? 'normal' : 'italic',
-                            }}>${eff.description || 'Add description…'}</span>
+                                cursor: eff.description ? 'default' : 'pointer',
+                            }} onClick=${eff.description ? undefined : () => startEdit('description')}>${eff.description || 'Add description…'}</span>
                             <button class="comp-edit-pencil" onClick=${() => startEdit('description')} title="Edit description">✎</button>
                         `}
                     </div>
