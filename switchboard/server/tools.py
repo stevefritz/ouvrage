@@ -215,6 +215,10 @@ PROJECT_TOOLS = [
                     "type": "object",
                     "description": "Advanced: custom status colors/labels for dashboard rendering. Most users don't need this.",
                 },
+                "github_pat_override": {
+                    "type": "string",
+                    "description": "Optional project-specific GitHub PAT. Encrypted at rest. Use for repos in different orgs or requiring a separate token. If not set, falls back to instance-level PAT.",
+                },
             },
             "required": ["id", "repo"],
         },
@@ -253,6 +257,7 @@ PROJECT_TOOLS = [
                 "auto_pr": {"type": ["boolean", "null"], "description": "Project-level default for auto_pr"},
                 "auto_merge": {"type": ["boolean", "null"], "description": "Project-level default for auto_merge"},
                 "state_definitions": {"type": ["object", "null"], "description": "Custom state definitions for dashboard rendering"},
+                "github_pat_override": {"type": ["string", "null"], "description": "Project-specific GitHub PAT. Pass a new value to encrypt and store. Pass empty string or null to clear (falls back to instance PAT)."},
             },
             "required": ["id"],
         },

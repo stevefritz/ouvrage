@@ -10,6 +10,7 @@ import switchboard.dispatch as task_engine
 from switchboard.server.context import get_request_user_id
 from switchboard.git.operations import normalize_repo_url, _build_authenticated_url
 from switchboard.git.worktree import _run_as_worker
+from switchboard.crypto import encrypt_value, is_fernet_token
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +97,9 @@ async def _handle_create_project(arguments):
     if missing:
         return {"error": f"Missing required config fields: {', '.join(missing)}. All config must be explicitly set at project creation."}
 
+    pat_raw = arguments.get("github_pat_override")
+    pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
+
     # 2a + 2b: validate PAT exists and can access the repo before creating any DB row
     pat_error = await _validate_github_pat_for_repo(repo)
     if pat_error:
@@ -122,6 +126,7 @@ async def _handle_create_project(arguments):
         auto_merge=arguments.get("auto_merge"),
         state_definitions=arguments.get("state_definitions"),
         created_by=get_request_user_id(),
+        github_pat_override=pat_encrypted,
     )
     return result
 
@@ -139,6 +144,13 @@ async def _handle_update_project(arguments):
         return {"error": "No fields to update"}
     if "repo" in fields:
         fields["repo"] = normalize_repo_url(fields["repo"])
+    # Encrypt PAT override if a new value was provided; empty/null clears it
+    if "github_pat_override" in fields:
+        pat = fields["github_pat_override"]
+        if pat:  # non-empty string → encrypt
+            fields["github_pat_override"] = encrypt_value(pat) if not is_fernet_token(pat) else pat
+        else:  # empty string or null → clear (db.update_project treats empty string as NULL)
+            fields["github_pat_override"] = "" if pat == "" else None
     return await db.update_project(project_id, **fields)
 
 
