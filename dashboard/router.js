@@ -70,6 +70,11 @@ export function parseRoute() {
         return { view: 'settings', params: {} };
     }
 
+    // /docs
+    if (hash === '/docs') {
+        return { view: 'docs', params: {} };
+    }
+
     return { view: 'landing', params: {} };
 }
 
@@ -123,4 +128,5 @@ export const routes = {
     conversation: (id) => `#/conversation/${encodeURIComponent(id)}`,
     files:        () => '#/files',
     settings:     () => '#/settings',
+    docs:         () => '#/docs',
 };

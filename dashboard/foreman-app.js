@@ -14,6 +14,7 @@ import { ConversationView } from './views/ConversationView.js';
 import { LoginView } from './views/LoginView.js';
 import { Settings } from './components/Settings.js';
 import { Files } from './components/Files.js';
+import { ArchitectureDocs } from './docs/architecture.js';
 
 const html = htm.bind(h);
 
@@ -43,6 +44,8 @@ function ForemanApp() {
         content = html`<${Files} />`;
     } else if (view === 'settings') {
         content = html`<${Settings} />`;
+    } else if (view === 'docs') {
+        content = html`<${ArchitectureDocs} />`;
     } else {
         content = html`<${LandingView} />`;
     }
