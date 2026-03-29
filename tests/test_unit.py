@@ -2164,6 +2164,15 @@ class TestReactiveConversationInjection:
 class TestHeldDefaults:
     """_handle_dispatch_task applies held defaults: standalone=True, chain=False."""
 
+    @pytest.fixture(autouse=True)
+    def mock_anthropic_key(self):
+        """Bypass Anthropic key guard so these tests focus on held-default logic."""
+        with patch("switchboard.server.handlers.tasks.db.get_user_credentials",
+                   return_value={"anthropic_api_key": "sk-ant-test"}):
+            with patch("switchboard.server.handlers.tasks.db.get_instance",
+                       return_value={"owner_user_id": None}):
+                yield
+
     async def test_standalone_task_defaults_to_held(self, db, sample_project):
         """Standalone task (no depends_on) defaults to held=true."""
         from switchboard.server.handlers.tasks import _handle_dispatch_task
@@ -2234,6 +2243,13 @@ class TestHeldDefaults:
 
 class TestProjectCreateValidation:
     """_handle_create_project rejects missing required config fields."""
+
+    @pytest.fixture(autouse=True)
+    def mock_pat_validation(self):
+        """Bypass PAT guard so tests focus on config-field validation logic."""
+        with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
+                   return_value=None):
+            yield
 
     async def test_missing_all_required_fields_returns_error(self, db):
         from switchboard.server.handlers.projects import _handle_create_project
