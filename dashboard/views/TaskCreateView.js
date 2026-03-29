@@ -624,7 +624,6 @@ export function TaskCreateView({ project: initialProject }) {
                                         <option value="inherit">inherit</option>
                                         <option value="claude-sonnet-4-6">sonnet</option>
                                         <option value="claude-opus-4-6">opus</option>
-                                        <option value="claude-haiku-4-5-20251001">haiku</option>
                                     </select>
                                     ${model === 'inherit' ? html`
                                         <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary, fontStyle: 'italic' }}>
@@ -646,7 +645,6 @@ export function TaskCreateView({ project: initialProject }) {
                                         <option value="inherit">inherit</option>
                                         <option value="claude-sonnet-4-6">sonnet</option>
                                         <option value="claude-opus-4-6">opus</option>
-                                        <option value="claude-haiku-4-5-20251001">haiku</option>
                                     </select>
                                     ${reviewModel === 'inherit' ? html`
                                         <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary, fontStyle: 'italic' }}>
