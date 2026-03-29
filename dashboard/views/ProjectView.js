@@ -709,19 +709,37 @@ function ComponentCard({ component, allTasks, onClick }) {
     `;
 }
 
-function ComponentPanel({ component: componentProp, conversations, allTasks, onClose, onFilterByComponent }) {
+function ComponentPanel({ component, conversations, allTasks, onClose, onFilterByComponent, onComponentUpdated }) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
-    const [component, setComponent] = useState(componentProp);
+    const [localComponent, setLocalComponent] = useState(null);
+    const [editingField, setEditingField] = useState(null); // 'name' | 'description'
+    const [editingValue, setEditingValue] = useState('');
+    const [editSaving, setEditSaving] = useState(false);
+    const [editError, setEditError] = useState(null);
+    const nameInputRef = useRef(null);
+    const descTextareaRef = useRef(null);
+    const justCancelled = useRef(false);
 
-    useEffect(() => { setComponent(componentProp); }, [componentProp]);
+    useEffect(() => { setLocalComponent(component); }, [component]);
+
+    useEffect(() => {
+        if (editingField === 'name' && nameInputRef.current) {
+            nameInputRef.current.focus();
+            nameInputRef.current.select();
+        }
+        if (editingField === 'description' && descTextareaRef.current) {
+            descTextareaRef.current.focus();
+        }
+    }, [editingField]);
 
     const refreshComponent = useCallback(async () => {
-        if (!componentProp) return;
+        if (!component) return;
         try {
-            const updated = await api.getComponent(componentProp.id);
-            setComponent(updated);
+            const updated = await api.getComponent(component.id);
+            setLocalComponent(updated);
+            if (onComponentUpdated) onComponentUpdated(updated);
         } catch (_) { /* ignore */ }
-    }, [componentProp]);
+    }, [component, onComponentUpdated]);
 
     useEffect(() => {
         const check = () => setIsMobile(window.innerWidth < 640);
@@ -735,11 +753,53 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);
 
+    const startEdit = (field) => {
+        setEditingField(field);
+        const cur = localComponent || component;
+        setEditingValue(field === 'name' ? (cur.name || '') : (cur.description || ''));
+        setEditError(null);
+    };
+
+    const cancelEdit = () => {
+        justCancelled.current = true;
+        setEditingField(null);
+        setEditingValue('');
+        setEditError(null);
+    };
+
+    const saveEdit = async (field, value) => {
+        if (justCancelled.current) { justCancelled.current = false; return; }
+        if (!field) return;
+        if (field === 'name' && !value.trim()) { cancelEdit(); return; }
+        setEditSaving(true);
+        try {
+            const compId = (localComponent || component).id;
+            await api.updateComponent(compId, { [field]: value });
+            const updated = await api.getComponent(compId);
+            setLocalComponent(updated);
+            if (onComponentUpdated) onComponentUpdated(updated);
+            setEditingField(null);
+            setEditingValue('');
+        } catch (err) {
+            setEditError(err.message || 'Save failed');
+        } finally {
+            setEditSaving(false);
+        }
+    };
+
+    const handleEditKeyDown = (e, field, value) => {
+        if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); return; }
+        if (e.key === 'Enter' && field === 'name') { e.preventDefault(); saveEdit(field, value); }
+    };
+
     if (!component) return null;
 
-    const linkedConvs = conversations.filter(c => c.component_id === component.id).slice(0, 5);
+    // eff: use locally-updated state after a save, fall back to prop before first save
+    const eff = localComponent || component;
+
+    const linkedConvs = conversations.filter(c => c.component_id === eff.id).slice(0, 5);
     const componentTasks = allTasks
-        .filter(t => t.component_id === component.id)
+        .filter(t => t.component_id === eff.id)
         .sort((a, b) => {
             const ta = a.last_activity || a.updated_at || '';
             const tb = b.last_activity || b.updated_at || '';
@@ -761,7 +821,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
         building: colors.green,
         polish: colors.blue,
         deployed: colors.textSecondary,
-    }[component.phase] || colors.textTertiary;
+    }[eff.phase] || colors.textTertiary;
 
     const panelStyle = isMobile ? {
         position: 'fixed', left: 0, right: 0, bottom: 0,
@@ -808,7 +868,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
     };
 
     // Config overrides — check for non-default values
-    const config = component.config || {};
+    const config = eff.config || {};
     const hasOverrides = config.model || config.auto_test === false || config.auto_review === false
         || config.max_turns || config.max_wall_clock || config.test_command || config.setup_command;
 
@@ -823,6 +883,12 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     from { transform: translateY(100%); opacity: 0; }
                     to   { transform: translateY(0);    opacity: 1; }
                 }
+                .comp-edit-wrap { display: flex; align-items: center; gap: 6px; }
+                .comp-edit-pencil { background: none; border: none; color: #888; cursor: pointer; padding: 0 2px; font-size: 13px; opacity: 0; transition: opacity 0.15s; line-height: 1; flex-shrink: 0; }
+                .comp-edit-wrap:hover .comp-edit-pencil { opacity: 0.7; }
+                .comp-edit-pencil:hover { opacity: 1 !important; }
+                .comp-edit-name-wrap { flex: 1; overflow: hidden; }
+                .comp-edit-desc-wrap { min-height: 20px; }
             `}</style>
             <div style=${{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 499 }}
                  onClick=${onClose} />
@@ -832,18 +898,40 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     display: 'flex', alignItems: 'center', gap: '10px',
                     padding: '12px 16px', borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
                 }}>
-                    <span style=${{
-                        fontFamily: typography.fontBody, fontSize: typography.size.lg,
-                        fontWeight: typography.weight.semibold, color: colors.text,
-                        flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>${component.name || component.id}</span>
-                    ${component.phase ? html`
+                    <div class="comp-edit-wrap comp-edit-name-wrap" style=${{ flex: 1, overflow: 'hidden' }}>
+                        ${editingField === 'name' ? html`
+                            <input
+                                ref=${nameInputRef}
+                                value=${editingValue}
+                                onInput=${e => setEditingValue(e.target.value)}
+                                onKeyDown=${e => handleEditKeyDown(e, 'name', editingValue)}
+                                onBlur=${() => saveEdit('name', editingValue)}
+                                disabled=${editSaving}
+                                style=${{
+                                    fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                                    fontWeight: typography.weight.semibold, color: colors.text,
+                                    background: colors.bg, border: `1px solid ${colors.border}`,
+                                    borderRadius: layout.borderRadius.sm, padding: '2px 6px',
+                                    width: '100%', outline: 'none', boxSizing: 'border-box',
+                                }}
+                            />
+                        ` : html`
+                            <span style=${{
+                                fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                                fontWeight: typography.weight.semibold, color: colors.text,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                display: 'block',
+                            }}>${eff.name || eff.id}</span>
+                            <button class="comp-edit-pencil" onClick=${() => startEdit('name')} title="Edit name">✎</button>
+                        `}
+                    </div>
+                    ${eff.phase ? html`
                         <span style=${{
                             fontSize: typography.size.xs, color: phaseColor,
                             fontWeight: typography.weight.medium,
                             padding: '2px 8px', borderRadius: layout.borderRadius.pill,
                             background: phaseColor + '18',
-                        }}>${component.phase}</span>
+                        }}>${eff.phase}</span>
                     ` : null}
                     <${ControlButtons}
                         paused=${component.paused}
@@ -857,6 +945,38 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
 
                 <!-- Body -->
                 <div style=${{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <!-- Description inline edit -->
+                    <div class="comp-edit-wrap comp-edit-desc-wrap">
+                        ${editingField === 'description' ? html`
+                            <textarea
+                                ref=${descTextareaRef}
+                                value=${editingValue}
+                                onInput=${e => setEditingValue(e.target.value)}
+                                onKeyDown=${e => handleEditKeyDown(e, 'description', editingValue)}
+                                onBlur=${() => saveEdit('description', editingValue)}
+                                disabled=${editSaving}
+                                rows="3"
+                                style=${{
+                                    width: '100%', fontFamily: typography.fontBody,
+                                    fontSize: typography.size.sm, color: colors.text,
+                                    background: colors.bg, border: `1px solid ${colors.border}`,
+                                    borderRadius: layout.borderRadius.sm, padding: '5px 8px',
+                                    outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                                    lineHeight: typography.lineHeight.relaxed,
+                                }}
+                            />
+                        ` : html`
+                            <span style=${{
+                                fontSize: typography.size.sm, flex: 1,
+                                color: eff.description ? colors.textSecondary : colors.textTertiary,
+                                fontStyle: eff.description ? 'normal' : 'italic',
+                                cursor: eff.description ? 'default' : 'pointer',
+                            }} onClick=${eff.description ? undefined : () => startEdit('description')}>${eff.description || 'Add description…'}</span>
+                            <button class="comp-edit-pencil" onClick=${() => startEdit('description')} title="Edit description">✎</button>
+                        `}
+                    </div>
+                    ${editError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${editError}</div>` : null}
+
                     <!-- Summary -->
                     <div style=${{
                         fontSize: typography.size.sm, color: colors.textSecondary,
@@ -864,7 +984,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
 
                     <!-- Filter tasks button -->
                     <button style=${filterBtnStyle} onClick=${handleFilter}>
-                        ⚡ Filter tasks to ${component.name || component.id}
+                        ⚡ Filter tasks to ${eff.name || eff.id}
                     </button>
 
                     <!-- Linked conversations -->
@@ -898,7 +1018,7 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
                     ` : null}
 
                     <!-- Punchlist -->
-                    <${PunchlistSection} componentId=${component.id} componentName=${component.name} />
+                    <${PunchlistSection} componentId=${eff.id} componentName=${eff.name} />
 
                     <!-- Tasks -->
                     <div>
@@ -991,15 +1111,71 @@ function ComponentPanel({ component: componentProp, conversations, allTasks, onC
     `;
 }
 
-function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter }) {
+function slugifyComponent(text) {
+    return text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+}
+
+function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter, projectId, onComponentCreated, onComponentUpdated }) {
     const [selectedComponent, setSelectedComponent] = useState(null);
 
-    if (components.length === 0) return null;
+    const handleComponentUpdated = (comp) => {
+        setSelectedComponent(comp);
+        if (onComponentUpdated) onComponentUpdated(comp);
+    };
+    const [showForm, setShowForm] = useState(false);
+    const [formName, setFormName] = useState('');
+    const [formDesc, setFormDesc] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [formError, setFormError] = useState(null);
+    const [showNameTip, setShowNameTip] = useState(false);
+
+    const derivedId = slugifyComponent(formName);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!formName.trim()) return;
+        setSubmitting(true);
+        setFormError(null);
+        try {
+            const result = await api.createComponent({
+                id: derivedId,
+                project_id: projectId,
+                name: formName.trim(),
+                description: formDesc.trim() || undefined,
+            });
+            onComponentCreated(result);
+            setFormName('');
+            setFormDesc('');
+            setShowForm(false);
+        } catch (err) {
+            setFormError(err.message || 'Failed to create component');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleCancel = () => {
+        setShowForm(false);
+        setFormName('');
+        setFormDesc('');
+        setFormError(null);
+    };
 
     const sectionStyle = {
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
+    };
+
+    const headerRowStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: '4px',
     };
 
     const headerStyle = {
@@ -1008,7 +1184,19 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
         color: colors.textSecondary,
         letterSpacing: '0.06em',
         textTransform: 'uppercase',
-        marginBottom: '4px',
+    };
+
+    const newBtnStyle = {
+        fontSize: typography.size.xs,
+        fontFamily: typography.fontBody,
+        fontWeight: typography.weight.medium,
+        color: colors.accent,
+        background: 'transparent',
+        border: `1px solid ${colors.accent}`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '3px 10px',
+        cursor: 'pointer',
+        lineHeight: '1.4',
     };
 
     const gridStyle = {
@@ -1017,19 +1205,190 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
         gap: '8px',
     };
 
+    const formBoxStyle = {
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        marginTop: '4px',
+    };
+
+    const inputStyle = {
+        width: '100%',
+        background: colors.bg,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        color: colors.text,
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        padding: '7px 10px',
+        boxSizing: 'border-box',
+        outline: 'none',
+    };
+
+    const textareaStyle = {
+        ...inputStyle,
+        resize: 'vertical',
+        minHeight: '72px',
+    };
+
+    const labelStyle = {
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.medium,
+        color: colors.textSecondary,
+        marginBottom: '5px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+    };
+
+    const hintStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        marginTop: '3px',
+    };
+
+    const formActionsStyle = {
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'center',
+    };
+
+    const submitBtnStyle = {
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        background: colors.accent,
+        color: '#fff',
+        border: 'none',
+        borderRadius: layout.borderRadius.sm,
+        padding: '7px 16px',
+        cursor: submitting ? 'not-allowed' : 'pointer',
+        opacity: submitting ? 0.7 : 1,
+    };
+
+    const cancelBtnStyle = {
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        background: 'transparent',
+        color: colors.textSecondary,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '7px 14px',
+        cursor: 'pointer',
+    };
+
+    const tipStyle = {
+        position: 'absolute',
+        bottom: '120%',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        padding: '8px 10px',
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        whiteSpace: 'normal',
+        width: '220px',
+        zIndex: 100,
+        pointerEvents: 'none',
+        lineHeight: typography.lineHeight.relaxed,
+    };
+
+    const questionIconStyle = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '15px',
+        height: '15px',
+        borderRadius: '50%',
+        border: `1px solid ${colors.border}`,
+        fontSize: '9px',
+        color: colors.textTertiary,
+        cursor: 'pointer',
+        position: 'relative',
+        flexShrink: 0,
+    };
+
+    if (components.length === 0 && !showForm) {
+        return html`
+            <div style=${sectionStyle}>
+                <div style=${headerRowStyle}>
+                    <div style=${headerStyle}>Components</div>
+                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
+                </div>
+            </div>
+        `;
+    }
+
     return html`
         <div style=${sectionStyle}>
-            <div style=${headerStyle}>Components</div>
-            <div style=${gridStyle}>
-                ${components.map(comp => html`
-                    <${ComponentCard}
-                        key=${comp.id}
-                        component=${comp}
-                        allTasks=${tasks}
-                        onClick=${setSelectedComponent}
-                    />
-                `)}
+            <div style=${headerRowStyle}>
+                <div style=${headerStyle}>Components</div>
+                ${!showForm ? html`
+                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
+                ` : null}
             </div>
+            ${components.length > 0 ? html`
+                <div style=${gridStyle}>
+                    ${components.map(comp => html`
+                        <${ComponentCard}
+                            key=${comp.id}
+                            component=${comp}
+                            allTasks=${tasks}
+                            onClick=${setSelectedComponent}
+                        />
+                    `)}
+                </div>
+            ` : null}
+
+            ${showForm ? html`
+                <form style=${formBoxStyle} onSubmit=${handleSubmit}>
+                    <div>
+                        <div style=${labelStyle}>
+                            <span>Name</span>
+                            <span
+                                style=${questionIconStyle}
+                                onMouseEnter=${() => setShowNameTip(true)}
+                                onMouseLeave=${() => setShowNameTip(false)}
+                            >?
+                                ${showNameTip ? html`<div style=${tipStyle}>The display name for this component. Used to group tasks under a shared feature or epic. Keep it short and descriptive (e.g. "Auth Revamp", "Billing Flow").</div>` : null}
+                            </span>
+                        </div>
+                        <input
+                            style=${inputStyle}
+                            type="text"
+                            placeholder="e.g. Auth Revamp"
+                            value=${formName}
+                            onInput=${e => setFormName(e.target.value)}
+                            required
+                            autoFocus
+                        />
+                        ${derivedId ? html`<div style=${hintStyle}>ID: ${derivedId}</div>` : null}
+                    </div>
+                    <div>
+                        <div style=${labelStyle}>Description <span style=${{ fontWeight: 400, color: colors.textTertiary }}>(optional)</span></div>
+                        <textarea
+                            style=${textareaStyle}
+                            placeholder="What is this component about?"
+                            value=${formDesc}
+                            onInput=${e => setFormDesc(e.target.value)}
+                        />
+                    </div>
+                    ${formError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${formError}</div>` : null}
+                    <div style=${formActionsStyle}>
+                        <button type="submit" style=${submitBtnStyle} disabled=${submitting || !formName.trim()}>
+                            ${submitting ? 'Creating…' : 'Create'}
+                        </button>
+                        <button type="button" style=${cancelBtnStyle} onClick=${handleCancel}>Cancel</button>
+                    </div>
+                </form>
+            ` : null}
         </div>
 
         <${ComponentPanel}
@@ -1038,6 +1397,7 @@ function ComponentsSection({ components, conversations, tasks, componentFilter, 
             allTasks=${tasks}
             onClose=${() => setSelectedComponent(null)}
             onFilterByComponent=${onComponentFilter}
+            onComponentUpdated=${handleComponentUpdated}
         />
     `;
 }
@@ -1971,6 +2331,9 @@ export function ProjectView({ id }) {
                 tasks=${tasks}
                 componentFilter=${componentFilter}
                 onComponentFilter=${setComponentFilter}
+                projectId=${id}
+                onComponentCreated=${(comp) => setComponents(prev => [...prev, comp])}
+                onComponentUpdated=${(comp) => setComponents(prev => prev.map(c => c.id === comp.id ? comp : c))}
             />
 
             <!-- Project-level conversations (unlinked only) -->

@@ -119,10 +119,14 @@ def screenshot_page(browser, page_name, page_config, base_url, base_dir):
             time.sleep(0.3)
         except Exception as e:
             print(f"  Click failed on '{selector}': {e}")
+    wait_after_clicks_ms = page_config.get("wait_after_clicks_ms", 0)
+    if wait_after_clicks_ms:
+        time.sleep(wait_after_clicks_ms / 1000.0)
 
     # Take screenshot
     output_path = f"/tmp/visual-check-{page_name}.png"
-    page.screenshot(path=output_path, full_page=True)
+    full_page = page_config.get("full_page", True)
+    page.screenshot(path=output_path, full_page=full_page)
 
     context.close()
     return output_path

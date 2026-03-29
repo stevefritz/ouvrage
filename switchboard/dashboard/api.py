@@ -129,6 +129,10 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/components" and method == "GET":
             return await _handle_list_components(scope, send)
 
+        # POST /dashboard/api/components
+        if path == "/dashboard/api/components" and method == "POST":
+            return await _handle_create_component(receive, send)
+
         # /dashboard/api/components/{id} — GET detail, PATCH update, /activity
         if path.startswith("/dashboard/api/components/"):
             rest = path[len("/dashboard/api/components/"):]
@@ -1049,6 +1053,25 @@ async def _handle_list_components(scope, send):
         return await _error(send, "project_id is required")
     components = await db.list_components(project_id)
     await _json_response(send, components)
+
+
+async def _handle_create_component(receive, send):
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    component_id = data.get("id", "").strip()
+    project_id = data.get("project_id", "").strip()
+    name = data.get("name", "").strip()
+    description = data.get("description", "").strip() or None
+    if not component_id:
+        return await _error(send, "id is required", 400)
+    if not project_id:
+        return await _error(send, "project_id is required", 400)
+    if not name:
+        return await _error(send, "name is required", 400)
+    result = await db.create_component(
+        id=component_id, project_id=project_id, name=name, description=description,
+    )
+    await _json_response(send, result, 201)
 
 
 async def _handle_get_component(send, component_id):
