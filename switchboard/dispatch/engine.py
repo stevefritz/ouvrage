@@ -746,14 +746,15 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
         return await db.get_task(task_id)
 
     # Clear stale pr_status; optionally reset recovery_count (skip for auto-recovery
-    # so the increment from recover_orphaned_tasks is preserved for flap detection)
-    updates = {}
+    # so the increment from recover_orphaned_tasks is preserved for flap detection).
+    # Always reset gate_status and gate_retries — stale gate state from the previous
+    # attempt must not persist into the new session.
+    updates: dict = {"gate_status": None, "gate_retries": 0}
     if task.get("pr_status"):
         updates["pr_status"] = None
     if reset_recovery_count and task.get("recovery_count"):
         updates["recovery_count"] = 0
-    if updates:
-        await db.update_task(task_id, **updates)
+    await db.update_task(task_id, **updates)
 
     return await dispatch_task(
         project_id=task["project_id"],
@@ -788,7 +789,7 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     # Also clear held flag so retried tasks dispatch normally
     new_attempt = (task.get("current_attempt") or 1) + 1
     await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
-                         current_attempt=new_attempt, held=False)
+                         gate_retries=0, current_attempt=new_attempt, held=False)
 
     # Post "Attempt N starting..." so the attempt group appears in Foreman immediately
     # (before CC posts anything). Must happen after update_task so attempt_number is correct.
@@ -878,6 +879,7 @@ async def reopen_task(task_id: str) -> dict:
         session_id=None,
         gate_status=None,
         gate_passed_at=None,
+        gate_retries=0,
         reopen_saved_gate_status=task.get("gate_status"),
         reopen_saved_gate_passed_at=task.get("gate_passed_at"),
     )
