@@ -1,5 +1,6 @@
 """Dashboard REST API — JSON endpoints for the Switchboard SPA."""
 
+import asyncio
 import json
 import logging
 import os
@@ -339,6 +340,10 @@ async def handle_request(scope, receive, send):
             token_id = path[len("/dashboard/api/settings/tokens/"):]
             return await _handle_revoke_token(scope, send, token_id)
 
+        # ── Runtime info endpoint ──────────────────────────────────────────
+        if path == "/dashboard/api/runtime-info" and method == "GET":
+            return await _handle_runtime_info(send)
+
         # ── Files endpoints ────────────────────────────────────────────────
         if path == "/dashboard/api/files" and method == "GET":
             return await _handle_list_files(scope, send)
@@ -379,6 +384,63 @@ async def _handle_system(send):
         "uptime_seconds": round(time.monotonic() - _start_time),
         "jira_base_url": JIRA_BASE_URL or None,
     })
+
+
+# Runtime commands: (key, display_name, args, pkg_manager)
+_RUNTIME_COMMANDS = [
+    ("python",     "Python",    ["python3", "--version"],           "pip"),
+    ("node",       "Node.js",   ["node", "--version"],              "npm"),
+    ("typescript", "TypeScript",["tsc", "--version"],               "tsc"),
+    ("php",        "PHP",       ["php", "--version"],               "Composer"),
+    ("ruby",       "Ruby",      ["ruby", "--version"],              "Bundler"),
+    ("go",         "Go",        ["go", "version"],                  None),
+    ("rust",       "Rust",      ["rustc", "--version"],             "Cargo"),
+    ("java",       "Java",      ["java", "-version"],               "Maven, Gradle"),
+    ("dotnet",     "C# / .NET", ["dotnet", "--version"],            "dotnet CLI"),
+]
+
+
+async def _run_version_cmd(args: list[str]) -> str:
+    """Run a version command and return its stdout+stderr, or empty string on failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        output = (stdout or stderr or b"").decode("utf-8", errors="replace").strip()
+        return output
+    except Exception:
+        return ""
+
+
+def _parse_version(key: str, raw: str) -> str:
+    """Extract a clean version string from raw command output."""
+    if not raw:
+        return "not installed"
+    # Most tools: first line, first token that looks like a version
+    first_line = raw.splitlines()[0].strip()
+    import re
+    # Match patterns like "3.13.0", "v22.0.0", "1.23.4", "21.0.1", "9.0.100"
+    m = re.search(r'v?(\d+[\d.]+)', first_line)
+    if m:
+        return m.group(0).lstrip("v")
+    return first_line[:40]  # fallback: first 40 chars of first line
+
+
+async def _handle_runtime_info(send):
+    runtimes = []
+    for key, name, args, pkg_manager in _RUNTIME_COMMANDS:
+        raw = await _run_version_cmd(args)
+        version = _parse_version(key, raw)
+        runtimes.append({
+            "key": key,
+            "name": name,
+            "version": version,
+            "pkg_manager": pkg_manager,
+        })
+    await _json_response(send, runtimes)
 
 
 async def _handle_list_projects(send):

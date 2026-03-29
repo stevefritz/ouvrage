@@ -776,6 +776,90 @@ function ApiTokensSection() {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// Runtime Environment section
+// ══════════════════════════════════════════════════════════════════════════
+
+function RuntimeSection() {
+    const [runtimes, setRuntimes] = useState(null);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        api.getRuntimeInfo()
+            .then(setRuntimes)
+            .catch(e => setError(e.message));
+    }, []);
+
+    return html`
+        <div style=${{ marginBottom: '28px' }}>
+            <${SectionHeader} text="Available Runtimes" />
+
+            <div style=${styles.card}>
+                ${error && html`
+                    <div style=${{ fontSize: '13px', color: colors.yellow }}>${error}</div>
+                `}
+
+                ${!runtimes && !error && html`
+                    <div style=${{ fontSize: '13px', color: colors.textSecondary }}>
+                        Loading runtimes…
+                    </div>
+                `}
+
+                ${runtimes && html`
+                    <div style=${{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                        gap: '8px',
+                        marginBottom: '14px',
+                    }}>
+                        ${runtimes.map(r => html`
+                            <div key=${r.key} style=${{
+                                background: colors.surface,
+                                border: `0.5px solid ${colors.borderSubtle}`,
+                                borderRadius: '6px',
+                                padding: '10px 12px',
+                            }}>
+                                <div style=${{
+                                    fontSize: '13px',
+                                    fontWeight: 500,
+                                    color: colors.text,
+                                    marginBottom: '3px',
+                                }}>${r.name}</div>
+                                <div style=${{
+                                    fontSize: '12px',
+                                    color: r.version === 'not installed' ? colors.textTertiary : colors.textSecondary,
+                                    fontStyle: r.version === 'not installed' ? 'italic' : 'normal',
+                                }}>${r.version}</div>
+                                ${r.pkg_manager && html`
+                                    <div style=${{
+                                        fontSize: '11px',
+                                        color: colors.textTertiary,
+                                        marginTop: '2px',
+                                    }}>${r.pkg_manager}</div>
+                                `}
+                            </div>
+                        `)}
+                    </div>
+
+                    <div style=${{
+                        fontSize: '12px',
+                        color: colors.textTertiary,
+                        lineHeight: 1.5,
+                        borderTop: `0.5px solid ${colors.borderSubtle}`,
+                        paddingTop: '10px',
+                    }}>
+                        These runtimes are pre-installed in your Foreman instance.
+                        Use the project's Setup Command to install your project's specific dependencies
+                        (e.g. <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>composer install</code>,
+                        <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>pip install -r requirements.txt</code>).
+                    </div>
+                `}
+            </div>
+        </div>
+    `;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // Main Settings component
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -1053,6 +1137,9 @@ export function Settings() {
                     `}
                 </div>
             </div>
+
+            <!-- ═══ AVAILABLE RUNTIMES section ═══ -->
+            <${RuntimeSection} />
         </div>
     `;
 }

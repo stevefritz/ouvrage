@@ -217,4 +217,7 @@ export const api = {
         body: JSON.stringify({ name }),
     }),
     revokeToken: (id) => request(`/settings/tokens/${id}`, { method: 'DELETE' }),
+
+    // Runtime environment info
+    getRuntimeInfo: () => request('/runtime-info'),
 };

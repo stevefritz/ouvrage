@@ -1,0 +1,11 @@
+[
+  { "key": "python",     "name": "Python",    "version": "3.13.0",  "pkg_manager": "pip" },
+  { "key": "node",       "name": "Node.js",   "version": "22.0.0",  "pkg_manager": "npm" },
+  { "key": "typescript", "name": "TypeScript","version": "5.4.5",   "pkg_manager": "tsc" },
+  { "key": "php",        "name": "PHP",       "version": "8.3.4",   "pkg_manager": "Composer" },
+  { "key": "ruby",       "name": "Ruby",      "version": "3.3.0",   "pkg_manager": "Bundler" },
+  { "key": "go",         "name": "Go",        "version": "1.23.0",  "pkg_manager": null },
+  { "key": "rust",       "name": "Rust",      "version": "1.78.0",  "pkg_manager": "Cargo" },
+  { "key": "java",       "name": "Java",      "version": "21.0.1",  "pkg_manager": "Maven, Gradle" },
+  { "key": "dotnet",     "name": "C# / .NET", "version": "9.0.100", "pkg_manager": "dotnet CLI" }
+]

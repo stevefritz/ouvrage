@@ -7,7 +7,8 @@
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
         "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
-        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
       },
       "reference": "fixtures/visual/ref-settings.png",
       "wait_ms": 1500
@@ -18,7 +19,8 @@
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
         "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
-        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
       },
       "wait_ms": 1500
     },
@@ -28,9 +30,21 @@
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
         "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
-        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
       },
       "reference": "fixtures/visual/ref-settings-mobile.png",
+      "wait_ms": 1500
+    },
+    "settings-runtime-info": {
+      "url": "/foreman#/settings",
+      "viewport": { "width": 1280, "height": 1800 },
+      "mocks": {
+        "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
+      },
       "wait_ms": 1500
     },
     "landing": {
