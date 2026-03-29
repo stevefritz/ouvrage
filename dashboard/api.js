@@ -62,6 +62,12 @@ export const api = {
         body: JSON.stringify(params),
     }),
 
+    // Update mutable task metadata
+    updateTask: (taskId, fields) => request(`/tasks/${eid(taskId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(fields),
+    }),
+
     // Actions
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
     retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {
