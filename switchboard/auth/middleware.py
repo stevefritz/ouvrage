@@ -323,6 +323,7 @@ UNPROTECTED_PATHS = {
     "/oauth/revoke",
     "/auth/login",
     "/auth/logout",
+    "/auth/sso",
     "/foreman/login",
 }
 

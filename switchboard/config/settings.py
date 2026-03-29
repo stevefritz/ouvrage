@@ -59,6 +59,14 @@ AUTH_MODE = os.environ.get("AUTH_MODE", "local")
 # Example: https://foreman.dev
 CONTROL_PLANE_URL = os.environ.get("CONTROL_PLANE_URL")
 
+# CONTROL_PLANE_JWKS is the URL to fetch the control plane's public JWKS.
+# Example: https://foreman.dev/api/auth/.well-known/jwks.json
+CONTROL_PLANE_JWKS = os.environ.get("CONTROL_PLANE_JWKS")
+
+# INSTANCE_SLUG is this instance's slug, used as the expected JWT audience.
+# Example: my-tenant
+INSTANCE_SLUG = os.environ.get("INSTANCE_SLUG")
+
 # ---------------------------------------------------------------------------
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------
