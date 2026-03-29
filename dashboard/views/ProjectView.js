@@ -830,6 +830,7 @@ function ComponentPanel({ component, conversations, allTasks, onClose, onFilterB
         borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
         boxShadow: '0 -8px 40px rgba(0,0,0,0.5)', zIndex: 500,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        maxWidth: '100vw', boxSizing: 'border-box',
         animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
     } : {
         position: 'fixed', top: 0, right: 0, bottom: 0,
@@ -1943,7 +1944,7 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
                 ${task.goal || task.id}
             </span>
 
-            <div style=${tagsRowStyle}>
+            <div style=${tagsRowStyle} class="foreman-task-row-tags">
                 <span style=${{
                     fontFamily: typography.fontMono,
                     fontSize: typography.size.xs,
@@ -2118,6 +2119,12 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
 
     return html`
         <div style=${sectionStyle}>
+            <style>${`
+                @media (max-width: 640px) {
+                    .foreman-task-row { flex-wrap: wrap; }
+                    .foreman-task-row-tags { width: 100%; flex-wrap: wrap; margin-top: 2px; }
+                }
+            `}</style>
             <div style=${sectionHeaderStyle}>Tasks · ${filtered.length}</div>
 
             <${FilterBar}

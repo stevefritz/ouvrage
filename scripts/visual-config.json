@@ -154,6 +154,22 @@
         "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
       },
       "wait_ms": 2000
+    },
+    "project-view-component-panel-mobile": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-view-project.json",
+        "/dashboard/api/tasks**": "fixtures/visual/project-view-tasks.json",
+        "/dashboard/api/components**": "fixtures/visual/project-view-components.json",
+        "/dashboard/api/conversations**": "fixtures/visual/project-view-conversations.json",
+        "/dashboard/api/activity**": "fixtures/visual/project-view-activity.json",
+        "/dashboard/api/punchlist/**": "fixtures/visual/project-view-punchlist.json"
+      },
+      "click": [".foreman-component-card"],
+      "wait_after_clicks_ms": 1500,
+      "full_page": false,
+      "wait_ms": 2000
     }
   }
 }
