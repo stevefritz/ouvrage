@@ -94,6 +94,20 @@ async def _handle_dispatch_task(arguments):
     task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
     caller_user_id = get_request_user_id()
 
+    # Guard: require Anthropic API key before creating any task record
+    if caller_user_id is not None:
+        creds = await db.get_user_credentials(caller_user_id)
+        if not creds or not creds.get("anthropic_api_key"):
+            return {"error": "Add your Anthropic API key in Settings before dispatching tasks."}
+    else:
+        # No authenticated user — check the instance owner's credentials
+        instance = await db.get_instance()
+        owner_id = instance.get("owner_user_id") if instance else None
+        if owner_id:
+            creds = await db.get_user_credentials(owner_id)
+            if not creds or not creds.get("anthropic_api_key"):
+                return {"error": "Add your Anthropic API key in Settings before dispatching tasks."}
+
     # Resolve held default: standalone tasks held=true, chain tasks held=false
     held = arguments.get("held")
     if held is None:

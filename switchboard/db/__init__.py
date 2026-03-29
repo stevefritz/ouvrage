@@ -53,6 +53,7 @@ from switchboard.db.projects import (
     update_project,
     list_projects,
     count_projects,
+    delete_project,
 )
 
 # Tasks
@@ -204,7 +205,7 @@ __all__ = [
     "create_conversation", "post_message", "read_messages", "get_pinned",
     "pin_message", "board", "list_conversations", "archive_conversation",
     # projects
-    "create_project", "get_project", "update_project", "list_projects", "count_projects",
+    "create_project", "get_project", "update_project", "list_projects", "count_projects", "delete_project",
     # tasks
     "create_task", "get_task", "update_task", "bulk_update_tasks", "move_task",
     "list_tasks", "get_project_task_counts", "get_recent_activity", "get_dependents",

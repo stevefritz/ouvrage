@@ -20,6 +20,7 @@ from switchboard.server.handlers.projects import (
     _handle_pause_project,
     _handle_resume_project,
     _handle_stop_project,
+    _handle_delete_project,
 )
 from switchboard.server.handlers.tasks import (
     _handle_dispatch_task,
@@ -102,6 +103,7 @@ TOOL_HANDLERS = {
     "get_project": _handle_get_project,
     "update_project": _handle_update_project,
     "list_projects": _handle_list_projects,
+    "delete_project": _handle_delete_project,
     # Task tools
     "dispatch_task": _handle_dispatch_task,
     "release_worktree": _handle_release_worktree,
