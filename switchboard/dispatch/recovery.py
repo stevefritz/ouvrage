@@ -273,9 +273,10 @@ async def recover_orphaned_tasks():
 
         # Check concurrency before dispatching
         active = await db.count_active_tasks()
-        if active >= db.DEFAULT_MAX_CONCURRENT:
+        _limit = await db.get_concurrency_limit()
+        if active >= _limit:
             # Queue with recovery priority (front of FIFO queue)
-            log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{db.DEFAULT_MAX_CONCURRENT})")
+            log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{_limit})")
             await db.update_task(task_id, status="ready",
                                  queued_at=db.now_iso(), recovery_priority=True)
             continue

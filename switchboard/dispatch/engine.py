@@ -614,10 +614,11 @@ async def dispatch_task(
 
     # Check concurrency limit — queue if full (FIFO)
     active = await db.count_active_tasks()
-    if active >= db.DEFAULT_MAX_CONCURRENT and not is_resume:
+    _limit = await db.get_concurrency_limit()
+    if active >= _limit and not is_resume:
         queued_at = db.now_iso()
         await db.update_task(task_id, queued_at=queued_at)
-        log.info(f"Task {task_id} queued (concurrency full: {active}/{db.DEFAULT_MAX_CONCURRENT})")
+        log.info(f"Task {task_id} queued (concurrency full: {active}/{_limit})")
         return {
             "task_id": task_id, "status": "ready",
             "branch": task["branch"],

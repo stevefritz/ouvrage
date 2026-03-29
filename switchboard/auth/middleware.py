@@ -400,6 +400,10 @@ def auth_middleware(inner_app):
         if path.startswith("/dashboard"):
             return await inner_app(scope, receive, send)
 
+        # ── Internal API — handles its own Bearer token auth ────────────────
+        if path.startswith("/internal/"):
+            return await inner_app(scope, receive, send)
+
         # ── Bearer JWT for all other paths (/mcp, OAuth, etc.) ─────────────
         # Always active: self-issued mode uses local RSA key, external mode
         # fetches JWKS from the configured AUTH_ISSUER_URL.

@@ -160,6 +160,13 @@ from switchboard.db.files import (
     delete_file,
 )
 
+# Instance config (control-plane overrides)
+from switchboard.db.instance_config import (
+    get_instance_config,
+    set_instance_config,
+    get_concurrency_limit,
+)
+
 # Audit
 from switchboard.db.audit import (
     write_audit_log,
@@ -224,6 +231,8 @@ __all__ = [
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
     "get_github_pat", "get_anthropic_key",
     "set_instance_github_pat", "get_instance_github_pat",
+    # instance config
+    "get_instance_config", "set_instance_config", "get_concurrency_limit",
     # audit
     "write_audit_log", "get_audit_log",
     # search

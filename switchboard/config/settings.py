@@ -67,6 +67,10 @@ CONTROL_PLANE_JWKS = os.environ.get("CONTROL_PLANE_JWKS")
 # Example: my-tenant
 INSTANCE_SLUG = os.environ.get("INSTANCE_SLUG")
 
+# INTERNAL_API_TOKEN is the Bearer token for machine-to-machine /internal/* endpoints.
+# Required when AUTH_MODE=saas. Shared with the control plane at container startup.
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN")
+
 # ---------------------------------------------------------------------------
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------
