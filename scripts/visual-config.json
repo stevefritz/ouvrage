@@ -155,6 +155,20 @@
       },
       "wait_ms": 2000
     },
+    "project-edit": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
+      },
+      "click": ["button[title='Edit project configuration']"],
+      "wait_after_clicks_ms": 800,
+      "wait_ms": 2000
+    },
     "project-view-component-panel-mobile": {
       "url": "/foreman#/project/mcp-switchboard",
       "viewport": { "width": 375, "height": 812 },

@@ -1,4 +1,4 @@
-"""Tests for POST /dashboard/api/projects endpoint."""
+"""Tests for POST and PATCH /dashboard/api/projects endpoints."""
 
 import json
 from unittest.mock import patch
@@ -214,3 +214,103 @@ class TestPostProjects:
 
         assert resp2.status == 400
         assert "already belongs to project" in resp2.json()["error"]
+
+
+# ── PATCH /dashboard/api/projects/{id} ────────────────────────────────────────
+
+class TestPatchProject:
+
+    async def _create_project(self, db):
+        """Helper: create a test project and return its id."""
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/projects", method="POST")
+        resp = _Capture()
+        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+            await handle_request(scope, _make_receive(_valid_payload()), resp)
+        assert resp.status == 201
+        return resp.json()["id"]
+
+    async def test_patch_project_updates_field(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"default_branch": "develop"}), resp)
+
+        assert resp.status == 200
+        data = resp.json()
+        assert data["default_branch"] == "develop"
+
+    async def test_patch_project_updates_multiple_fields(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({
+            "model": "sonnet",
+            "max_turns": 50,
+            "auto_pr": True,
+        }), resp)
+
+        assert resp.status == 200
+        data = resp.json()
+        assert data["model"] == "sonnet"
+        assert data["max_turns"] == 50
+        assert data["auto_pr"] in (True, 1)
+
+    async def test_patch_project_not_found(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/projects/nonexistent", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"default_branch": "main"}), resp)
+
+        assert resp.status == 404
+        assert "nonexistent" in resp.json()["error"]
+
+    async def test_patch_project_ignores_unknown_fields(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        # Sending unknown field should not error, just be silently ignored
+        await handle_request(scope, _make_receive({"default_branch": "main", "bogus_field": "x"}), resp)
+
+        assert resp.status == 200
+
+    async def test_patch_project_env_overrides(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"env_overrides": {"KEY": "val"}}), resp)
+
+        assert resp.status == 200
+        assert resp.json()["env_overrides"] == {"KEY": "val"}
+
+    async def test_patch_project_review_ignore_patterns(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"review_ignore_patterns": ["*.lock", "dist/"]}), resp)
+
+        assert resp.status == 200
+        assert resp.json()["review_ignore_patterns"] == ["*.lock", "dist/"]
+
+    async def test_patch_project_empty_body_returns_unchanged(self, db):
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({}), resp)
+
+        assert resp.status == 200
+        assert resp.json()["id"] == proj_id

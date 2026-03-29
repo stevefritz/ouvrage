@@ -12,6 +12,7 @@ import { StatusDot } from '../components/StatusDot.js';
 import { ChainBadge } from '../components/ChainBadge.js';
 import { relativeTime } from '../components/utils.js';
 import { TaskView } from './TaskView.js';
+import { styles as fkStyles, FormField, FormRow, Toggle } from '../components/FormKit.js';
 
 const html = htm.bind(h);
 
@@ -2153,6 +2154,451 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
 }
 
 // ---------------------------------------------------------------------------
+// EditProjectPanel — slide-out panel for editing project configuration
+// ---------------------------------------------------------------------------
+
+function EditProjectPanel({ project, onClose, onSaved }) {
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
+
+    // Form state — initialized from current project values
+    const [defaultBranch, setDefaultBranch] = useState(project.default_branch || 'main');
+    const [model, setModel] = useState(project.model || '');
+    const [reviewModel, setReviewModel] = useState(project.review_model || '');
+    const [setupCommand, setSetupCommand] = useState(project.setup_command || '');
+    const [testCommand, setTestCommand] = useState(project.test_command || '');
+    const [teardownCommand, setTeardownCommand] = useState(project.teardown_command || '');
+    const [maxTurns, setMaxTurns] = useState(project.max_turns != null ? String(project.max_turns) : '');
+    const [maxWallClock, setMaxWallClock] = useState(project.max_wall_clock != null ? String(project.max_wall_clock) : '');
+    const [autoTest, setAutoTest] = useState(project.auto_test != null ? Boolean(project.auto_test) : true);
+    const [autoReview, setAutoReview] = useState(project.auto_review != null ? Boolean(project.auto_review) : true);
+    const [autoPr, setAutoPr] = useState(project.auto_pr != null ? Boolean(project.auto_pr) : false);
+    const [autoMerge, setAutoMerge] = useState(project.auto_merge != null ? Boolean(project.auto_merge) : false);
+    const [reviewIgnorePatterns, setReviewIgnorePatterns] = useState(
+        Array.isArray(project.review_ignore_patterns)
+            ? project.review_ignore_patterns.join('\n')
+            : (project.review_ignore_patterns || '')
+    );
+    const [envOverrides, setEnvOverrides] = useState(
+        project.env_overrides && typeof project.env_overrides === 'object'
+            ? JSON.stringify(project.env_overrides, null, 2)
+            : (project.env_overrides || '')
+    );
+    const [envError, setEnvError] = useState(null);
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 640);
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
+
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    const handleSave = async () => {
+        setEnvError(null);
+        // Validate env_overrides JSON if provided
+        let parsedEnv = undefined;
+        if (envOverrides.trim()) {
+            try {
+                parsedEnv = JSON.parse(envOverrides);
+            } catch (_) {
+                setEnvError('Invalid JSON in env overrides');
+                return;
+            }
+        }
+
+        setSaving(true);
+        setError(null);
+        try {
+            const fields = {
+                default_branch: defaultBranch.trim() || 'main',
+                model: model || null,
+                review_model: reviewModel || null,
+                setup_command: setupCommand.trim() || null,
+                test_command: testCommand.trim() || null,
+                teardown_command: teardownCommand.trim() || null,
+                max_turns: maxTurns.trim() ? parseInt(maxTurns, 10) : null,
+                max_wall_clock: maxWallClock.trim() ? parseInt(maxWallClock, 10) : null,
+                auto_test: autoTest,
+                auto_review: autoReview,
+                auto_pr: autoPr,
+                auto_merge: autoMerge,
+                review_ignore_patterns: reviewIgnorePatterns.trim()
+                    ? reviewIgnorePatterns.split('\n').map(s => s.trim()).filter(Boolean)
+                    : null,
+                env_overrides: parsedEnv !== undefined ? parsedEnv : (envOverrides.trim() ? undefined : null),
+            };
+            // Remove undefined values (keep nulls — they clear the field)
+            Object.keys(fields).forEach(k => fields[k] === undefined && delete fields[k]);
+
+            await api.updateProject(project.id, fields);
+            onSaved();
+            onClose();
+        } catch (e) {
+            setError(e.message || 'Save failed');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const panelStyle = isMobile ? {
+        position: 'fixed', left: 0, right: 0, bottom: 0,
+        height: '85vh', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
+        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)', zIndex: 600,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
+    } : {
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: 'clamp(420px, 35vw, 580px)', background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.4)', zIndex: 600,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
+    };
+
+    const sectionLabelStyle = {
+        fontSize: '11px',
+        fontWeight: typography.weight.medium,
+        color: colors.textTertiary,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        marginBottom: '10px',
+        marginTop: '4px',
+        paddingBottom: '6px',
+        borderBottom: `1px solid ${colors.border}33`,
+    };
+
+    const inheritHintStyle = {
+        fontSize: '10px',
+        color: colors.textTertiary,
+        fontStyle: 'italic',
+        marginTop: '3px',
+    };
+
+    const toggleRowStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 0',
+        borderBottom: `1px solid ${colors.border}22`,
+    };
+
+    const toggleLabelStyle = {
+        fontSize: typography.size.sm,
+        color: colors.text,
+        flex: 1,
+    };
+
+    const toggleSubStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        marginTop: '2px',
+    };
+
+    return html`
+        <div>
+            <style>${`
+                @keyframes foreman-slide-right {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to   { transform: translateX(0);    opacity: 1; }
+                }
+                @keyframes foreman-slide-up {
+                    from { transform: translateY(100%); opacity: 0; }
+                    to   { transform: translateY(0);    opacity: 1; }
+                }
+            `}</style>
+
+            <!-- Backdrop -->
+            <div style=${{
+                position: 'fixed', inset: 0,
+                background: 'rgba(0,0,0,0.4)', zIndex: 599,
+            }} onClick=${onClose} />
+
+            <!-- Panel -->
+            <div style=${panelStyle}>
+                <!-- Header -->
+                <div style=${{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '14px 16px', borderBottom: `1px solid ${colors.border}`,
+                    flexShrink: 0,
+                }}>
+                    <span style=${{
+                        fontFamily: typography.fontBody,
+                        fontSize: typography.size.base,
+                        fontWeight: typography.weight.semibold,
+                        color: colors.text,
+                        flex: 1,
+                    }}>Edit Project Config</span>
+                    <span style=${{
+                        fontFamily: typography.fontMono,
+                        fontSize: typography.size.xs,
+                        color: colors.textTertiary,
+                    }}>${project.id}</span>
+                    <button
+                        onClick=${onClose}
+                        style=${{
+                            background: 'none', border: 'none',
+                            color: colors.textTertiary, cursor: 'pointer',
+                            fontSize: '20px', lineHeight: 1,
+                            padding: '2px 6px',
+                            borderRadius: layout.borderRadius.sm,
+                        }}
+                        title="Close (Esc)"
+                    >×</button>
+                </div>
+
+                <!-- Error banner -->
+                ${error ? html`
+                    <div style=${{
+                        padding: '10px 16px',
+                        background: colors.redBg,
+                        borderBottom: `1px solid ${colors.red}44`,
+                        color: colors.red,
+                        fontSize: typography.size.sm,
+                        flexShrink: 0,
+                    }}>${error}</div>
+                ` : null}
+
+                <!-- Body -->
+                <div style=${{
+                    flex: 1, overflowY: 'auto',
+                    padding: '16px',
+                    display: 'flex', flexDirection: 'column', gap: '20px',
+                }}>
+
+                    <!-- Git section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Git</div>
+                        <${FormField} label="Default Branch">
+                            <input
+                                type="text"
+                                value=${defaultBranch}
+                                onInput=${e => setDefaultBranch(e.target.value)}
+                                style=${fkStyles.input}
+                                placeholder="main"
+                            />
+                            <div style=${inheritHintStyle}>Inherits to tasks as merge target</div>
+                        </${FormField}>
+                    </div>
+
+                    <!-- Models section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Models</div>
+                        <${FormRow}>
+                            <${FormField} label="Worker Model">
+                                <select
+                                    value=${model}
+                                    onChange=${e => setModel(e.target.value)}
+                                    style=${fkStyles.select}
+                                >
+                                    <option value="">System default</option>
+                                    <option value="sonnet">sonnet</option>
+                                    <option value="opus">opus</option>
+                                </select>
+                                <div style=${inheritHintStyle}>Inherits to tasks</div>
+                            </${FormField}>
+                            <${FormField} label="Review Model">
+                                <select
+                                    value=${reviewModel}
+                                    onChange=${e => setReviewModel(e.target.value)}
+                                    style=${fkStyles.select}
+                                >
+                                    <option value="">System default (opus)</option>
+                                    <option value="sonnet">sonnet</option>
+                                    <option value="opus">opus</option>
+                                </select>
+                                <div style=${inheritHintStyle}>Inherits to tasks</div>
+                            </${FormField}>
+                        </${FormRow}>
+                    </div>
+
+                    <!-- Commands section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Commands</div>
+                        <${FormField} label="Setup Command">
+                            <textarea
+                                value=${setupCommand}
+                                onInput=${e => setSetupCommand(e.target.value)}
+                                style=${{ ...fkStyles.input, resize: 'vertical', minHeight: '60px', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
+                                placeholder="e.g. npm install"
+                                rows="2"
+                            />
+                            <div style=${inheritHintStyle}>Run after worktree creation — inherits to tasks</div>
+                        </${FormField}>
+                        <${FormField} label="Test Command">
+                            <textarea
+                                value=${testCommand}
+                                onInput=${e => setTestCommand(e.target.value)}
+                                style=${{ ...fkStyles.input, resize: 'vertical', minHeight: '60px', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
+                                placeholder="e.g. pytest tests/"
+                                rows="2"
+                            />
+                            <div style=${inheritHintStyle}>Used by test gate — inherits to tasks</div>
+                        </${FormField}>
+                        <${FormField} label="Teardown Command">
+                            <textarea
+                                value=${teardownCommand}
+                                onInput=${e => setTeardownCommand(e.target.value)}
+                                style=${{ ...fkStyles.input, resize: 'vertical', minHeight: '60px', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
+                                placeholder="e.g. docker compose down"
+                                rows="2"
+                            />
+                            <div style=${inheritHintStyle}>Run on worktree cleanup</div>
+                        </${FormField}>
+                    </div>
+
+                    <!-- Limits section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Limits</div>
+                        <${FormRow}>
+                            <${FormField} label="Max Turns">
+                                <input
+                                    type="number"
+                                    value=${maxTurns}
+                                    onInput=${e => setMaxTurns(e.target.value)}
+                                    style=${fkStyles.input}
+                                    placeholder="System default"
+                                    min="1"
+                                />
+                                <div style=${inheritHintStyle}>Inherits to tasks</div>
+                            </${FormField}>
+                            <${FormField} label="Max Wall Clock (minutes)">
+                                <input
+                                    type="number"
+                                    value=${maxWallClock}
+                                    onInput=${e => setMaxWallClock(e.target.value)}
+                                    style=${fkStyles.input}
+                                    placeholder="System default"
+                                    min="1"
+                                />
+                                <div style=${inheritHintStyle}>Inherits to tasks</div>
+                            </${FormField}>
+                        </${FormRow}>
+                    </div>
+
+                    <!-- Automation section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Automation</div>
+
+                        <div style=${toggleRowStyle}>
+                            <div style=${{ flex: 1 }}>
+                                <div style=${toggleLabelStyle}>Auto Test</div>
+                                <div style=${toggleSubStyle}>Run test gate after each session — inherits to tasks</div>
+                            </div>
+                            <${Toggle}
+                                checked=${autoTest}
+                                onChange=${() => setAutoTest(v => !v)}
+                            />
+                        </div>
+
+                        <div style=${toggleRowStyle}>
+                            <div style=${{ flex: 1 }}>
+                                <div style=${toggleLabelStyle}>Auto Review</div>
+                                <div style=${toggleSubStyle}>Run Opus self-review gate after test pass — inherits to tasks</div>
+                            </div>
+                            <${Toggle}
+                                checked=${autoReview}
+                                onChange=${() => setAutoReview(v => !v)}
+                            />
+                        </div>
+
+                        <div style=${toggleRowStyle}>
+                            <div style=${{ flex: 1 }}>
+                                <div style=${toggleLabelStyle}>Auto PR</div>
+                                <div style=${toggleSubStyle}>Create PR when chain tail passes all gates — inherits to tasks. Mutually exclusive with Auto Merge.</div>
+                            </div>
+                            <${Toggle}
+                                checked=${autoPr}
+                                onChange=${() => { setAutoPr(v => !v); if (!autoPr) setAutoMerge(false); }}
+                            />
+                        </div>
+
+                        <div style=${toggleRowStyle}>
+                            <div style=${{ flex: 1 }}>
+                                <div style=${toggleLabelStyle}>Auto Merge</div>
+                                <div style=${toggleSubStyle}>Merge branch on gate pass — inherits to tasks. Mutually exclusive with Auto PR.</div>
+                            </div>
+                            <${Toggle}
+                                checked=${autoMerge}
+                                onChange=${() => { setAutoMerge(v => !v); if (!autoMerge) setAutoPr(false); }}
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Advanced section -->
+                    <div>
+                        <div style=${sectionLabelStyle}>Advanced</div>
+
+                        <${FormField} label="Review Ignore Patterns">
+                            <textarea
+                                value=${reviewIgnorePatterns}
+                                onInput=${e => setReviewIgnorePatterns(e.target.value)}
+                                style=${{ ...fkStyles.input, resize: 'vertical', minHeight: '72px', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
+                                placeholder="*.lock${'\n'}vendor/"
+                                rows="3"
+                            />
+                            <div style=${inheritHintStyle}>One glob pattern per line — excludes files from reviewer diffs</div>
+                        </${FormField}>
+
+                        <${FormField} label="Env Overrides">
+                            <textarea
+                                value=${envOverrides}
+                                onInput=${e => { setEnvOverrides(e.target.value); setEnvError(null); }}
+                                style=${{ ...fkStyles.input, resize: 'vertical', minHeight: '100px', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
+                                placeholder='{"NODE_ENV": "test"}'
+                                rows="4"
+                            />
+                            ${envError ? html`
+                                <div style=${{ fontSize: typography.size.xs, color: colors.red, marginTop: '4px' }}>${envError}</div>
+                            ` : html`
+                                <div style=${inheritHintStyle}>JSON key-value pairs written to .env.testing in worktree</div>
+                            `}
+                        </${FormField}>
+                    </div>
+
+                </div>
+
+                <!-- Footer actions -->
+                <div style=${{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '12px 16px',
+                    borderTop: `1px solid ${colors.border}`,
+                    flexShrink: 0,
+                }}>
+                    <button
+                        onClick=${handleSave}
+                        disabled=${saving}
+                        style=${{
+                            ...fkStyles.buttonPrimary,
+                            padding: '7px 18px',
+                            fontSize: typography.size.sm,
+                            opacity: saving ? 0.6 : 1,
+                            cursor: saving ? 'not-allowed' : 'pointer',
+                        }}
+                    >${saving ? 'Saving…' : 'Save'}</button>
+                    <button
+                        onClick=${onClose}
+                        disabled=${saving}
+                        style=${{
+                            ...fkStyles.button,
+                            padding: '7px 14px',
+                            fontSize: typography.size.sm,
+                        }}
+                    >Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
 // ProjectView — root component
 // ---------------------------------------------------------------------------
 
@@ -2164,6 +2610,8 @@ export function ProjectView({ id }) {
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
     const [selectedTaskId, setSelectedTaskId] = useState(null);
+    const [showEditPanel, setShowEditPanel] = useState(false);
+    const [saveToast, setSaveToast] = useState(false);
 
     const [statusFilter, setStatusFilter] = useState('');
     const [componentFilter, setComponentFilter] = useState('');
@@ -2309,6 +2757,22 @@ export function ProjectView({ id }) {
                 <h1 style=${titleStyle}>${project?.id || id}</h1>
                 ${repoShort ? html`<span style=${repoTagStyle}>${repoShort}</span>` : null}
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
+                    <button
+                        onClick=${() => setShowEditPanel(true)}
+                        title="Edit project configuration"
+                        style=${{
+                            background: 'transparent',
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.sm,
+                            color: colors.textTertiary,
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            padding: '2px 7px',
+                            lineHeight: 1,
+                            transition: 'color 120ms, border-color 120ms',
+                            flexShrink: 0,
+                        }}
+                    >✎</button>
                     <${ControlButtons}
                         paused=${project.paused}
                         onPause=${async () => { await api.pauseProject(id); await load(); }}
@@ -2373,5 +2837,38 @@ export function ProjectView({ id }) {
             taskId=${selectedTaskId}
             onClose=${() => setSelectedTaskId(null)}
         />
+
+        <!-- Project Edit Panel -->
+        ${showEditPanel && project ? html`
+            <${EditProjectPanel}
+                project=${project}
+                onClose=${() => setShowEditPanel(false)}
+                onSaved=${async () => {
+                    await load();
+                    setSaveToast(true);
+                    setTimeout(() => setSaveToast(false), 3000);
+                }}
+            />
+        ` : null}
+
+        <!-- Save success toast -->
+        ${saveToast ? html`
+            <div style=${{
+                position: 'fixed',
+                bottom: '24px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: colors.green,
+                color: '#fff',
+                padding: '8px 20px',
+                borderRadius: layout.borderRadius.md,
+                fontSize: typography.size.sm,
+                fontFamily: typography.fontBody,
+                fontWeight: typography.weight.medium,
+                zIndex: 700,
+                boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+                pointerEvents: 'none',
+            }}>Project settings saved</div>
+        ` : null}
     `;
 }

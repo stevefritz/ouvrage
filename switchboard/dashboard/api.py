@@ -112,6 +112,8 @@ async def handle_request(scope, receive, send):
             rest = path[len("/dashboard/api/projects/"):]
             if method == "GET" and "/" not in rest:
                 return await _handle_get_project(send, rest)
+            if method == "PATCH" and "/" not in rest:
+                return await _handle_update_project(receive, send, rest)
             if method == "POST" and rest.endswith("/pause"):
                 pid = rest[:-len("/pause")]
                 result = await tasks.pause_project(pid)
@@ -463,6 +465,34 @@ async def _handle_get_project(send, project_id):
     task_list = await db.list_tasks(project_id=project_id)
     project["tasks"] = task_list
     await _json_response(send, project)
+
+
+# Mutable project fields accepted by PATCH /dashboard/api/projects/{id}
+_PROJECT_MUTABLE_FIELDS = {
+    "default_branch", "model", "review_model",
+    "setup_command", "test_command", "teardown_command",
+    "max_turns", "max_wall_clock",
+    "auto_test", "auto_review", "auto_pr", "auto_merge",
+    "review_ignore_patterns", "env_overrides",
+}
+
+
+async def _handle_update_project(receive, send, project_id):
+    """PATCH /dashboard/api/projects/{id} — update mutable project config."""
+    project = await db.get_project(project_id)
+    if not project:
+        return await _error(send, f"Project '{project_id}' not found", 404)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    # Only accept known mutable fields
+    updates = {k: v for k, v in data.items() if k in _PROJECT_MUTABLE_FIELDS}
+    if not updates:
+        return await _json_response(send, project)
+
+    result = await db.update_project(project_id, **updates)
+    await _json_response(send, result)
 
 
 async def _handle_activity(scope, send):
