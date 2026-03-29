@@ -457,6 +457,9 @@ async def _handle_create_project(receive, send, scope):
         return await _error(send, pat_error["error"], 400)
 
     try:
+        pat_raw = data.get("github_pat_override")
+        pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
+
         result = await db.create_project(
             id=project_id,
             repo=repo,
@@ -476,6 +479,7 @@ async def _handle_create_project(receive, send, scope):
             auto_pr=data.get("auto_pr"),
             auto_merge=data.get("auto_merge"),
             created_by=get_request_user_id(),
+            github_pat_override=pat_encrypted,
         )
         await _json_response(send, result, 201)
     except Exception as exc:
@@ -492,32 +496,41 @@ async def _handle_get_project(send, project_id):
     await _json_response(send, project)
 
 
-# Mutable project fields accepted by PATCH /dashboard/api/projects/{id}
-_PROJECT_MUTABLE_FIELDS = {
-    "default_branch", "model", "review_model",
-    "setup_command", "test_command", "teardown_command",
-    "max_turns", "max_wall_clock",
-    "auto_test", "auto_review", "auto_pr", "auto_merge",
-    "review_ignore_patterns", "env_overrides",
-}
-
-
 async def _handle_update_project(receive, send, project_id):
-    """PATCH /dashboard/api/projects/{id} — update mutable project config."""
-    project = await db.get_project(project_id)
-    if not project:
-        return await _error(send, f"Project '{project_id}' not found", 404)
-
+    """PATCH /dashboard/api/projects/{id} — update mutable project config fields."""
     body = await _read_body(receive)
-    data = json.loads(body) if body else {}
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return await _error(send, "Invalid JSON body", 400)
 
-    # Only accept known mutable fields
-    updates = {k: v for k, v in data.items() if k in _PROJECT_MUTABLE_FIELDS}
-    if not updates:
+    ALLOWED = {
+        "default_branch", "setup_command", "teardown_command", "test_command",
+        "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
+        "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
+        "state_definitions", "github_pat_override",
+    }
+    fields = {k: v for k, v in data.items() if k in ALLOWED}
+    if not fields:
+        project = await db.get_project(project_id)
+        if not project:
+            return await _error(send, f"Project '{project_id}' not found", 404)
         return await _json_response(send, project)
 
-    result = await db.update_project(project_id, **updates)
-    await _json_response(send, result)
+    if "github_pat_override" in fields:
+        pat = fields["github_pat_override"]
+        if pat:  # non-empty → encrypt
+            fields["github_pat_override"] = encrypt_value(pat) if not is_fernet_token(pat) else pat
+        else:  # empty string or null → clear
+            fields["github_pat_override"] = "" if pat == "" else None
+
+    try:
+        result = await db.update_project(project_id, **fields)
+        await _json_response(send, result)
+    except ValueError as exc:
+        return await _error(send, str(exc), 404)
+    except Exception as exc:
+        return await _error(send, str(exc), 400)
 
 
 async def _handle_delete_project(send, project_id, scope):

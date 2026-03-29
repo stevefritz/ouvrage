@@ -227,6 +227,13 @@ class TestPostProjects:
 
 class TestPatchProject:
 
+    @pytest.fixture(autouse=True)
+    def mock_pat_validation(self):
+        """Bypass PAT guard — these tests focus on project PATCH logic, not credentials."""
+        with patch("switchboard.db.get_instance_github_pat", return_value="ghp_test"):
+            with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", return_value=None):
+                yield
+
     async def _create_project(self, db):
         """Helper: create a test project and return its id."""
         from switchboard.dashboard.api import handle_request
