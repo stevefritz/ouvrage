@@ -43,6 +43,7 @@ export const api = {
     getProject: (id) => request(`/projects/${eid(id)}`),
     updateProject: (id, fields) => request(`/projects/${eid(id)}`, { method: 'PATCH', body: JSON.stringify(fields) }),
     createProject: (params) => request('/projects', { method: 'POST', body: JSON.stringify(params) }),
+    deleteProject: (id) => request(`/projects/${eid(id)}`, { method: 'DELETE' }),
     getSystem: () => request('/system'),
     getConversations: (params = {}) => {
         const qs = new URLSearchParams(params).toString();

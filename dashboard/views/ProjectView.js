@@ -6,7 +6,7 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout, statusColors, animation } from '../tokens.js';
-import { routes } from '../router.js';
+import { routes, navigate } from '../router.js';
 import { api } from '../api.js';
 import { StatusDot } from '../components/StatusDot.js';
 import { ChainBadge } from '../components/ChainBadge.js';
@@ -2616,6 +2616,12 @@ export function ProjectView({ id }) {
     const [statusFilter, setStatusFilter] = useState('');
     const [componentFilter, setComponentFilter] = useState('');
 
+    // Delete project state
+    const [showDeleteOverlay, setShowDeleteOverlay] = useState(false);
+    const [deleteConfirmText, setDeleteConfirmText] = useState('');
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState(null);
+
     const chainMap = buildChainMap(tasks);
 
     const load = useCallback(async () => {
@@ -2647,6 +2653,19 @@ export function ProjectView({ id }) {
         const timer = setInterval(load, POLL_INTERVAL_MS);
         return () => clearInterval(timer);
     }, [load]);
+
+    const handleDeleteProject = async () => {
+        if (!project || deleteConfirmText !== project.id) return;
+        setDeleting(true);
+        setDeleteError(null);
+        try {
+            await api.deleteProject(id);
+            navigate('/');
+        } catch (e) {
+            setDeleteError(e.message || 'Failed to delete project');
+            setDeleting(false);
+        }
+    };
 
     // ---- Styles ----
     const pageStyle = {
@@ -2830,6 +2849,59 @@ export function ProjectView({ id }) {
                 onComponentFilter=${setComponentFilter}
                 onTaskSelect=${setSelectedTaskId}
             />
+
+            <!-- Danger Zone -->
+            <div style=${{
+                border: `1px solid ${colors.red}44`,
+                borderRadius: layout.borderRadius.lg,
+                padding: '20px 24px',
+                marginTop: '8px',
+            }}>
+                <div style=${{
+                    fontSize: typography.size.xs,
+                    fontWeight: typography.weight.semibold,
+                    color: colors.red,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    marginBottom: '12px',
+                }}>Danger Zone</div>
+
+                ${(() => {
+                    const workingTasks = tasks.filter(t => t.status === 'working');
+                    const hasWorking = workingTasks.length > 0;
+                    return html`
+                        <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                            <div>
+                                <div style=${{ fontSize: typography.size.sm, fontWeight: typography.weight.medium, color: colors.text, marginBottom: '2px' }}>
+                                    Delete this project
+                                </div>
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
+                                    ${hasWorking
+                                        ? `Cannot delete — ${workingTasks.length} task(s) are still working. Cancel them first.`
+                                        : 'Permanently removes the project and its working directory from disk.'}
+                                </div>
+                            </div>
+                            <button
+                                onClick=${() => { setShowDeleteOverlay(true); setDeleteConfirmText(''); setDeleteError(null); }}
+                                disabled=${hasWorking}
+                                style=${{
+                                    padding: '6px 16px',
+                                    borderRadius: layout.borderRadius.sm,
+                                    background: hasWorking ? colors.surface : colors.redBg,
+                                    border: `1px solid ${hasWorking ? colors.border : colors.red}44`,
+                                    color: hasWorking ? colors.textTertiary : colors.red,
+                                    fontSize: typography.size.sm,
+                                    cursor: hasWorking ? 'not-allowed' : 'pointer',
+                                    fontFamily: typography.fontBody,
+                                    opacity: hasWorking ? 0.6 : 1,
+                                    whiteSpace: 'nowrap',
+                                }}
+                                title=${hasWorking ? 'Cancel all working tasks before deleting' : 'Delete this project'}
+                            >Delete Project</button>
+                        </div>
+                    `;
+                })()}
+            </div>
         </div>
 
         <!-- Task Panel slide-out -->
@@ -2869,6 +2941,112 @@ export function ProjectView({ id }) {
                 boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
                 pointerEvents: 'none',
             }}>Project settings saved</div>
+        ` : null}
+
+        <!-- Delete Project confirmation overlay -->
+        ${showDeleteOverlay ? html`
+            <div onClick=${() => setShowDeleteOverlay(false)} style=${{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: 1000,
+            }}>
+                <div onClick=${e => e.stopPropagation()} style=${{
+                    background: colors.surface,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: layout.borderRadius.lg,
+                    padding: '28px',
+                    maxWidth: '440px',
+                    width: '90%',
+                }}>
+                    <h3 style=${{
+                        fontFamily: typography.fontBody,
+                        fontSize: typography.size.lg,
+                        fontWeight: typography.weight.semibold,
+                        color: colors.text,
+                        margin: '0 0 8px',
+                    }}>Delete Project?</h3>
+                    <p style=${{
+                        fontFamily: typography.fontBody,
+                        fontSize: typography.size.sm,
+                        color: colors.textSecondary,
+                        margin: '0 0 16px',
+                        lineHeight: typography.lineHeight.normal,
+                    }}>
+                        This will permanently delete the project and remove its working directory from disk.
+                        This action cannot be undone.
+                    </p>
+                    <p style=${{
+                        fontFamily: typography.fontBody,
+                        fontSize: typography.size.sm,
+                        color: colors.textSecondary,
+                        margin: '0 0 6px',
+                    }}>
+                        Type <strong style=${{ fontFamily: typography.fontMono, color: colors.text }}>${project?.id}</strong> to confirm:
+                    </p>
+                    <input
+                        type="text"
+                        value=${deleteConfirmText}
+                        onInput=${e => setDeleteConfirmText(e.target.value)}
+                        placeholder=${project?.id}
+                        style=${{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: colors.surfaceActive,
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.sm,
+                            color: colors.text,
+                            fontSize: typography.size.sm,
+                            fontFamily: typography.fontMono,
+                            padding: '8px 10px',
+                            outline: 'none',
+                            marginBottom: '16px',
+                        }}
+                        autoFocus
+                    />
+                    ${deleteError ? html`
+                        <div style=${{
+                            background: colors.redBg,
+                            border: `1px solid ${colors.red}44`,
+                            borderRadius: layout.borderRadius.sm,
+                            padding: '8px 12px',
+                            color: colors.red,
+                            fontSize: typography.size.xs,
+                            marginBottom: '16px',
+                        }}>${deleteError}</div>
+                    ` : null}
+                    <div style=${{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                            onClick=${() => setShowDeleteOverlay(false)}
+                            style=${{
+                                padding: '6px 16px',
+                                borderRadius: layout.borderRadius.sm,
+                                background: colors.surface,
+                                border: `1px solid ${colors.border}`,
+                                color: colors.textSecondary,
+                                cursor: 'pointer',
+                                fontFamily: typography.fontBody,
+                                fontSize: typography.size.sm,
+                            }}
+                        >Cancel</button>
+                        <button
+                            onClick=${handleDeleteProject}
+                            disabled=${deleting || deleteConfirmText !== project?.id}
+                            style=${{
+                                padding: '6px 16px',
+                                borderRadius: layout.borderRadius.sm,
+                                background: colors.red,
+                                border: 'none',
+                                color: '#fff',
+                                cursor: (deleting || deleteConfirmText !== project?.id) ? 'not-allowed' : 'pointer',
+                                opacity: (deleting || deleteConfirmText !== project?.id) ? 0.5 : 1,
+                                fontFamily: typography.fontBody,
+                                fontSize: typography.size.sm,
+                                fontWeight: typography.weight.medium,
+                            }}
+                        >${deleting ? 'Deleting…' : 'Delete Project'}</button>
+                    </div>
+                </div>
+            </div>
         ` : null}
     `;
 }
