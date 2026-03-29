@@ -89,10 +89,21 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
 
     # Clone the repo as a bare repo if the base doesn't have .git
     bare_path = os.path.join(base, ".bare")
+
+    # Resolve authenticated URL once — used for both initial bare clone and fetch.
+    # This ensures new private repos can clone without a credential helper pre-configured.
+    # Must be resolved before the bare-path check so the clone gets credentials.
+    try:
+        from switchboard.git.operations import _resolve_push_url
+        auth_url = await _resolve_push_url(project["id"])
+    except (ValueError, Exception):
+        auth_url = None  # no PAT configured or public repo — unauthenticated URL is fine
+
     if not os.path.exists(bare_path):
         log.info(f"Cloning bare repo: {project['repo']} -> {bare_path}")
+        clone_url = auth_url or project["repo"]
         stdout, stderr, rc = await _run_as_worker(
-            "git", "clone", "--bare", project["repo"], bare_path,
+            "git", "clone", "--bare", clone_url, bare_path,
         )
         if rc != 0:
             raise RuntimeError(f"git clone --bare failed: {stderr.decode()}")
@@ -104,11 +115,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
 
     # Fetch latest from remote — use authenticated URL if available (avoids
     # dependency on credential.helper which may point to a deleted worktree script)
-    try:
-        from switchboard.git.operations import _resolve_push_url
-        fetch_url = await _resolve_push_url(project["id"])
-    except (ValueError, Exception):
-        fetch_url = "origin"  # fallback to SSH
+    fetch_url = auth_url or "origin"
     # When fetching by URL (not remote name), must pass refspec explicitly
     # or git only fetches HEAD without updating origin/* tracking refs
     fetch_args = ["git", "-C", bare_path, "fetch", fetch_url]

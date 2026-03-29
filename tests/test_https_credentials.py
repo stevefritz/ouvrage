@@ -399,3 +399,147 @@ class TestStartupMigration:
             for c in remote_set_url_calls
         )
         assert found, "git remote set-url must be called with HTTPS URL"
+
+
+# ---------------------------------------------------------------------------
+# setup_worktree — bare clone uses authenticated URL
+# ---------------------------------------------------------------------------
+
+class TestBareCloneAuth:
+    """setup_worktree must use authenticated URL for the initial bare clone."""
+
+    PAT = "ghp_test_bare_clone_token"
+    PROJECT_ID = "test-proj"
+    REPO = "https://github.com/acme/widgets.git"
+    AUTH_URL = f"https://oauth2:{PAT}@github.com/acme/widgets.git"
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        self.working_dir = str(tmp_path / "working")
+        os.makedirs(self.working_dir)
+        self.project = {
+            "id": self.PROJECT_ID,
+            "repo": self.REPO,
+            "working_dir": self.working_dir,
+            "default_branch": "main",
+        }
+
+        # Simulate _run_as_worker: mkdir succeeds, clone succeeds, everything else succeeds
+        async def _fake_run(*args, **kwargs):
+            if args[0] == "mkdir":
+                os.makedirs(args[-1], exist_ok=True)
+            elif args[0] == "git" and "clone" in args and "--bare" in args:
+                # Create bare_path dir to simulate successful clone
+                bare_path = args[-1]
+                os.makedirs(bare_path, exist_ok=True)
+            elif args[0] == "git" and "symbolic-ref" in args:
+                return (b"refs/heads/main", b"", 0)
+            elif args[0] == "git" and "worktree" in args and "add" in args:
+                # Create the worktree dir
+                worktree_path = args[-2] if args[-1].startswith("origin/") or args[-1] == "main" else args[-1]
+                # worktree path is the second-to-last or last non-ref arg
+                for a in args:
+                    if str(a).startswith(str(tmp_path)) and "working" in str(a) and ".bare" not in str(a):
+                        os.makedirs(str(a), exist_ok=True)
+                        break
+            return (b"", b"", 0)
+
+        self.mock_run = AsyncMock(side_effect=_fake_run)
+        self.mock_get_db = AsyncMock()
+
+        self.patches = [
+            patch("switchboard.git.worktree._run_as_worker", self.mock_run),
+            patch("switchboard.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
+        ]
+        for p in self.patches:
+            p.start()
+        yield
+        for p in self.patches:
+            p.stop()
+
+    def _get_clone_call(self):
+        """Find the git clone --bare call among all _run_as_worker invocations."""
+        for c in self.mock_run.call_args_list:
+            if c.args[0] == "git" and "--bare" in c.args and "clone" in c.args:
+                return c
+        return None
+
+    @pytest.mark.asyncio
+    async def test_bare_clone_uses_authenticated_url_when_pat_available(self):
+        """When PAT is configured, git clone --bare must use the authenticated URL."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+                try:
+                    await setup_worktree(self.project, "test-task", "test-branch")
+                except Exception:
+                    pass  # worktree add may fail in test env — clone call is what we check
+
+        clone_call = self._get_clone_call()
+        assert clone_call is not None, "git clone --bare was not called"
+        assert self.AUTH_URL in clone_call.args, (
+            f"Authenticated URL not used for bare clone. Got: {clone_call.args}"
+        )
+        assert self.REPO not in clone_call.args, "Plain URL (no PAT) must not be used when PAT is available"
+
+    @pytest.mark.asyncio
+    async def test_bare_clone_falls_back_to_plain_url_when_no_pat(self):
+        """When no PAT is configured, git clone --bare falls back to plain project URL."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(side_effect=ValueError("No GitHub PAT configured"))
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+                try:
+                    await setup_worktree(self.project, "test-task", "test-branch")
+                except Exception:
+                    pass
+
+        clone_call = self._get_clone_call()
+        assert clone_call is not None, "git clone --bare was not called"
+        assert self.REPO in clone_call.args, (
+            f"Plain project URL not used for bare clone when no PAT. Got: {clone_call.args}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_bare_clone_skipped_when_bare_path_exists(self):
+        """When .bare already exists, git clone --bare must NOT be called."""
+        from switchboard.git.worktree import setup_worktree
+
+        # Pre-create the bare path to simulate existing project
+        bare_path = os.path.join(self.working_dir, ".bare")
+        os.makedirs(bare_path)
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+                try:
+                    await setup_worktree(self.project, "test-task", "test-branch")
+                except Exception:
+                    pass
+
+        clone_call = self._get_clone_call()
+        assert clone_call is None, "git clone --bare must not run when .bare already exists"
+
+    @pytest.mark.asyncio
+    async def test_fetch_uses_authenticated_url_when_pat_available(self):
+        """The post-clone git fetch must also use the authenticated URL."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+                try:
+                    await setup_worktree(self.project, "test-task", "test-branch")
+                except Exception:
+                    pass
+
+        fetch_calls = [
+            c for c in self.mock_run.call_args_list
+            if c.args[0] == "git" and "fetch" in c.args and "--bare" not in c.args
+            and c.args[2] != self.working_dir  # not the worktree fetch at the end
+        ]
+        auth_fetch = any(self.AUTH_URL in c.args for c in fetch_calls)
+        assert auth_fetch, "Authenticated URL must be used for the bare repo fetch"
