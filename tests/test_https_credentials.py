@@ -543,3 +543,33 @@ class TestBareCloneAuth:
         ]
         auth_fetch = any(self.AUTH_URL in c.args for c in fetch_calls)
         assert auth_fetch, "Authenticated URL must be used for the bare repo fetch"
+
+    @pytest.mark.asyncio
+    async def test_pat_stripped_from_bare_repo_remote_url_after_clone(self):
+        """After bare clone, remote.origin.url must be reset to the plain URL (no PAT)."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+                try:
+                    await setup_worktree(self.project, "test-task", "test-branch")
+                except Exception:
+                    pass
+
+        # Find the git config remote.origin.url call that resets to plain URL
+        reset_calls = [
+            c for c in self.mock_run.call_args_list
+            if c.args[0] == "git" and "config" in c.args
+            and "remote.origin.url" in c.args
+            and self.REPO in c.args
+            and self.AUTH_URL not in c.args
+        ]
+        assert reset_calls, (
+            "remote.origin.url must be reset to plain URL after clone to strip PAT from disk"
+        )
+        # And the PAT must not appear in any git config call
+        for c in self.mock_run.call_args_list:
+            if c.args[0] == "git" and "config" in c.args:
+                for arg in c.args:
+                    assert self.PAT not in str(arg), f"PAT found in git config call: {c.args}"

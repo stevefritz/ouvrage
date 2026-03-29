@@ -96,7 +96,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     try:
         from switchboard.git.operations import _resolve_push_url
         auth_url = await _resolve_push_url(project["id"])
-    except (ValueError, Exception):
+    except Exception:
         auth_url = None  # no PAT configured or public repo — unauthenticated URL is fine
 
     if not os.path.exists(bare_path):
@@ -112,6 +112,14 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
             "git", "-C", bare_path, "config",
             "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
         )
+        # Strip PAT from bare repo config — git clone stores the URL used as
+        # remote.origin.url, which would leave the PAT in plaintext on disk.
+        # Reset to the plain repo URL; fetches already use auth_url directly.
+        if auth_url:
+            await _run_as_worker(
+                "git", "-C", bare_path, "config",
+                "remote.origin.url", project["repo"],
+            )
 
     # Fetch latest from remote — use authenticated URL if available (avoids
     # dependency on credential.helper which may point to a deleted worktree script)
