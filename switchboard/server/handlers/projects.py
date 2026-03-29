@@ -1,11 +1,17 @@
 """Project tool handlers."""
 
+import asyncio
+import logging
 import os
+import shutil
 
 import switchboard.db as db
 import switchboard.dispatch as task_engine
 from switchboard.server.context import get_request_user_id
-from switchboard.git.operations import normalize_repo_url
+from switchboard.git.operations import normalize_repo_url, _build_authenticated_url
+from switchboard.git.worktree import _run_as_worker
+
+log = logging.getLogger(__name__)
 
 WORKTREE_BASE = os.environ.get("WORKTREE_BASE", "/work")
 
@@ -25,6 +31,38 @@ def _resolve_working_dir(repo: str, folder_name: str | None = None) -> str:
     if not name:
         raise ValueError("Could not derive folder name from repo URL")
     return os.path.join(WORKTREE_BASE, name)
+
+
+async def _validate_github_pat_for_repo(repo: str) -> dict | None:
+    """Check that a GitHub PAT is configured and can access the given repo.
+
+    Returns None if valid, or {"error": "..."} if not.
+    Runs git ls-remote without writing any files.
+    """
+    try:
+        pat = await db.get_instance_github_pat()
+    except ValueError:
+        return {"error": "Add your GitHub PAT in Settings before creating projects."}
+
+    if not pat:
+        return {"error": "Add your GitHub PAT in Settings before creating projects."}
+
+    # Test PAT access to the repo using git ls-remote (read-only, no file writes)
+    auth_url = _build_authenticated_url(pat, repo)
+    try:
+        stdout, stderr, rc = await asyncio.wait_for(
+            _run_as_worker("git", "ls-remote", "--exit-code", auth_url, "HEAD"),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
+    except Exception:
+        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
+
+    if rc != 0:
+        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
+
+    return None
 
 
 async def _handle_create_project(arguments):
@@ -58,8 +96,14 @@ async def _handle_create_project(arguments):
     if missing:
         return {"error": f"Missing required config fields: {', '.join(missing)}. All config must be explicitly set at project creation."}
 
-    return await db.create_project(
-        id=arguments["id"],
+    # 2a + 2b: validate PAT exists and can access the repo before creating any DB row
+    pat_error = await _validate_github_pat_for_repo(repo)
+    if pat_error:
+        return pat_error
+
+    project_id = arguments["id"]
+    result = await db.create_project(
+        id=project_id,
         repo=repo,
         working_dir=resolved,
         default_branch=arguments.get("default_branch", "main"),
@@ -79,6 +123,7 @@ async def _handle_create_project(arguments):
         state_definitions=arguments.get("state_definitions"),
         created_by=get_request_user_id(),
     )
+    return result
 
 
 async def _handle_get_project(arguments):
@@ -111,3 +156,44 @@ async def _handle_stop_project(arguments):
 
 async def _handle_list_projects(arguments):
     return await db.list_projects()
+
+
+async def _handle_delete_project(arguments):
+    """Delete a project and remove its working directory from disk.
+
+    Rejects if the project has tasks in 'working' status.
+    """
+    project_id = arguments["project_id"]
+
+    project = await db.get_project(project_id)
+    if not project:
+        return {"error": f"Project '{project_id}' not found"}
+
+    # Check for active (working) tasks
+    working_tasks = await db.list_tasks(project_id=project_id, status="working")
+    if working_tasks:
+        task_ids = [t["id"] for t in working_tasks]
+        return {
+            "error": f"Cannot delete project '{project_id}' — {len(working_tasks)} task(s) are still working: {', '.join(task_ids)}. "
+                     "Cancel or wait for them to finish first."
+        }
+
+    working_dir = project.get("working_dir")
+
+    # Delete project row from DB
+    await db.delete_project(project_id)
+
+    # Remove working directory from disk (bare repo + worktrees)
+    if working_dir and os.path.isdir(working_dir):
+        try:
+            shutil.rmtree(working_dir)
+            log.info(f"Removed working directory for deleted project '{project_id}': {working_dir}")
+        except Exception as e:
+            log.warning(f"Failed to remove working directory '{working_dir}' for project '{project_id}': {e}")
+            return {
+                "deleted": True,
+                "project_id": project_id,
+                "warning": f"Project row deleted but failed to remove working directory: {e}",
+            }
+
+    return {"deleted": True, "project_id": project_id, "working_dir": working_dir}

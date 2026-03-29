@@ -114,6 +114,8 @@ async def handle_request(scope, receive, send):
                 return await _handle_get_project(send, rest)
             if method == "PATCH" and "/" not in rest:
                 return await _handle_update_project(receive, send, rest)
+            if method == "DELETE" and "/" not in rest:
+                return await _handle_delete_project(send, rest, scope)
             if method == "POST" and rest.endswith("/pause"):
                 pid = rest[:-len("/pause")]
                 result = await tasks.pause_project(pid)
@@ -358,6 +360,7 @@ async def handle_request(scope, receive, send):
     except RuntimeError as e:
         await _error(send, str(e), 409)
     except Exception as e:
+        logger.exception("Unhandled exception in dashboard API: %s %s", method, path)
         await _error(send, f"Internal error: {e}", 500)
 
 
@@ -441,6 +444,18 @@ async def _handle_create_project(receive, send, scope):
     if missing:
         return await _error(send, f"Missing required config fields: {', '.join(missing)}", 400)
 
+    # 2a: Validate GitHub PAT is configured before creating the project row
+    try:
+        await db.get_instance_github_pat()
+    except ValueError:
+        return await _error(send, "Add your GitHub PAT in Settings before creating projects.", 400)
+
+    # 2b: Validate PAT can access the repo (git ls-remote, no file writes)
+    from switchboard.server.handlers.projects import _validate_github_pat_for_repo
+    pat_error = await _validate_github_pat_for_repo(repo)
+    if pat_error:
+        return await _error(send, pat_error["error"], 400)
+
     try:
         result = await db.create_project(
             id=project_id,
@@ -464,7 +479,8 @@ async def _handle_create_project(receive, send, scope):
         )
         await _json_response(send, result, 201)
     except Exception as exc:
-        return await _error(send, str(exc), 400)
+        logger.exception("Error creating project '%s'", project_id)
+        return await _error(send, str(exc), 500)
 
 
 async def _handle_get_project(send, project_id):
@@ -502,6 +518,50 @@ async def _handle_update_project(receive, send, project_id):
 
     result = await db.update_project(project_id, **updates)
     await _json_response(send, result)
+
+
+async def _handle_delete_project(send, project_id, scope):
+    """DELETE /dashboard/api/projects/{id} — delete project and its working directory."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    project = await db.get_project(project_id)
+    if not project:
+        return await _error(send, f"Project '{project_id}' not found", 404)
+
+    # Reject if project has working tasks
+    working_tasks = await db.list_tasks(project_id=project_id, status="working")
+    if working_tasks:
+        task_ids = [t["id"] for t in working_tasks]
+        return await _error(
+            send,
+            f"Cannot delete project '{project_id}' — {len(working_tasks)} task(s) are still working: "
+            f"{', '.join(task_ids)}. Cancel or wait for them to finish first.",
+            409,
+        )
+
+    working_dir = project.get("working_dir")
+
+    # Delete DB row
+    try:
+        await db.delete_project(project_id)
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+
+    # Remove working directory from disk
+    if working_dir and os.path.isdir(working_dir):
+        try:
+            shutil.rmtree(working_dir)
+        except Exception as e:
+            logger.warning("Failed to remove working directory '%s' for project '%s': %s", working_dir, project_id, e)
+            return await _json_response(send, {
+                "deleted": True,
+                "project_id": project_id,
+                "warning": f"Project deleted but failed to remove working directory: {e}",
+            })
+
+    await _json_response(send, {"deleted": True, "project_id": project_id})
 
 
 async def _handle_activity(scope, send):
@@ -1387,6 +1447,14 @@ async def _handle_get_user_settings(scope, send):
     }
     notif_prefs = creds.get("notification_preferences") or {}
 
+    # GitHub PAT status (instance-level credential)
+    github_pat_configured = False
+    try:
+        await db.get_instance_github_pat()
+        github_pat_configured = True
+    except (ValueError, Exception):
+        pass
+
     await _json_response(send, {
         "profile": {
             "name": full_user.get("name"),
@@ -1395,6 +1463,7 @@ async def _handle_get_user_settings(scope, send):
             "role": full_user.get("role"),
         },
         "anthropic": anthropic_info,
+        "github": {"configured": github_pat_configured},
         "notifications": notif_prefs,
     })
 

@@ -312,7 +312,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     }, []);
 
     const statusText = !editing
-        ? (anthropic.configured ? 'Configured' : undefined)
+        ? (anthropic.configured ? 'Configured' : 'Not set — required to dispatch tasks')
         : undefined;
     const maskedValue = (!editing && anthropic.key_last4) ? `····${anthropic.key_last4}` : undefined;
 
@@ -929,6 +929,18 @@ export function Settings() {
                         anthropic=${userSettings.anthropic}
                         onSaved=${loadUserSettings}
                     />
+                    ${!isAdmin && html`
+                        <div style=${{ marginBottom: '12px' }}>
+                            <${CredentialCard}
+                                icon="🔑"
+                                name="GitHub PAT"
+                                connected=${userSettings.github?.configured ?? false}
+                                statusText=${(userSettings.github?.configured)
+                                    ? 'Configured'
+                                    : 'Not set — required to create projects (configured by admin)'}
+                            />
+                        </div>
+                    `}
                     <${ProfileCard}
                         profile=${userSettings.profile}
                         onSaved=${loadUserSettings}

@@ -262,6 +262,24 @@ PROJECT_TOOLS = [
         description="List all registered projects.",
         inputSchema={"type": "object", "properties": {}},
     ),
+    Tool(
+        name="delete_project",
+        description=(
+            "Delete a project and remove its working directory from disk. "
+            "Rejects if the project has tasks in 'working' status — cancel them first. "
+            "This is permanent and cannot be undone."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "ID of the project to delete",
+                },
+            },
+            "required": ["project_id"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------

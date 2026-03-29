@@ -104,3 +104,50 @@ async def count_projects() -> int:
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT COUNT(*) AS cnt FROM projects")
         return rows[0]["cnt"] if rows else 0
+
+
+async def delete_project(project_id: str) -> None:
+    """Delete a project and all its child records from the database.
+
+    Cascades through tasks (checklist, artifacts, tags, subtasks, messages,
+    files) and components (punchlist, component_conversations).
+    Does NOT remove files from disk — callers are responsible for cleanup.
+    Raises ValueError if the project doesn't exist.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM projects WHERE id = ?", (project_id,))
+        if not rows:
+            raise ValueError(f"Project '{project_id}' not found")
+
+        # Collect task IDs for this project
+        task_rows = await db.execute_fetchall(
+            "SELECT id FROM tasks WHERE project_id = ?", (project_id,)
+        )
+        task_ids = [r["id"] for r in task_rows]
+
+        if task_ids:
+            placeholders = ",".join("?" * len(task_ids))
+            await db.execute(f"DELETE FROM task_checklist WHERE task_id IN ({placeholders})", task_ids)
+            await db.execute(f"DELETE FROM task_artifacts WHERE task_id IN ({placeholders})", task_ids)
+            await db.execute(f"DELETE FROM task_tags WHERE task_id IN ({placeholders})", task_ids)
+            await db.execute(f"DELETE FROM subtasks WHERE task_id IN ({placeholders})", task_ids)
+            await db.execute(f"DELETE FROM files WHERE task_id IN ({placeholders})", task_ids)
+            # messages with task_id (message_chunks cascade via ON DELETE CASCADE)
+            await db.execute(f"DELETE FROM messages WHERE task_id IN ({placeholders})", task_ids)
+
+        await db.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
+
+        # Collect component IDs for this project
+        comp_rows = await db.execute_fetchall(
+            "SELECT id FROM components WHERE project_id = ?", (project_id,)
+        )
+        comp_ids = [r["id"] for r in comp_rows]
+
+        if comp_ids:
+            placeholders = ",".join("?" * len(comp_ids))
+            await db.execute(f"DELETE FROM component_conversations WHERE component_id IN ({placeholders})", comp_ids)
+            await db.execute(f"DELETE FROM punchlist WHERE component_id IN ({placeholders})", comp_ids)
+
+        await db.execute("DELETE FROM components WHERE project_id = ?", (project_id,))
+        await db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        await db.commit()

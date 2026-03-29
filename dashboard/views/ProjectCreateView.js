@@ -195,6 +195,7 @@ export function ProjectCreateView() {
 
     // Optional fields
     const [optionalOpen, setOptionalOpen] = useState(false);
+    const [folderName, setFolderName] = useState('');
     const [testCommand, setTestCommand] = useState('');
     const [setupCommand, setSetupCommand] = useState('');
     const [teardownCommand, setTeardownCommand] = useState('');
@@ -256,6 +257,7 @@ export function ProjectCreateView() {
                 max_wall_clock: parseInt(maxWallClock),
             };
 
+            if (folderName.trim()) payload.folder_name = folderName.trim();
             if (testCommand.trim()) payload.test_command = testCommand.trim();
             if (setupCommand.trim()) payload.setup_command = setupCommand.trim();
             if (teardownCommand.trim()) payload.teardown_command = teardownCommand.trim();
@@ -680,6 +682,19 @@ export function ProjectCreateView() {
 
                     ${optionalOpen ? html`
                         <div style=${{ ...sectionStyle, marginTop: '16px' }}>
+                            <div style=${fieldStyle}>
+                                <${FieldLabel} label="Working Directory Name" helpText="Override the folder name used for this project's worktrees (optional — defaults to repo name). Use this if you need multiple projects from the same repo." />
+                                <input
+                                    class="foreman-input-mono"
+                                    type="text"
+                                    value=${folderName}
+                                    onInput=${e => setFolderName(e.target.value)}
+                                    style=${inputMono}
+                                    placeholder="my-project-2 (defaults to repo name)"
+                                    spellcheck="false"
+                                    autocomplete="off"
+                                />
+                            </div>
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Test Command" helpText="Shell command for the test suite. Example: 'pytest -v', 'npm test'. Leave blank if no automated tests." />
                                 <input
