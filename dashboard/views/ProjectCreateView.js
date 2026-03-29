@@ -201,6 +201,7 @@ export function ProjectCreateView() {
     const [teardownCommand, setTeardownCommand] = useState('');
     const [ignorePatterns, setIgnorePatterns] = useState('');
     const [envOverrides, setEnvOverrides] = useState([]);
+    const [githubPatOverride, setGithubPatOverride] = useState('');
 
     // Form state
     const [submitting, setSubmitting] = useState(false);
@@ -261,6 +262,7 @@ export function ProjectCreateView() {
             if (testCommand.trim()) payload.test_command = testCommand.trim();
             if (setupCommand.trim()) payload.setup_command = setupCommand.trim();
             if (teardownCommand.trim()) payload.teardown_command = teardownCommand.trim();
+            if (githubPatOverride.trim()) payload.github_pat_override = githubPatOverride.trim();
             if (ignorePatterns.trim()) {
                 payload.review_ignore_patterns = ignorePatterns.split(',').map(p => p.trim()).filter(Boolean);
             }
@@ -798,6 +800,17 @@ export function ProjectCreateView() {
                                     style=${inputMono}
                                     placeholder="make clean"
                                     spellcheck="false"
+                                />
+                            </div>
+                            <div style=${fieldStyle}>
+                                <${FieldLabel} label="GitHub PAT (project-specific)" helpText="Optional. Uses instance PAT if not set. Use this for repos that need a different token (different org, client repo, SaaS isolation)." />
+                                <input
+                                    type="password"
+                                    value=${githubPatOverride}
+                                    onInput=${e => setGithubPatOverride(e.target.value)}
+                                    style=${inputBase}
+                                    placeholder="ghp_…"
+                                    autocomplete="new-password"
                                 />
                             </div>
                         </div>

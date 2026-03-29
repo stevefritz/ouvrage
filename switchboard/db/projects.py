@@ -19,6 +19,7 @@ async def create_project(
     auto_pr: bool | None = None,
     auto_merge: bool | None = None,
     created_by: int | None = None,
+    github_pat_override: str | None = None,
 ) -> dict:
     async with get_db() as db:
         ts = now_iso()
@@ -30,12 +31,14 @@ async def create_project(
                (id, repo, default_branch, working_dir, setup_command, teardown_command,
                 test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
                 state_definitions, review_model, review_ignore_patterns,
-                auto_test, auto_review, auto_pr, auto_merge, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                auto_test, auto_review, auto_pr, auto_merge, created_by, created_at,
+                github_pat_override)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
              test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
              state_json, review_model, rip_json,
-             auto_test, auto_review, auto_pr, auto_merge, created_by, ts),
+             auto_test, auto_review, auto_pr, auto_merge, created_by, ts,
+             github_pat_override),
         )
         await db.commit()
         return {
@@ -49,6 +52,7 @@ async def create_project(
             "auto_test": auto_test, "auto_review": auto_review,
             "auto_pr": auto_pr, "auto_merge": auto_merge,
             "created_by": created_by, "created_at": ts,
+            "github_pat_override": github_pat_override,
         }
 
 
@@ -83,6 +87,9 @@ async def update_project(project_id: str, **fields) -> dict:
             fields["state_definitions"] = json.dumps(fields["state_definitions"])
         if "review_ignore_patterns" in fields and isinstance(fields["review_ignore_patterns"], list):
             fields["review_ignore_patterns"] = json.dumps(fields["review_ignore_patterns"])
+        # Empty string means "clear the override" — store as NULL
+        if "github_pat_override" in fields and fields["github_pat_override"] == "":
+            fields["github_pat_override"] = None
 
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [project_id]
