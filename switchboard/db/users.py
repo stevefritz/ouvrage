@@ -232,18 +232,19 @@ async def create_api_token(user_id: int, name: str | None = None) -> dict:
     """
     raw_token = "sb_" + secrets.token_hex(32)  # "sb_" + 64-char hex = 67 chars
     token_hash = _hash_token(raw_token)
+    token_prefix = raw_token[:12]  # "sb_" + 9 chars, enough to identify
     ts = now_iso()
 
     async with get_db() as db:
         cursor = await db.execute(
-            """INSERT INTO api_tokens (user_id, token_hash, name, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (user_id, token_hash, name, ts),
+            """INSERT INTO api_tokens (user_id, token_hash, name, token_prefix, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, token_hash, name, token_prefix, ts),
         )
         await db.commit()
         token_id = cursor.lastrowid
 
-    return {"token": raw_token, "id": token_id, "name": name}
+    return {"token": raw_token, "id": token_id, "name": name, "token_prefix": token_prefix}
 
 
 async def _update_token_last_used(token_id: int) -> None:
@@ -300,7 +301,7 @@ async def list_api_tokens(user_id: int) -> list[dict]:
     """List tokens for a user. Never returns token_hash."""
     async with get_db() as db:
         rows = await db.execute_fetchall(
-            """SELECT id, user_id, name, last_used_at, created_at, expires_at
+            """SELECT id, user_id, name, token_prefix, last_used_at, created_at, expires_at
                FROM api_tokens WHERE user_id = ?
                ORDER BY created_at DESC""",
             (user_id,),

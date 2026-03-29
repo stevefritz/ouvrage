@@ -6,9 +6,20 @@
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
-        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json"
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
       },
       "reference": "fixtures/visual/ref-settings.png",
+      "wait_ms": 1500
+    },
+    "settings-tokens": {
+      "url": "/foreman#/settings",
+      "viewport": { "width": 1280, "height": 1100 },
+      "mocks": {
+        "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
+      },
       "wait_ms": 1500
     },
     "settings-mobile": {
@@ -16,7 +27,8 @@
       "viewport": { "width": 375, "height": 812 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
-        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json"
+        "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
+        "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json"
       },
       "reference": "fixtures/visual/ref-settings-mobile.png",
       "wait_ms": 1500
@@ -153,6 +165,20 @@
         "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
         "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
       },
+      "wait_ms": 2000
+    },
+    "project-edit": {
+      "url": "/foreman#/project/mcp-switchboard",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
+      },
+      "click": ["button[title='Edit project configuration']"],
+      "wait_after_clicks_ms": 800,
       "wait_ms": 2000
     },
     "docs": {

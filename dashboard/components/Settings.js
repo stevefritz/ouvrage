@@ -530,6 +530,243 @@ function ChangePasswordCard() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// API Tokens section
+// ══════════════════════════════════════════════════════════════════════════
+
+function ApiTokensSection() {
+    const [tokens, setTokens] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [creating, setCreating] = useState(false);
+    const [newTokenName, setNewTokenName] = useState('');
+    const [newToken, setNewToken] = useState(null); // raw token shown once
+    const [copied, setCopied] = useState(false);
+    const [revokeError, setRevokeError] = useState(null);
+
+    const loadTokens = useCallback(async () => {
+        try {
+            const data = await api.listTokens();
+            setTokens(data.tokens || []);
+            setError(null);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { loadTokens(); }, []);
+
+    const handleGenerate = useCallback(async () => {
+        setCreating(true);
+        setError(null);
+        try {
+            const result = await api.createToken(newTokenName.trim() || null);
+            setNewToken(result);
+            setNewTokenName('');
+            await loadTokens();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setCreating(false);
+        }
+    }, [newTokenName, loadTokens]);
+
+    const handleCopy = useCallback(async () => {
+        if (!newToken?.token) return;
+        try {
+            await navigator.clipboard.writeText(newToken.token);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (_) {}
+    }, [newToken]);
+
+    const handleDismiss = useCallback(() => {
+        setNewToken(null);
+        setCopied(false);
+    }, []);
+
+    const handleRevoke = useCallback(async (tokenId) => {
+        setRevokeError(null);
+        try {
+            await api.revokeToken(tokenId);
+            await loadTokens();
+        } catch (e) {
+            setRevokeError(e.message);
+        }
+    }, [loadTokens]);
+
+    const formatDate = (iso) => {
+        if (!iso) return '—';
+        try {
+            return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        } catch { return iso; }
+    };
+
+    return html`
+        <div style=${{ marginBottom: '28px' }}>
+            <${SectionHeader} text="API Tokens" />
+
+            <!-- One-time token reveal card -->
+            ${newToken && html`
+                <div style=${{
+                    ...styles.card,
+                    border: `1px solid ${colors.accent}`,
+                    marginBottom: '12px',
+                    background: colors.surface,
+                }}>
+                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style=${{ fontSize: '14px' }}>🔑</span>
+                        <span style=${{ fontSize: '13px', fontWeight: '600', color: colors.text }}>
+                            Token created${newToken.name ? `: ${newToken.name}` : ''}
+                        </span>
+                    </div>
+                    <div style=${{
+                        fontSize: '12px',
+                        color: colors.yellow || '#d97706',
+                        marginBottom: '10px',
+                    }}>
+                        ⚠ Copy this token now. You won't be able to see it again.
+                    </div>
+                    <div style=${{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: colors.bg || '#0d1117',
+                        border: `1px solid ${colors.border}`,
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        marginBottom: '10px',
+                    }}>
+                        <code style=${{
+                            fontFamily: 'monospace',
+                            fontSize: '12px',
+                            color: colors.text,
+                            flex: 1,
+                            wordBreak: 'break-all',
+                        }}>${newToken.token}</code>
+                        <button
+                            style=${{
+                                ...styles.buttonPrimary,
+                                padding: '4px 12px',
+                                fontSize: '11px',
+                                whiteSpace: 'nowrap',
+                            }}
+                            onClick=${handleCopy}>
+                            ${copied ? '✓ Copied' : 'Copy'}
+                        </button>
+                    </div>
+                    <button
+                        style=${{ ...styles.button, fontSize: '11px', padding: '4px 12px' }}
+                        onClick=${handleDismiss}>
+                        Done, I've saved it
+                    </button>
+                </div>
+            `}
+
+            <!-- Token list -->
+            <div style=${styles.card}>
+                <div style=${{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '14px',
+                }}>
+                    <div style=${styles.cardTitle}>Your API tokens</div>
+                </div>
+
+                ${loading && html`
+                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 0' }}>
+                        <span class="loading-spinner"></span>
+                        <span style=${{ fontSize: '13px', color: colors.textSecondary }}>Loading tokens…</span>
+                    </div>
+                `}
+
+                ${error && html`
+                    <div style=${{ fontSize: '12px', color: colors.red, marginBottom: '12px' }}>${error}</div>
+                `}
+
+                ${revokeError && html`
+                    <div style=${{ fontSize: '12px', color: colors.red, marginBottom: '8px' }}>${revokeError}</div>
+                `}
+
+                ${!loading && tokens && tokens.length === 0 && html`
+                    <div style=${{ fontSize: '13px', color: colors.textTertiary, padding: '8px 0 12px' }}>
+                        No tokens yet. Generate one to connect Claude Desktop, scripts, or other MCP clients.
+                    </div>
+                `}
+
+                ${!loading && tokens && tokens.length > 0 && html`
+                    <div style=${{ marginBottom: '14px' }}>
+                        ${tokens.map(t => html`
+                            <div key=${t.id} style=${{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                padding: '8px 0',
+                                borderBottom: `0.5px solid ${colors.borderSubtle || colors.border}`,
+                            }}>
+                                <div style=${{ flex: 1, minWidth: 0 }}>
+                                    <div style=${{ fontSize: '13px', color: colors.text, fontWeight: '500' }}>
+                                        ${t.name || html`<span style=${{ color: colors.textTertiary, fontStyle: 'italic' }}>Unnamed</span>`}
+                                    </div>
+                                    <div style=${{ display: 'flex', gap: '12px', marginTop: '2px' }}>
+                                        ${t.token_prefix && html`
+                                            <span style=${{
+                                                fontFamily: 'monospace',
+                                                fontSize: '11px',
+                                                color: colors.textTertiary,
+                                            }}>${t.token_prefix}…</span>
+                                        `}
+                                        <span style=${{ fontSize: '11px', color: colors.textTertiary }}>
+                                            Created ${formatDate(t.created_at)}
+                                        </span>
+                                        <span style=${{ fontSize: '11px', color: colors.textTertiary }}>
+                                            ${t.last_used_at ? `Last used ${formatDate(t.last_used_at)}` : 'Never used'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <${ConfirmAction}
+                                    label="Revoke"
+                                    confirmLabel="Yes, revoke"
+                                    warningText="Revoke this token?"
+                                    onConfirm=${() => handleRevoke(t.id)}
+                                    danger=${true}
+                                />
+                            </div>
+                        `)}
+                    </div>
+                `}
+
+                <!-- Generate token row -->
+                <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', paddingTop: '4px' }}>
+                    <input
+                        type="text"
+                        style=${{ ...styles.input, flex: 1, maxWidth: '220px' }}
+                        placeholder="Token name (optional)"
+                        value=${newTokenName}
+                        onInput=${(e) => setNewTokenName(e.target.value)}
+                        onKeyDown=${(e) => e.key === 'Enter' && !creating && handleGenerate()}
+                    />
+                    <button
+                        style=${{
+                            ...styles.buttonPrimary,
+                            opacity: creating ? 0.5 : 1,
+                            cursor: creating ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                        }}
+                        onClick=${handleGenerate}
+                        disabled=${creating}>
+                        ${creating ? 'Generating…' : 'Generate Token'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // Main Settings component
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -699,6 +936,9 @@ export function Settings() {
                     <${ChangePasswordCard} />
                 `}
             </div>
+
+            <!-- ═══ API TOKENS section ═══ -->
+            <${ApiTokensSection} />
 
             <!-- ═══ NOTIFICATIONS section ═══ -->
             <div style=${{ marginBottom: '28px' }}>

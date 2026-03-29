@@ -112,6 +112,8 @@ async def handle_request(scope, receive, send):
             rest = path[len("/dashboard/api/projects/"):]
             if method == "GET" and "/" not in rest:
                 return await _handle_get_project(send, rest)
+            if method == "PATCH" and "/" not in rest:
+                return await _handle_update_project(receive, send, rest)
             if method == "POST" and rest.endswith("/pause"):
                 pid = rest[:-len("/pause")]
                 result = await tasks.pause_project(pid)
@@ -325,6 +327,15 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/settings/user/change-password" and method == "POST":
             return await _handle_change_password(receive, send, scope)
 
+        # API token management
+        if path == "/dashboard/api/settings/tokens" and method == "GET":
+            return await _handle_list_tokens(scope, send)
+        if path == "/dashboard/api/settings/tokens" and method == "POST":
+            return await _handle_create_token(receive, scope, send)
+        if path.startswith("/dashboard/api/settings/tokens/") and method == "DELETE":
+            token_id = path[len("/dashboard/api/settings/tokens/"):]
+            return await _handle_revoke_token(scope, send, token_id)
+
         # ── Files endpoints ────────────────────────────────────────────────
         if path == "/dashboard/api/files" and method == "GET":
             return await _handle_list_files(scope, send)
@@ -463,6 +474,34 @@ async def _handle_get_project(send, project_id):
     task_list = await db.list_tasks(project_id=project_id)
     project["tasks"] = task_list
     await _json_response(send, project)
+
+
+# Mutable project fields accepted by PATCH /dashboard/api/projects/{id}
+_PROJECT_MUTABLE_FIELDS = {
+    "default_branch", "model", "review_model",
+    "setup_command", "test_command", "teardown_command",
+    "max_turns", "max_wall_clock",
+    "auto_test", "auto_review", "auto_pr", "auto_merge",
+    "review_ignore_patterns", "env_overrides",
+}
+
+
+async def _handle_update_project(receive, send, project_id):
+    """PATCH /dashboard/api/projects/{id} — update mutable project config."""
+    project = await db.get_project(project_id)
+    if not project:
+        return await _error(send, f"Project '{project_id}' not found", 404)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    # Only accept known mutable fields
+    updates = {k: v for k, v in data.items() if k in _PROJECT_MUTABLE_FIELDS}
+    if not updates:
+        return await _json_response(send, project)
+
+    result = await db.update_project(project_id, **updates)
+    await _json_response(send, result)
 
 
 async def _handle_activity(scope, send):
@@ -1443,6 +1482,54 @@ async def _handle_change_password(receive, send, scope):
 
     new_hash = ph.hash(new_password)
     await db.update_user(user_id, password_hash=new_hash)
+    await _json_response(send, {"ok": True})
+
+
+# ── API token management endpoints ────────────────────────────────────────
+
+async def _handle_list_tokens(scope, send):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    tokens = await db.list_api_tokens(user_id)
+    await _json_response(send, {"tokens": tokens})
+
+
+async def _handle_create_token(receive, scope, send):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    name = (data.get("name") or "").strip() or None
+
+    result = await db.create_api_token(user_id, name=name)
+    await _json_response(send, result, status=201)
+
+
+async def _handle_revoke_token(scope, send, token_id_str):
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        return await _error(send, "Not authenticated", 401)
+
+    try:
+        token_id = int(token_id_str)
+    except (ValueError, TypeError):
+        return await _error(send, "Invalid token ID", 400)
+
+    # Verify the token belongs to this user before revoking
+    tokens = await db.list_api_tokens(user_id)
+    if not any(t["id"] == token_id for t in tokens):
+        return await _error(send, "Token not found", 404)
+
+    deleted = await db.revoke_api_token(token_id)
+    if not deleted:
+        return await _error(send, "Token not found", 404)
     await _json_response(send, {"ok": True})
 
 
