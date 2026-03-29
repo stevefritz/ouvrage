@@ -586,6 +586,24 @@ async def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_message_chunks_message_id ON message_chunks(message_id);
             CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+            CREATE TABLE IF NOT EXISTS task_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                triggered_by TEXT NOT NULL,
+                source_detail TEXT,
+                previous_status TEXT,
+                new_status TEXT,
+                created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_log_task ON task_audit_log(task_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS instance_config (
+                id INTEGER PRIMARY KEY,
+                concurrency_limit INTEGER,
+                max_projects INTEGER
+            );
         """)
 
         # Credential encryption migration: encrypt any plaintext values in user_credentials.

@@ -20,7 +20,8 @@ async def _drain_queue() -> None:
     from switchboard.dispatch.engine import dispatch_task
 
     active = await db.count_active_tasks()
-    if active >= db.DEFAULT_MAX_CONCURRENT:
+    limit = await db.get_concurrency_limit()
+    if active >= limit:
         return
 
     queued = await db.get_queued_tasks()

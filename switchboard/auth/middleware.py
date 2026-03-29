@@ -41,6 +41,8 @@ from switchboard.config.settings import (
     AUTH_REQUIRED_SCOPES,
     RESOURCE_URL,
     OAUTH_BASE_URL,
+    AUTH_MODE,
+    CONTROL_PLANE_URL,
 )
 
 
@@ -283,6 +285,32 @@ def _protected_resource_metadata() -> dict:
     return meta
 
 
+# ── SaaS helpers ───────────────────────────────────────────────────────────
+
+def _get_instance_url(scope: dict) -> str:
+    """Derive this instance's base URL from the request host header.
+
+    Returns e.g. 'https://tenant.foreman.dev'. Falls back to an empty string
+    if the host header is absent (should not happen in normal usage).
+    """
+    headers = dict(scope.get("headers", []))
+    host = headers.get(b"host", b"").decode("utf-8", errors="replace")
+    if not host:
+        return ""
+    # Assume HTTPS in SaaS mode (tenants are always behind TLS).
+    return f"https://{host}"
+
+
+def _saas_redirect_url(scope: dict) -> str:
+    """Build the control-plane redirect URL for unauthenticated SaaS requests.
+
+    Returns: {CONTROL_PLANE_URL}/login?redirect={instance_url}/auth/sso
+    """
+    instance_url = _get_instance_url(scope)
+    cp = (CONTROL_PLANE_URL or "").rstrip("/")
+    return f"{cp}/login?redirect={quote(instance_url + '/auth/sso', safe='')}"
+
+
 # ── Middleware ──────────────────────────────────────────────────────────────
 
 UNPROTECTED_PATHS = {
@@ -295,6 +323,7 @@ UNPROTECTED_PATHS = {
     "/oauth/revoke",
     "/auth/login",
     "/auth/logout",
+    "/auth/sso",
     "/foreman/login",
 }
 
@@ -332,10 +361,13 @@ def auth_middleware(inner_app):
         if path.startswith("/foreman") and path != "/foreman/login":
             user = await get_session_user(scope)
             if user is None:
-                # Build next= param: path + query string
-                qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
-                next_path = path + ("?" + qs if qs else "")
-                location = "/foreman/login?next=" + quote(next_path, safe="")
+                if AUTH_MODE == "saas":
+                    location = _saas_redirect_url(scope)
+                else:
+                    # Build next= param: path + query string
+                    qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
+                    next_path = path + ("?" + qs if qs else "")
+                    location = "/foreman/login?next=" + quote(next_path, safe="")
                 await send({
                     "type": "http.response.start",
                     "status": 302,
@@ -350,13 +382,26 @@ def auth_middleware(inner_app):
         if path.startswith("/dashboard/api/"):
             user = await get_session_user(scope)
             if user is None:
-                await _send_json(send, 401, {"error": "authentication_required"})
+                if AUTH_MODE == "saas":
+                    location = _saas_redirect_url(scope)
+                    await send({
+                        "type": "http.response.start",
+                        "status": 302,
+                        "headers": [[b"location", location.encode()]],
+                    })
+                    await send({"type": "http.response.body", "body": b""})
+                else:
+                    await _send_json(send, 401, {"error": "authentication_required"})
                 return
             scope["session_user"] = user
             return await inner_app(scope, receive, send)
 
         # ── Dashboard static assets — no auth ──────────────────────────────
         if path.startswith("/dashboard"):
+            return await inner_app(scope, receive, send)
+
+        # ── Internal API — handles its own Bearer token auth ────────────────
+        if path.startswith("/internal/"):
             return await inner_app(scope, receive, send)
 
         # ── Bearer JWT for all other paths (/mcp, OAuth, etc.) ─────────────

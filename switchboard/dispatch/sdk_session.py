@@ -760,6 +760,12 @@ async def _run_sdk_session(
         except asyncio.TimeoutError:
             log.warning(f"Task {task_id}: wall clock timeout ({max_wall_clock_minutes}m)")
             await db.update_task(task_id, status="needs-review")
+            await db.write_audit_log(
+                task_id=task_id, action="wall_clock_timeout",
+                triggered_by="system",
+                source_detail=f"_run_sdk_session (timeout {max_wall_clock_minutes}m)",
+                previous_status="working", new_status="needs-review",
+            )
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Wall clock timeout",
@@ -783,6 +789,12 @@ async def _run_sdk_session(
                 result_msg.num_turns and result_msg.num_turns >= max_turns
             ):
                 await db.update_task(task_id, status="turns-exhausted")
+                await db.write_audit_log(
+                    task_id=task_id, action="turns_exhausted",
+                    triggered_by="system",
+                    source_detail=f"_run_sdk_session (max_turns={max_turns})",
+                    previous_status="working", new_status="turns-exhausted",
+                )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Turns exhausted",
@@ -832,6 +844,12 @@ async def _run_sdk_session(
 
                 await db.update_task(task_id, status="rate-limited",
                                      retry_after=retry_after_iso)
+                await db.write_audit_log(
+                    task_id=task_id, action="rate_limited",
+                    triggered_by="system",
+                    source_detail="_run_sdk_session (API rate limit hit)",
+                    previous_status="working", new_status="rate-limited",
+                )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Rate limited",
@@ -844,6 +862,12 @@ async def _run_sdk_session(
                 await _drain_queue()
             elif result_msg.is_error:
                 await db.update_task(task_id, status="failed")
+                await db.write_audit_log(
+                    task_id=task_id, action="failed",
+                    triggered_by="system",
+                    source_detail=f"_run_sdk_session (error: {result_msg.stop_reason})",
+                    previous_status="working", new_status="failed",
+                )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Task failed",
@@ -861,6 +885,12 @@ async def _run_sdk_session(
                 await _drain_queue()
             else:
                 await db.update_task(task_id, status="completed")
+                await db.write_audit_log(
+                    task_id=task_id, action="completed",
+                    triggered_by="system",
+                    source_detail="_run_sdk_session (CC session completed)",
+                    previous_status="working", new_status="completed",
+                )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
                     title="Task completed",
@@ -907,6 +937,12 @@ async def _run_sdk_session(
         else:
             # No result message — shouldn't happen but handle gracefully
             await db.update_task(task_id, status="needs-review")
+            await db.write_audit_log(
+                task_id=task_id, action="failed",
+                triggered_by="system",
+                source_detail="_run_sdk_session (no ResultMessage received)",
+                previous_status="working", new_status="needs-review",
+            )
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Session ended without result",
@@ -934,6 +970,12 @@ async def _run_sdk_session(
         else:
             log.exception(f"SDK session error for task {task_id}: {e}")
             await db.update_task(task_id, status="failed")
+            await db.write_audit_log(
+                task_id=task_id, action="failed",
+                triggered_by="system",
+                source_detail=f"_run_sdk_session (exception: {error_str[:200]})",
+                previous_status="working", new_status="failed",
+            )
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", type="status",
                 title="Dispatch error",

@@ -12,11 +12,16 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 def get_master_key() -> bytes:
-    """Read master key from env var. Raises RuntimeError if not set."""
+    """Read master key from env var or Docker secret file. Raises RuntimeError if neither exists."""
     key = os.environ.get("SWITCHBOARD_MASTER_KEY")
     if not key:
+        secret_path = "/run/secrets/master_key"
+        if os.path.isfile(secret_path):
+            with open(secret_path) as f:
+                key = f.read().strip()
+    if not key:
         raise RuntimeError(
-            "SWITCHBOARD_MASTER_KEY env var required. "
+            "SWITCHBOARD_MASTER_KEY env var or /run/secrets/master_key required. "
             "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
     return key.encode()

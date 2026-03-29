@@ -47,6 +47,35 @@ AUTH_REQUIRED_SCOPES = os.environ.get("AUTH_REQUIRED_SCOPES", "").split(",") if 
 RESOURCE_URL = os.environ.get("RESOURCE_URL")  # e.g. https://switchboard.example.dev/mcp
 
 # ---------------------------------------------------------------------------
+# SaaS / Auth Mode
+# ---------------------------------------------------------------------------
+
+# AUTH_MODE controls how unauthenticated dashboard requests are handled.
+# "local" (default): no-session → 401/redirect to local login page.
+# "saas": no-session → 302 redirect to CONTROL_PLANE_URL/login for SSO.
+AUTH_MODE = os.environ.get("AUTH_MODE", "local")
+
+# CONTROL_PLANE_URL is required when AUTH_MODE=saas.
+# Example: https://foreman.dev
+CONTROL_PLANE_URL = os.environ.get("CONTROL_PLANE_URL")
+
+# CONTROL_PLANE_JWKS is the URL to fetch the control plane's public JWKS.
+# Example: https://foreman.dev/api/auth/.well-known/jwks.json
+CONTROL_PLANE_JWKS = os.environ.get("CONTROL_PLANE_JWKS")
+
+# INSTANCE_SLUG is this instance's slug, used as the expected JWT audience.
+# Example: my-tenant
+INSTANCE_SLUG = os.environ.get("INSTANCE_SLUG")
+
+# INTERNAL_API_TOKEN is the Bearer token for machine-to-machine /internal/* endpoints.
+# Required when AUTH_MODE=saas. Shared with the control plane at container startup.
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN")
+
+# MAX_PROJECTS — max number of projects allowed (0 = unlimited, backward-compatible default).
+# Can be overridden at runtime via POST /internal/config.
+MAX_PROJECTS = int(os.environ.get("MAX_PROJECTS", "0"))
+
+# ---------------------------------------------------------------------------
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------
 

@@ -207,6 +207,12 @@ async def recover_orphaned_tasks():
     # concurrency while we process them one by one with stagger delays
     for task in orphans:
         await db.update_task(task["id"], status="needs-review")
+        await db.write_audit_log(
+            task_id=task["id"], action="recovered",
+            triggered_by="recovery-sweep",
+            source_detail="recover_orphaned_tasks (marked needs-review)",
+            previous_status=task.get("status"), new_status="needs-review",
+        )
 
     # If recovery is disabled, just post messages (already marked needs-review above)
     if not RECOVERY_ENABLED:
@@ -267,9 +273,10 @@ async def recover_orphaned_tasks():
 
         # Check concurrency before dispatching
         active = await db.count_active_tasks()
-        if active >= db.DEFAULT_MAX_CONCURRENT:
+        _limit = await db.get_concurrency_limit()
+        if active >= _limit:
             # Queue with recovery priority (front of FIFO queue)
-            log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{db.DEFAULT_MAX_CONCURRENT})")
+            log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{_limit})")
             await db.update_task(task_id, status="ready",
                                  queued_at=db.now_iso(), recovery_priority=True)
             continue

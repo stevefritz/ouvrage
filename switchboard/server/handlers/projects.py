@@ -28,6 +28,12 @@ def _resolve_working_dir(repo: str, folder_name: str | None = None) -> str:
 
 
 async def _handle_create_project(arguments):
+    max_projects = await db.get_max_projects()
+    if max_projects > 0:
+        current_count = await db.count_projects()
+        if current_count >= max_projects:
+            return {"error": f"Project limit reached ({current_count}/{max_projects}). Upgrade your plan for more projects."}
+
     repo = normalize_repo_url(arguments["repo"])
     working_dir = arguments.get("working_dir") or _resolve_working_dir(
         repo, arguments.get("folder_name")

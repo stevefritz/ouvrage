@@ -181,6 +181,18 @@
       "wait_after_clicks_ms": 800,
       "wait_ms": 2000
     },
+    "docs": {
+      "url": "/foreman#/docs",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {},
+      "wait_ms": 1500
+    },
+    "docs-mobile": {
+      "url": "/foreman#/docs",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {},
+      "wait_ms": 1500
+    },
     "project-view-component-panel-mobile": {
       "url": "/foreman#/project/mcp-switchboard",
       "viewport": { "width": 375, "height": 812 },
