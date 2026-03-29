@@ -71,6 +71,7 @@ class TestCreateProjectNormalizesUrl:
         self.patches = [
             patch("switchboard.server.handlers.projects.db.create_project", side_effect=mock_create_project),
             patch("switchboard.server.handlers.projects.db.list_projects", AsyncMock(return_value=[])),
+            patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)),
             patch("switchboard.server.handlers.projects.get_request_user_id", return_value=1),
             patch("os.path.realpath", side_effect=lambda p: p),
         ]

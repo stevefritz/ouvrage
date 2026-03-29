@@ -13,7 +13,9 @@ from mcp.types import TextContent
 from switchboard.auth import middleware as auth
 from switchboard.auth import oauth as oauth_server
 from switchboard.auth import sessions as session_server
+from switchboard.auth import sso as sso_server
 from switchboard.dashboard import api as dashboard_api
+from switchboard.internal import api as internal_api
 import switchboard.db as db
 import switchboard.dispatch as tasks
 
@@ -311,6 +313,10 @@ async def main():
             await session_server.handle_login(scope, receive, send)
         elif path == "/auth/logout" and method == "POST":
             await session_server.handle_logout(scope, receive, send)
+        elif path == "/auth/sso" and method == "GET":
+            await sso_server.handle_sso(scope, receive, send)
+        elif path.startswith("/internal/"):
+            await internal_api.handle_request(scope, receive, send)
         elif path == "/oauth/authorize" and method == "GET":
             # Inject oauth_user_id from session before authorize handler runs
             user = await session_server.get_session_user(scope)

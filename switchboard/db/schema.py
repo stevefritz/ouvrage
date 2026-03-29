@@ -592,6 +592,12 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
             CREATE INDEX IF NOT EXISTS idx_audit_log_task ON task_audit_log(task_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS instance_config (
+                id INTEGER PRIMARY KEY,
+                concurrency_limit INTEGER,
+                max_projects INTEGER
+            );
         """)
 
         # Credential encryption migration: encrypt any plaintext values in user_credentials.

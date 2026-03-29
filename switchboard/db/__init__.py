@@ -52,6 +52,7 @@ from switchboard.db.projects import (
     get_project,
     update_project,
     list_projects,
+    count_projects,
 )
 
 # Tasks
@@ -160,6 +161,14 @@ from switchboard.db.files import (
     delete_file,
 )
 
+# Instance config (control-plane overrides)
+from switchboard.db.instance_config import (
+    get_instance_config,
+    set_instance_config,
+    get_concurrency_limit,
+    get_max_projects,
+)
+
 # Audit
 from switchboard.db.audit import (
     write_audit_log,
@@ -195,7 +204,7 @@ __all__ = [
     "create_conversation", "post_message", "read_messages", "get_pinned",
     "pin_message", "board", "list_conversations", "archive_conversation",
     # projects
-    "create_project", "get_project", "update_project", "list_projects",
+    "create_project", "get_project", "update_project", "list_projects", "count_projects",
     # tasks
     "create_task", "get_task", "update_task", "bulk_update_tasks", "move_task",
     "list_tasks", "get_project_task_counts", "get_recent_activity", "get_dependents",
@@ -224,6 +233,8 @@ __all__ = [
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
     "get_github_pat", "get_anthropic_key",
     "set_instance_github_pat", "get_instance_github_pat",
+    # instance config
+    "get_instance_config", "set_instance_config", "get_concurrency_limit", "get_max_projects",
     # audit
     "write_audit_log", "get_audit_log",
     # search
