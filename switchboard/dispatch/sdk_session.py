@@ -32,11 +32,13 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ResultMessage,
     SystemMessage,
     UserMessage,
 )
-from claude_agent_sdk.types import TextBlock, ToolUseBlock, ToolResultBlock
+from claude_agent_sdk.types import TextBlock, ToolPermissionContext, ToolUseBlock, ToolResultBlock
 
 import switchboard.db as db
 from switchboard.notifications import slack as notify
@@ -494,6 +496,36 @@ def _log_result(log_dir: Path, result: ResultMessage):
 
 
 # ---------------------------------------------------------------------------
+# Tool permission guard — block gh CLI
+# ---------------------------------------------------------------------------
+
+async def _gh_cli_guard(
+    tool_name: str, tool_input: dict, context: ToolPermissionContext
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Block Bash commands that invoke the gh CLI.
+
+    gh commands are not allowed inside CC workers — PRs are created automatically
+    by the gate pipeline. This prevents workers from running gh pr create or any
+    other gh command.
+    """
+    if tool_name in ("Bash", "bash"):
+        command = tool_input.get("command", "") if isinstance(tool_input, dict) else str(tool_input)
+        if (
+            command.strip().startswith("gh ")
+            or " gh " in command
+            or "|gh " in command
+            or "| gh " in command
+        ):
+            return PermissionResultDeny(
+                message=(
+                    "gh CLI is not allowed. PRs are created automatically by the gate pipeline. "
+                    "Never use gh pr create or any gh command."
+                )
+            )
+    return PermissionResultAllow()
+
+
+# ---------------------------------------------------------------------------
 # Agent SDK Dispatch
 # ---------------------------------------------------------------------------
 
@@ -551,6 +583,7 @@ async def _run_sdk_session(
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
         extra_args={"replay-user-messages": None},
+        can_use_tool=_gh_cli_guard,
     )
 
     # If resuming, use the resume option

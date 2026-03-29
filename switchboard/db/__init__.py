@@ -92,6 +92,7 @@ from switchboard.db.tasks import (
     update_subtask,
     get_subtasks,
     get_subtask,
+    get_tasks_with_open_prs,
 )
 
 # Components

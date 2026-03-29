@@ -206,6 +206,21 @@ async def list_tasks(project_id: str | None = None, status: str | None = None, t
         return tasks
 
 
+async def get_tasks_with_open_prs() -> list[dict]:
+    """Return tasks that have a pr_url but whose pr_status is not 'merged' or 'closed'."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("""
+            SELECT t.*,
+                (SELECT ref FROM task_artifacts WHERE task_id = t.id AND type = 'pr_url' LIMIT 1) as pr_url
+            FROM tasks t
+            WHERE EXISTS (
+                SELECT 1 FROM task_artifacts WHERE task_id = t.id AND type = 'pr_url'
+            )
+            AND (t.pr_status IS NULL OR t.pr_status NOT IN ('merged', 'closed'))
+        """)
+        return [dict(r) for r in rows]
+
+
 async def get_project_task_counts() -> dict[str, dict]:
     """Get task counts and total cost per project in a single query."""
     async with get_db() as db:

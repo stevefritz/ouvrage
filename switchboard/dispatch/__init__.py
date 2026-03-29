@@ -46,6 +46,13 @@ from switchboard.dispatch.gates import (
 
 from switchboard.dispatch.queue import _drain_queue
 
+from switchboard.dispatch.pr_sweep import (
+    _parse_pr_url,
+    _check_pr_status,
+    _handle_pr_merged,
+    _pr_status_sweep,
+)
+
 from switchboard.dispatch._state import _running_tasks, _active_clients
 
 from switchboard.dispatch.engine import (
@@ -114,6 +121,11 @@ __all__ = [
     "_process_review_result",
     # queue
     "_drain_queue",
+    # pr_sweep
+    "_parse_pr_url",
+    "_check_pr_status",
+    "_handle_pr_merged",
+    "_pr_status_sweep",
     # engine — public API
     "_running_tasks",
     "_active_clients",
