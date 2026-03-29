@@ -319,9 +319,15 @@ function GitFlowLineage({ task, chain }) {
             }}>
                 ${prUrl && safeUrl(prUrl) ? html`
                     <a href=${safeUrl(prUrl)} target="_blank" rel="noopener"
-                        style=${linkPillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
+                        style=${task.pr_status === 'merged'
+                            ? linkPillStyle(colors.greenBg, colors.green)
+                            : task.pr_status === 'closed'
+                                ? linkPillStyle('rgba(92, 94, 102, 0.12)', colors.textTertiary)
+                                : linkPillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
                         class="foreman-task-pr-link">
-                        PR ${prNumber ? `#${prNumber}` : ''} ↗
+                        ${task.pr_status === 'merged'
+                            ? `PR ${prNumber ? `#${prNumber}` : ''} merged ↗`
+                            : `PR ${prNumber ? `#${prNumber}` : ''} ↗`}
                     </a>
                 ` : null}
 
@@ -526,11 +532,28 @@ function BlockedBy({ task, blockerTask }) {
 
 // ── Action Toolbar + Checklist Summary ──────────────────────
 
-function ActionToolbar({ task, onAction }) {
+const ACTION_TOOLTIPS = {
+    approve:           'Release this held task and dispatch CC.',
+    dispatch:          'Create worktree and launch CC session.',
+    hold:              'Put on hold. Requires manual approval before dispatch.',
+    cancel:            'Kill the running CC process. Code changes preserved.',
+    resume:            'Continue the existing CC session with full history.',
+    retry:             'Start a fresh CC session. Previous context is lost.',
+    reopen:            'Set to reopened. Post feedback, then click Start.',
+    start:             'Dispatch CC with feedback as revision instructions.',
+    close:             'Destroy worktree and delete branch. Permanent.',
+    'skip-gate':       'Manually mark gate as passed, bypassing validation.',
+    'advance-chain':   'Dispatch dependent tasks in the chain.',
+    'release-worktree':'Detach worktree without closing. Frees disk space.',
+    'cancel-chain':    'Cancel this task and all dependents.',
+};
+
+function ActionToolbar({ task, chain, onAction }) {
     const actions = [];
 
     const btn = (action, label, bg, fg) => html`
         <button key=${action} onClick=${() => onAction(action, task.id)}
+            title=${ACTION_TOOLTIPS[action] || ''}
             style=${{
                 padding: '4px 12px', borderRadius: layout.borderRadius.sm,
                 background: bg, color: fg, border: 'none', cursor: 'pointer',
@@ -581,6 +604,11 @@ function ActionToolbar({ task, onAction }) {
     }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
+    }
+    // Show Cancel Chain when this task is part of a chain (has depends_on OR has dependents)
+    const hasChainContext = task.depends_on || (chain && chain.some(t => t.depends_on === task.id));
+    if (hasChainContext) {
+        actions.push(btn('cancel-chain', 'Cancel Chain', colors.redBg, colors.red));
     }
 
     const done = task.checklist_done || 0;
@@ -1845,6 +1873,7 @@ const CONFIRM_TEXT = {
     approve: { title: 'Approve & Dispatch', body: 'Release this held task for dispatch?' },
     hold: { title: 'Hold Task', body: 'Put this task on hold? It will require manual approval before dispatch.' },
     dispatch: { title: 'Dispatch Task', body: 'Create worktree and launch CC session?' },
+    'cancel-chain': { title: 'Cancel Chain', body: 'Cancel this task and all dependent tasks in the chain? This cannot be undone.' },
 };
 
 function ConfirmOverlay({ action, onConfirm, onCancel }) {
@@ -2514,6 +2543,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 hold: () => api.holdTask(id),
                 dispatch: () => api.dispatchTask(id),
                 reopen: () => api.reopenTask(id),
+                'cancel-chain': () => api.cancelChain(id),
             };
             const fn = actionMap[action];
             if (fn) await fn();
@@ -2755,10 +2785,14 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                         ` : null}
                         ${prUrl && safeUrl(prUrl) ? html`
                             <a href=${safeUrl(prUrl)} target="_blank" rel="noopener"
-                                style=${pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
+                                style=${task.pr_status === 'merged'
+                                    ? pillStyle(colors.greenBg, colors.green)
+                                    : task.pr_status === 'closed'
+                                        ? pillStyle('rgba(92, 94, 102, 0.12)', colors.textTertiary)
+                                        : pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
                                 class="foreman-task-pr-link"
                                 onClick=${e => e.stopPropagation()}>
-                                PR ↗
+                                ${task.pr_status === 'merged' ? 'PR merged ↗' : 'PR ↗'}
                             </a>
                         ` : null}
                     </div>
@@ -2773,7 +2807,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
 
                 <!-- Actions -->
-                <${ActionToolbar} task=${task} onAction=${handleAction} />
+                <${ActionToolbar} task=${task} chain=${chain} onAction=${handleAction} />
 
                 <!-- Open → full task page -->
                 <a href=${routes.task(id)}
@@ -2818,7 +2852,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${ChainStrip} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ChainInvalidationWarning} task=${task} chain=${chain} />
-            <${ActionToolbar} task=${task} onAction=${handleAction} />
+            <${ActionToolbar} task=${task} chain=${chain} onAction=${handleAction} />
             ${showStartOverlay ? html`
                 <${StartConfigOverlay}
                     task=${task}

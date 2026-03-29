@@ -1863,21 +1863,29 @@ function PRTag({ task }) {
     if (!prUrl) return null;
     if (typeof prUrl !== 'string' || (!prUrl.startsWith('https://') && !prUrl.startsWith('http://'))) return null;
 
+    const prNumber = (prUrl.match(/\/pull\/(\d+)/) || [])[1];
+    const isMerged = task.pr_status === 'merged';
+    const isClosed = task.pr_status === 'closed';
+
     return html`
         <a href=${prUrl} target="_blank" rel="noopener" style=${{
             display: 'inline-flex',
             alignItems: 'center',
             fontFamily: typography.fontMono,
             fontSize: typography.size.xs,
-            color: colors.accent,
-            background: colors.accentBg,
-            border: `1px solid rgba(124, 90, 246, 0.25)`,
+            color: isMerged ? colors.green : isClosed ? colors.textTertiary : colors.accent,
+            background: isMerged ? colors.greenBg : isClosed ? 'rgba(92, 94, 102, 0.12)' : colors.accentBg,
+            border: `1px solid ${isMerged ? `${colors.green}44` : isClosed ? 'rgba(92, 94, 102, 0.25)' : 'rgba(124, 90, 246, 0.25)'}`,
             borderRadius: '4px',
             padding: '1px 7px',
             lineHeight: '18px',
             textDecoration: 'none',
             whiteSpace: 'nowrap',
-        }}>PR ↗</a>
+        }}>
+            ${isMerged
+                ? `PR${prNumber ? ` #${prNumber}` : ''} merged ↗`
+                : `PR${prNumber ? ` #${prNumber}` : ''} ↗`}
+        </a>
     `;
 }
 
