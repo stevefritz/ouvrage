@@ -71,6 +71,10 @@ INSTANCE_SLUG = os.environ.get("INSTANCE_SLUG")
 # Required when AUTH_MODE=saas. Shared with the control plane at container startup.
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN")
 
+# MAX_PROJECTS — max number of projects allowed (0 = unlimited, backward-compatible default).
+# Can be overridden at runtime via POST /internal/config.
+MAX_PROJECTS = int(os.environ.get("MAX_PROJECTS", "0"))
+
 # ---------------------------------------------------------------------------
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------

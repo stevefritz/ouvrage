@@ -6,6 +6,7 @@ env-var defaults.
 """
 
 from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
+from switchboard.config.settings import MAX_PROJECTS as _MAX_PROJECTS_ENV
 from switchboard.db.connection import get_db
 
 
@@ -50,6 +51,21 @@ async def set_instance_config(
         row = rows[0]
         return {"concurrency_limit": row["concurrency_limit"],
                 "max_projects": row["max_projects"]}
+
+
+async def get_max_projects() -> int:
+    """Return the effective max projects limit.
+
+    Read order:
+    1. DB runtime config (set by /internal/config) — if present, use it
+    2. MAX_PROJECTS env var
+    3. 0 (unlimited)
+    """
+    cfg = await get_instance_config()
+    db_val = cfg.get("max_projects")
+    if db_val is not None:
+        return int(db_val)
+    return _MAX_PROJECTS_ENV
 
 
 async def get_concurrency_limit() -> int:

@@ -97,3 +97,10 @@ async def list_projects() -> list[dict]:
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM projects ORDER BY created_at DESC")
         return [_decode_project(dict(r)) for r in rows]
+
+
+async def count_projects() -> int:
+    """Return the total number of registered projects."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT COUNT(*) AS cnt FROM projects")
+        return rows[0]["cnt"] if rows else 0
