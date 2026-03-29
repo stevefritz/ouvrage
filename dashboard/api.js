@@ -208,4 +208,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
     }),
+
+    // API token management
+    listTokens: () => request('/settings/tokens'),
+    createToken: (name) => request('/settings/tokens', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+    }),
+    revokeToken: (id) => request(`/settings/tokens/${id}`, { method: 'DELETE' }),
 };

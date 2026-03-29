@@ -506,6 +506,12 @@ async def init_db():
             if "task_id" not in files_col_names:
                 await conn.execute("ALTER TABLE files ADD COLUMN task_id TEXT REFERENCES tasks(id)")
 
+        # Migrate api_tokens: add token_prefix for display in the UI
+        token_columns = await conn.execute_fetchall("PRAGMA table_info(api_tokens)")
+        token_col_names = [c["name"] for c in token_columns]
+        if "token_prefix" not in token_col_names:
+            await conn.execute("ALTER TABLE api_tokens ADD COLUMN token_prefix TEXT")
+
         # ---------------------------------------------------------------------------
         # Bootstrap migration: seed default owner user and instance if users is empty.
         # Backfill all FK columns so existing rows point to the owner.
