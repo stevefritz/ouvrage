@@ -1,10 +1,15 @@
 # Foreman (Switchboard) — production container image
 # One image, many tenant containers. Each gets its own /data and /work volumes.
 #
-# Build:  docker build -t foreman:latest .
+# Build:
+#   docker build -t foreman:latest .                                    # base image (~300MB)
+#   docker build --build-arg WITH_PLAYWRIGHT=true -t foreman:eyes .     # with Playwright+Chromium (~700MB)
+#
 # Run:    docker compose up -d
 #
 # Requires: CAP_SETUID, CAP_SETGID, CAP_KILL (for worker process isolation)
+
+ARG WITH_PLAYWRIGHT=false
 
 FROM python:3.13-slim AS base
 
@@ -44,6 +49,15 @@ COPY dashboard/ dashboard/
 COPY foreman.html ./
 
 RUN pip install --no-cache-dir .
+
+# --- Playwright (optional, for visual verification) ---
+# Higher-tier plans get Chromium so CC workers can screenshot pages and verify UI.
+# Adds ~400MB to image size. Skipped by default.
+ARG WITH_PLAYWRIGHT
+RUN if [ "$WITH_PLAYWRIGHT" = "true" ]; then \
+        pip install --no-cache-dir playwright \
+        && npx playwright install --with-deps chromium \
+    ; fi
 
 # --- Volumes ---
 # /data — SQLite DB, OAuth RSA key, encryption keys (persistent tenant data)
