@@ -512,7 +512,10 @@ async def _handle_update_project(receive, send, project_id):
     }
     fields = {k: v for k, v in data.items() if k in ALLOWED}
     if not fields:
-        return await _error(send, "No updatable fields provided", 400)
+        project = await db.get_project(project_id)
+        if not project:
+            return await _error(send, f"Project '{project_id}' not found", 404)
+        return await _json_response(send, project)
 
     if "github_pat_override" in fields:
         pat = fields["github_pat_override"]

@@ -483,7 +483,7 @@ class TestDashboardUpdateProjectPat:
         assert resp.status == 404
 
     async def test_patch_project_empty_body(self, db):
-        """PATCH with no updatable fields returns 400."""
+        """PATCH with no updatable fields returns unchanged project (no-op)."""
         from switchboard.dashboard.api import handle_request
 
         await db.create_project(id="empty-patch", repo="https://github.com/org/r.git", working_dir="/work/r")
@@ -492,7 +492,8 @@ class TestDashboardUpdateProjectPat:
         resp = _Capture()
         await handle_request(scope, _make_receive({"unknown_field": "value"}), resp)
 
-        assert resp.status == 400
+        assert resp.status == 200
+        assert resp.json()["id"] == "empty-patch"
 
     async def test_patch_project_updates_non_pat_fields(self, db):
         """PATCH can update other project fields like test_command."""
