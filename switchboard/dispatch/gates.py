@@ -278,6 +278,12 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
             await db.update_task(task_id, gate_status="test-passed")
         else:
             await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await db.write_audit_log(
+            task_id=task_id, action="gate_passed",
+            triggered_by="gate-pipeline",
+            source_detail="_run_test_gate (tests passed)",
+            previous_status=task.get("status"), new_status=task.get("status"),
+        )
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title="Tests passed",
@@ -323,6 +329,12 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         retries = (task.get("gate_retries") or 0) + 1
         max_retries = task.get("max_test_retries") or task.get("max_gate_retries") or 3
         await db.update_task(task_id, gate_status="test-failed", gate_retries=retries)
+        await db.write_audit_log(
+            task_id=task_id, action="gate_failed",
+            triggered_by="gate-pipeline",
+            source_detail=f"_run_test_gate (tests failed, attempt {retries}/{max_retries})",
+            previous_status=task.get("status"), new_status=task.get("status"),
+        )
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title=f"Tests failed (attempt {retries}/{max_retries})",
@@ -627,12 +639,24 @@ async def _process_review_result_inline(task_id: str) -> None:
     if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {task_id}")
         await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await db.write_audit_log(
+            task_id=task_id, action="gate_passed",
+            triggered_by="gate-pipeline",
+            source_detail="_process_review_result_inline (review approved)",
+            previous_status="completed", new_status="completed",
+        )
         await _check_and_dispatch_dependents(task_id)
     else:
         task = await db.get_task(task_id)
         retries = (task.get("gate_retries") or 0) + 1
         max_retries = task.get("max_review_retries") or task.get("max_gate_retries") or 3
         await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
+        await db.write_audit_log(
+            task_id=task_id, action="gate_failed",
+            triggered_by="gate-pipeline",
+            source_detail=f"_process_review_result_inline (review failed, attempt {retries}/{max_retries})",
+            previous_status=task.get("status"), new_status=task.get("status"),
+        )
         log.warning(f"Review failed for {task_id} (attempt {retries}/{max_retries})")
 
         if retries < max_retries:
@@ -656,12 +680,24 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
     if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {parent_task_id}")
         await db.update_task(parent_task_id, gate_status="passed", gate_passed_at=db.now_iso())
+        await db.write_audit_log(
+            task_id=parent_task_id, action="gate_passed",
+            triggered_by="gate-pipeline",
+            source_detail="_process_review_result (review approved)",
+            previous_status="completed", new_status="completed",
+        )
         await _check_and_dispatch_dependents(parent_task_id)
     else:
         parent = await db.get_task(parent_task_id)
         retries = (parent.get("gate_retries") or 0) + 1
         max_retries = parent.get("max_review_retries") or parent.get("max_gate_retries") or 3
         await db.update_task(parent_task_id, gate_status="review-failed", gate_retries=retries)
+        await db.write_audit_log(
+            task_id=parent_task_id, action="gate_failed",
+            triggered_by="gate-pipeline",
+            source_detail=f"_process_review_result (review failed, attempt {retries}/{max_retries})",
+            previous_status=parent.get("status"), new_status=parent.get("status"),
+        )
         log.warning(f"Review failed for {parent_task_id} (attempt {retries}/{max_retries})")
 
         if retries < max_retries:

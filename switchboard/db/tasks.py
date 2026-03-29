@@ -55,6 +55,16 @@ async def create_task(
              created_by, dispatched_by, ts, ts),
         )
         await db.commit()
+
+        # Write audit log for task creation
+        from switchboard.db.audit import write_audit_log
+        await write_audit_log(
+            task_id=id, action="created",
+            triggered_by="user",
+            source_detail="create_task",
+            previous_status=None, new_status="ready",
+        )
+
         return {
             "id": id, "project_id": project_id, "goal": goal, "status": "ready",
             "phase": None, "branch": branch, "worktree_path": None,

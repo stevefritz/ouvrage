@@ -207,6 +207,12 @@ async def recover_orphaned_tasks():
     # concurrency while we process them one by one with stagger delays
     for task in orphans:
         await db.update_task(task["id"], status="needs-review")
+        await db.write_audit_log(
+            task_id=task["id"], action="recovered",
+            triggered_by="recovery-sweep",
+            source_detail="recover_orphaned_tasks (marked needs-review)",
+            previous_status=task.get("status"), new_status="needs-review",
+        )
 
     # If recovery is disabled, just post messages (already marked needs-review above)
     if not RECOVERY_ENABLED:
