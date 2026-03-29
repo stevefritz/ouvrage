@@ -77,7 +77,7 @@ const TIMEZONES = [
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const color = type === 'success' ? colors.green : colors.red;
+    const color = type === 'success' ? colors.green : type === 'info' ? colors.blue : colors.red;
     return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
 }
 
@@ -275,7 +275,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [feedback, setFeedback] = useState(null);
-    const [editing, setEditing] = useState(!anthropic.configured);
+    const [editing, setEditing] = useState(!anthropic.configured && !anthropic.skip_credential_check);
 
     const handleSave = useCallback(async () => {
         if (!key.trim()) return;
@@ -312,7 +312,11 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     }, []);
 
     const statusText = !editing
-        ? (anthropic.configured ? 'Configured' : 'Not set — required to dispatch tasks')
+        ? (anthropic.configured
+            ? 'Configured'
+            : anthropic.skip_credential_check
+                ? 'Bypassed via environment'
+                : 'Not set — required to dispatch tasks')
         : undefined;
     const maskedValue = (!editing && anthropic.key_last4) ? `····${anthropic.key_last4}` : undefined;
 
@@ -350,14 +354,19 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
             <${CredentialCard}
                 icon="🔑"
                 name="Anthropic API key"
-                connected=${anthropic.configured}
+                connected=${anthropic.configured || anthropic.skip_credential_check}
                 statusText=${statusText}
                 maskedValue=${maskedValue}
-                onUpdate=${editing ? undefined : () => setEditing(true)}
-                onTest=${(!editing && !testing && anthropic.configured) ? handleTest : undefined}
+                onUpdate=${(editing || anthropic.skip_credential_check) ? undefined : () => setEditing(true)}
+                onTest=${(!editing && !testing && anthropic.configured && !anthropic.skip_credential_check) ? handleTest : undefined}
             >
                 ${editing ? editForm : null}
             </${CredentialCard}>
+            ${anthropic.skip_credential_check && !anthropic.configured && html`
+                <div style=${{ padding: '4px 16px 0' }}>
+                    <${FeedbackBanner} message="Credential checks bypassed via environment" type="info" />
+                </div>
+            `}
             ${feedback && html`
                 <div style=${{ padding: '4px 16px 0' }}>
                     <${FeedbackBanner} message=${feedback.message} type=${feedback.type} />

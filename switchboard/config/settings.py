@@ -1,6 +1,7 @@
 """Environment variable reads and runtime settings for Switchboard."""
 
 import os
+import shutil
 
 # ---------------------------------------------------------------------------
 # Database
@@ -82,3 +83,18 @@ MAX_PROJECTS = int(os.environ.get("MAX_PROJECTS", "0"))
 OAUTH_BASE_URL = os.environ.get("OAUTH_BASE_URL")  # e.g. https://switchboard.example.dev
 OAUTH_RSA_KEY_PATH = os.environ.get("OAUTH_RSA_KEY_PATH", "./data/oauth_rsa_key.pem")
 OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")  # claude-mcp client secret (seeded on first run)
+
+# ---------------------------------------------------------------------------
+# Credential Check Bypass
+# ---------------------------------------------------------------------------
+
+# SKIP_CREDENTIAL_CHECK — when true, dispatch_task skips the Anthropic API key
+# check and create_project skips the PAT-exists check (clone validation still
+# runs if a PAT IS configured).  Intended for CC-subscription users who
+# authenticate via the Claude Code binary rather than an explicit API key.
+SKIP_CREDENTIAL_CHECK = os.environ.get("SKIP_CREDENTIAL_CHECK", "false").lower() in ("true", "1", "yes")
+
+# HAS_CLAUDE_BINARY — true if the `claude` or `claude-code` binary is on PATH.
+# Treated as an implicit bypass for the Anthropic API key check: CC workers
+# authenticate via the subscription, not via an explicit API key.
+HAS_CLAUDE_BINARY = bool(shutil.which("claude") or shutil.which("claude-code"))

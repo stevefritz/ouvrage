@@ -18,6 +18,7 @@ import switchboard.db as db
 import switchboard.dispatch as tasks
 from switchboard.auth.oauth import get_client as _get_oauth_client
 from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
+from switchboard.config import settings as _settings
 from switchboard.crypto import decrypt_value, encrypt_value, is_fernet_token
 from switchboard.git.operations import normalize_repo_url
 from switchboard.notifications import web_push
@@ -1454,9 +1455,11 @@ async def _handle_get_user_settings(scope, send):
 
     creds = await db.get_user_credentials(user_id) or {}
     ant_key = creds.get("anthropic_api_key")
+    credential_bypass = _settings.SKIP_CREDENTIAL_CHECK or _settings.HAS_CLAUDE_BINARY
     anthropic_info = {
         "configured": bool(ant_key),
         "key_last4": ant_key[-4:] if ant_key else None,
+        "skip_credential_check": credential_bypass,
     }
     notif_prefs = creds.get("notification_preferences") or {}
 

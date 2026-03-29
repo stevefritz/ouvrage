@@ -11,6 +11,7 @@ from switchboard.server.context import get_request_user_id
 from switchboard.git.operations import normalize_repo_url, _build_authenticated_url
 from switchboard.git.worktree import _run_as_worker
 from switchboard.crypto import encrypt_value, is_fernet_token
+from switchboard.config.settings import SKIP_CREDENTIAL_CHECK
 
 log = logging.getLogger(__name__)
 
@@ -100,10 +101,22 @@ async def _handle_create_project(arguments):
     pat_raw = arguments.get("github_pat_override")
     pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
 
-    # 2a + 2b: validate PAT exists and can access the repo before creating any DB row
-    pat_error = await _validate_github_pat_for_repo(repo)
-    if pat_error:
-        return pat_error
+    # 2a + 2b: validate PAT exists and can access the repo before creating any DB row.
+    # When SKIP_CREDENTIAL_CHECK=true, skip the PAT-exists check but still validate
+    # repo access if a PAT IS configured (don't bypass clone validation when a key is present).
+    if SKIP_CREDENTIAL_CHECK:
+        try:
+            instance_pat = await db.get_instance_github_pat()
+        except ValueError:
+            instance_pat = None
+        if instance_pat:
+            pat_error = await _validate_github_pat_for_repo(repo)
+            if pat_error:
+                return pat_error
+    else:
+        pat_error = await _validate_github_pat_for_repo(repo)
+        if pat_error:
+            return pat_error
 
     project_id = arguments["id"]
     result = await db.create_project(
