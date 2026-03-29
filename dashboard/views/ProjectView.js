@@ -2215,6 +2215,7 @@ export function ProjectView({ id }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        flexWrap: 'wrap',
         paddingBottom: '16px',
         borderBottom: `1px solid ${colors.border}`,
         gap: '12px',
@@ -2228,7 +2229,10 @@ export function ProjectView({ id }) {
         margin: 0,
         letterSpacing: '-0.02em',
         flex: 1,
-        wordBreak: 'break-word',
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
     };
 
     const repoTagStyle = {
