@@ -87,6 +87,13 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     if not task or not task.get("gate_passed_at"):
         return
 
+    await db.write_audit_log(
+        task_id=task_id, action="chain_advanced",
+        triggered_by="gate-pipeline",
+        source_detail="_check_and_dispatch_dependents",
+        previous_status=task.get("status"), new_status=task.get("status"),
+    )
+
     # Resolve punchlist items claimed by this task
     resolved = await db.resolve_punchlist_items_for_task(task_id)
     if resolved:
@@ -147,12 +154,24 @@ async def _invalidate_chain(task_id: str) -> None:
     for dep in dependents:
         if dep["status"] == "working":
             try:
+                await db.write_audit_log(
+                    task_id=dep["id"], action="cancelled",
+                    triggered_by="chain-invalidation",
+                    source_detail=f"_invalidate_chain (parent {task_id} re-dispatched)",
+                    previous_status=dep["status"], new_status="cancelled",
+                )
                 await cancel_task(dep["id"])
             except Exception as e:
                 log.error(f"Failed to cancel working dependent {dep['id']}: {e}")
 
         current_gate = dep.get("gate_status")
         if dep["status"] in ("completed", "ready") or current_gate in ("passed", "testing", "reviewing"):
+            await db.write_audit_log(
+                task_id=dep["id"], action="stale",
+                triggered_by="chain-invalidation",
+                source_detail=f"_invalidate_chain (parent {task_id} re-dispatched)",
+                previous_status=dep["status"], new_status=dep["status"],
+            )
             await db.update_task(
                 dep["id"],
                 gate_status="stale",
@@ -651,6 +670,7 @@ async def dispatch_task(
     session_id = task.get("session_id") if is_resume else None
 
     # Update task record
+    prev_status = task.get("status", "ready")
     dispatch_count = (task.get("dispatch_count") or 0) + 1
     await db.update_task(
         task_id,
@@ -659,6 +679,12 @@ async def dispatch_task(
         worktree_path=worktree_path,
         dispatch_count=dispatch_count,
         last_activity=db.now_iso(),
+    )
+    await db.write_audit_log(
+        task_id=task_id, action="dispatched",
+        triggered_by="system" if is_resume else "user",
+        source_detail=f"dispatch_task (dispatch_count={dispatch_count}, resume={is_resume})",
+        previous_status=prev_status, new_status="working",
     )
 
     # Log dispatch
@@ -735,6 +761,13 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
     if task["status"] not in resumable:
         raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
 
+    await db.write_audit_log(
+        task_id=task_id, action="resumed",
+        triggered_by="user",
+        source_detail=f"resume_task (reset_recovery={reset_recovery_count})",
+        previous_status=task.get("status"), new_status="working",
+    )
+
     # If gate already passed AND task is in a terminal state (not needs-review),
     # re-trigger post-gate pipeline instead of launching a new CC session.
     # Exceptions: needs-review or pr_status=conflict mean CC still has work to do.
@@ -773,6 +806,13 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
+
+    await db.write_audit_log(
+        task_id=task_id, action="retried",
+        triggered_by="user",
+        source_detail=f"retry_task (clean={clean})",
+        previous_status=task.get("status"), new_status="working",
+    )
 
     # Archive current attempt's logs before overwriting on next dispatch
     project = await db.get_project(task["project_id"])
@@ -882,6 +922,12 @@ async def reopen_task(task_id: str) -> dict:
         gate_retries=0,
         reopen_saved_gate_status=task.get("gate_status"),
         reopen_saved_gate_passed_at=task.get("gate_passed_at"),
+    )
+    await db.write_audit_log(
+        task_id=task_id, action="reopened",
+        triggered_by="user",
+        source_detail=f"reopen_task (attempt={new_attempt})",
+        previous_status="completed", new_status="reopened",
     )
 
     # Post status message — auto-stamped to new_attempt since current_attempt is now updated
@@ -1031,7 +1077,14 @@ async def cancel_task(task_id: str) -> dict:
     if not cancelled_async and task.get("status") == "working":
         log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
 
+    prev_status = task.get("status")
     await db.update_task(task_id, status="cancelled", held=False)
+    await db.write_audit_log(
+        task_id=task_id, action="cancelled",
+        triggered_by="cancel-api",
+        source_detail="cancel_task",
+        previous_status=prev_status, new_status="cancelled",
+    )
 
     # Revert any punchlist items claimed by this task back to 'open'
     reverted = await db.revert_punchlist_items_for_task(task_id)
@@ -1050,6 +1103,12 @@ async def skip_gate(task_id: str) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
     await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+    await db.write_audit_log(
+        task_id=task_id, action="gate_passed",
+        triggered_by="user",
+        source_detail="skip_gate (manual bypass)",
+        previous_status=task.get("status"), new_status=task.get("status"),
+    )
     await db.post_task_message(
         task_id=task_id, author="dispatcher", type="status",
         title="Gate skipped",
@@ -1092,11 +1151,18 @@ async def cancel_chain(task_id: str) -> dict:
         task = await db.get_task(tid)
         if not task or task["status"] in ("cancelled", "completed"):
             return
+        prev_status = task["status"]
         # Cancel running tasks
         if task["status"] == "working":
             await cancel_task(tid)
         else:
             await db.update_task(tid, status="cancelled")
+        await db.write_audit_log(
+            task_id=tid, action="cancelled",
+            triggered_by="cancel-chain",
+            source_detail=f"cancel_chain (root={task_id})",
+            previous_status=prev_status, new_status="cancelled",
+        )
         cancelled.append(tid)
         # Recurse into dependents
         deps = await db.get_dependents(tid)
@@ -1122,6 +1188,12 @@ async def approve_task(task_id: str) -> dict:
         raise ValueError(f"Task '{task_id}' is not held")
 
     await db.update_task(task_id, held=False)
+    await db.write_audit_log(
+        task_id=task_id, action="approved",
+        triggered_by="user",
+        source_detail="approve_task",
+        previous_status=task.get("status"), new_status=task.get("status"),
+    )
     log.info(f"Task {task_id} approved — releasing hold")
 
     await db.post_task_message(
@@ -1171,6 +1243,7 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     if project:
         await archive_task_logs(task, project, "close")
 
+    prev_status = task.get("status")
     if cleanup and project:
         await cleanup_worktree(project, task, force_delete_branch)
         await db.update_task(
@@ -1182,6 +1255,12 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
             task_id, status="completed",
             gate_passed_at=None, held=False,
         )
+    await db.write_audit_log(
+        task_id=task_id, action="closed",
+        triggered_by="user",
+        source_detail="close_task (manual close)",
+        previous_status=prev_status, new_status="completed",
+    )
 
     # Post status message so it's clear this was a manual close
     await db.post_task_message(

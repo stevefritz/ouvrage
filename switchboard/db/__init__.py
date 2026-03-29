@@ -160,6 +160,12 @@ from switchboard.db.files import (
     delete_file,
 )
 
+# Audit
+from switchboard.db.audit import (
+    write_audit_log,
+    get_audit_log,
+)
+
 # Search
 from switchboard.db.search import (
     search_messages_semantic,
@@ -218,6 +224,8 @@ __all__ = [
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
     "get_github_pat", "get_anthropic_key",
     "set_instance_github_pat", "get_instance_github_pat",
+    # audit
+    "write_audit_log", "get_audit_log",
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",
