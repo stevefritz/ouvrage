@@ -105,11 +105,16 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     # PR and merge only happen at chain tail — mid-chain tasks just advance.
     # Code flows downhill; the last task's branch IS the feature branch.
     if is_chain_tail:
-        if task.get("auto_merge"):
+        if task.get("auto_pr"):
+            # PR wins over merge — if both are set, create PR only
+            await _maybe_create_pr(task_id)
+        elif task.get("auto_merge"):
             merge_ok = await _perform_auto_merge(task_id)
             if not merge_ok:
-                return  # Conflict or error — don't advance chain
-        await _maybe_create_pr(task_id)
+                return  # Conflict or error
+        else:
+            # Neither auto_pr nor auto_merge — still try PR (manual flag check inside)
+            await _maybe_create_pr(task_id)
     else:
         # Mid-chain: dispatch dependents
         for dep in dependents:
