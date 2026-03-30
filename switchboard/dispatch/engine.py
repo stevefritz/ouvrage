@@ -100,47 +100,43 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
         log.info(f"Task {task_id}: resolved {resolved} punchlist item(s)")
 
     dependents = await db.get_dependents(task_id)
+    is_chain_tail = not dependents
 
-    # Auto-merge only at chain tail — mid-chain tasks just advance to the next dependent.
-    # Code flows downhill through the chain; the last task's branch IS the feature branch.
-    if task.get("auto_merge") and not dependents:
-        merge_ok = await _perform_auto_merge(task_id)
-        if not merge_ok:
-            return  # Conflict or error — don't advance chain
-    dispatched_any = False
-    for dep in dependents:
-        if dep["status"] == "ready" and not dep.get("held"):
-            log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
-            try:
-                await dispatch_task(
-                    project_id=dep["project_id"],
-                    task_id=dep["id"],
-                    goal=dep["goal"],
-                    auto_test=dep.get("auto_test", True),
-                )
-                dispatched_any = True
-            except Exception as e:
-                log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
-        elif dep["status"] == "ready" and dep.get("held"):
-            log.info(f"Skipping held task {dep['id']} — requires manual approval")
-            await db.post_task_message(
-                task_id=dep["id"], author="dispatcher", type="status",
-                title="Ready but held",
-                content="Parent task completed and gate passed. This task is held — approve to dispatch.",
-            )
-            continue
-        elif dep.get("gate_status") == "stale" and dep["status"] in ("completed", "cancelled"):
-            # Re-dispatch stale downstream task with rebase
-            log.info(f"Re-dispatching stale dependent {dep['id']} (parent {task_id} gate passed)")
-            try:
-                await _rebase_and_redispatch(dep, task)
-                dispatched_any = True
-            except Exception as e:
-                log.error(f"Failed to re-dispatch stale dependent {dep['id']}: {e}")
-
-    # If no dependents to dispatch, this might be the chain tail — try auto-PR
-    if not dispatched_any:
+    # PR and merge only happen at chain tail — mid-chain tasks just advance.
+    # Code flows downhill; the last task's branch IS the feature branch.
+    if is_chain_tail:
+        if task.get("auto_merge"):
+            merge_ok = await _perform_auto_merge(task_id)
+            if not merge_ok:
+                return  # Conflict or error — don't advance chain
         await _maybe_create_pr(task_id)
+    else:
+        # Mid-chain: dispatch dependents
+        for dep in dependents:
+            if dep["status"] == "ready" and not dep.get("held"):
+                log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
+                try:
+                    await dispatch_task(
+                        project_id=dep["project_id"],
+                        task_id=dep["id"],
+                        goal=dep["goal"],
+                        auto_test=dep.get("auto_test", True),
+                    )
+                except Exception as e:
+                    log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
+            elif dep["status"] == "ready" and dep.get("held"):
+                log.info(f"Skipping held task {dep['id']} — requires manual approval")
+                await db.post_task_message(
+                    task_id=dep["id"], author="dispatcher", type="status",
+                    title="Ready but held",
+                    content="Parent task completed and gate passed. This task is held — approve to dispatch.",
+                )
+            elif dep.get("gate_status") == "stale" and dep["status"] in ("completed", "cancelled"):
+                log.info(f"Re-dispatching stale dependent {dep['id']} (parent {task_id} gate passed)")
+                try:
+                    await _rebase_and_redispatch(dep, task)
+                except Exception as e:
+                    log.error(f"Failed to re-dispatch stale dependent {dep['id']}: {e}")
 
     # Auto-release worktree AFTER PR creation so worktree_path is still available
     await _auto_release_worktree(task_id)

@@ -581,13 +581,13 @@ class TestCheckAndDispatchWithAutoMerge:
                 await _check_and_dispatch_dependents("test-project/am-gate")
                 mock_merge.assert_awaited_once_with("test-project/am-gate")
 
-    async def test_chain_stops_on_merge_failure(self, db, sample_project):
-        """When auto-merge fails, dependents are NOT dispatched."""
+    async def test_mid_chain_skips_merge_dispatches_dependent(self, db, sample_project):
+        """Mid-chain task with auto_merge=True skips merge and dispatches dependent."""
         from switchboard.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
-            id="test-project/am-fail", project_id="test-project",
-            goal="Merge fail", auto_merge=True,
+            id="test-project/am-mid", project_id="test-project",
+            goal="Mid chain", auto_merge=True,
         )
         await db.update_task(task["id"],
             status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
@@ -595,15 +595,16 @@ class TestCheckAndDispatchWithAutoMerge:
 
         dep = await db.create_task(
             id="test-project/am-dep", project_id="test-project",
-            goal="Dependent", depends_on="test-project/am-fail",
+            goal="Dependent", depends_on="test-project/am-mid",
         )
 
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=False)):
+        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock()) as mock_merge:
             with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
-                await _check_and_dispatch_dependents("test-project/am-fail")
+                await _check_and_dispatch_dependents("test-project/am-mid")
 
-        # Dependent should NOT have been dispatched
-        self.mock_dispatch.assert_not_awaited()
+        # Mid-chain: merge should NOT be called, dependent SHOULD be dispatched
+        mock_merge.assert_not_awaited()
+        self.mock_dispatch.assert_awaited_once()
 
     async def test_queue_drained_after_chain(self, db, sample_project):
         """_drain_queue is called at the end of _check_and_dispatch_dependents."""
