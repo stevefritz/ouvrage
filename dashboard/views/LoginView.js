@@ -47,15 +47,14 @@ export function LoginView() {
             } else {
                 // Success — redirect
                 const target = data.redirect || nextUrl;
-                if (target.startsWith('/oauth/')) {
-                    // OAuth flow — navigate to authorize endpoint (which redirects
-                    // to Claude.ai callback). Claude Desktop handles the callback
-                    // and this tab ends up on claude.ai doing nothing.
-                    // Open OAuth in a popup, keep this tab on the dashboard.
-                    window.open(target, '_blank', 'width=500,height=600');
-                    window.location.href = '/foreman/';
+                if (target.startsWith('/oauth/') && window.opener) {
+                    // Desktop app flow — we're in a popup opened by the app.
+                    // Navigate to authorize endpoint (redirects to callback),
+                    // the app intercepts it.
+                    window.location.href = target;
                     return;
                 }
+                // Normal flow (claude.ai website, direct browser) — follow redirect
                 window.location.href = target;
             }
         } catch (err) {
