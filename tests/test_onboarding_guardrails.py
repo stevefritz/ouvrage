@@ -198,6 +198,13 @@ class TestDispatchTaskCredentialGuardNoUser:
 class TestCreateProjectPATGuard:
     """create_project must reject before DB write when PAT is missing or invalid."""
 
+    @pytest.fixture(autouse=True)
+    def force_credential_check(self):
+        """Disable the SKIP_CREDENTIAL_CHECK bypass so the PAT guard fires."""
+        import switchboard.server.handlers.projects as proj_module
+        with patch.object(proj_module, "SKIP_CREDENTIAL_CHECK", False):
+            yield
+
     _BASE_ARGS = {
         "id": "new-project",
         "repo": "https://github.com/acme/new-repo.git",
