@@ -1517,7 +1517,7 @@ async def _handle_get_user_settings(scope, send):
 
     creds = await db.get_user_credentials(user_id) or {}
     ant_key = creds.get("anthropic_api_key")
-    credential_bypass = _settings.SKIP_CREDENTIAL_CHECK or _settings.HAS_CLAUDE_BINARY
+    credential_bypass = _settings.SKIP_CREDENTIAL_CHECK
     anthropic_info = {
         "configured": bool(ant_key),
         "key_last4": ant_key[-4:] if ant_key else None,

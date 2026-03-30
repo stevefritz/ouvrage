@@ -1,7 +1,6 @@
 """Environment variable reads and runtime settings for Switchboard."""
 
 import os
-import shutil
 
 # ---------------------------------------------------------------------------
 # Database
@@ -90,11 +89,5 @@ OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")  # claude-mcp client
 
 # SKIP_CREDENTIAL_CHECK — when true, dispatch_task skips the Anthropic API key
 # check and create_project skips the PAT-exists check (clone validation still
-# runs if a PAT IS configured).  Intended for CC-subscription users who
-# authenticate via the Claude Code binary rather than an explicit API key.
+# runs if a PAT IS configured).  Explicit opt-in only — must be set in env.
 SKIP_CREDENTIAL_CHECK = os.environ.get("SKIP_CREDENTIAL_CHECK", "false").lower() in ("true", "1", "yes")
-
-# HAS_CLAUDE_BINARY — true if the `claude` or `claude-code` binary is on PATH.
-# Treated as an implicit bypass for the Anthropic API key check: CC workers
-# authenticate via the subscription, not via an explicit API key.
-HAS_CLAUDE_BINARY = bool(shutil.which("claude") or shutil.which("claude-code"))

@@ -94,7 +94,6 @@ class TestDispatchTaskCredentialGuard:
             with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=True):
                 with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=False):
                     with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
-                        with patch.object(tasks_module, "HAS_CLAUDE_BINARY", False):
                             yield
 
     async def test_dispatch_without_anthropic_key_returns_error(self, db, sample_project, user_without_anthropic_key):
@@ -160,7 +159,6 @@ class TestDispatchTaskCredentialGuardNoUser:
             with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=False):
                 with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=True):
                     with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
-                        with patch.object(tasks_module, "HAS_CLAUDE_BINARY", False):
                             yield
 
     async def test_dispatch_no_user_no_owner_key_returns_error(self, db, sample_project, owner_user):

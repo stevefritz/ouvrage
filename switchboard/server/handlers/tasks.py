@@ -12,7 +12,7 @@ from switchboard.notifications import slack as notify
 import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
 from switchboard.server.context import get_request_user_id, get_request_is_token_auth, get_request_is_worker
-from switchboard.config.settings import SKIP_CREDENTIAL_CHECK, HAS_CLAUDE_BINARY
+from switchboard.config.settings import SKIP_CREDENTIAL_CHECK
 
 log = logging.getLogger("switchboard.server")
 
@@ -96,9 +96,8 @@ async def _handle_dispatch_task(arguments):
     caller_user_id = get_request_user_id()
 
     # Guard: require Anthropic API key before creating any task record.
-    # Bypassed when SKIP_CREDENTIAL_CHECK=true or a Claude Code binary is found on PATH
-    # (CC-subscription users authenticate via the binary, not an explicit API key).
-    if not (SKIP_CREDENTIAL_CHECK or HAS_CLAUDE_BINARY):
+    # Bypassed when SKIP_CREDENTIAL_CHECK=true (explicit opt-in via env var).
+    if not SKIP_CREDENTIAL_CHECK:
         if caller_user_id is not None:
             creds = await db.get_user_credentials(caller_user_id)
             if not creds or not creds.get("anthropic_api_key"):
