@@ -300,6 +300,9 @@ async def main():
             await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)
+        elif path == "/dashboard" or path == "/dashboard/":
+            await send({"type": "http.response.start", "status": 302, "headers": [[b"location", b"/foreman"]]})
+            await send({"type": "http.response.body", "body": b""})
         elif path.startswith("/dashboard"):
             await _serve_dashboard(scope, send)
         elif path.startswith("/foreman"):
