@@ -412,6 +412,16 @@ def auth_middleware(inner_app):
         if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
+        # Redirect unknown paths to /foreman — only /mcp and /mcp/worker need JWT
+        if path not in ("/mcp", "/mcp/worker"):
+            await send({
+                "type": "http.response.start",
+                "status": 302,
+                "headers": [[b"location", b"/foreman"]],
+            })
+            await send({"type": "http.response.body", "body": b""})
+            return
+
         # HEAD on /mcp returns protocol version (unauthenticated, for discovery)
         method = scope.get("method", "")
         if path == "/mcp" and method == "HEAD":
