@@ -179,6 +179,8 @@ async def _handle_usage(scope, receive, send) -> None:
             (month_start_iso,),
         )
         row = rows[0]
+        proj_rows = await conn.execute_fetchall("SELECT COUNT(*) AS projects_count FROM projects")
+        projects_count = proj_rows[0]["projects_count"] or 0
 
     tasks_this_month = row["tasks_this_month"] or 0
     total_cost_usd = round(float(row["total_cost_usd"] or 0.0), 6)
@@ -189,6 +191,7 @@ async def _handle_usage(scope, receive, send) -> None:
         "total_cost_usd": total_cost_usd,
         "active_tasks": active_tasks,
         "current_concurrency": active_tasks,
+        "projects_count": projects_count,
     })
 
 
