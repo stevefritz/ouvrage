@@ -328,8 +328,13 @@ async def main():
         elif path == "/oauth/revoke" and method == "POST":
             await oauth_server.handle_revoke(scope, receive, send)
         else:
-            await send({"type": "http.response.start", "status": 404, "headers": [[b"content-type", b"text/plain"]]})
-            await send({"type": "http.response.body", "body": b"Not Found"})
+            # Redirect unknown paths to /foreman (dashboard)
+            await send({
+                "type": "http.response.start",
+                "status": 302,
+                "headers": [[b"location", b"/foreman"]],
+            })
+            await send({"type": "http.response.body", "body": b""})
 
     # Wrap with auth middleware (always active — self-issued or external)
     protected_app = auth.auth_middleware(app)
