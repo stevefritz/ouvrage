@@ -12,6 +12,7 @@ from switchboard.notifications import slack as notify
 import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
 from switchboard.server.context import get_request_user_id, get_request_is_token_auth, get_request_is_worker
+from switchboard.config.settings import SKIP_CREDENTIAL_CHECK, HAS_CLAUDE_BINARY
 
 log = logging.getLogger("switchboard.server")
 
@@ -94,19 +95,22 @@ async def _handle_dispatch_task(arguments):
     task_id = f"{project_id}/{raw_id}" if "/" not in raw_id else raw_id
     caller_user_id = get_request_user_id()
 
-    # Guard: require Anthropic API key before creating any task record
-    if caller_user_id is not None:
-        creds = await db.get_user_credentials(caller_user_id)
-        if not creds or not creds.get("anthropic_api_key"):
-            return {"error": "Add your Anthropic API key in Settings before dispatching tasks."}
-    else:
-        # No authenticated user — check the instance owner's credentials
-        instance = await db.get_instance()
-        owner_id = instance.get("owner_user_id") if instance else None
-        if owner_id:
-            creds = await db.get_user_credentials(owner_id)
+    # Guard: require Anthropic API key before creating any task record.
+    # Bypassed when SKIP_CREDENTIAL_CHECK=true or a Claude Code binary is found on PATH
+    # (CC-subscription users authenticate via the binary, not an explicit API key).
+    if not (SKIP_CREDENTIAL_CHECK or HAS_CLAUDE_BINARY):
+        if caller_user_id is not None:
+            creds = await db.get_user_credentials(caller_user_id)
             if not creds or not creds.get("anthropic_api_key"):
                 return {"error": "Add your Anthropic API key in Settings before dispatching tasks."}
+        else:
+            # No authenticated user — check the instance owner's credentials
+            instance = await db.get_instance()
+            owner_id = instance.get("owner_user_id") if instance else None
+            if owner_id:
+                creds = await db.get_user_credentials(owner_id)
+                if not creds or not creds.get("anthropic_api_key"):
+                    return {"error": "Add your Anthropic API key in Settings before dispatching tasks."}
 
     # Resolve held default: standalone tasks held=true, chain tasks held=false
     held = arguments.get("held")

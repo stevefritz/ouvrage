@@ -77,7 +77,7 @@ const TIMEZONES = [
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const color = type === 'success' ? colors.green : colors.red;
+    const color = type === 'success' ? colors.green : type === 'info' ? colors.blue : colors.red;
     return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
 }
 
@@ -275,7 +275,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [feedback, setFeedback] = useState(null);
-    const [editing, setEditing] = useState(!anthropic.configured);
+    const [editing, setEditing] = useState(!anthropic.configured && !anthropic.skip_credential_check);
 
     const handleSave = useCallback(async () => {
         if (!key.trim()) return;
@@ -312,7 +312,11 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     }, []);
 
     const statusText = !editing
-        ? (anthropic.configured ? 'Configured' : 'Not set — required to dispatch tasks')
+        ? (anthropic.configured
+            ? 'Configured'
+            : anthropic.skip_credential_check
+                ? 'Bypassed via environment'
+                : 'Not set — required to dispatch tasks')
         : undefined;
     const maskedValue = (!editing && anthropic.key_last4) ? `····${anthropic.key_last4}` : undefined;
 
@@ -350,14 +354,19 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
             <${CredentialCard}
                 icon="🔑"
                 name="Anthropic API key"
-                connected=${anthropic.configured}
+                connected=${anthropic.configured || anthropic.skip_credential_check}
                 statusText=${statusText}
                 maskedValue=${maskedValue}
-                onUpdate=${editing ? undefined : () => setEditing(true)}
-                onTest=${(!editing && !testing && anthropic.configured) ? handleTest : undefined}
+                onUpdate=${(editing || anthropic.skip_credential_check) ? undefined : () => setEditing(true)}
+                onTest=${(!editing && !testing && anthropic.configured && !anthropic.skip_credential_check) ? handleTest : undefined}
             >
                 ${editing ? editForm : null}
             </${CredentialCard}>
+            ${anthropic.skip_credential_check && !anthropic.configured && html`
+                <div style=${{ padding: '4px 16px 0' }}>
+                    <${FeedbackBanner} message="Credential checks bypassed via environment" type="info" />
+                </div>
+            `}
             ${feedback && html`
                 <div style=${{ padding: '4px 16px 0' }}>
                     <${FeedbackBanner} message=${feedback.message} type=${feedback.type} />
@@ -767,6 +776,90 @@ function ApiTokensSection() {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// Runtime Environment section
+// ══════════════════════════════════════════════════════════════════════════
+
+function RuntimeSection() {
+    const [runtimes, setRuntimes] = useState(null);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        api.getRuntimeInfo()
+            .then(setRuntimes)
+            .catch(e => setError(e.message));
+    }, []);
+
+    return html`
+        <div style=${{ marginBottom: '28px' }}>
+            <${SectionHeader} text="Available Runtimes" />
+
+            <div style=${styles.card}>
+                ${error && html`
+                    <div style=${{ fontSize: '13px', color: colors.yellow }}>${error}</div>
+                `}
+
+                ${!runtimes && !error && html`
+                    <div style=${{ fontSize: '13px', color: colors.textSecondary }}>
+                        Loading runtimes…
+                    </div>
+                `}
+
+                ${runtimes && html`
+                    <div style=${{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                        gap: '8px',
+                        marginBottom: '14px',
+                    }}>
+                        ${runtimes.map(r => html`
+                            <div key=${r.key} style=${{
+                                background: colors.surface,
+                                border: `0.5px solid ${colors.borderSubtle}`,
+                                borderRadius: '6px',
+                                padding: '10px 12px',
+                            }}>
+                                <div style=${{
+                                    fontSize: '13px',
+                                    fontWeight: 500,
+                                    color: colors.text,
+                                    marginBottom: '3px',
+                                }}>${r.name}</div>
+                                <div style=${{
+                                    fontSize: '12px',
+                                    color: r.version === 'not installed' ? colors.textTertiary : colors.textSecondary,
+                                    fontStyle: r.version === 'not installed' ? 'italic' : 'normal',
+                                }}>${r.version}</div>
+                                ${r.pkg_manager && html`
+                                    <div style=${{
+                                        fontSize: '11px',
+                                        color: colors.textTertiary,
+                                        marginTop: '2px',
+                                    }}>${r.pkg_manager}</div>
+                                `}
+                            </div>
+                        `)}
+                    </div>
+
+                    <div style=${{
+                        fontSize: '12px',
+                        color: colors.textTertiary,
+                        lineHeight: 1.5,
+                        borderTop: `0.5px solid ${colors.borderSubtle}`,
+                        paddingTop: '10px',
+                    }}>
+                        These runtimes are pre-installed in your Foreman instance.
+                        Use the project's Setup Command to install your project's specific dependencies
+                        (e.g. <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>composer install</code>,
+                        <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>pip install -r requirements.txt</code>).
+                    </div>
+                `}
+            </div>
+        </div>
+    `;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // Main Settings component
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -1044,6 +1137,9 @@ export function Settings() {
                     `}
                 </div>
             </div>
+
+            <!-- ═══ AVAILABLE RUNTIMES section ═══ -->
+            <${RuntimeSection} />
         </div>
     `;
 }

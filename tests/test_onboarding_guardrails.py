@@ -88,11 +88,14 @@ class TestDispatchTaskCredentialGuard:
 
     @pytest.fixture(autouse=True)
     def patch_context(self, owner_user):
-        """Set MCP request context to the owner user."""
+        """Set MCP request context to the owner user; disable bypass flags so the guard fires."""
+        import switchboard.server.handlers.tasks as tasks_module
         with patch("switchboard.server.handlers.tasks.get_request_user_id", return_value=owner_user["id"]):
             with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=True):
                 with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=False):
-                    yield
+                    with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
+                        with patch.object(tasks_module, "HAS_CLAUDE_BINARY", False):
+                            yield
 
     async def test_dispatch_without_anthropic_key_returns_error(self, db, sample_project, user_without_anthropic_key):
         """dispatch_task with no key → error dict, no task row created."""
@@ -151,11 +154,14 @@ class TestDispatchTaskCredentialGuardNoUser:
 
     @pytest.fixture(autouse=True)
     def patch_context_no_user(self):
-        """Simulate no authenticated user (worker path)."""
+        """Simulate no authenticated user (worker path); disable bypass flags so the guard fires."""
+        import switchboard.server.handlers.tasks as tasks_module
         with patch("switchboard.server.handlers.tasks.get_request_user_id", return_value=None):
             with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=False):
                 with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=True):
-                    yield
+                    with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
+                        with patch.object(tasks_module, "HAS_CLAUDE_BINARY", False):
+                            yield
 
     async def test_dispatch_no_user_no_owner_key_returns_error(self, db, sample_project, owner_user):
         """No user context but instance owner has no key → reject with error."""

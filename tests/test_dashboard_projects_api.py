@@ -328,3 +328,39 @@ class TestPatchProject:
 
         assert resp.status == 200
         assert resp.json()["id"] == proj_id
+
+    async def test_patch_project_sets_github_pat_override(self, db):
+        """PATCH with a PAT value encrypts and stores it; DB has a non-null value."""
+        import switchboard.db as sw_db
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"github_pat_override": "ghp_testtoken123"}), resp)
+
+        assert resp.status == 200
+        # The response won't expose the raw token; just check DB stores something non-null
+        project = await sw_db.get_project(proj_id)
+        assert project["github_pat_override"] is not None
+        assert project["github_pat_override"] != ""
+
+    async def test_patch_project_clears_github_pat_override(self, db):
+        """PATCH with empty string clears the stored PAT (sets to null in DB)."""
+        import switchboard.db as sw_db
+        from switchboard.dashboard.api import handle_request
+
+        # First, set a PAT
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"github_pat_override": "ghp_testtoken123"}), resp)
+        assert resp.status == 200
+
+        # Now clear it
+        resp2 = _Capture()
+        await handle_request(scope, _make_receive({"github_pat_override": ""}), resp2)
+        assert resp2.status == 200
+
+        project = await sw_db.get_project(proj_id)
+        assert project["github_pat_override"] is None
