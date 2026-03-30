@@ -11,12 +11,13 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'https://esm.sh/preact@10.25.4/hooks';
 import { api } from '../api.js';
-import { colors, typography, statusColors, statusBgs, layout, animation } from '../tokens.js';
+import { colors, typography, statusColors, statusBgs, layout, animation, spacing } from '../tokens.js';
 import { StatusDot } from '../components/StatusDot.js';
 import { GateDots } from '../components/GateDots.js';
 import { Tag } from '../components/Tag.js';
 import { relativeTime } from '../components/utils.js';
 import { routes } from '../router.js';
+import { ImageLightbox, isImageFile } from '../components/ImageLightbox.js';
 
 const html = htm.bind(h);
 
@@ -1430,6 +1431,7 @@ function FilesDrawer({ taskId }) {
     const [error, setError] = useState(null);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [copiedId, setCopiedId] = useState(null);
+    const [lightboxFile, setLightboxFile] = useState(null);
     const inputRef = useRef(null);
 
     const loadFiles = useCallback(async () => {
@@ -1563,60 +1565,96 @@ function FilesDrawer({ taskId }) {
                     ` : null}
 
                     <!-- File list -->
-                    ${files.map(f => html`
+                    ${files.map(f => {
+                        const isImg = isImageFile(f.filename);
+                        const downloadUrl = `/dashboard/api/files/${f.id}/download`;
+                        return html`
                         <div key=${f.id} style=${{
+                            display: 'flex', alignItems: 'flex-start', gap: '8px',
                             padding: '8px 0',
                             borderBottom: `1px solid ${colors.borderSubtle}`,
                         }}>
-                            <!-- Line 1: icon + filename (truncated) + source label -->
-                            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, marginBottom: '4px' }}>
-                                <span style=${{ fontSize: '14px', flexShrink: 0 }}>${taskFileIcon(f.mime_type)}</span>
-                                <span style=${{
-                                    fontSize: typography.size.sm, fontWeight: typography.weight.medium,
-                                    color: colors.text, overflow: 'hidden',
-                                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                    flex: 1, minWidth: 0,
-                                }} title=${f.filename}>${f.filename}</span>
-                                <span style=${{
-                                    fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
-                                    fontStyle: 'italic',
-                                }}>${f.uploaded_by ? `📎 uploaded` : `🤖 CC`}</span>
-                            </div>
-                            <!-- Line 2: size + path (truncated) + action buttons -->
-                            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flexWrap: 'wrap' }}>
-                                <span style=${{
-                                    fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
-                                }}>${formatFileSize(f.size_bytes)}</span>
-                                <span style=${{
-                                    fontFamily: typography.fontMono, fontSize: '11px',
-                                    color: colors.textSecondary, overflow: 'hidden',
-                                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                    flex: 1, minWidth: 0,
-                                }} title=${f.stored_path}>${f.stored_path}</span>
-                                <button
-                                    style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
-                                    onClick=${() => handleCopy(f.id, f.stored_path)}
-                                >${copiedId === f.id ? 'Copied!' : 'Copy path'}</button>
-                                <a
-                                    href=${`/dashboard/api/files/${f.id}/download`}
-                                    target="_blank" rel="noopener"
-                                    style=${smallBtn}
-                                >↓ Download</a>
-                                ${deleteConfirm === f.id ? html`
-                                    <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-                                        <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
-                                        <button style=${{ ...smallBtn, color: colors.red, borderColor: colors.red }}
-                                            onClick=${() => handleDelete(f.id)}>Yes</button>
-                                        <button style=${smallBtn}
-                                            onClick=${() => setDeleteConfirm(null)}>Cancel</button>
-                                    </span>
-                                ` : html`
-                                    <button style=${{ ...smallBtn, fontSize: '12px', padding: '1px 6px' }}
-                                        onClick=${() => setDeleteConfirm(f.id)}>✕</button>
-                                `}
+                            <!-- Thumbnail or icon -->
+                            ${isImg
+                                ? html`<img
+                                    src=${downloadUrl}
+                                    alt=${f.filename}
+                                    style=${{
+                                        width: '36px', height: '36px',
+                                        objectFit: 'cover', flexShrink: 0,
+                                        borderRadius: layout.borderRadius.sm,
+                                        border: `1px solid ${colors.border}`,
+                                        cursor: 'pointer',
+                                    }}
+                                    onClick=${() => setLightboxFile(f)}
+                                    title="Click to preview"
+                                />`
+                                : html`<span style=${{ fontSize: '14px', flexShrink: 0, paddingTop: '2px' }}>${taskFileIcon(f.mime_type)}</span>`
+                            }
+                            <!-- Info -->
+                            <div style=${{ flex: 1, minWidth: 0 }}>
+                                <!-- Line 1: filename + source label -->
+                                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, marginBottom: '4px' }}>
+                                    <span style=${{
+                                        fontSize: typography.size.sm, fontWeight: typography.weight.medium,
+                                        color: isImg ? colors.accent : colors.text,
+                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                        flex: 1, minWidth: 0, cursor: isImg ? 'pointer' : 'default',
+                                    }}
+                                    title=${f.filename}
+                                    onClick=${isImg ? () => setLightboxFile(f) : undefined}
+                                    >${f.filename}</span>
+                                    <span style=${{
+                                        fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
+                                        fontStyle: 'italic',
+                                    }}>${f.uploaded_by ? `📎 uploaded` : `🤖 CC`}</span>
+                                </div>
+                                <!-- Line 2: size + path (truncated) -->
+                                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, marginBottom: '4px' }}>
+                                    <span style=${{
+                                        fontSize: typography.size.xs, color: colors.textTertiary, flexShrink: 0,
+                                    }}>${formatFileSize(f.size_bytes)}</span>
+                                    <span style=${{
+                                        fontFamily: typography.fontMono, fontSize: '11px',
+                                        color: colors.textSecondary, overflow: 'hidden',
+                                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                        flex: 1, minWidth: 0,
+                                    }} title=${f.stored_path}>${f.stored_path}</span>
+                                </div>
+                                <!-- Line 3: action buttons -->
+                                <div style=${{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    <button
+                                        style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
+                                        onClick=${() => handleCopy(f.id, f.stored_path)}
+                                    >${copiedId === f.id ? 'Copied!' : 'Copy path'}</button>
+                                    <a
+                                        href=${downloadUrl}
+                                        target="_blank" rel="noopener"
+                                        style=${smallBtn}
+                                    >↓ Download</a>
+                                    ${deleteConfirm === f.id ? html`
+                                        <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+                                            <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
+                                            <button style=${{ ...smallBtn, color: colors.red, borderColor: colors.red }}
+                                                onClick=${() => handleDelete(f.id)}>Yes</button>
+                                            <button style=${smallBtn}
+                                                onClick=${() => setDeleteConfirm(null)}>Cancel</button>
+                                        </span>
+                                    ` : html`
+                                        <button style=${{ ...smallBtn, fontSize: '12px', padding: '1px 6px' }}
+                                            onClick=${() => setDeleteConfirm(f.id)}>✕</button>
+                                    `}
+                                </div>
                             </div>
                         </div>
-                    `)}
+                    `;})}
+                    ${lightboxFile && html`
+                        <${ImageLightbox}
+                            src=${`/dashboard/api/files/${lightboxFile.id}/download`}
+                            alt=${lightboxFile.filename}
+                            onClose=${() => setLightboxFile(null)}
+                        />
+                    `}
                 </div>
             ` : null}
         </div>

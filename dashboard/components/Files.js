@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@
 import { api } from '../api.js';
 import { styles, SectionHeader, ConfirmAction } from './FormKit.js';
 import { colors, typography, spacing, layout, animation } from '../tokens.js';
+import { ImageLightbox, isImageFile } from './ImageLightbox.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,8 +124,11 @@ function FileRow({ file, onRename, onDelete }) {
     const [editing, setEditing] = useState(false);
     const [editValue, setEditValue] = useState(file.filename);
     const [copied, setCopied] = useState(false);
-    const [hoverCopy, setHoverCopy] = useState(false);
+    const [lightbox, setLightbox] = useState(false);
     const inputRef = useRef(null);
+
+    const isImage = isImageFile(file.filename);
+    const downloadUrl = `/dashboard/api/files/${file.id}/download`;
 
     useEffect(() => {
         if (editing && inputRef.current) {
@@ -157,34 +161,49 @@ function FileRow({ file, onRename, onDelete }) {
     }, [file.stored_path]);
 
     const rowStyle = {
-        display: 'grid',
-        gridTemplateColumns: '32px 1fr auto',
-        alignItems: 'center',
+        display: 'flex',
+        alignItems: 'flex-start',
         gap: spacing[3],
         padding: `${spacing[3]} ${spacing[4]}`,
         borderBottom: `0.5px solid ${colors.borderSubtle}`,
     };
 
-    const copyBtnStyle = {
+    const smallBtn = {
         fontSize: '11px',
         padding: '2px 8px',
         borderRadius: layout.borderRadius.sm,
         border: `1px solid ${colors.border}`,
-        background: hoverCopy ? colors.surfaceHover : 'transparent',
-        color: copied ? colors.green : colors.textTertiary,
+        background: 'transparent',
+        color: colors.textTertiary,
         cursor: 'pointer',
         fontFamily: 'inherit',
         flexShrink: 0,
-        transition: `background ${animation.durationFast}, color ${animation.durationFast}`,
     };
 
     return html`
         <div style=${rowStyle}>
-            <!-- Icon -->
-            <span style=${{ fontSize: '20px', textAlign: 'center' }}>${fileIcon(file.mime_type)}</span>
+            <!-- Thumbnail or icon -->
+            ${isImage
+                ? html`<img
+                    src=${downloadUrl}
+                    alt=${file.filename}
+                    style=${{
+                        width: '36px',
+                        height: '36px',
+                        objectFit: 'cover',
+                        borderRadius: layout.borderRadius.sm,
+                        border: `1px solid ${colors.border}`,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                    }}
+                    onClick=${() => setLightbox(true)}
+                    title="Click to preview"
+                />`
+                : html`<span style=${{ fontSize: '20px', textAlign: 'center', flexShrink: 0, width: '36px', paddingTop: '2px' }}>${fileIcon(file.mime_type)}</span>`
+            }
 
             <!-- Info -->
-            <div style=${{ minWidth: 0 }}>
+            <div style=${{ minWidth: 0, flex: 1 }}>
                 <!-- Filename -->
                 <div style=${{ marginBottom: '2px' }}>
                     ${editing
@@ -205,11 +224,11 @@ function FileRow({ file, onRename, onDelete }) {
                             style=${{
                                 fontSize: typography.size.sm,
                                 fontWeight: typography.weight.medium,
-                                color: colors.text,
-                                cursor: 'pointer',
+                                color: isImage ? colors.accent : colors.text,
+                                cursor: isImage ? 'pointer' : 'text',
                             }}
-                            onClick=${() => { setEditValue(file.filename); setEditing(true); }}
-                            title="Click to rename"
+                            onClick=${() => isImage ? setLightbox(true) : (setEditValue(file.filename), setEditing(true))}
+                            title=${isImage ? 'Click to preview' : 'Click to rename'}
                         >${file.filename}</span>`
                     }
                 </div>
@@ -220,31 +239,32 @@ function FileRow({ file, onRename, onDelete }) {
                     color: colors.textTertiary,
                     marginBottom: '4px',
                 }}>
-                    ${formatSize(file.size_bytes)} \u00B7 ${timeAgo(file.created_at)}
+                    ${formatSize(file.size_bytes)} · ${timeAgo(file.created_at)}
                 </div>
 
-                <!-- Path with copy -->
-                <div style=${{ display: 'flex', alignItems: 'center', gap: spacing[2] }}>
-                    <span style=${{
-                        fontFamily: typography.fontMono,
-                        fontSize: typography.size.xs,
-                        color: colors.textSecondary,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        minWidth: 0,
-                    }}>${file.stored_path}</span>
-                    <button
-                        style=${copyBtnStyle}
-                        onMouseEnter=${() => setHoverCopy(true)}
-                        onMouseLeave=${() => setHoverCopy(false)}
-                        onClick=${handleCopy}
-                    >${copied ? 'Copied!' : 'Copy'}</button>
-                </div>
+                <!-- Path -->
+                <div style=${{
+                    fontFamily: typography.fontMono,
+                    fontSize: typography.size.xs,
+                    color: colors.textSecondary,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                }}>${file.stored_path}</div>
             </div>
 
-            <!-- Delete -->
-            <div style=${{ flexShrink: 0 }}>
+            <!-- Actions — right-aligned, consistent across all rows -->
+            <div style=${{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: spacing[2],
+                flexShrink: 0,
+            }}>
+                <button
+                    style=${{ ...smallBtn, color: copied ? colors.green : colors.textTertiary }}
+                    onClick=${handleCopy}
+                >${copied ? 'Copied!' : 'Copy'}</button>
                 <${ConfirmAction}
                     label="Delete"
                     confirmLabel="Yes, delete"
@@ -254,6 +274,14 @@ function FileRow({ file, onRename, onDelete }) {
                 />
             </div>
         </div>
+
+        ${lightbox && html`
+            <${ImageLightbox}
+                src=${downloadUrl}
+                alt=${file.filename}
+                onClose=${() => setLightbox(false)}
+            />
+        `}
     `;
 }
 
