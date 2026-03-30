@@ -99,13 +99,14 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     if resolved:
         log.info(f"Task {task_id}: resolved {resolved} punchlist item(s)")
 
-    # Auto-merge if enabled (before chain advancement)
-    if task.get("auto_merge"):
+    dependents = await db.get_dependents(task_id)
+
+    # Auto-merge only at chain tail — mid-chain tasks just advance to the next dependent.
+    # Code flows downhill through the chain; the last task's branch IS the feature branch.
+    if task.get("auto_merge") and not dependents:
         merge_ok = await _perform_auto_merge(task_id)
         if not merge_ok:
             return  # Conflict or error — don't advance chain
-
-    dependents = await db.get_dependents(task_id)
     dispatched_any = False
     for dep in dependents:
         if dep["status"] == "ready" and not dep.get("held"):
