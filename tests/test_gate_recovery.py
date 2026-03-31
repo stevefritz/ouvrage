@@ -9,6 +9,7 @@ Covers:
 """
 
 import asyncio
+import os
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -177,16 +178,26 @@ class TestRunningGatesDispatchReview:
 
         assert "test-project/t1" not in _running_gates
 
-    async def test_duplicate_guard_skips_second_call(self, db, sample_project):
-        """If task_id is already in _running_gates, _dispatch_review returns immediately."""
+    async def test_duplicate_guard_skips_when_already_reviewing(self, db, sample_project):
+        """If gate_status is already 'reviewing', _dispatch_review returns immediately.
+
+        The duplicate guard uses gate_status (DB state) instead of _running_gates,
+        because _dispatch_review is called from within _run_test_gate_inner which
+        still holds the task in _running_gates.
+        """
         from switchboard.dispatch.gates import _dispatch_review
+
+        # Create a task with gate_status=reviewing to trigger duplicate guard
+        task = await db.create_task(
+            id="test-project/t1", project_id="test-project", goal="dup guard test",
+        )
+        await db.update_task("test-project/t1", gate_status="reviewing")
 
         inner_called = []
 
         async def _fake_inner(tid, proj, task):
             inner_called.append(tid)
 
-        _running_gates.add("test-project/t1")
         with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/t1", sample_project, {})
 
@@ -210,6 +221,16 @@ class TestResumeGatePipeline:
         self.mock_ensure_pushed = AsyncMock(return_value=True)
         self.mock_notify = AsyncMock()
 
+        # Patch os.path.exists to return True for fake worktree paths used by _make_task.
+        # This satisfies the worktree guard in _resume_gate_pipeline without creating
+        # real directories. All other paths delegate to the real os.path.exists.
+        _real_exists = os.path.exists
+
+        def _fake_exists(p):
+            if p == "/tmp/fake-worktree":
+                return True
+            return _real_exists(p)
+
         patches = [
             patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
             patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
@@ -219,6 +240,7 @@ class TestResumeGatePipeline:
             # retry_task and _check_and_dispatch_dependents are lazily imported from engine
             patch("switchboard.dispatch.engine.retry_task", self.mock_retry_task),
             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_dependents),
+            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()

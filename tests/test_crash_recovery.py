@@ -177,14 +177,23 @@ class TestRecoverGateSubtask:
 
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
+        import os as _os
         self.mock_run_test_gate = AsyncMock()
         self.mock_dispatch_review = AsyncMock()
+
+        _real_exists = _os.path.exists
+
+        def _fake_exists(p):
+            if p == "/tmp/fake-worktree":
+                return True
+            return _real_exists(p)
 
         patches = [
             patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
             patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
             patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()
@@ -198,7 +207,8 @@ class TestRecoverGateSubtask:
         parent = await db.create_task(id="test-project/parent", project_id="test-project",
                                        goal="Parent task")
         await db.update_task("test-project/parent", status="completed",
-                             gate_status="testing", auto_test=True)
+                             gate_status="testing", auto_test=True,
+                             worktree_path="/tmp/fake-worktree")
 
         # Create orphaned subtask
         await _create_orphan(db, task_id="test-project/review-sub",
@@ -220,7 +230,8 @@ class TestRecoverGateSubtask:
         parent = await db.create_task(id="test-project/parent-rev", project_id="test-project",
                                        goal="Parent task review")
         await db.update_task("test-project/parent-rev", status="completed",
-                             gate_status="reviewing", auto_review=True)
+                             gate_status="reviewing", auto_review=True,
+                             worktree_path="/tmp/fake-worktree")
 
         await _create_orphan(db, task_id="test-project/review-sub-2",
                              parent_task_id="test-project/parent-rev",

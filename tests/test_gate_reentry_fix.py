@@ -172,14 +172,24 @@ class TestResumePipelineReturnValues:
 
     @pytest.fixture(autouse=True)
     def _setup(self):
+        import os as _os
         from switchboard.dispatch._state import _running_gates
         _running_gates.clear()
+
+        _real_exists = _os.path.exists
+
+        def _fake_exists(p):
+            if p == "/tmp/fake-worktree":
+                return True
+            return _real_exists(p)
+
         patches = [
             patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
             patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
             patch("switchboard.dispatch.gates.notify", AsyncMock()),
             patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         self._patches = [p.start() for p in patches]
         yield
@@ -198,6 +208,7 @@ class TestResumePipelineReturnValues:
             status="completed",
             gate_status=gate_status,
             gate_retries=gate_retries,
+            worktree_path="/tmp/fake-worktree",
             pushed_at=db.now_iso(),
         )
 

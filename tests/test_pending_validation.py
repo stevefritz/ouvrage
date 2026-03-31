@@ -436,6 +436,7 @@ class TestRecoveryPendingValidation:
 
     async def test_pending_validation_no_gate_runs_test_gate(self, db, sample_project):
         from switchboard.dispatch.recovery import recover_orphaned_tasks
+        import os as _os
 
         # Update project to have a test_command
         await db.update_project("test-project", test_command="pytest")
@@ -448,7 +449,15 @@ class TestRecoveryPendingValidation:
         )
         await db.update_task("test-project/pv-recovery-1",
                              status="pending-validation",
-                             gate_status=None)
+                             gate_status=None,
+                             worktree_path="/tmp/fake-worktree")
+
+        _real_exists = _os.path.exists
+
+        def _fake_exists(p):
+            if p == "/tmp/fake-worktree":
+                return True
+            return _real_exists(p)
 
         with patch(
             "switchboard.dispatch.gates._run_test_gate",
@@ -456,7 +465,14 @@ class TestRecoveryPendingValidation:
         ) as mock_test_gate, patch(
             "switchboard.dispatch.gates._dispatch_review",
             new_callable=AsyncMock,
-        ) as mock_review:
+        ) as mock_review, patch(
+            "switchboard.dispatch.gates.os.path.exists",
+            side_effect=_fake_exists,
+        ), patch(
+            "switchboard.git.operations._ensure_branch_pushed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ):
             await recover_orphaned_tasks()
 
             mock_test_gate.assert_called_once()

@@ -483,8 +483,14 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
 
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     """Run a lightweight review subtask in the parent's worktree."""
-    if task_id in _running_gates:
-        log.warning(f"Review gate already running for {task_id}, skipping duplicate")
+    # Use gate_status as duplicate guard instead of _running_gates.
+    # _running_gates can't be used here because _dispatch_review is called from
+    # within _run_test_gate_inner, which still holds the task in _running_gates.
+    # Checking gate_status=="reviewing" (set at the start of _dispatch_review_inner)
+    # prevents true duplicates without blocking the normal test→review transition.
+    fresh = await db.get_task(task_id)
+    if fresh and fresh.get("gate_status") == "reviewing":
+        log.warning(f"Review already in progress for {task_id}, skipping duplicate")
         return
     _running_gates.add(task_id)
     try:
@@ -943,6 +949,20 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool 
         log.info(f"_resume_gate_pipeline: gate already running for {task_id}, skipping ({reason})")
         return await db.get_task(task_id)
 
+    # Guard: verify worktree exists before re-entering any gate path.
+    # If the worktree was released (e.g. task completed + auto-release), the gate
+    # cannot run. Set needs-review so a human can decide what to do.
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        log.warning(f"_resume_gate_pipeline: worktree missing for {task_id}, setting needs-review ({reason})")
+        await db.update_task(task_id, gate_status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="switchboard", type="status",
+            title="Gate recovery blocked — worktree missing",
+            content=f"Cannot resume gate pipeline: worktree not found. Reason: {reason}.",
+        )
+        return False
+
     gate = task.get("gate_status")
     gate_retries = task.get("gate_retries") or 0
     max_test_retries = task.get("max_test_retries") or task.get("max_gate_retries") or 3
@@ -997,7 +1017,11 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool 
         return True  # Gate was interrupted between test-pass and review — re-entering
 
     elif gate == "reviewing":
-        # Server died during review — start fresh (don't try to resume dead session)
+        # Server died during review — start fresh (don't try to resume dead session).
+        # Reset gate_status to test-passed so _dispatch_review's duplicate guard
+        # (which checks gate_status == "reviewing") doesn't block recovery.
+        await db.update_task(task_id, gate_status="test-passed")
+        task = await db.get_task(task_id)
         asyncio.create_task(_dispatch_review(task_id, project, task))
         return True  # Gate was interrupted mid-review — re-dispatching
 
