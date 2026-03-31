@@ -261,6 +261,11 @@ function FileRow({ file, onRename, onDelete }) {
                 gap: spacing[2],
                 flexShrink: 0,
             }}>
+                <a
+                    href=${downloadUrl}
+                    download=${file.filename}
+                    style=${smallBtn}
+                >Download</a>
                 <button
                     style=${{ ...smallBtn, color: copied ? colors.green : colors.textTertiary }}
                     onClick=${handleCopy}
