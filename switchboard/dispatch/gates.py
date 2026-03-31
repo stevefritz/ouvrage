@@ -911,8 +911,13 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
             )
 
 
-async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> dict | None:
+async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool | None:
     """Unified gate recovery — single entry point for recovering any interrupted gate state.
+
+    Returns True if the gate was interrupted and recovery was handled (gate re-entered).
+    Returns False if the gate state is a normal rejection (test-failed, review-failed,
+    needs-review) — the caller must launch a new CC session with feedback instead.
+    Returns None if the task or project was not found.
 
     Reads fresh state from DB at invocation time to avoid race conditions.
     Re-checks _running_gates before taking action to prevent races with normal completion.
@@ -958,28 +963,28 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> dict 
             pushed = await _ensure_branch_pushed(task_id, task)
             if not pushed:
                 await db.update_task(task_id, gate_status="push-failed")
-                return await db.get_task(task_id)
+                return True  # Handled (set push-failed state)
             await db.update_task(task_id, pushed_at=db.now_iso())
             task = await db.get_task(task_id)
         # Enter gate pipeline from top
         asyncio.create_task(_run_test_gate(task_id, project, task))
+        return True  # Gate interrupted before starting — re-entering pipeline
 
     elif gate == "testing":
         # Gate was running when server died — re-run (tests are idempotent)
         asyncio.create_task(_run_test_gate(task_id, project, task))
+        return True  # Gate was interrupted mid-test — re-running
 
     elif gate == "test-failed":
-        if gate_retries < max_test_retries:
-            # Reset gate_status=None so retry_task won't recurse back here
-            await db.update_task(task_id, gate_status=None)
-            from switchboard.dispatch.engine import retry_task
-            await retry_task(task_id)
-        else:
+        # Normal rejection — code needs fixing. DO NOT re-run gates.
+        # Return False so caller (recovery or retry_task) can launch CC with failure feedback.
+        if gate_retries >= max_test_retries:
             await db.update_task(task_id, gate_status="needs-review")
             await notify.task_needs_review(
                 task_id=task_id,
                 reason=f"Tests failed {gate_retries} times. Manual intervention needed.",
             )
+        return False  # Caller should launch CC retry (not gate retry)
 
     elif gate == "test-passed":
         # Tests passed but review never started
@@ -989,29 +994,29 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> dict 
             await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
             from switchboard.dispatch.engine import _check_and_dispatch_dependents
             await _check_and_dispatch_dependents(task_id)
+        return True  # Gate was interrupted between test-pass and review — re-entering
 
     elif gate == "reviewing":
         # Server died during review — start fresh (don't try to resume dead session)
         asyncio.create_task(_dispatch_review(task_id, project, task))
+        return True  # Gate was interrupted mid-review — re-dispatching
 
     elif gate == "review-failed":
-        if gate_retries < max_review_retries:
-            # Reset gate_status=None so retry_task won't recurse back here
-            await db.update_task(task_id, gate_status=None)
-            from switchboard.dispatch.engine import retry_task
-            await retry_task(task_id)
-        else:
+        # Normal rejection — code needs fixing. DO NOT re-run gates.
+        # Return False so caller (recovery or retry_task) can launch CC with review feedback.
+        if gate_retries >= max_review_retries:
             await db.update_task(task_id, gate_status="needs-review")
             await notify.task_needs_review(
                 task_id=task_id,
                 reason=f"Review failed {gate_retries} times. Manual intervention needed.",
             )
+        return False  # Caller should launch CC retry (not gate retry)
 
     elif gate == "needs-review":
-        # Give a fresh gate budget (same as original retry_task re-entry behavior)
-        await db.update_task(task_id, gate_status=None, gate_retries=0)
-        task = await db.get_task(task_id)
-        asyncio.create_task(_run_test_gate(task_id, project, task))
+        # Terminal state — user must decide. DO NOT re-run gates.
+        # Code was rejected and max retries exceeded (or review stalled twice).
+        # A new CC session needs the user's explicit direction.
+        return False  # Caller should not auto-retry; user intervention required
 
     elif gate == "push-failed":
         # Re-attempt push — if it succeeds, reset gate_status and re-enter pipeline
@@ -1023,14 +1028,15 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> dict 
             asyncio.create_task(_run_test_gate(task_id, project, task))
         else:
             log.info(f"_resume_gate_pipeline: {task_id} push still failing — leaving as push-failed (user must fix PAT)")
+        return True  # Handled (either re-entered pipeline or left in push-failed)
 
     elif gate == "passed":
         # Edge case: passed but gate_passed_at not set
         if not task.get("gate_passed_at"):
             from switchboard.dispatch.engine import _check_and_dispatch_dependents
             await _check_and_dispatch_dependents(task_id)
+        return True  # Handled
 
     else:
         log.warning(f"_resume_gate_pipeline: unknown gate_status={gate!r} for {task_id}")
-
-    return await db.get_task(task_id)
+        return False

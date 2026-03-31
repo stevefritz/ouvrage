@@ -190,7 +190,15 @@ async def recover_orphaned_tasks():
                 continue
             if gate is not None or (status == "pending-validation" and gate is None):
                 log.warning(f"Startup: recovering {task['id']} (status={status}, gate={gate})")
-                await _resume_gate_pipeline(task["id"], reason="startup recovery")
+                handled = await _resume_gate_pipeline(task["id"], reason="startup recovery")
+                if handled is False:
+                    # Rejection state (test-failed/review-failed) — launch CC retry so the
+                    # worker can fix the code. Skip needs-review: that's a terminal state
+                    # requiring user action, not automatic recovery.
+                    refreshed = await db.get_task(task["id"])
+                    if refreshed and refreshed.get("gate_status") in ("test-failed", "review-failed"):
+                        from switchboard.dispatch.engine import retry_task  # noqa: PLC0415
+                        await retry_task(task["id"])
 
     # Find orphaned working tasks.
     # NOTE: pid is never written by current SDK-based dispatch, so it will

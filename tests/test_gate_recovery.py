@@ -280,16 +280,17 @@ class TestResumeGatePipeline:
 
         self.mock_run_test_gate.assert_called_once()
 
-    async def test_test_failed_under_limit_calls_retry_task(self, db, sample_project):
-        """gate_status=test-failed with retries < max → reset gate_status, call retry_task."""
+    async def test_test_failed_under_limit_returns_false(self, db, sample_project):
+        """gate_status=test-failed with retries < max → return False (caller does CC retry)."""
         await _make_task(db, gate_status="test-failed", gate_retries=1)
 
-        await _resume_gate_pipeline("test-project/gate-task-1")
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
 
-        # gate_status should be reset to None before calling retry_task
+        assert result is False
+        # gate_status unchanged — caller decides how to handle
         task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_status"] is None
-        self.mock_retry_task.assert_called_once_with("test-project/gate-task-1")
+        assert task["gate_status"] == "test-failed"
+        self.mock_retry_task.assert_not_called()
 
     async def test_test_failed_at_limit_sets_needs_review(self, db, sample_project):
         """gate_status=test-failed with retries >= max → set needs-review."""
@@ -332,15 +333,17 @@ class TestResumeGatePipeline:
 
         self.mock_dispatch_review.assert_called_once()
 
-    async def test_review_failed_under_limit_calls_retry_task(self, db, sample_project):
-        """gate_status=review-failed with retries < max → reset gate_status, call retry_task."""
+    async def test_review_failed_under_limit_returns_false(self, db, sample_project):
+        """gate_status=review-failed with retries < max → return False (caller does CC retry)."""
         await _make_task(db, gate_status="review-failed", gate_retries=1)
 
-        await _resume_gate_pipeline("test-project/gate-task-1")
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
 
+        assert result is False
+        # gate_status unchanged — caller decides how to handle
         task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_status"] is None  # reset before retry_task
-        self.mock_retry_task.assert_called_once_with("test-project/gate-task-1")
+        assert task["gate_status"] == "review-failed"
+        self.mock_retry_task.assert_not_called()
 
     async def test_review_failed_at_limit_sets_needs_review(self, db, sample_project):
         """gate_status=review-failed with retries >= max_review_retries → needs-review."""
@@ -353,18 +356,24 @@ class TestResumeGatePipeline:
         assert task["gate_status"] == "needs-review"
         self.mock_notify.task_needs_review.assert_called_once()
 
-    async def test_needs_review_resets_retries_and_runs_test_gate(self, db, sample_project):
-        """gate_status=needs-review → reset gate_retries=0, run test gate."""
+    async def test_needs_review_returns_false(self, db, sample_project):
+        """gate_status=needs-review → return False (terminal state, user must decide).
+
+        needs-review means the code was rejected and max retries exceeded (or review stalled).
+        _resume_gate_pipeline must NOT re-run the gate pipeline — that would loop forever
+        because the same rejected code would fail review again. The caller must decide
+        whether to launch a new CC session (with user-provided direction) or wait.
+        """
         await _make_task(db, gate_status="needs-review", gate_retries=2)
 
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
 
+        assert result is False
+        # State should not change — gate_status stays needs-review
         task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_status"] is None
-        assert task["gate_retries"] == 0
-        self.mock_run_test_gate.assert_called_once()
+        assert task["gate_status"] == "needs-review"
+        assert task["gate_retries"] == 2
+        self.mock_run_test_gate.assert_not_called()
 
     async def test_push_failed_retry_succeeds(self, db, sample_project):
         """gate_status=push-failed, push succeeds → reset gate_status, run test gate."""
@@ -440,6 +449,38 @@ class TestResumeGatePipeline:
         """Returns None when task doesn't exist."""
         result = await _resume_gate_pipeline("test-project/nonexistent")
         assert result is None
+
+    async def test_returns_true_for_testing(self, db, sample_project):
+        """gate_status=testing → return True (gate was interrupted, recovery handled)."""
+        await _make_task(db, gate_status="testing")
+
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
+
+        assert result is True
+
+    async def test_returns_true_for_reviewing(self, db, sample_project):
+        """gate_status=reviewing → return True (gate was interrupted, recovery handled)."""
+        await _make_task(db, gate_status="reviewing")
+
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
+
+        assert result is True
+
+    async def test_returns_false_for_review_failed(self, db, sample_project):
+        """gate_status=review-failed → return False (code rejected, CC must retry)."""
+        await _make_task(db, gate_status="review-failed", gate_retries=1)
+
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
+
+        assert result is False
+
+    async def test_returns_false_for_test_failed(self, db, sample_project):
+        """gate_status=test-failed → return False (code rejected, CC must retry)."""
+        await _make_task(db, gate_status="test-failed", gate_retries=1)
+
+        result = await _resume_gate_pipeline("test-project/gate-task-1")
+
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
@@ -754,12 +795,12 @@ class TestMarkWorkingForRecovery:
 # ---------------------------------------------------------------------------
 
 class TestRetryTaskGateReentry:
-    """retry_task delegates to _resume_gate_pipeline for any non-None gate_status."""
+    """retry_task delegates to _resume_gate_pipeline only for interrupted gate states."""
 
     @pytest.fixture(autouse=True)
     def _setup(self):
         _running_gates.clear()
-        self.mock_resume_pipeline = AsyncMock(return_value={"id": "test-project/gate-task-1"})
+        self.mock_resume_pipeline = AsyncMock(return_value=True)
 
         patches = [
             patch("switchboard.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
@@ -772,16 +813,21 @@ class TestRetryTaskGateReentry:
             p.stop()
         _running_gates.clear()
 
-    async def test_completed_needs_review_delegates_to_pipeline(self, db, sample_project):
-        """completed + needs-review gate_status → _resume_gate_pipeline called."""
+    async def test_completed_needs_review_does_not_delegate_to_pipeline(self, db, sample_project):
+        """completed + needs-review → does NOT delegate to _resume_gate_pipeline (dispatches CC).
+
+        needs-review is a rejection state, not an interrupted gate. Re-entering the gate
+        pipeline would cause an infinite loop because the same rejected code would fail again.
+        """
         from switchboard.dispatch.engine import retry_task
         await _make_task(db, status="completed", gate_status="needs-review")
 
-        await retry_task("test-project/gate-task-1")
+        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            await retry_task("test-project/gate-task-1")
 
-        self.mock_resume_pipeline.assert_called_with(
-            "test-project/gate-task-1", reason="retry"
-        )
+        self.mock_resume_pipeline.assert_not_called()
+        mock_dispatch.assert_called_once()
 
     async def test_completed_testing_delegates_to_pipeline(self, db, sample_project):
         """completed + testing gate_status → _resume_gate_pipeline called."""

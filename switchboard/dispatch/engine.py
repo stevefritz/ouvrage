@@ -837,15 +837,18 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Special case: task completed/pending-validation/turns-exhausted, code already written,
-    # but gate is in an intermediate state. Delegate to _resume_gate_pipeline which handles
-    # ALL gate states (not just needs-review/review-failed).
+    # Gate was INTERRUPTED (process died mid-flight) — re-run the gate, don't re-run CC.
+    # Only interrupted states qualify: the code is fine, the gate just needs to run again.
+    # Normal rejections (test-failed, review-failed, needs-review) must NOT re-enter the gate
+    # pipeline — CC needs to run again with the feedback so it can fix the code.
+    INTERRUPTED_GATE_STATES = ("testing", "reviewing", "test-passed")
     if (task.get("status") in ("completed", "pending-validation", "turns-exhausted")
             and not task.get("gate_passed_at")
-            and task.get("gate_status") is not None):
-        log.info(f"retry_task {task_id}: delegating to _resume_gate_pipeline (gate_status={task.get('gate_status')})")
+            and task.get("gate_status") in INTERRUPTED_GATE_STATES):
+        log.info(f"retry_task {task_id}: gate was interrupted (gate_status={task.get('gate_status')}), re-entering gate pipeline")
         from switchboard.dispatch.gates import _resume_gate_pipeline  # lazy import
-        return await _resume_gate_pipeline(task_id, reason="retry")
+        await _resume_gate_pipeline(task_id, reason="retry")
+        return await db.get_task(task_id)
 
     await db.write_audit_log(
         task_id=task_id, action="retried",
