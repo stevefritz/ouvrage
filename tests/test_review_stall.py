@@ -549,19 +549,40 @@ class TestRetryTaskGatePipeline:
         await asyncio.sleep(0)
         mock_test_gate.assert_called_once()
 
-    async def test_retry_task_reruns_gate_for_completed_null_gate_status(self, db, sample_project):
-        """retry_task with completed + gate_status=None re-runs gate pipeline."""
+    async def test_retry_task_does_not_rerun_gate_for_completed_null_gate_status(self, db, sample_project):
+        """retry_task with completed + gate_status=None goes through normal dispatch path.
+
+        gate_status=None is ambiguous (gate never ran, or was reset) — it should NOT
+        trigger the gate-retry path. Only needs-review and review-failed do. This
+        ensures normal retries work correctly when gate_status is None.
+        """
         task = await self._make_stalled_task(db, sample_project, None)
-        # gate_status=None means gate never ran (or was reset)
         await db.update_task("test-project/stalled-gate-task", gate_status=None)
 
         mock_test_gate = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate):
+        mock_dispatch = AsyncMock(return_value={
+            "task_id": "test-project/stalled-gate-task",
+            "status": "working",
+            "phase": "analysis",
+            "worktree_path": "/tmp/fake",
+            "branch": "stalled-gate-task",
+            "session_id": None,
+            "dispatch_count": 2,
+            "max_turns": 50,
+            "max_wall_clock": 30,
+            "model": "sonnet",
+            "resumed": False,
+            "queued": False,
+        })
+        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
+             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
             from switchboard.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
         await asyncio.sleep(0)
-        mock_test_gate.assert_called_once()
+        # Gate pipeline should NOT have been called — normal dispatch path instead
+        mock_test_gate.assert_not_called()
+        mock_dispatch.assert_called_once()
 
     async def test_retry_task_resets_gate_retries(self, db, sample_project):
         """Gate retries counter is reset when re-running gate pipeline."""

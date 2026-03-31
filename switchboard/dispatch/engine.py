@@ -816,9 +816,11 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
 
     # Special case: task completed, code already written, but gate stalled/failed.
     # Re-run the gate pipeline (test → review) rather than launching a new CC session.
+    # Only applies when gate_status is explicitly needs-review or review-failed — NOT None,
+    # since None means "gate never ran" (normal retry path) vs "gate ran and stalled".
     if (task.get("status") == "completed"
             and not task.get("gate_passed_at")
-            and task.get("gate_status") in (None, "needs-review", "review-failed")):
+            and task.get("gate_status") in ("needs-review", "review-failed")):
         log.info(f"retry_task {task_id}: re-running gate pipeline (code complete, gate needs retry)")
         from switchboard.dispatch.gates import _run_test_gate  # lazy import
         project = await db.get_project(task["project_id"])
