@@ -930,7 +930,7 @@ async def _verify_worktree_exists(task_id: str, task: dict, reason: str) -> bool
     """
     worktree = task.get("worktree_path")
     if not worktree or not os.path.exists(worktree):
-        log.warning(f"_resume_gate_pipeline: worktree missing for {task_id}, setting needs-review ({reason})")
+        log.warning(f"_verify_worktree_exists: worktree missing for {task_id}, setting needs-review ({reason})")
         await db.update_task(task_id, gate_status="needs-review")
         await db.post_task_message(
             task_id=task_id, author="switchboard", type="status",
