@@ -576,3 +576,124 @@ class TestBareCloneAuth:
             if c.args[0] == "git" and "config" in c.args:
                 for arg in c.args:
                     assert self.PAT not in str(arg), f"PAT found in git config call: {c.args}"
+
+
+# ---------------------------------------------------------------------------
+# setup_worktree — existing worktree fetch fallback
+# ---------------------------------------------------------------------------
+
+class TestExistingWorktreeFetchFallback:
+    """setup_worktree must check fetch return code and fall back to authenticated URL on failure."""
+
+    PAT = "ghp_test_fetch_fallback"
+    PROJECT_ID = "fetch-proj"
+    REPO = "https://github.com/acme/widgets.git"
+    AUTH_URL = f"https://oauth2:{PAT}@github.com/acme/widgets.git"
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        # working_dir and worktree must align: worktree = os.path.join(working_dir, dir_name)
+        self.working_dir = str(tmp_path / "working")
+        os.makedirs(self.working_dir)
+        self.dir_name = "my-task-wt"
+        self.worktree_path = os.path.join(self.working_dir, self.dir_name)
+        os.makedirs(self.worktree_path)  # pre-create to trigger the existing-worktree code path
+
+        self.project = {
+            "id": self.PROJECT_ID,
+            "repo": self.REPO,
+            "working_dir": self.working_dir,
+            "default_branch": "main",
+        }
+        self.branch = "my-feature"
+
+        self.mock_run = AsyncMock()
+        self.patches = [
+            patch("switchboard.git.worktree._run_as_worker", self.mock_run),
+            patch("switchboard.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
+        ]
+        for p in self.patches:
+            p.start()
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_fetch_success_no_fallback(self):
+        """When fetch origin succeeds, fallback fetch is not attempted."""
+        from switchboard.git.worktree import setup_worktree
+
+        self.mock_run.return_value = (b"", b"", 0)  # all git commands succeed
+
+        await setup_worktree(self.project, self.dir_name, self.branch)
+
+        # There should be a 'fetch origin' call
+        fetch_calls = [c for c in self.mock_run.call_args_list if "fetch" in c.args]
+        assert len(fetch_calls) >= 1
+        assert any("origin" in c.args for c in fetch_calls)
+
+        # No authenticated URL should appear in any fetch call
+        auth_fetches = [c for c in fetch_calls if self.AUTH_URL in c.args]
+        assert len(auth_fetches) == 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_tries_authenticated_url(self):
+        """When fetch origin fails, it retries with the authenticated URL."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+
+        async def _side_effect(*args, **kwargs):
+            # Fail only fetch origin (not fetch with auth URL)
+            if "fetch" in args and "origin" in args and self.AUTH_URL not in args:
+                return (b"", b"network error", 1)
+            return (b"", b"", 0)  # everything else (including fallback fetch) succeeds
+
+        self.mock_run.side_effect = _side_effect
+
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            await setup_worktree(self.project, self.dir_name, self.branch)
+
+        # Authenticated URL should appear in a fetch call
+        fetch_calls = [c for c in self.mock_run.call_args_list if "fetch" in c.args]
+        auth_fetches = [c for c in fetch_calls if self.AUTH_URL in c.args]
+        assert len(auth_fetches) >= 1, (
+            f"Expected a fetch with authenticated URL after origin fetch failure. "
+            f"Fetch calls: {[c.args for c in fetch_calls]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_fallback_also_fails_raises(self):
+        """When both fetch origin and authenticated URL fetch fail, RuntimeError is raised."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
+
+        async def _side_effect(*args, **kwargs):
+            if "fetch" in args:
+                return (b"", b"network error", 1)  # all fetches fail
+            return (b"", b"", 0)
+
+        self.mock_run.side_effect = _side_effect
+
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with pytest.raises(RuntimeError, match="git fetch failed"):
+                await setup_worktree(self.project, self.dir_name, self.branch)
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_no_pat_raises(self):
+        """When fetch fails and no PAT is available, RuntimeError is raised."""
+        from switchboard.git.worktree import setup_worktree
+
+        mock_resolve = AsyncMock(side_effect=ValueError("No GitHub PAT configured"))
+
+        async def _side_effect(*args, **kwargs):
+            if "fetch" in args and "origin" in args:
+                return (b"", b"network error", 1)  # fetch origin fails
+            return (b"", b"", 0)
+
+        self.mock_run.side_effect = _side_effect
+
+        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+            with pytest.raises(RuntimeError, match="no PAT available"):
+                await setup_worktree(self.project, self.dir_name, self.branch)

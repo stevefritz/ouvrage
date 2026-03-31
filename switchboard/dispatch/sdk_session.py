@@ -806,8 +806,16 @@ async def _run_sdk_session(
 
                 # Still push and try the gate — CC may have finished the work
                 task = await db.get_task(task_id)
-                await _ensure_branch_pushed(task_id, task)
-                if not task.get("gate_passed_at"):
+                push_ok = await _ensure_branch_pushed(task_id, task)
+                if not push_ok:
+                    await db.update_task(task_id, gate_status="push-failed")
+                    await db.post_task_message(
+                        task_id=task_id, author="dispatcher", type="status",
+                        title="Gate pipeline blocked — push failed",
+                        content="Push failed. Gates will not run until code is pushed. "
+                                "Fix the PAT or push manually, then resume.",
+                    )
+                elif not task.get("gate_passed_at"):
                     project = await db.get_project(task["project_id"])
                     if task.get("auto_test") and project and project.get("test_command"):
                         await _run_test_gate(task_id, project, task)
@@ -914,10 +922,17 @@ async def _run_sdk_session(
 
                 # Auto-push branch before gate pipeline
                 task = await db.get_task(task_id)
-                await _ensure_branch_pushed(task_id, task)
-
+                push_ok = await _ensure_branch_pushed(task_id, task)
+                if not push_ok:
+                    await db.update_task(task_id, gate_status="push-failed")
+                    await db.post_task_message(
+                        task_id=task_id, author="dispatcher", type="status",
+                        title="Gate pipeline blocked — push failed",
+                        content="Push failed. Gates will not run until code is pushed. "
+                                "Fix the PAT or push manually, then resume.",
+                    )
                 # Check if this is a review task — process result on parent
-                if task.get("parent_task_id"):
+                elif task.get("parent_task_id"):
                     await _process_review_result(task_id, task["parent_task_id"])
                 elif task.get("gate_passed_at"):
                     # Gate already passed previously — this is a manual resume (e.g. fixing merge conflicts)

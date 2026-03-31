@@ -269,8 +269,9 @@ class TestEnsureBranchPushedPat:
         import os
 
         with patch.object(os.path, "exists", return_value=True):
-            # Remote branch exists, no unpushed commits
+            # credential helper check (no helper), then remote branch exists, no unpushed commits
             self.mock_run.side_effect = [
+                (b"", b"", 0),  # git config credential.helper — no cred helper
                 (b"abc refs/heads/br\n", b"", 0),  # ls-remote
                 (b"", b"", 0),  # git log (no unpushed)
             ]
@@ -280,7 +281,7 @@ class TestEnsureBranchPushedPat:
                 "branch": "br",
             })
 
-        ls_remote_call = self.mock_run.call_args_list[0]
+        ls_remote_call = self.mock_run.call_args_list[1]  # index 1: after cred helper check
         assert "ls-remote" in ls_remote_call.args
         assert "https://oauth2:ghp_test@github.com/acme/widgets.git" in ls_remote_call.args
 
