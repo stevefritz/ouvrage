@@ -220,11 +220,14 @@ class TestRetryTaskPendingValidation:
             yield
 
     async def test_pending_validation_with_stalled_gate_reruns_gate(self, db, sample_project):
-        """A pending-validation task with gate_status=review-failed should re-run gate, not launch CC."""
-        from switchboard.dispatch.engine import retry_task
+        """pending-validation task with gate_status=review-failed delegates to _resume_gate_pipeline.
 
-        # Need a project with test_command
-        await db.update_project("test-project", test_command="pytest tests/")
+        The old behavior re-ran the gate directly. The new behavior routes through
+        _resume_gate_pipeline which handles review-failed by dispatching a fresh CC session
+        to address the review feedback. This is the correct behavior: review-failed means
+        code needs fixing, not just re-reviewing the same code.
+        """
+        from switchboard.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/pv-stall",
@@ -236,10 +239,11 @@ class TestRetryTaskPendingValidation:
                              status="pending-validation",
                              gate_status="review-failed")
 
-        with patch("switchboard.dispatch.engine.asyncio.create_task") as mock_create_task:
+        mock_resume = AsyncMock(return_value={"id": "test-project/pv-stall"})
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
             await retry_task("test-project/pv-stall")
-            # create_task is called for the gate pipeline (not a CC session)
-            mock_create_task.assert_called_once()
+
+        mock_resume.assert_called_once_with("test-project/pv-stall", reason="retry")
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +486,12 @@ class TestRecoveryPendingValidation:
             mock_review.assert_not_called()
 
     async def test_pending_validation_review_failed_runs_review(self, db, sample_project):
+        """pending-validation + review-failed calls _resume_gate_pipeline at startup.
+
+        New behavior: startup recovery delegates to _resume_gate_pipeline for all gate states.
+        For review-failed, _resume_gate_pipeline dispatches a fresh CC session (correct behavior:
+        reviewer found code issues, code needs fixing before reviewing again).
+        """
         from switchboard.dispatch.recovery import recover_orphaned_tasks
 
         task = await db.create_task(
@@ -494,16 +504,13 @@ class TestRecoveryPendingValidation:
                              status="pending-validation",
                              gate_status="review-failed")
 
-        with patch(
-            "switchboard.dispatch.gates._run_test_gate",
-            new_callable=AsyncMock,
-        ) as mock_test_gate, patch(
-            "switchboard.dispatch.gates._dispatch_review",
-            new_callable=AsyncMock,
-        ) as mock_review:
+        mock_resume = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
             await recover_orphaned_tasks()
 
-            mock_review.assert_called_once()
+        mock_resume.assert_called_with(
+            "test-project/pv-review-failed", reason="startup recovery"
+        )
 
     async def test_pending_validation_gate_passed_dispatches_chain(self, db, sample_project):
         """pending-validation with gate_status=passed should dispatch chain."""

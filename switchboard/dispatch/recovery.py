@@ -46,11 +46,29 @@ async def mark_working_for_recovery():
     Sets recovery_priority so startup recovery knows these were killed by SIGTERM,
     not by a real failure. This runs in the lifespan.shutdown handler before the
     event loop dies.
+
+    Also logs tasks in active gate states for observability — with the in-memory
+    _running_gates approach, a restart automatically orphans all gates (empty set
+    on startup), so no special handling is required beyond logging.
     """
+    from switchboard.dispatch._state import _running_gates  # noqa: PLC0415
+
+    # Log any active gate coroutines for shutdown observability
+    if _running_gates:
+        log.info(f"Shutdown: {len(_running_gates)} gate(s) will be orphaned: {', '.join(sorted(_running_gates))}")
+
     working = await db.list_tasks(status="working")
     for task in working:
         await db.update_task(task["id"], recovery_priority=True)
         log.info(f"Shutdown: marked {task['id']} for recovery")
+
+    # Log tasks in active gate states — startup recovery will handle them via unified sweep
+    for gate_status in ("completed", "pending-validation", "turns-exhausted"):
+        gate_tasks = await db.list_tasks(status=gate_status)
+        for task in gate_tasks:
+            gate = task.get("gate_status")
+            if gate in ("testing", "reviewing"):
+                log.info(f"Shutdown: task {task['id']} has active gate_status={gate} — will recover on restart")
 
 
 def _classify_orphan(task: dict) -> tuple[int, str]:
@@ -152,54 +170,27 @@ async def recover_orphaned_tasks():
     Features staggered recovery, flap detection, and FIFO queue priority.
     """
     # Lazy imports to break circular dependency with dispatch.engine
-    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review  # noqa: PLC0415
+    from switchboard.dispatch.gates import _resume_gate_pipeline  # noqa: PLC0415
 
-    # Re-trigger gate for tasks stuck in test-failed/review-failed
-    # (this is independent of RECOVERY_ENABLED — it's existing behavior)
-    all_tasks = await db.list_tasks(status="completed")
-    for task in all_tasks:
-        gate = task.get("gate_status")
-        if gate in ("test-failed", "review-failed"):
-            log.warning(f"Startup recovery: task {task['id']} has gate_status={gate}, re-triggering gate")
-            project = await db.get_project(task["project_id"])
-            if not project:
+    # Unified sweep for tasks stuck in intermediate gate states across all terminal statuses.
+    # Replaces the previous separate Category 1 (completed) and Category 2 (pending-validation)
+    # sweeps with a single consistent sweep that also covers turns-exhausted.
+    for status in ("completed", "pending-validation", "turns-exhausted"):
+        stuck_tasks = await db.list_tasks(status=status)
+        for task in stuck_tasks:
+            gate = task.get("gate_status")
+            if task.get("gate_passed_at"):
+                # Gate passed but post-gate actions might have been missed
+                if gate == "passed":
+                    from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
+                    await _check_and_dispatch_dependents(task["id"])
                 continue
-            if gate == "test-failed" and task.get("auto_test") and project.get("test_command"):
-                await _run_test_gate(task["id"], project, task)
-            elif gate == "review-failed" and task.get("auto_review"):
-                await _dispatch_review(task["id"], project, task)
-
-    # Re-trigger gate for tasks stuck in pending-validation (server crashed during gate pipeline).
-    # These tasks have a CC session that finished but the gate pipeline never completed.
-    pending_tasks = await db.list_tasks(status="pending-validation")
-    for task in pending_tasks:
-        gate = task.get("gate_status")
-        # push-failed: don't auto-retry (user must fix PAT or push manually)
-        if gate == "push-failed":
-            continue
-        log.warning(f"Startup recovery: task {task['id']} stuck in pending-validation (gate_status={gate}), re-entering gate pipeline")
-        project = await db.get_project(task["project_id"])
-        if not project:
-            continue
-        if gate == "passed":
-            # Gates passed but chain dispatch was missed
-            from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
-            await _check_and_dispatch_dependents(task["id"])
-        elif gate in ("reviewing", "review-failed") and task.get("auto_review"):
-            await _dispatch_review(task["id"], project, task)
-        elif gate in (None, "testing", "test-failed", "test-passed"):
-            # test-passed: tests passed but review never started
-            if gate == "test-passed" and task.get("auto_review"):
-                await _dispatch_review(task["id"], project, task)
-            elif task.get("auto_test") and project.get("test_command"):
-                await _run_test_gate(task["id"], project, task)
-            elif task.get("auto_review"):
-                await _dispatch_review(task["id"], project, task)
-            else:
-                # No gates configured — set gate_passed_at and advance chain
-                await db.update_task(task["id"], gate_status="passed", gate_passed_at=db.now_iso())
-                from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
-                await _check_and_dispatch_dependents(task["id"])
+            if gate == "push-failed":
+                log.info(f"Startup: skipping {task['id']} (push-failed, requires manual fix)")
+                continue
+            if gate is not None or (status == "pending-validation" and gate is None):
+                log.warning(f"Startup: recovering {task['id']} (status={status}, gate={gate})")
+                await _resume_gate_pipeline(task["id"], reason="startup recovery")
 
     # Find orphaned working tasks.
     # NOTE: pid is never written by current SDK-based dispatch, so it will
@@ -460,7 +451,8 @@ async def check_stalled_tasks():
     """Background loop: check for working tasks with no recent activity or dead processes."""
     # Lazy imports to break circular dependency
     from switchboard.dispatch.engine import retry_task  # noqa: PLC0415
-    from switchboard.dispatch._state import _active_clients
+    from switchboard.dispatch._state import _active_clients, _running_gates
+    from switchboard.dispatch.gates import _resume_gate_pipeline  # noqa: PLC0415
 
     while True:
         try:
@@ -515,6 +507,25 @@ async def check_stalled_tasks():
                                         "Initiating auto-recovery.",
                             )
                             await _recover_single_task(task_obj)
+
+            # Check for orphaned gate processes (testing/reviewing with no live coroutine)
+            for gate_status in ("completed", "pending-validation", "turns-exhausted"):
+                gate_tasks = await db.list_tasks(status=gate_status)
+                for task in gate_tasks:
+                    gate = task.get("gate_status")
+                    if gate not in ("testing", "reviewing"):
+                        continue  # Only active gate states need liveness checking
+                    if task["id"] in _running_gates:
+                        continue  # Gate coroutine is alive
+                    # Check grace period — 120 seconds to avoid racing with normal startup
+                    last_activity = task.get("last_activity") or task.get("updated_at")
+                    if not last_activity:
+                        continue
+                    last = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                    idle = (now - last).total_seconds()
+                    if idle > 120:
+                        log.warning(f"Background: recovering {task['id']} (gate={gate}, idle {idle:.0f}s)")
+                        await _resume_gate_pipeline(task["id"], reason="background monitor")
 
             # Check for ready tasks whose parents have passed — missed chain advancement
             ready_tasks = await db.list_tasks(status="ready")

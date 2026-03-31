@@ -538,16 +538,23 @@ class TestRetryTaskGatePipeline:
         assert task_id_called == "test-project/stalled-gate-task"
 
     async def test_retry_task_reruns_gate_for_completed_review_failed(self, db, sample_project):
-        """retry_task with completed + gate_status=review-failed re-runs gate pipeline."""
+        """retry_task with completed + gate_status=review-failed delegates to _resume_gate_pipeline.
+
+        review-failed means the reviewer found code issues that need fixing.
+        _resume_gate_pipeline handles the routing (resets gate_status, calls retry_task for
+        a fresh CC session so the worker can address the review feedback).
+        """
         task = await self._make_stalled_task(db, sample_project, "review-failed")
 
-        mock_test_gate = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate):
+        mock_resume_pipeline = AsyncMock(return_value={"id": "test-project/stalled-gate-task"})
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
-        await asyncio.sleep(0)
-        mock_test_gate.assert_called_once()
+        # retry_task should delegate to _resume_gate_pipeline for any non-None gate_status
+        mock_resume_pipeline.assert_called_once_with(
+            "test-project/stalled-gate-task", reason="retry"
+        )
 
     async def test_retry_task_does_not_rerun_gate_for_completed_null_gate_status(self, db, sample_project):
         """retry_task with completed + gate_status=None goes through normal dispatch path.
