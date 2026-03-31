@@ -144,6 +144,7 @@ async def _run_dispatch_review(task, project, captured, fake_run_subtask):
     from switchboard.dispatch.gates import _dispatch_review
 
     with patch("switchboard.db.update_task", AsyncMock()), \
+         patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
          patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
          patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
          patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
@@ -171,6 +172,7 @@ class TestDispatchReviewComponentContext:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
@@ -199,6 +201,7 @@ class TestDispatchReviewComponentContext:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
@@ -234,6 +237,7 @@ class TestDispatchReviewPromptStructure:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
@@ -340,6 +344,7 @@ class TestDispatchReviewPunchlistClaims:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
@@ -373,6 +378,7 @@ class TestDispatchReviewPunchlistClaims:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
@@ -412,6 +418,7 @@ class TestDispatchReviewPriorReviewHistory:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
@@ -463,6 +470,7 @@ class TestDispatchReviewPriorReviewHistory:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
@@ -502,6 +510,7 @@ class TestDispatchReviewFetchBeforeDiff:
             return {"status": "completed"}
 
         with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
              patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
              patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \

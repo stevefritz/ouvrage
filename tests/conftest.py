@@ -1,3 +1,4 @@
+import os
 import threading
 
 def pytest_sessionfinish(session, exitstatus):
@@ -7,3 +8,5 @@ def pytest_sessionfinish(session, exitstatus):
         print(f"\n⚠️  {len(alive)} non-daemon threads blocking exit:")
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
+        # Force exit — don't let leaked aiosqlite threads hold the process hostage
+        os._exit(exitstatus)

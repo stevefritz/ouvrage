@@ -72,6 +72,7 @@ class TestInvalidateChain:
         patches = [
             patch("switchboard.db.get_dependents", self.mock_get_dependents),
             patch("switchboard.db.update_task", self.mock_update_task),
+            patch("switchboard.db.write_audit_log", AsyncMock()),
             patch("switchboard.dispatch.engine.cancel_task", self.mock_cancel_task),
         ]
         for p in patches:
@@ -163,6 +164,7 @@ class TestProcessReviewResultInline:
             patch("switchboard.db.read_task_messages", self.mock_read_msgs),
             patch("switchboard.db.update_task", self.mock_update_task),
             patch("switchboard.db.get_task", self.mock_get_task),
+            patch("switchboard.db.write_audit_log", AsyncMock()),
             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_deps),
             patch("switchboard.dispatch.engine.retry_task", self.mock_retry),
             patch("switchboard.notifications.slack.task_needs_review", self.mock_notify),
@@ -277,10 +279,13 @@ class TestCheckAndDispatchDependents:
         self.mock_auto_release = AsyncMock()
         self.mock_resolve_punchlist = AsyncMock(return_value=0)
         self.mock_post_msg = AsyncMock()
+        self.mock_update_task = AsyncMock()
 
         patches = [
             patch("switchboard.db.get_task", self.mock_get_task),
             patch("switchboard.db.get_dependents", self.mock_get_dependents),
+            patch("switchboard.db.update_task", self.mock_update_task),
+            patch("switchboard.db.write_audit_log", AsyncMock()),
             patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
             patch("switchboard.dispatch.engine._rebase_and_redispatch", self.mock_rebase),
             patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
