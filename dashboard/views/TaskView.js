@@ -2597,6 +2597,16 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     // pollTick — increments every 5s, passed to children to trigger their refresh
     const [pollTick, setPollTick] = useState(0);
 
+    // Refs to hold latest versions of callbacks — avoids stale closures in setInterval
+    const loadTaskRef = useRef(loadTask);
+    const loadAttemptsRef = useRef(loadAttempts);
+    const loadChainRef = useRef(loadChain);
+    const loadBlockerRef = useRef(loadBlocker);
+    useEffect(() => { loadTaskRef.current = loadTask; }, [loadTask]);
+    useEffect(() => { loadAttemptsRef.current = loadAttempts; }, [loadAttempts]);
+    useEffect(() => { loadChainRef.current = loadChain; }, [loadChain]);
+    useEffect(() => { loadBlockerRef.current = loadBlocker; }, [loadBlocker]);
+
     // Initial load + unified polling — always runs while view is mounted
     useEffect(() => {
         mountedRef.current = true;
@@ -2615,15 +2625,15 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
 
         // Unified 5s poll — task + attempts + pollTick (drives FilesDrawer)
         const mainTimer = setInterval(() => {
-            loadTask();
-            loadAttempts();
-            setPollTick(t => t + 1);
+            loadTaskRef.current();
+            loadAttemptsRef.current();
+            setPollTick(t => (t + 1) % 1000);
         }, 5000);
 
         // Slower 15s poll — chain + blocker (change less frequently)
         const slowTimer = setInterval(() => {
-            loadChain();
-            loadBlocker();
+            loadChainRef.current();
+            loadBlockerRef.current();
         }, 15000);
 
         return () => {
