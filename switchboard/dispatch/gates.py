@@ -17,6 +17,7 @@ import logging
 import os
 import pwd
 import shlex
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -46,6 +47,40 @@ def _tail_lines(text: str, max_chars: int) -> str:
     if idx == -1:
         return text[cut:]
     return text[idx + 1:]
+
+
+def _read_last_jsonl_timestamp(path: Path) -> datetime | None:
+    """Return the timestamp of the last entry in a session JSONL file, or None."""
+    try:
+        if not path.exists():
+            return None
+        with open(path) as f:
+            content = f.read()
+        for line in reversed(content.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                ts = entry.get("timestamp")
+                if ts:
+                    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return None
+    except Exception:
+        return None
+
+
+# Prompt injected when resuming a stalled review subtask (strike 1 recovery).
+# The reviewer already did the analysis — it just needs to complete output.
+_REVIEW_RESUME_PROMPT = (
+    "You were reviewing a task and your session was interrupted due to inactivity. "
+    "Resume where you left off. If you have already completed your analysis, post "
+    "your review result now using post_task_message with type='review' and title "
+    "'APPROVED' or 'CHANGES REQUESTED'. If you haven't finished the analysis, "
+    "continue reviewing and then post your result."
+)
 
 
 async def _run_test_streaming(worktree: str, test_command: str) -> tuple[str, int]:
@@ -105,11 +140,17 @@ async def _run_subtask(
     prompt: str,
     model: str = "opus",
     max_turns: int = 30,
+    resume_session_id: str | None = None,
+    inactivity_timeout: int | None = None,
 ) -> dict:
     """Run a lightweight CC session in the parent's worktree.
 
     No separate worktree, no setup_command, no gate pipeline.
     Returns the subtask record.
+
+    resume_session_id: if set, resume this SDK session (strike 1 recovery).
+    inactivity_timeout: if set, cancel if no JSONL activity for N seconds;
+        returns subtask with status="stalled" and extra "_captured_session_id" key.
     """
     from switchboard.dispatch.engine import _update_usage
 
@@ -158,14 +199,20 @@ async def _run_subtask(
         model=model,
         max_turns=max_turns,
         setting_sources=["user", "project"],
-        system_prompt={"type": "preset", "preset": "claude_code", "append": prompt},
+        system_prompt={"type": "preset", "preset": "claude_code", "append": prompt if not resume_session_id else ""},
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
         extra_args={"replay-user-messages": None},
     )
 
+    if resume_session_id:
+        options.resume = resume_session_id
+
     result_msg = None
-    log.info(f"Running subtask {subtask_id} (type={subtask_type}, model={model})")
+    # Capture session_id from AssistantMessage for potential strike 1 resume.
+    # Use a list for mutability in nested functions.
+    _session_id_captured: list[str] = []
+    log.info(f"Running subtask {subtask_id} (type={subtask_type}, model={model}, resume={resume_session_id is not None})")
 
     # Subtask session log — write to .switchboard/{type}-{count}-session.jsonl
     subtask_log_path = log_dir / f"{subtask_type}-{count}-session.jsonl"
@@ -175,6 +222,10 @@ async def _run_subtask(
         entry = {"timestamp": db.now_iso(), "type": type(msg).__name__}
         try:
             if isinstance(msg, AssistantMessage):
+                # Capture session_id for potential stall resume
+                sid = getattr(msg, "session_id", None)
+                if sid and not _session_id_captured:
+                    _session_id_captured.append(sid)
                 entry["content"] = []
                 for block in (msg.content or []):
                     if isinstance(block, TextBlock):
@@ -192,21 +243,84 @@ async def _run_subtask(
         except Exception:
             pass
 
-    try:
+    async def _sdk_loop():
+        nonlocal result_msg
+        initial_prompt = _REVIEW_RESUME_PROMPT if resume_session_id else prompt
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt)
+            await client.query(initial_prompt)
             async for message in client.receive_response():
                 _log_subtask_msg(message)
                 if isinstance(message, ResultMessage):
                     result_msg = message
-    except Exception as e:
-        log.exception(f"Subtask {subtask_id} error: {e}")
-        await db.update_subtask(subtask_id, status="failed",
-                                result=str(e), completed_at=db.now_iso())
-        return await db.get_subtask(subtask_id)
+
+    stall_detected = False
+    sdk_exception: Exception | None = None
+
+    try:
+        if inactivity_timeout:
+            start_time = datetime.now(timezone.utc)
+            # Check more frequently than the timeout, but at least every second
+            # and at most every 30 seconds.
+            check_interval = min(30, max(1, inactivity_timeout // 6))
+
+            async def _watchdog():
+                while True:
+                    await asyncio.sleep(check_interval)
+                    last_ts = _read_last_jsonl_timestamp(subtask_log_path)
+                    ref = last_ts if last_ts is not None else start_time
+                    idle = (datetime.now(timezone.utc) - ref).total_seconds()
+                    if idle >= inactivity_timeout:
+                        return  # signal stall by completing
+
+            sdk_task = asyncio.create_task(_sdk_loop())
+            watchdog_task = asyncio.create_task(_watchdog())
+            done, _pending = await asyncio.wait(
+                [sdk_task, watchdog_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if watchdog_task in done:
+                # Watchdog completed first — inactivity stall detected
+                stall_detected = True
+                sdk_task.cancel()
+                try:
+                    await sdk_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            else:
+                # SDK completed first
+                watchdog_task.cancel()
+                try:
+                    await watchdog_task
+                except asyncio.CancelledError:
+                    pass
+                if not sdk_task.cancelled():
+                    exc = sdk_task.exception()
+                    if exc:
+                        sdk_exception = exc
+        else:
+            try:
+                await _sdk_loop()
+            except Exception as e:
+                sdk_exception = e
     finally:
         stderr_log.close()
         subtask_log_file.close()
+
+    if stall_detected:
+        captured = _session_id_captured[0] if _session_id_captured else None
+        log.warning(f"Subtask {subtask_id} stalled (inactivity={inactivity_timeout}s), captured_session_id={captured}")
+        await db.update_subtask(subtask_id, status="stalled",
+                                result="inactivity_stall", completed_at=db.now_iso())
+        subtask = await db.get_subtask(subtask_id)
+        # Attach captured session_id so caller can resume (strike 1)
+        return dict(subtask, _captured_session_id=captured)
+
+    if sdk_exception:
+        log.exception(f"Subtask {subtask_id} error: {sdk_exception}")
+        await db.update_subtask(subtask_id, status="failed",
+                                result=str(sdk_exception), completed_at=db.now_iso())
+        return await db.get_subtask(subtask_id)
 
     if result_msg:
         input_tokens = 0
@@ -594,14 +708,61 @@ Post your review:
 mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='review', title='APPROVED' or 'CHANGES REQUESTED', content='...')
 """
 
+    from switchboard.config.constants import REVIEW_INACTIVITY_TIMEOUT_SECONDS
+
+    review_model = task.get("review_model") or "opus"
     log.info(f"Running subtask review for {task_id}")
     try:
         subtask = await _run_subtask(
             task_id=task_id,
             subtask_type="review",
             prompt=review_prompt,
-            model=task.get("review_model") or "opus",
+            model=review_model,
+            inactivity_timeout=REVIEW_INACTIVITY_TIMEOUT_SECONDS,
         )
+
+        # ── Stall handling: strike 1 (resume) and strike 2 (halt) ──────────
+        if subtask.get("status") == "stalled":
+            captured_session_id = subtask.get("_captured_session_id")
+            timeout_min = REVIEW_INACTIVITY_TIMEOUT_SECONDS // 60
+            log.warning(f"Review subtask stalled (strike 1) for {task_id}, session_id={captured_session_id}")
+            await db.post_task_message(
+                task_id=task_id, author="dispatcher", type="status",
+                title=f"Review stalled — resuming (strike 1/2)",
+                content=(
+                    f"Review session was inactive for {timeout_min} minutes. "
+                    f"Resuming the same session to recover the in-progress analysis."
+                ),
+            )
+            # Strike 1: resume the same session
+            subtask2 = await _run_subtask(
+                task_id=task_id,
+                subtask_type="review",
+                prompt=review_prompt,
+                model=review_model,
+                resume_session_id=captured_session_id,
+                inactivity_timeout=REVIEW_INACTIVITY_TIMEOUT_SECONDS,
+            )
+            if subtask2.get("status") == "stalled":
+                # Strike 2: halt, require manual intervention
+                log.error(f"Review subtask stalled twice (strike 2) for {task_id} — halting")
+                await db.post_task_message(
+                    task_id=task_id, author="dispatcher", type="status",
+                    title="Review stalled twice — manual retry required (strike 2/2)",
+                    content=(
+                        f"Review session stalled again after {timeout_min} minutes of inactivity. "
+                        f"Setting gate_status=needs-review. "
+                        f"Use retry_task to re-run the gate pipeline when ready."
+                    ),
+                )
+                await db.update_task(task_id, gate_status="needs-review")
+                await notify.task_needs_review(
+                    task_id=task_id,
+                    reason=f"Review stalled twice (>{timeout_min}m inactivity each time). Manual retry needed.",
+                )
+                return
+            # Use subtask2 for further processing
+            subtask = subtask2
 
         if subtask.get("status") == "completed":
             await _process_review_result_inline(task_id)

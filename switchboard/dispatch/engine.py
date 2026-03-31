@@ -805,10 +805,39 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
 
     If review/feedback messages were posted after the last CC result,
     they are injected into the prompt so CC knows to apply revisions.
+
+    Special case: if the task is completed but the gate stalled (gate_status=needs-review
+    or review-failed, gate_passed_at not set), re-run the gate pipeline instead of
+    launching a new CC session — the code is already written and committed.
     """
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
+
+    # Special case: task completed, code already written, but gate stalled/failed.
+    # Re-run the gate pipeline (test → review) rather than launching a new CC session.
+    if (task.get("status") == "completed"
+            and not task.get("gate_passed_at")
+            and task.get("gate_status") in (None, "needs-review", "review-failed")):
+        log.info(f"retry_task {task_id}: re-running gate pipeline (code complete, gate needs retry)")
+        from switchboard.dispatch.gates import _run_test_gate  # lazy import
+        project = await db.get_project(task["project_id"])
+        if not project:
+            raise ValueError(f"Project not found for task '{task_id}'")
+        await db.update_task(task_id, gate_status=None, gate_retries=0)
+        await db.write_audit_log(
+            task_id=task_id, action="retried",
+            triggered_by="user",
+            source_detail="retry_task: re-running gate pipeline (stall recovery)",
+            previous_status=task.get("status"), new_status=task.get("status"),
+        )
+        await db.post_task_message(
+            task_id=task_id, author="switchboard", type="status",
+            title="Gate retry",
+            content="Re-running gate pipeline (test → review) — code is already complete.",
+        )
+        asyncio.create_task(_run_test_gate(task_id, project, task))
+        return await db.get_task(task_id)
 
     await db.write_audit_log(
         task_id=task_id, action="retried",

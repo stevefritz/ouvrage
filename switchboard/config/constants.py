@@ -92,6 +92,12 @@ STALL_THRESHOLD_SECONDS = 300  # 5 minutes
 STALL_CHECK_INTERVAL = 60  # check every minute
 
 # ---------------------------------------------------------------------------
+# Review subtask inactivity watchdog
+# ---------------------------------------------------------------------------
+
+REVIEW_INACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes of JSONL inactivity = stalled reviewer
+
+# ---------------------------------------------------------------------------
 # Review constants
 # ---------------------------------------------------------------------------
 
