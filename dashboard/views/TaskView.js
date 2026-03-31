@@ -1447,7 +1447,7 @@ function taskFileIcon(mime) {
     return '📎';
 }
 
-function FilesDrawer({ taskId }) {
+function FilesDrawer({ taskId, pollTick }) {
     const [isOpen, setIsOpen] = useState(false);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -1465,15 +1465,21 @@ function FilesDrawer({ taskId }) {
             const data = await api.getTaskFiles(taskId);
             const list = data.files || data || [];
             list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            setFiles(list);
+            // Only update if data changed — prevents flicker on poll
+            setFiles(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(list)) return prev;
+                return list;
+            });
         } catch (e) {
-            setError(e.message);
+            // Only show errors on initial load, not on polls
+            if (loading) setError(e.message);
         } finally {
             setLoading(false);
         }
     }, [taskId]);
 
-    useEffect(() => { loadFiles(); }, [loadFiles]);
+    // Load on mount and re-fetch whenever pollTick changes
+    useEffect(() => { loadFiles(); }, [loadFiles, pollTick]);
 
     const handleUpload = useCallback(async (fileList) => {
         if (!fileList || fileList.length === 0) return;
@@ -2521,13 +2527,20 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const loadTask = useCallback(async () => {
         try {
             const data = await api.getTask(id);
-            if (mountedRef.current) { setTask(data); setError(null); loadedRef.current = true; }
+            if (mountedRef.current) {
+                // Only update if data changed — prevents unnecessary re-renders
+                setTask(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                    return data;
+                });
+                setError(null);
+                loadedRef.current = true;
+            }
         } catch (e) {
             if (mountedRef.current) {
                 // Only show error on initial load failure. Once loaded, poll errors
                 // are silently logged to avoid flashing the error screen.
                 if (!loadedRef.current) setError(e.message);
-                else console.warn('Poll error:', e.message);
             }
         }
     }, [id]);
@@ -2538,34 +2551,53 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             if (mountedRef.current && data) {
                 // API returns { attempts: [...] } or just [...]
                 const list = Array.isArray(data) ? data : (data.attempts || []);
-                setAttempts(list);
+                // Only update if data actually changed — prevents re-render flicker
+                setAttempts(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(list)) return prev;
+                    return list;
+                });
             }
         } catch (e) {
-            console.warn('Attempts load error:', e.message);
-            if (mountedRef.current) setAttempts([]);
+            // Silent on poll errors — only set empty on initial load
+            if (mountedRef.current) {
+                setAttempts(prev => prev === null ? [] : prev);
+            }
         }
     }, [id]);
 
-    // Load blocker task if depends_on
-    useEffect(() => {
+    // Reusable loaders for blocker + chain (called on mount and polled)
+    const loadBlocker = useCallback(async () => {
         if (!task?.depends_on) { setBlockerTask(null); return; }
-        api.getTask(task.depends_on)
-            .then(d => mountedRef.current && setBlockerTask(d))
-            .catch(() => mountedRef.current && setBlockerTask(null));
+        try {
+            const d = await api.getTask(task.depends_on);
+            if (mountedRef.current) {
+                setBlockerTask(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(d)) return prev;
+                    return d;
+                });
+            }
+        } catch { if (mountedRef.current) setBlockerTask(null); }
     }, [task?.depends_on]);
 
-    // Load chain for compact mode chain position
-    useEffect(() => {
+    const loadChain = useCallback(async () => {
         if (!id) return;
-        api.getChain(id)
-            .then(data => {
-                const list = data?.chain || [];
-                if (mountedRef.current) setChain(list.length > 1 ? list : null);
-            })
-            .catch(() => mountedRef.current && setChain(null));
+        try {
+            const data = await api.getChain(id);
+            const list = data?.chain || [];
+            if (mountedRef.current) {
+                const next = list.length > 1 ? list : null;
+                setChain(prev => {
+                    if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+                    return next;
+                });
+            }
+        } catch { if (mountedRef.current) setChain(null); }
     }, [id]);
 
-    // Initial load
+    // pollTick — increments every 5s, passed to children to trigger their refresh
+    const [pollTick, setPollTick] = useState(0);
+
+    // Initial load + unified polling — always runs while view is mounted
     useEffect(() => {
         mountedRef.current = true;
         loadedRef.current = false;
@@ -2574,25 +2606,35 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         setError(null);
         setBlockerTask(null);
         setChain(null);
+        setPollTick(0);
+
+        // Immediate first load
         loadTask();
         loadAttempts();
-        return () => { mountedRef.current = false; };
+        loadChain();
+
+        // Unified 5s poll — task + attempts + pollTick (drives FilesDrawer)
+        const mainTimer = setInterval(() => {
+            loadTask();
+            loadAttempts();
+            setPollTick(t => t + 1);
+        }, 5000);
+
+        // Slower 15s poll — chain + blocker (change less frequently)
+        const slowTimer = setInterval(() => {
+            loadChain();
+            loadBlocker();
+        }, 15000);
+
+        return () => {
+            mountedRef.current = false;
+            clearInterval(mainTimer);
+            clearInterval(slowTimer);
+        };
     }, [id]);
 
-    // Polling — task status at 5s always while view is open, attempts at 10s for all non-terminal states
-    useEffect(() => {
-        if (!task) return;
-        const taskTimer = setInterval(loadTask, 5000);
-        // Poll attempts for any non-terminal status so review feedback and gate results appear live
-        const shouldPollAttempts = !['completed', 'merged', 'cancelled'].includes(task.status);
-        const attemptTimer = shouldPollAttempts
-            ? setInterval(loadAttempts, 10000)
-            : null;
-        return () => {
-            clearInterval(taskTimer);
-            if (attemptTimer) clearInterval(attemptTimer);
-        };
-    }, [task?.id, task?.status, loadTask, loadAttempts]);
+    // Load blocker whenever depends_on changes (initial + when task data arrives)
+    useEffect(() => { loadBlocker(); }, [loadBlocker]);
 
     // Action handler
     const handleAction = useCallback((action, taskId) => {
@@ -2978,7 +3020,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GateActivityPanel} task=${task} />
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />
-            <${FilesDrawer} taskId=${id} />
+            <${FilesDrawer} taskId=${id} pollTick=${pollTick} />
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
