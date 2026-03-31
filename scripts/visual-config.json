@@ -64,6 +64,18 @@
       },
       "wait_ms": 1500
     },
+    "files-markdown-lightbox": {
+      "url": "/foreman#/files",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/files": "fixtures/visual/files.json",
+        "/dashboard/api/files/e5f6g7h8/download": "fixtures/visual/md-api-spec.txt"
+      },
+      "click": ["span[title='Click to preview']:has-text('api-spec.md')"],
+      "wait_after_clicks_ms": 2000,
+      "full_page": false,
+      "wait_ms": 1500
+    },
     "task-detail": {
       "url": "/foreman#/task/implement-auth",
       "viewport": { "width": 1280, "height": 1200 },
@@ -75,6 +87,19 @@
       },
       "wait_ms": 2000,
       "click": [".foreman-attempt-header:has-text('Files')"]
+    },
+    "task-detail-spec-lightbox": {
+      "url": "/foreman#/task/implement-auth",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/implement-auth/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/implement-auth": "fixtures/visual/task-detail-task.json",
+        "/dashboard/api/tasks/implement-auth/attempts": "fixtures/visual/task-detail-attempts.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000,
+      "click": ["button:has-text('View formatted')"]
     },
     "project-create": {
       "url": "/foreman#/project/new",
