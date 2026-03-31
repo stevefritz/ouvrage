@@ -549,6 +549,17 @@ async def dispatch_task(
     is_resume = False
 
     if task is None:
+        # Enforce linear chains: each task can have at most one dependent.
+        if depends_on:
+            existing_dependents = await db.get_dependents(depends_on)
+            if existing_dependents:
+                existing_id = existing_dependents[0]["id"]
+                raise ValueError(
+                    f"Task '{depends_on}' already has a dependent ('{existing_id}'). "
+                    f"Chains are linear — each task can only have one successor. "
+                    f"Remove the existing dependent first, or chain off '{existing_id}' instead."
+                )
+
         task = await db.create_task(
             id=task_id, project_id=project_id, goal=goal,
             branch=branch,

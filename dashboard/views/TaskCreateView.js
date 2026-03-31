@@ -326,6 +326,23 @@ export function TaskCreateView({ project: initialProject }) {
             return;
         }
 
+        // Pre-submit: check if depends_on parent already has a dependent (linear chains only)
+        if (dependsOn.trim()) {
+            try {
+                const chain = await api.getChain(dependsOn.trim());
+                if (chain && chain.chain) {
+                    const parentIdx = chain.chain.findIndex(t => t.id === dependsOn.trim());
+                    if (parentIdx !== -1 && parentIdx < chain.chain.length - 1) {
+                        const existingId = chain.chain[parentIdx + 1].id;
+                        setFieldErrors({ depends_on: `Task '${dependsOn.trim()}' already has a dependent ('${existingId}'). Chains are linear — each task can only have one successor.` });
+                        return;
+                    }
+                }
+            } catch (_) {
+                // If chain fetch fails, let server handle validation
+            }
+        }
+
         setSubmitting(true);
 
         const payload = {
@@ -746,8 +763,9 @@ export function TaskCreateView({ project: initialProject }) {
                                     value=${dependsOn}
                                     onInput=${e => handleDependsOnChange(e.target.value)}
                                     placeholder="task-id (in this project)"
-                                    style=${monoInputStyle}
+                                    style=${{ ...monoInputStyle, ...(fieldErrors.depends_on ? { borderColor: colors.red } : {}) }}
                                 />
+                                ${fieldErrors.depends_on ? html`<div style=${{ color: colors.red, fontSize: typography.size.xs, marginTop: '4px' }}>${fieldErrors.depends_on}</div>` : null}
                             </div>
 
                             <!-- Base Branch -->
