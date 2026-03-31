@@ -18,6 +18,7 @@ import { Tag } from '../components/Tag.js';
 import { relativeTime } from '../components/utils.js';
 import { routes } from '../router.js';
 import { ImageLightbox, isImageFile } from '../components/ImageLightbox.js';
+import { MarkdownLightbox, isMarkdownFile } from '../components/MarkdownLightbox.js';
 
 const html = htm.bind(h);
 
@@ -653,6 +654,7 @@ function ActionToolbar({ task, chain, onAction }) {
 function HaikuLine({ msg, isExpanded, onToggle }) {
     const meta = getMsgMeta(msg.type);
     const verdict = reviewVerdict(msg);
+    const [showFormatted, setShowFormatted] = useState(false);
 
     // Review tint
     let bgTint = 'transparent';
@@ -708,6 +710,21 @@ function HaikuLine({ msg, isExpanded, onToggle }) {
                     </span>
                 ` : null}
 
+                ${msg.type === 'spec' ? html`
+                    <button
+                        style=${{
+                            fontSize: '11px', padding: '2px 7px',
+                            borderRadius: layout.borderRadius.sm,
+                            border: `1px solid ${colors.border}`,
+                            background: 'transparent', color: colors.textTertiary,
+                            cursor: 'pointer', fontFamily: typography.fontMono,
+                            flexShrink: 0,
+                        }}
+                        onClick=${(e) => { e.stopPropagation(); setShowFormatted(true); }}
+                        title="View spec as formatted markdown"
+                    >View formatted</button>
+                ` : null}
+
                 <span style=${{
                     fontFamily: typography.fontMono, fontSize: typography.size.xs,
                     color: colors.textTertiary, flexShrink: 0,
@@ -750,6 +767,14 @@ function HaikuLine({ msg, isExpanded, onToggle }) {
                         ${msg.author || ''} · ${meta.label} · ${relativeTime(msg.created_at)}
                     </div>
                 </div>
+            ` : null}
+
+            ${showFormatted ? html`
+                <${MarkdownLightbox}
+                    content=${msg.content}
+                    title=${msg.title || 'Task Spec'}
+                    onClose=${() => setShowFormatted(false)}
+                />
             ` : null}
         </div>
     `;
@@ -1432,6 +1457,7 @@ function FilesDrawer({ taskId }) {
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [copiedId, setCopiedId] = useState(null);
     const [lightboxFile, setLightboxFile] = useState(null);
+    const [mdLightboxFile, setMdLightboxFile] = useState(null);
     const inputRef = useRef(null);
 
     const loadFiles = useCallback(async () => {
@@ -1567,6 +1593,7 @@ function FilesDrawer({ taskId }) {
                     <!-- File list -->
                     ${files.map(f => {
                         const isImg = isImageFile(f.filename);
+                        const isMd = isMarkdownFile(f.filename);
                         const downloadUrl = `/dashboard/api/files/${f.id}/download`;
                         return html`
                         <div key=${f.id} style=${{
@@ -1597,12 +1624,12 @@ function FilesDrawer({ taskId }) {
                                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, marginBottom: '4px' }}>
                                     <span style=${{
                                         fontSize: typography.size.sm, fontWeight: typography.weight.medium,
-                                        color: isImg ? colors.accent : colors.text,
+                                        color: (isImg || isMd) ? colors.accent : colors.text,
                                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                        flex: 1, minWidth: 0, cursor: isImg ? 'pointer' : 'default',
+                                        flex: 1, minWidth: 0, cursor: (isImg || isMd) ? 'pointer' : 'default',
                                     }}
                                     title=${f.filename}
-                                    onClick=${isImg ? () => setLightboxFile(f) : undefined}
+                                    onClick=${isImg ? () => setLightboxFile(f) : isMd ? () => setMdLightboxFile(f) : undefined}
                                     >${f.filename}</span>
                                     <span style=${{
                                         fontSize: '10px', color: colors.textTertiary, flexShrink: 0,
@@ -1623,6 +1650,12 @@ function FilesDrawer({ taskId }) {
                                 </div>
                                 <!-- Line 3: action buttons -->
                                 <div style=${{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    ${isMd ? html`
+                                        <button
+                                            style=${{ ...smallBtn, color: colors.accent, borderColor: colors.accent }}
+                                            onClick=${() => setMdLightboxFile(f)}
+                                        >Preview</button>
+                                    ` : null}
                                     <button
                                         style=${{ ...smallBtn, color: copiedId === f.id ? colors.green : colors.textTertiary }}
                                         onClick=${() => handleCopy(f.id, f.stored_path)}
@@ -1653,6 +1686,13 @@ function FilesDrawer({ taskId }) {
                             src=${`/dashboard/api/files/${lightboxFile.id}/download`}
                             alt=${lightboxFile.filename}
                             onClose=${() => setLightboxFile(null)}
+                        />
+                    `}
+                    ${mdLightboxFile && html`
+                        <${MarkdownLightbox}
+                            src=${`/dashboard/api/files/${mdLightboxFile.id}/download`}
+                            filename=${mdLightboxFile.filename}
+                            onClose=${() => setMdLightboxFile(null)}
                         />
                     `}
                 </div>

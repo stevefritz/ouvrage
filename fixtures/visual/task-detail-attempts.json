@@ -1,0 +1,34 @@
+{
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "status": "working",
+      "started_at": "2026-03-28T09:00:00Z",
+      "messages": [
+        {
+          "id": 100,
+          "type": "spec",
+          "author": "system",
+          "title": "Implement OAuth2 Authentication Flow with PKCE Support",
+          "content": "# OAuth2 Authentication Flow with PKCE Support\n\n## Context\n\nThe app currently uses basic session auth. We need to add OAuth2 with PKCE for third-party client access.\n\n## What to build\n\n### 1. OAuth client registration\n\nAdd a `/oauth/clients` endpoint that lets users register clients:\n\n```json\n{\n  \"client_id\": \"my-app\",\n  \"redirect_uris\": [\"https://myapp.example.com/callback\"],\n  \"scopes\": [\"read\", \"write\"]\n}\n```\n\n### 2. PKCE flow\n\nImplement RFC 7636 PKCE:\n\n- `code_challenge` — SHA256 hash of code verifier\n- `code_challenge_method` — must be `S256`\n- Exchange `code` + `code_verifier` for access token\n\n### 3. Token refresh\n\n| Field | Value |\n|-------|-------|\n| access_token_ttl | 1 hour |\n| refresh_token_ttl | 30 days |\n| rotation | on every refresh |\n\n## Constraints\n\n- Don't break existing session auth\n- All tokens signed with RS256\n- Store only hashed refresh tokens",
+          "pinned": true,
+          "created_at": "2026-03-28T09:00:00Z"
+        },
+        {
+          "id": 101,
+          "type": "plan",
+          "author": "cc-worker",
+          "content": "## Plan\n1. Add OAuth client table\n2. Implement PKCE flow\n3. Token refresh\n4. Session cookies",
+          "created_at": "2026-03-28T09:05:00Z"
+        },
+        {
+          "id": 102,
+          "type": "progress",
+          "author": "cc-worker",
+          "content": "OAuth client registration and PKCE challenge/verifier are done. Moving to token refresh.",
+          "created_at": "2026-03-28T09:45:00Z"
+        }
+      ]
+    }
+  ]
+}

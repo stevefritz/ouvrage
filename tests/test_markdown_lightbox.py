@@ -4,6 +4,9 @@ Covers:
 - isMarkdownFile extension detection logic (verified via JS source content)
 - MarkdownLightbox component structure and highlight.js integration
 - Files page markdown wiring
+- MarkdownLightbox content prop (inline rendering without fetch)
+- TaskView spec message "View formatted" button
+- TaskView .md task file preview
 """
 
 import re
@@ -12,6 +15,7 @@ from pathlib import Path
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
 LIGHTBOX_JS = DASHBOARD_DIR / "components" / "MarkdownLightbox.js"
 FILES_JS = DASHBOARD_DIR / "components" / "Files.js"
+TASK_VIEW_JS = DASHBOARD_DIR / "views" / "TaskView.js"
 
 
 class TestIsMarkdownFileDetection:
@@ -257,3 +261,151 @@ class TestFilesPageMarkdownIntegration:
         # Clicking a markdown filename should set lightbox state to true
         assert "isMarkdown" in src
         assert "setLightbox(true)" in src
+
+
+class TestMarkdownLightboxContentProp:
+    """Verify MarkdownLightbox accepts a content prop for inline rendering (no fetch)."""
+
+    def _get_source(self):
+        return LIGHTBOX_JS.read_text()
+
+    def test_accepts_content_prop(self):
+        src = self._get_source()
+        # Component signature should destructure a content prop
+        match = re.search(r"export function MarkdownLightbox\(\{(.+?)\}", src, re.DOTALL)
+        assert match, "MarkdownLightbox signature not found"
+        assert "content" in match.group(1)
+
+    def test_accepts_title_prop(self):
+        src = self._get_source()
+        match = re.search(r"export function MarkdownLightbox\(\{(.+?)\}", src, re.DOTALL)
+        assert match, "MarkdownLightbox signature not found"
+        assert "title" in match.group(1)
+
+    def test_content_prop_renders_without_fetch(self):
+        src = self._get_source()
+        # When content prop is provided, should not fetch (the content path shouldn't call fetch)
+        # There must be a separate effect that handles rawContent/content directly
+        assert "rawContent" in src or "content" in src
+        # Must NOT fetch when content is provided — verify there's a condition on src for fetch
+        assert "if (!src)" in src or "if (!rawContent)" in src
+
+    def test_backward_compat_src_still_fetches(self):
+        src = self._get_source()
+        # src path must still fetch
+        assert "fetch(src)" in src
+
+    def test_header_shows_title_when_no_filename(self):
+        src = self._get_source()
+        # When filename is not provided, title should be used as the header label
+        assert "title" in src
+        assert "filename || title" in src or "filename\\ || title" in src or ("filename" in src and "title" in src)
+
+    def test_rendered_state_variable(self):
+        src = self._get_source()
+        # The internal state for HTML content should now be called 'rendered'
+        assert "rendered" in src
+        # Old variable name 'content' as state (useState) should not conflict with prop
+        # The rendered variable should be checked (rendered === null for loading)
+        assert "rendered === null" in src
+
+
+class TestTaskViewSpecMarkdownButton:
+    """Verify TaskView.js wires up the 'View formatted' button for spec messages."""
+
+    def _get_source(self):
+        return TASK_VIEW_JS.read_text()
+
+    def test_taskview_imports_markdown_lightbox(self):
+        src = self._get_source()
+        assert "MarkdownLightbox" in src
+        assert "MarkdownLightbox.js" in src
+
+    def test_taskview_imports_is_markdown_file(self):
+        src = self._get_source()
+        assert "isMarkdownFile" in src
+
+    def test_view_formatted_button_exists(self):
+        src = self._get_source()
+        assert "View formatted" in src
+
+    def test_view_formatted_only_on_spec(self):
+        src = self._get_source()
+        # Button should be conditional on msg.type === 'spec'
+        assert "msg.type === 'spec'" in src or "type === 'spec'" in src
+
+    def test_spec_lightbox_uses_content_prop(self):
+        src = self._get_source()
+        # The spec lightbox should pass content (not src) to MarkdownLightbox
+        match = re.search(r"showFormatted.+?MarkdownLightbox.+?onClose", src, re.DOTALL)
+        assert match, "Spec lightbox render block not found"
+        block = match.group(0)
+        assert "content=" in block or "content$" in block
+
+    def test_spec_lightbox_has_show_formatted_state(self):
+        src = self._get_source()
+        assert "showFormatted" in src
+        assert "setShowFormatted" in src
+
+    def test_view_formatted_button_stops_propagation(self):
+        src = self._get_source()
+        # Button click should stop propagation (don't toggle the message expand)
+        assert "stopPropagation" in src
+
+    def test_spec_lightbox_title_fallback(self):
+        src = self._get_source()
+        # Should provide a fallback title 'Task Spec' when msg.title is absent
+        assert "Task Spec" in src
+
+
+class TestTaskViewMdFilePreview:
+    """Verify TaskView.js adds MarkdownLightbox support for .md task files."""
+
+    def _get_source(self):
+        return TASK_VIEW_JS.read_text()
+
+    def test_md_file_check_in_files_drawer(self):
+        src = self._get_source()
+        assert "isMarkdownFile" in src
+        # Should store result in a local isMd variable
+        assert "isMd" in src
+
+    def test_md_files_use_accent_color(self):
+        src = self._get_source()
+        # Markdown filenames should use accent color (same as images)
+        assert "isMd" in src
+        assert "accent" in src
+
+    def test_md_files_use_pointer_cursor(self):
+        src = self._get_source()
+        assert "isMd" in src
+        assert "pointer" in src
+
+    def test_md_lightbox_state_exists(self):
+        src = self._get_source()
+        assert "mdLightboxFile" in src
+        assert "setMdLightboxFile" in src
+
+    def test_md_lightbox_rendered_conditionally(self):
+        src = self._get_source()
+        match = re.search(r"mdLightboxFile.+?MarkdownLightbox.+?onClose", src, re.DOTALL)
+        assert match, "MarkdownLightbox for .md task files not found"
+
+    def test_md_lightbox_receives_src(self):
+        src = self._get_source()
+        match = re.search(r"mdLightboxFile.+?MarkdownLightbox.+?onClose", src, re.DOTALL)
+        assert match
+        block = match.group(0)
+        assert "src=" in block
+
+    def test_md_lightbox_receives_filename(self):
+        src = self._get_source()
+        match = re.search(r"mdLightboxFile.+?MarkdownLightbox.+?onClose", src, re.DOTALL)
+        assert match
+        block = match.group(0)
+        assert "filename" in block
+
+    def test_preview_button_for_md_files(self):
+        src = self._get_source()
+        assert "Preview" in src
+        assert "isMd" in src

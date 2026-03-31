@@ -195,18 +195,43 @@ function ensureStyles() {
 }
 
 // ── MarkdownLightbox component ────────────────────────────────────────────────
+// Props:
+//   src      — URL to fetch markdown from (used by Files page)
+//   content  — raw markdown string to render directly (used by TaskView spec messages)
+//   filename — display name shown in header (for src path)
+//   title    — display name shown in header (for content path)
+//   onClose  — close handler
 
-export function MarkdownLightbox({ src, filename, onClose }) {
-    const [content, setContent] = useState(null);   // null = loading, string = ready
+export function MarkdownLightbox({ src, content: rawContent, filename, title, onClose }) {
+    const [rendered, setRendered] = useState(null);   // null = loading, string = ready
     const [error, setError] = useState(null);
 
     // Inject scoped CSS once
     useEffect(() => { ensureStyles(); }, []);
 
-    // Fetch markdown content
+    // If raw content is provided directly, render it without fetching
+    useEffect(() => {
+        if (!rawContent) return;
+        setRendered(null);
+        setError(null);
+        try {
+            if (typeof marked === 'undefined') {
+                throw new Error('marked library not available');
+            }
+            const raw = marked.parse(rawContent);
+            const clean = typeof DOMPurify !== 'undefined'
+                ? DOMPurify.sanitize(raw)
+                : raw;
+            setRendered(clean);
+        } catch (e) {
+            setError(e.message);
+        }
+    }, [rawContent]);
+
+    // Fetch markdown content from URL
     useEffect(() => {
         if (!src) return;
-        setContent(null);
+        setRendered(null);
         setError(null);
         fetch(src)
             .then(r => {
@@ -222,7 +247,7 @@ export function MarkdownLightbox({ src, filename, onClose }) {
                 const clean = typeof DOMPurify !== 'undefined'
                     ? DOMPurify.sanitize(raw)
                     : raw;
-                setContent(clean);
+                setRendered(clean);
             })
             .catch(e => setError(e.message));
     }, [src]);
@@ -306,8 +331,8 @@ export function MarkdownLightbox({ src, filename, onClose }) {
                 style=${containerStyle}
                 onClick=${(e) => e.stopPropagation()}
             >
-                ${filename && html`
-                    <div style=${filenameStyle}>${filename}</div>
+                ${(filename || title) && html`
+                    <div style=${filenameStyle}>${filename || title}</div>
                 `}
 
                 ${error
@@ -318,7 +343,7 @@ export function MarkdownLightbox({ src, filename, onClose }) {
                         borderRadius: layout.borderRadius.md,
                         fontSize: typography.size.sm,
                     }}>Failed to load: ${error}</div>`
-                    : content === null
+                    : rendered === null
                         ? html`<div style=${{
                             padding: spacing[8],
                             textAlign: 'center',
@@ -327,7 +352,7 @@ export function MarkdownLightbox({ src, filename, onClose }) {
                         }}>Loading...</div>`
                         : html`<div
                             class="md-lightbox-content"
-                            dangerouslySetInnerHTML=${{ __html: content }}
+                            dangerouslySetInnerHTML=${{ __html: rendered }}
                         />`
                 }
             </div>
