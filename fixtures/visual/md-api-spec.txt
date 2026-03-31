@@ -1,0 +1,71 @@
+# API Specification
+
+## Overview
+
+This document describes the Switchboard REST API for task orchestration.
+
+## Authentication
+
+All endpoints require a valid session cookie or Bearer token:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://api.example.com/mcp
+```
+
+## Endpoints
+
+### GET /dashboard/api/tasks
+
+Returns a list of tasks for the current project.
+
+**Query parameters:**
+
+| Parameter | Type   | Description            |
+|-----------|--------|------------------------|
+| project   | string | Filter by project ID   |
+| status    | string | Filter by task status  |
+| limit     | int    | Max results (default 50) |
+
+### POST /dashboard/api/tasks
+
+Create a new task.
+
+```json
+{
+  "project_id": "mcp-switchboard",
+  "goal": "Add OAuth2 support",
+  "model": "sonnet",
+  "depends_on": null
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "mcp-switchboard/add-oauth",
+  "status": "ready",
+  "created_at": "2026-03-31T12:00:00Z"
+}
+```
+
+## Error Handling
+
+All errors follow the standard format:
+
+```python
+class APIError(Exception):
+    def __init__(self, status: int, message: str):
+        self.status = status
+        self.message = message
+```
+
+> **Note:** Rate limits apply to all authenticated endpoints. See the [rate limiting docs](#rate-limits) for details.
+
+## Status Codes
+
+- `200 OK` — Success
+- `400 Bad Request` — Invalid input
+- `401 Unauthorized` — Missing or invalid auth
+- `404 Not Found` — Resource not found
+- `429 Too Many Requests` — Rate limited
