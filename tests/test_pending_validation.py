@@ -456,7 +456,10 @@ class TestRecoveryPendingValidation:
         ) as mock_test_gate, patch(
             "switchboard.dispatch.gates._dispatch_review",
             new_callable=AsyncMock,
-        ) as mock_review:
+        ) as mock_review, patch(
+            "switchboard.dispatch.gates._verify_worktree_exists",
+            AsyncMock(return_value=True),
+        ):
             await recover_orphaned_tasks()
 
             mock_test_gate.assert_called_once()

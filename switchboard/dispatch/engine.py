@@ -845,10 +845,14 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if (task.get("status") in ("completed", "pending-validation", "turns-exhausted")
             and not task.get("gate_passed_at")
             and task.get("gate_status") in INTERRUPTED_GATE_STATES):
-        log.info(f"retry_task {task_id}: gate was interrupted (gate_status={task.get('gate_status')}), re-entering gate pipeline")
-        from switchboard.dispatch.gates import _resume_gate_pipeline  # lazy import
-        await _resume_gate_pipeline(task_id, reason="retry")
-        return await db.get_task(task_id)
+        worktree = task.get("worktree_path")
+        if worktree and os.path.exists(worktree):
+            log.info(f"retry_task {task_id}: gate was interrupted (gate_status={task.get('gate_status')}), re-entering gate pipeline")
+            from switchboard.dispatch.gates import _resume_gate_pipeline  # lazy import
+            await _resume_gate_pipeline(task_id, reason="retry")
+            return await db.get_task(task_id)
+        else:
+            log.warning(f"retry_task {task_id}: gate interrupted but worktree missing ({worktree}), falling through to normal retry")
 
     await db.write_audit_log(
         task_id=task_id, action="retried",

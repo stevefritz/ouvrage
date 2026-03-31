@@ -355,6 +355,21 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
     # Cancel the orphaned subtask
     await db.update_task(task_id, status="cancelled")
 
+    # Guard against missing worktree before triggering gate actions on parent
+    parent_worktree = parent.get("worktree_path")
+    if not parent_worktree or not os.path.exists(parent_worktree):
+        log.warning(f"Recovery: parent {parent_id} worktree missing ({parent_worktree}), marking needs-review")
+        await db.update_task(parent_id, status="needs-review")
+        await db.post_task_message(
+            task_id=parent_id, author="dispatcher", type="status",
+            title="Gate recovery skipped — worktree missing",
+            content=(
+                f"Cannot re-trigger gate for parent task: worktree `{parent_worktree}` does not exist. "
+                f"Use Retry to re-create the worktree."
+            ),
+        )
+        return
+
     # Re-trigger the appropriate gate step on the parent
     gate = parent.get("gate_status")
     if gate in ("testing", "test-failed") and parent.get("auto_test") and project.get("test_command"):

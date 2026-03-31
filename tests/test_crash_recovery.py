@@ -185,6 +185,10 @@ class TestRecoverGateSubtask:
             patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
             patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            # Worktree existence guards — these tests cover gate subtask routing,
+            # not worktree existence, so bypass both guard points.
+            patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)),
+            patch("switchboard.dispatch.recovery.os.path.exists", return_value=True),
         ]
         for p in patches:
             p.start()

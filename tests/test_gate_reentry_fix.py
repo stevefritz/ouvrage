@@ -180,6 +180,9 @@ class TestResumePipelineReturnValues:
             patch("switchboard.dispatch.gates.notify", AsyncMock()),
             patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            # Worktree existence guard — tests in this class cover gate routing logic,
+            # not worktree existence, so bypass the guard.
+            patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)),
         ]
         self._patches = [p.start() for p in patches]
         yield

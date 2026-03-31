@@ -354,6 +354,24 @@ async def _run_subtask(
     return await db.get_subtask(subtask_id)
 
 
+async def _verify_worktree_exists(task_id: str, task: dict, context: str = "") -> bool:
+    """Check if task's worktree still exists on disk. If not, mark needs-review and return False."""
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        log.warning(f"Worktree missing for {task_id} ({context}): {worktree}")
+        await db.update_task(task_id, status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title=f"Worktree missing — {context or 'operation skipped'}",
+            content=(
+                f"Worktree `{worktree}` does not exist on disk. "
+                f"Use Retry to re-create the worktree."
+            ),
+        )
+        return False
+    return True
+
+
 async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
     """Run the project's test_command after task completion. Auto-retry on failure."""
     if task_id in _running_gates:
@@ -376,13 +394,11 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
         await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
         return
 
-    await db.update_task(task_id, gate_status="testing")
-    worktree = task.get("worktree_path")
-    if not worktree or not os.path.exists(worktree):
-        log.error(f"Task {task_id}: no worktree for test gate")
-        await db.update_task(task_id, gate_status="test-failed")
+    if not await _verify_worktree_exists(task_id, task, "test gate"):
         return
 
+    await db.update_task(task_id, gate_status="testing")
+    worktree = task.get("worktree_path")
     log.info(f"Task {task_id}: running test gate: {test_command}")
     test_output, rc = await _run_test_streaming(worktree, test_command)
 
@@ -498,6 +514,9 @@ async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> Non
     from switchboard.dispatch.engine import retry_task
 
     await db.update_task(task_id, gate_status="reviewing")
+
+    if not await _verify_worktree_exists(task_id, task, "review dispatch"):
+        return
 
     # --- Component context ---
     component = None
@@ -942,6 +961,9 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool 
     if task_id in _running_gates:
         log.info(f"_resume_gate_pipeline: gate already running for {task_id}, skipping ({reason})")
         return await db.get_task(task_id)
+
+    if not await _verify_worktree_exists(task_id, task, "gate recovery"):
+        return False
 
     gate = task.get("gate_status")
     gate_retries = task.get("gate_retries") or 0
