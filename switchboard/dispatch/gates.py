@@ -34,6 +34,7 @@ from switchboard.notifications import slack as notify
 from switchboard.config.settings import WORKER_USER
 from switchboard.git.worktree import _run_as_worker
 from switchboard.dispatch.sdk_session import _open_shared
+from switchboard.dispatch._state import _running_gates
 
 log = logging.getLogger(__name__)
 
@@ -355,6 +356,18 @@ async def _run_subtask(
 
 async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
     """Run the project's test_command after task completion. Auto-retry on failure."""
+    if task_id in _running_gates:
+        log.warning(f"Gate already running for {task_id}, skipping duplicate")
+        return
+    _running_gates.add(task_id)
+    try:
+        await _run_test_gate_inner(task_id, project, task)
+    finally:
+        _running_gates.discard(task_id)
+
+
+async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
+    """Inner implementation of test gate (called by _run_test_gate after liveness check)."""
     from switchboard.dispatch.engine import resume_task, retry_task, _check_and_dispatch_dependents
 
     test_command = project.get("test_command")
@@ -470,6 +483,18 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
 
 async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
     """Run a lightweight review subtask in the parent's worktree."""
+    if task_id in _running_gates:
+        log.warning(f"Review gate already running for {task_id}, skipping duplicate")
+        return
+    _running_gates.add(task_id)
+    try:
+        await _dispatch_review_inner(task_id, project, task)
+    finally:
+        _running_gates.discard(task_id)
+
+
+async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> None:
+    """Inner implementation of review dispatch (called by _dispatch_review after liveness check)."""
     from switchboard.dispatch.engine import retry_task
 
     await db.update_task(task_id, gate_status="reviewing")
@@ -780,7 +805,7 @@ mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', typ
             )
             if retries < max_retries:
                 log.info(f"Retrying review for {task_id} (attempt {retries + 1})")
-                await _dispatch_review(task_id, await db.get_project(task["project_id"]), task)
+                await _dispatch_review_inner(task_id, await db.get_project(task["project_id"]), task)
             else:
                 await db.update_task(task_id, status="needs-review")
                 await notify.task_needs_review(task_id, reason="Review failed after max retries.")
@@ -792,7 +817,7 @@ mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', typ
         await db.update_task(task_id, gate_status="review-failed", gate_retries=retries)
         if retries < max_retries:
             try:
-                await _dispatch_review(task_id, await db.get_project(task["project_id"]), task)
+                await _dispatch_review_inner(task_id, await db.get_project(task["project_id"]), task)
             except Exception:
                 log.exception(f"Review retry also failed for {task_id}")
                 await db.update_task(task_id, status="needs-review")
@@ -884,3 +909,128 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
                 parent_task_id,
                 reason="Review failed after max retries.",
             )
+
+
+async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> dict | None:
+    """Unified gate recovery — single entry point for recovering any interrupted gate state.
+
+    Reads fresh state from DB at invocation time to avoid race conditions.
+    Re-checks _running_gates before taking action to prevent races with normal completion.
+
+    Does NOT reset gate_retries when recovering interrupted states (testing/reviewing).
+    For test-failed/review-failed, resets gate_status=None before calling retry_task so
+    retry_task's gate re-entry check doesn't recurse back here.
+    For needs-review, resets gate_retries=0 (same as original retry_task re-entry behavior).
+    """
+    # Read fresh state from DB
+    task = await db.get_task(task_id)
+    if not task:
+        log.warning(f"_resume_gate_pipeline: task {task_id} not found")
+        return None
+
+    project = await db.get_project(task["project_id"])
+    if not project:
+        log.warning(f"_resume_gate_pipeline: project not found for {task_id}")
+        return None
+
+    # Re-check _running_gates to prevent race with normal completion
+    if task_id in _running_gates:
+        log.info(f"_resume_gate_pipeline: gate already running for {task_id}, skipping ({reason})")
+        return await db.get_task(task_id)
+
+    gate = task.get("gate_status")
+    gate_retries = task.get("gate_retries") or 0
+    max_test_retries = task.get("max_test_retries") or task.get("max_gate_retries") or 3
+    max_review_retries = task.get("max_review_retries") or task.get("max_gate_retries") or 3
+
+    log.info(f"_resume_gate_pipeline: {task_id} gate={gate} retries={gate_retries} reason={reason}")
+
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Gate recovery ({reason})",
+        content=f"Recovering task from gate state `{gate or 'None'}` (reason: {reason}).",
+    )
+
+    if gate is None:
+        # Gate pipeline never started — check if push is needed first
+        if not task.get("pushed_at"):
+            from switchboard.git.operations import _ensure_branch_pushed
+            pushed = await _ensure_branch_pushed(task_id, task)
+            if not pushed:
+                await db.update_task(task_id, gate_status="push-failed")
+                return await db.get_task(task_id)
+            await db.update_task(task_id, pushed_at=db.now_iso())
+            task = await db.get_task(task_id)
+        # Enter gate pipeline from top
+        asyncio.create_task(_run_test_gate(task_id, project, task))
+
+    elif gate == "testing":
+        # Gate was running when server died — re-run (tests are idempotent)
+        asyncio.create_task(_run_test_gate(task_id, project, task))
+
+    elif gate == "test-failed":
+        if gate_retries < max_test_retries:
+            # Reset gate_status=None so retry_task won't recurse back here
+            await db.update_task(task_id, gate_status=None)
+            from switchboard.dispatch.engine import retry_task
+            await retry_task(task_id)
+        else:
+            await db.update_task(task_id, gate_status="needs-review")
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Tests failed {gate_retries} times. Manual intervention needed.",
+            )
+
+    elif gate == "test-passed":
+        # Tests passed but review never started
+        if task.get("auto_review"):
+            asyncio.create_task(_dispatch_review(task_id, project, task))
+        else:
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+            from switchboard.dispatch.engine import _check_and_dispatch_dependents
+            await _check_and_dispatch_dependents(task_id)
+
+    elif gate == "reviewing":
+        # Server died during review — start fresh (don't try to resume dead session)
+        asyncio.create_task(_dispatch_review(task_id, project, task))
+
+    elif gate == "review-failed":
+        if gate_retries < max_review_retries:
+            # Reset gate_status=None so retry_task won't recurse back here
+            await db.update_task(task_id, gate_status=None)
+            from switchboard.dispatch.engine import retry_task
+            await retry_task(task_id)
+        else:
+            await db.update_task(task_id, gate_status="needs-review")
+            await notify.task_needs_review(
+                task_id=task_id,
+                reason=f"Review failed {gate_retries} times. Manual intervention needed.",
+            )
+
+    elif gate == "needs-review":
+        # Give a fresh gate budget (same as original retry_task re-entry behavior)
+        await db.update_task(task_id, gate_status=None, gate_retries=0)
+        task = await db.get_task(task_id)
+        asyncio.create_task(_run_test_gate(task_id, project, task))
+
+    elif gate == "push-failed":
+        # Re-attempt push — if it succeeds, reset gate_status and re-enter pipeline
+        from switchboard.git.operations import _ensure_branch_pushed
+        pushed = await _ensure_branch_pushed(task_id, task)
+        if pushed:
+            await db.update_task(task_id, gate_status=None, pushed_at=db.now_iso())
+            task = await db.get_task(task_id)
+            asyncio.create_task(_run_test_gate(task_id, project, task))
+        else:
+            log.info(f"_resume_gate_pipeline: {task_id} push still failing — leaving as push-failed (user must fix PAT)")
+
+    elif gate == "passed":
+        # Edge case: passed but gate_passed_at not set
+        if not task.get("gate_passed_at"):
+            from switchboard.dispatch.engine import _check_and_dispatch_dependents
+            await _check_and_dispatch_dependents(task_id)
+
+    else:
+        log.warning(f"_resume_gate_pipeline: unknown gate_status={gate!r} for {task_id}")
+
+    return await db.get_task(task_id)

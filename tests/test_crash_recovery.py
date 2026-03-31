@@ -211,8 +211,9 @@ class TestRecoverGateSubtask:
         sub = await db.get_task("test-project/review-sub")
         assert sub["status"] == "cancelled"
 
-        # Parent gate should be re-triggered (awaited directly)
-        self.mock_run_test_gate.assert_called_once()
+        # Parent gate should be re-triggered — both the unified gate sweep and
+        # _recover_gate_subtask trigger it; duplicate guard ensures only one runs.
+        self.mock_run_test_gate.assert_called()
 
     async def test_gate_subtask_retriggers_review(self, db, sample_project):
         """Orphaned subtask with reviewing parent re-triggers review."""
@@ -227,7 +228,8 @@ class TestRecoverGateSubtask:
 
         await recover_orphaned_tasks()
 
-        self.mock_dispatch_review.assert_called_once()
+        # _dispatch_review is triggered from both unified sweep and _recover_gate_subtask
+        self.mock_dispatch_review.assert_called()
 
 
 # ---------------------------------------------------------------------------

@@ -837,32 +837,15 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Special case: task completed/pending-validation, code already written, but gate stalled/failed.
-    # Re-run the gate pipeline (test → review) rather than launching a new CC session.
-    # Only applies when gate_status is explicitly needs-review or review-failed — NOT None,
-    # since None means "gate never ran" (normal retry path) vs "gate ran and stalled".
-    if (task.get("status") in ("completed", "pending-validation")
+    # Special case: task completed/pending-validation/turns-exhausted, code already written,
+    # but gate is in an intermediate state. Delegate to _resume_gate_pipeline which handles
+    # ALL gate states (not just needs-review/review-failed).
+    if (task.get("status") in ("completed", "pending-validation", "turns-exhausted")
             and not task.get("gate_passed_at")
-            and task.get("gate_status") in ("needs-review", "review-failed")):
-        log.info(f"retry_task {task_id}: re-running gate pipeline (code complete, gate needs retry)")
-        from switchboard.dispatch.gates import _run_test_gate  # lazy import
-        project = await db.get_project(task["project_id"])
-        if not project:
-            raise ValueError(f"Project not found for task '{task_id}'")
-        await db.update_task(task_id, gate_status=None, gate_retries=0)
-        await db.write_audit_log(
-            task_id=task_id, action="retried",
-            triggered_by="user",
-            source_detail="retry_task: re-running gate pipeline (stall recovery)",
-            previous_status=task.get("status"), new_status=task.get("status"),
-        )
-        await db.post_task_message(
-            task_id=task_id, author="switchboard", type="status",
-            title="Gate retry",
-            content="Re-running gate pipeline (test → review) — code is already complete.",
-        )
-        asyncio.create_task(_run_test_gate(task_id, project, task))
-        return await db.get_task(task_id)
+            and task.get("gate_status") is not None):
+        log.info(f"retry_task {task_id}: delegating to _resume_gate_pipeline (gate_status={task.get('gate_status')})")
+        from switchboard.dispatch.gates import _resume_gate_pipeline  # lazy import
+        return await _resume_gate_pipeline(task_id, reason="retry")
 
     await db.write_audit_log(
         task_id=task_id, action="retried",
