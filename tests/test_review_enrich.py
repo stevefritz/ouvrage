@@ -110,7 +110,7 @@ def mock_run_subtask():
     """Mock _run_subtask to capture prompt and return completed status."""
     captured = {}
 
-    async def fake_run_subtask(task_id, subtask_type, prompt, model):
+    async def fake_run_subtask(task_id, subtask_type, prompt, model, **kwargs):
         captured["prompt"] = prompt
         captured["task_id"] = task_id
         return {"status": "completed"}
@@ -166,7 +166,7 @@ class TestDispatchReviewComponentContext:
         project = {"id": "test-project", "default_branch": "main", "test_command": "pytest"}
         captured = {}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -194,7 +194,7 @@ class TestDispatchReviewComponentContext:
         }
         captured = {}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -229,7 +229,7 @@ class TestDispatchReviewPromptStructure:
         project = {"id": "test-project", "test_command": "pytest -v", **(project_overrides or {})}
         captured = {}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -335,7 +335,7 @@ class TestDispatchReviewPunchlistClaims:
         ]
         captured = {}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -368,7 +368,7 @@ class TestDispatchReviewPunchlistClaims:
         }
         captured = {}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -407,7 +407,7 @@ class TestDispatchReviewPriorReviewHistory:
                 return {"messages": [m for m in all_msgs if m.get("type") == "review"]}
             return {"messages": [m for m in all_msgs if m.get("type") != "review"]}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -458,7 +458,7 @@ class TestDispatchReviewPriorReviewHistory:
                 return {"messages": []}
             return {"messages": [human_msg]}
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             captured["prompt"] = prompt
             return {"status": "completed"}
 
@@ -497,7 +497,7 @@ class TestDispatchReviewFetchBeforeDiff:
             fetch_calls.append(args)
             return (b"", b"", 0)
 
-        async def fake_subtask(task_id, subtask_type, prompt, model):
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
             prompt_captured["prompt"] = prompt
             return {"status": "completed"}
 
