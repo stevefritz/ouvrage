@@ -1100,6 +1100,36 @@ FILES_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Worker-only tools (available exclusively on /mcp/worker endpoint)
+# ---------------------------------------------------------------------------
+
+WORKER_TOOLS = [
+    Tool(
+        name="escalate",
+        description=(
+            "Flag a task for human review. Sets the task to needs-review status and posts "
+            "a message explaining why. Use this when you encounter a problem you cannot resolve "
+            "— ambiguous spec, blocking issue, or something outside your scope. "
+            "Do not try to work around fundamental blockers; escalate instead."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID to escalate.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Clear explanation of why human review is needed.",
+                },
+            },
+            "required": ["task_id", "reason"],
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Full tools list
 # ---------------------------------------------------------------------------
 
@@ -1115,3 +1145,16 @@ TOOLS = (
     + TOKEN_TOOLS
     + FILES_TOOLS
 )
+
+# Worker allowlist — tools visible to CC workers on /mcp/worker endpoint.
+# Any tool not in this set is hidden from list_tools and rejected by call_tool.
+WORKER_TOOL_ALLOWLIST = {
+    "update_task_phase",
+    "update_task_checklist",
+    "add_checklist_item",
+    "remove_checklist_item",
+    "post_task_message",
+    "read_task_messages",
+    "add_task_file",
+    "escalate",
+}

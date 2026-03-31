@@ -339,6 +339,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- **Ambiguous spec** → post a question. Don't guess.")
     parts.append("- **Scope significantly larger than expected** → update phase to `needs-review` and explain.")
     parts.append("- **Blocking issue** (missing access, broken dependency) → post a question immediately.")
+    parts.append(f"- **Fundamental blocker you cannot resolve** → call `escalate(task_id='{task_id}', reason='...')` to flag the task for human review. Do not try to work around fundamental blockers.")
     if escalation_criteria:
         parts.append("")
         parts.append(escalation_criteria)
@@ -806,8 +807,16 @@ async def _run_sdk_session(
 
                 # Still push and try the gate — CC may have finished the work
                 task = await db.get_task(task_id)
-                await _ensure_branch_pushed(task_id, task)
-                if not task.get("gate_passed_at"):
+                push_ok = await _ensure_branch_pushed(task_id, task)
+                if not push_ok:
+                    await db.update_task(task_id, gate_status="push-failed")
+                    await db.post_task_message(
+                        task_id=task_id, author="dispatcher", type="status",
+                        title="Gate pipeline blocked — push failed",
+                        content="Push failed. Gates will not run until code is pushed. "
+                                "Fix the PAT or push manually, then resume.",
+                    )
+                elif not task.get("gate_passed_at"):
                     project = await db.get_project(task["project_id"])
                     if task.get("auto_test") and project and project.get("test_command"):
                         await _run_test_gate(task_id, project, task)
@@ -884,12 +893,12 @@ async def _run_sdk_session(
                 # Slot freed — drain FIFO queue
                 await _drain_queue()
             else:
-                await db.update_task(task_id, status="completed")
+                await db.update_task(task_id, status="pending-validation")
                 await db.write_audit_log(
                     task_id=task_id, action="completed",
                     triggered_by="system",
                     source_detail="_run_sdk_session (CC session completed)",
-                    previous_status="working", new_status="completed",
+                    previous_status="working", new_status="pending-validation",
                 )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",
@@ -914,10 +923,17 @@ async def _run_sdk_session(
 
                 # Auto-push branch before gate pipeline
                 task = await db.get_task(task_id)
-                await _ensure_branch_pushed(task_id, task)
-
+                push_ok = await _ensure_branch_pushed(task_id, task)
+                if not push_ok:
+                    await db.update_task(task_id, gate_status="push-failed")
+                    await db.post_task_message(
+                        task_id=task_id, author="dispatcher", type="status",
+                        title="Gate pipeline blocked — push failed",
+                        content="Push failed. Gates will not run until code is pushed. "
+                                "Fix the PAT or push manually, then resume.",
+                    )
                 # Check if this is a review task — process result on parent
-                if task.get("parent_task_id"):
+                elif task.get("parent_task_id"):
                     await _process_review_result(task_id, task["parent_task_id"])
                 elif task.get("gate_passed_at"):
                     # Gate already passed previously — this is a manual resume (e.g. fixing merge conflicts)

@@ -74,7 +74,25 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     if os.path.exists(worktree_path):
         log.info(f"Worktree already exists: {worktree_path}, pulling latest")
         # Fetch + pull so resumed tasks pick up upstream changes
-        await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
+        _, fetch_err, fetch_rc = await _run_as_worker(
+            "git", "-C", worktree_path, "fetch", "origin",
+        )
+        if fetch_rc != 0:
+            log.warning(f"git fetch origin failed for {worktree_path}: {fetch_err.decode().strip()}, trying authenticated URL")
+            try:
+                from switchboard.git.operations import _resolve_push_url
+                auth_url = await _resolve_push_url(project["id"])
+                _, fallback_err, fallback_rc = await _run_as_worker(
+                    "git", "-C", worktree_path, "fetch", auth_url,
+                    "+refs/heads/*:refs/remotes/origin/*",
+                )
+                if fallback_rc != 0:
+                    raise RuntimeError(
+                        f"git fetch failed with origin and authenticated URL: {fallback_err.decode().strip()}"
+                    )
+                log.info(f"Fallback fetch via authenticated URL succeeded for {worktree_path}")
+            except ValueError as e:
+                raise RuntimeError(f"git fetch failed and no PAT available for fallback: {e}")
         stdout, stderr, rc = await _run_as_worker(
             "git", "-C", worktree_path, "merge", "--ff-only",
             f"origin/{branch}",

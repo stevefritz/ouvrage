@@ -161,17 +161,25 @@ async def resolve_branch_target(task: dict) -> str:
     return project["default_branch"] if project else "main"
 
 
-async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
+async def _ensure_branch_pushed(task_id: str, task: dict) -> bool:
     """Force-push task branch if there are unpushed commits.
 
-    Uses HTTPS + PAT for authentication instead of SSH.
+    Checks for a credential helper on the worktree — if present, pushes to
+    `origin` (preferred path; tracking refs update naturally). Otherwise falls
+    back to the raw authenticated URL.
+
+    Uses --force in both paths. The branch is task-owned (single actor), so
+    --force-with-lease provides no safety benefit and causes stale-ref failures
+    on retries.
+
+    Returns True if push succeeded (or nothing needed pushing), False on failure.
     """
     worktree = task.get("worktree_path")
     branch = task.get("branch")
     if not worktree or not branch or not os.path.exists(worktree):
-        return
+        return True  # nothing to push — not a failure
 
-    # Resolve authenticated push URL
+    # Resolve authenticated push URL (needed for ls-remote check and fallback path)
     try:
         push_url = await _resolve_push_url(task["project_id"])
     except ValueError as e:
@@ -181,7 +189,13 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
             title="Push failed — no PAT configured",
             content=str(e),
         )
-        return
+        return False
+
+    # Check if a credential helper is configured on this worktree
+    cred_stdout, _, cred_rc = await _run_as_worker(
+        "git", "-C", worktree, "config", "credential.helper",
+    )
+    has_cred_helper = cred_rc == 0 and bool(cred_stdout.strip())
 
     # Check if remote branch exists
     stdout, _, rc = await _run_as_worker(
@@ -195,11 +209,16 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
             "git", "-C", worktree, "log", f"origin/{branch}..HEAD", "--oneline",
         )
         if rc != 0 or not stdout.strip():
-            return  # nothing to push
+            return True  # nothing to push
     # else: remote doesn't exist yet, push to create it
 
+    # Prefer pushing to the `origin` remote when the credential helper is set up —
+    # git then updates local tracking refs, avoiding stale-ref issues on retries.
+    # Fall back to the raw authenticated URL when the helper is absent.
+    push_target = "origin" if has_cred_helper else push_url
+
     _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "push", "--force-with-lease", push_url, branch,
+        "git", "-C", worktree, "push", "--force", push_target, branch,
     )
     if rc != 0:
         stderr_text = stderr.decode()
@@ -210,8 +229,10 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> None:
             title="Auto-push failed",
             content=friendly or f"```\n{stderr_text[:1000]}\n```",
         )
-    else:
-        log.info(f"Auto-pushed branch {branch} for {task_id}")
+        return False
+
+    log.info(f"Auto-pushed branch {branch} for {task_id}")
+    return True
 
 
 async def _git_fetch_and_rebase(worktree: str, target_branch: str) -> bool:

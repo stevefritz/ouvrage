@@ -4,7 +4,7 @@ Tests core functions by mocking database and subprocess calls.
 """
 
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -991,43 +991,73 @@ class TestEnsureBranchPushed:
         await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
+    async def test_no_worktree_returns_true(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        result = await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
+        assert result is True
+        self.mock_run.assert_not_awaited()
+
+    async def test_no_branch_returns_true(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
+        assert result is True
+        self.mock_run.assert_not_awaited()
+
     async def test_nothing_to_push(self):
         from switchboard.git.operations import _ensure_branch_pushed
-        # ls-remote returns a ref (remote exists), log shows nothing unpushed
+        # credential helper check + ls-remote returns a ref (remote exists) + log shows nothing unpushed
         self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"", b"", 0),  # log shows nothing unpushed
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert self.mock_run.await_count == 2  # ls-remote + log, no push
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is True
+        assert self.mock_run.await_count == 3  # config + ls-remote + log, no push
 
     async def test_pushes_unpushed_commits(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"abc Fix something\n", b"", 0),  # log shows unpushed
             (b"", b"", 0),  # push succeeds
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert self.mock_run.await_count == 3
-        push_call = self.mock_run.await_args_list[2]
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is True
+        assert self.mock_run.await_count == 4
+        push_call = self.mock_run.await_args_list[3]
         assert "push" in push_call.args
-        assert "--force-with-lease" in push_call.args
+        assert "--force" in push_call.args
+        assert "--force-with-lease" not in push_call.args
 
     async def test_pushes_when_no_remote_branch(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"", b"", 0),  # ls-remote returns empty (no remote branch)
             (b"", b"", 0),  # push succeeds
         ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert self.mock_run.await_count == 2
-        push_call = self.mock_run.await_args_list[1]
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is True
+        assert self.mock_run.await_count == 3
+        push_call = self.mock_run.await_args_list[2]
         assert "push" in push_call.args
+
+    async def test_push_failure_returns_false(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
+            (b"", b"", 0),  # ls-remote empty (no remote branch)
+            (b"", b"rejected", 1),  # push fails
+        ]
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is False
 
     async def test_push_failure_posts_message(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"", b"", 0),  # ls-remote empty
             (b"", b"rejected", 1),  # push fails
         ]
@@ -1036,6 +1066,174 @@ class TestEnsureBranchPushed:
         call_kwargs = self.mock_post_msg.await_args.kwargs
         assert call_kwargs["type"] == "status"
         assert "Auto-push failed" in call_kwargs["title"]
+
+    async def test_no_pat_returns_false(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        self.mock_resolve_url.side_effect = ValueError("No PAT configured")
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is False
+        self.mock_run.assert_not_awaited()
+
+    async def test_cred_helper_present_pushes_to_origin(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        # credential helper returns a helper path (non-empty)
+        self.mock_run.side_effect = [
+            (b"/path/to/helper.sh\n", b"", 0),  # git config credential.helper — has cred helper
+            (b"", b"", 0),  # ls-remote empty (no remote branch)
+            (b"", b"", 0),  # push succeeds
+        ]
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        push_call = self.mock_run.await_args_list[2]
+        assert "push" in push_call.args
+        assert "origin" in push_call.args
+        assert "--force" in push_call.args
+        # Must NOT use the raw URL
+        assert "https://oauth2:ghp_test@github.com" not in str(push_call.args)
+
+    async def test_cred_helper_absent_pushes_to_raw_url(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        # credential helper returns empty (not configured)
+        self.mock_run.side_effect = [
+            (b"", b"", 0),  # git config credential.helper — no cred helper
+            (b"", b"", 0),  # ls-remote empty (no remote branch)
+            (b"", b"", 0),  # push succeeds
+        ]
+        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        push_call = self.mock_run.await_args_list[2]
+        assert "push" in push_call.args
+        assert "https://oauth2:ghp_test@github.com/acme/widgets.git" in push_call.args
+        assert "origin" not in push_call.args
+
+
+# ---------------------------------------------------------------------------
+# Push failure blocks gate pipeline
+# ---------------------------------------------------------------------------
+
+class TestPushFailureBlocksGatePipeline:
+    """When _ensure_branch_pushed returns False, gate pipeline must be skipped."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, tmp_path):
+        import pwd
+        from pathlib import Path
+
+        self.log_dir = tmp_path / "logs"
+        self.log_dir.mkdir()
+        self.worktree = str(tmp_path / "wt")
+        os.makedirs(self.worktree, exist_ok=True)
+
+        mock_pw = MagicMock()
+        mock_pw.pw_dir = str(tmp_path)
+
+        self.mock_run_test_gate = AsyncMock()
+        self.mock_dispatch_review = AsyncMock()
+        self.mock_check_dependents = AsyncMock()
+        self.mock_update_usage = AsyncMock()
+
+        # Completing mock SDK client
+        from claude_agent_sdk import ResultMessage as _RM
+        result_msg = MagicMock(spec=_RM)
+        result_msg.is_error = False
+        result_msg.result = "Done."
+        result_msg.stop_reason = "end_turn"
+        result_msg.num_turns = 1
+        result_msg.total_cost_usd = 0.001
+        result_msg.duration_ms = 5000
+        result_msg.duration_api_ms = 4800
+        result_msg.session_id = None
+        result_msg.usage = {
+            "input_tokens": 10, "output_tokens": 5,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        }
+
+        async def _fast_gen():
+            yield result_msg
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=_fast_gen())
+
+        patches = [
+            patch("switchboard.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client),
+            patch("switchboard.dispatch.sdk_session._ensure_branch_pushed",
+                  AsyncMock(return_value=False)),
+            patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
+            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("switchboard.dispatch.engine._check_and_dispatch_dependents",
+                  self.mock_check_dependents),
+            patch("switchboard.dispatch.engine._update_usage", self.mock_update_usage),
+            patch("switchboard.dispatch.sdk_session.pwd.getpwnam", return_value=mock_pw),
+            patch("switchboard.notifications.slack.task_completed", AsyncMock()),
+            patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
+            patch("switchboard.dispatch.queue._drain_queue", AsyncMock()),
+        ]
+        for p in patches:
+            p.start()
+        self._patches = patches
+        yield
+        for p in patches:
+            p.stop()
+
+    async def test_push_fail_sets_push_failed_gate_status(self, db, sample_project, tmp_path):
+        """When push fails after completion, gate_status must be 'push-failed'."""
+        from switchboard.dispatch.sdk_session import _run_sdk_session
+
+        task = await db.create_task(
+            id="test-project/push-fail-gate",
+            project_id="test-project",
+            goal="Test push failure blocks gate",
+            auto_test=False,
+            auto_review=False,
+        )
+        await db.update_task(task["id"], status="working",
+                             worktree_path=self.worktree)
+
+        await _run_sdk_session(
+            task_id="test-project/push-fail-gate",
+            prompt="do the thing",
+            worktree_path=self.worktree,
+            session_id=None,
+            is_resume=False,
+            max_turns=10,
+            max_wall_clock_minutes=30,
+            log_dir=self.log_dir,
+        )
+
+        updated = await db.get_task("test-project/push-fail-gate")
+        assert updated["gate_status"] == "push-failed", (
+            f"Expected gate_status='push-failed', got {updated['gate_status']!r}"
+        )
+
+    async def test_push_fail_does_not_run_test_gate(self, db, sample_project, tmp_path):
+        """When push fails, _run_test_gate must NOT be called."""
+        from switchboard.dispatch.sdk_session import _run_sdk_session
+
+        task = await db.create_task(
+            id="test-project/push-fail-no-gate",
+            project_id="test-project",
+            goal="Test push failure blocks gate",
+            auto_test=True,
+            auto_review=True,
+        )
+        await db.update_task(task["id"], status="working",
+                             worktree_path=self.worktree)
+
+        await _run_sdk_session(
+            task_id="test-project/push-fail-no-gate",
+            prompt="do the thing",
+            worktree_path=self.worktree,
+            session_id=None,
+            is_resume=False,
+            max_turns=10,
+            max_wall_clock_minutes=30,
+            log_dir=self.log_dir,
+        )
+
+        self.mock_run_test_gate.assert_not_called()
+        self.mock_dispatch_review.assert_not_called()
+        self.mock_check_dependents.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

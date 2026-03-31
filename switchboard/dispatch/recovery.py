@@ -169,6 +169,38 @@ async def recover_orphaned_tasks():
             elif gate == "review-failed" and task.get("auto_review"):
                 await _dispatch_review(task["id"], project, task)
 
+    # Re-trigger gate for tasks stuck in pending-validation (server crashed during gate pipeline).
+    # These tasks have a CC session that finished but the gate pipeline never completed.
+    pending_tasks = await db.list_tasks(status="pending-validation")
+    for task in pending_tasks:
+        gate = task.get("gate_status")
+        # push-failed: don't auto-retry (user must fix PAT or push manually)
+        if gate == "push-failed":
+            continue
+        log.warning(f"Startup recovery: task {task['id']} stuck in pending-validation (gate_status={gate}), re-entering gate pipeline")
+        project = await db.get_project(task["project_id"])
+        if not project:
+            continue
+        if gate == "passed":
+            # Gates passed but chain dispatch was missed
+            from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
+            await _check_and_dispatch_dependents(task["id"])
+        elif gate in ("reviewing", "review-failed") and task.get("auto_review"):
+            await _dispatch_review(task["id"], project, task)
+        elif gate in (None, "testing", "test-failed", "test-passed"):
+            # test-passed: tests passed but review never started
+            if gate == "test-passed" and task.get("auto_review"):
+                await _dispatch_review(task["id"], project, task)
+            elif task.get("auto_test") and project.get("test_command"):
+                await _run_test_gate(task["id"], project, task)
+            elif task.get("auto_review"):
+                await _dispatch_review(task["id"], project, task)
+            else:
+                # No gates configured — set gate_passed_at and advance chain
+                await db.update_task(task["id"], gate_status="passed", gate_passed_at=db.now_iso())
+                from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
+                await _check_and_dispatch_dependents(task["id"])
+
     # Find orphaned working tasks.
     # NOTE: pid is never written by current SDK-based dispatch, so it will
     # almost always be None. The pid check below only has effect if a pid was

@@ -87,6 +87,18 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     if not task or not task.get("gate_passed_at"):
         return
 
+    # All gates passed and push confirmed — mark task as truly completed now.
+    # Only transition from in-pipeline statuses; leave completed/merged untouched.
+    if task.get("status") in ("pending-validation", "turns-exhausted"):
+        await db.update_task(task_id, status="completed")
+        await db.write_audit_log(
+            task_id=task_id, action="gate_passed",
+            triggered_by="gate-pipeline",
+            source_detail="_check_and_dispatch_dependents (all gates passed)",
+            previous_status=task.get("status"), new_status="completed",
+        )
+        task = await db.get_task(task_id)
+
     await db.write_audit_log(
         task_id=task_id, action="chain_advanced",
         triggered_by="gate-pipeline",
@@ -592,7 +604,7 @@ async def dispatch_task(
             f"Task '{task_id}' was previously cancelled. Use a new task ID, "
             f"or use retry_task to explicitly revive it."
         )
-    elif task["status"] in ("needs-review", "turns-exhausted", "completed", "merged"):
+    elif task["status"] in ("needs-review", "turns-exhausted", "completed", "merged", "pending-validation"):
         is_resume = True
         # Update depends_on if caller provided a new value (fixes stale prefix issue)
         if depends_on and task.get("depends_on") != depends_on:
@@ -760,7 +772,7 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
     task = await db.get_task(task_id)
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
-    resumable = ("needs-review", "turns-exhausted", "completed", "merged", "rate-limited")
+    resumable = ("needs-review", "turns-exhausted", "completed", "merged", "rate-limited", "pending-validation")
     if task["status"] not in resumable:
         raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
 
@@ -775,7 +787,7 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
     # re-trigger post-gate pipeline instead of launching a new CC session.
     # Exceptions: needs-review or pr_status=conflict mean CC still has work to do.
     if (task.get("gate_passed_at")
-            and task["status"] in ("completed", "merged")
+            and task["status"] in ("completed", "merged", "pending-validation")
             and task.get("pr_status") != "conflict"):
         log.info(f"Resume {task_id}: gate already passed, re-triggering post-gate pipeline")
         await _check_and_dispatch_dependents(task_id)
@@ -814,11 +826,11 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     if not task:
         raise ValueError(f"Task '{task_id}' not found")
 
-    # Special case: task completed, code already written, but gate stalled/failed.
+    # Special case: task completed/pending-validation, code already written, but gate stalled/failed.
     # Re-run the gate pipeline (test → review) rather than launching a new CC session.
     # Only applies when gate_status is explicitly needs-review or review-failed — NOT None,
     # since None means "gate never ran" (normal retry path) vs "gate ran and stalled".
-    if (task.get("status") == "completed"
+    if (task.get("status") in ("completed", "pending-validation")
             and not task.get("gate_passed_at")
             and task.get("gate_status") in ("needs-review", "review-failed")):
         log.info(f"retry_task {task_id}: re-running gate pipeline (code complete, gate needs retry)")
