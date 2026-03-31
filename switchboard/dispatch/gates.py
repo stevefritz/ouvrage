@@ -917,6 +917,30 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
             )
 
 
+async def _verify_worktree_exists(task_id: str, task: dict, reason: str) -> bool:
+    """Check that the task's worktree directory exists on disk before re-entering the gate pipeline.
+
+    If the worktree is missing (e.g. it was released after the task completed with
+    auto_release_worktree enabled), the gate cannot run. This function sets
+    gate_status='needs-review' and posts an explanatory message to the task thread so
+    a human can decide what to do next.
+
+    Returns True if the worktree exists and the gate may proceed.
+    Returns False if the worktree is missing; the caller should abort gate re-entry.
+    """
+    worktree = task.get("worktree_path")
+    if not worktree or not os.path.exists(worktree):
+        log.warning(f"_resume_gate_pipeline: worktree missing for {task_id}, setting needs-review ({reason})")
+        await db.update_task(task_id, gate_status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="switchboard", type="status",
+            title="Gate recovery blocked — worktree missing",
+            content=f"Cannot resume gate pipeline: worktree not found. Reason: {reason}.",
+        )
+        return False
+    return True
+
+
 async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool | None:
     """Unified gate recovery — single entry point for recovering any interrupted gate state.
 
@@ -950,17 +974,7 @@ async def _resume_gate_pipeline(task_id: str, reason: str = "recovery") -> bool 
         return await db.get_task(task_id)
 
     # Guard: verify worktree exists before re-entering any gate path.
-    # If the worktree was released (e.g. task completed + auto-release), the gate
-    # cannot run. Set needs-review so a human can decide what to do.
-    worktree = task.get("worktree_path")
-    if not worktree or not os.path.exists(worktree):
-        log.warning(f"_resume_gate_pipeline: worktree missing for {task_id}, setting needs-review ({reason})")
-        await db.update_task(task_id, gate_status="needs-review")
-        await db.post_task_message(
-            task_id=task_id, author="switchboard", type="status",
-            title="Gate recovery blocked — worktree missing",
-            content=f"Cannot resume gate pipeline: worktree not found. Reason: {reason}.",
-        )
+    if not await _verify_worktree_exists(task_id, task, reason):
         return False
 
     gate = task.get("gate_status")
