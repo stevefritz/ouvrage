@@ -150,7 +150,8 @@ async def _run_dispatch_review(task, project, captured, fake_run_subtask):
          patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
          patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
          patch("switchboard.dispatch.gates._run_subtask", fake_run_subtask), \
-         patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+         patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+         patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
         await _dispatch_review(task["id"], project, task)
 
     return captured.get("prompt", "")
@@ -176,7 +177,8 @@ class TestDispatchReviewComponentContext:
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         assert "No component assigned" in captured["prompt"]
@@ -205,7 +207,8 @@ class TestDispatchReviewComponentContext:
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -239,7 +242,8 @@ class TestDispatchReviewPromptStructure:
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         return captured.get("prompt", "")
@@ -346,7 +350,8 @@ class TestDispatchReviewPunchlistClaims:
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -379,7 +384,8 @@ class TestDispatchReviewPunchlistClaims:
              patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         assert "None." in captured["prompt"]
@@ -417,7 +423,8 @@ class TestDispatchReviewPriorReviewHistory:
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         return captured.get("prompt", "")
@@ -468,7 +475,8 @@ class TestDispatchReviewPriorReviewHistory:
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -507,7 +515,8 @@ class TestDispatchReviewFetchBeforeDiff:
              patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
              patch("switchboard.dispatch.gates._run_as_worker", fake_run_as_worker), \
              patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("switchboard.dispatch.gates._verify_worktree_exists", AsyncMock(return_value=True)):
             await _dispatch_review(task["id"], project, task)
 
         return fetch_calls, prompt_captured.get("prompt", "")
@@ -547,9 +556,35 @@ class TestDispatchReviewFetchBeforeDiff:
         assert "git diff release...HEAD" not in prompt
 
     async def test_fetch_skipped_when_no_worktree(self, tmp_db):
-        """No crash if worktree_path is None — fetch is skipped gracefully."""
-        fetch_calls, prompt = await self._run_capturing_fetch({"worktree_path": None})
-        # fetch should not have been called
+        """When worktree_path is None, the worktree guard bails out — no fetch, no prompt."""
+        from switchboard.dispatch.gates import _dispatch_review
+        task = {
+            "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
+            "worktree_path": None, "branch": "my-task", "review_model": "opus",
+            "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
+        }
+        project = {"id": "test-project", "test_command": "pytest -v"}
+        fetch_calls = []
+        prompt_captured = {}
+
+        async def fake_run_as_worker(*args, **kwargs):
+            fetch_calls.append(args)
+            return (b"", b"", 0)
+
+        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
+            prompt_captured["prompt"] = prompt
+            return {"status": "completed"}
+
+        with patch("switchboard.db.update_task", AsyncMock()), \
+             patch("switchboard.db.post_task_message", AsyncMock()), \
+             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
+             patch("switchboard.dispatch.gates._run_as_worker", fake_run_as_worker), \
+             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
+             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+            await _dispatch_review(task["id"], project, task)
+
+        # Guard bails out — no fetch called, no prompt built
         assert not any("fetch" in args for args in fetch_calls)
-        # prompt still uses origin/ prefix regardless
-        assert "origin/main...HEAD" in prompt
+        assert prompt_captured.get("prompt", "") == ""
