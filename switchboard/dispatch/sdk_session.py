@@ -339,6 +339,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- **Ambiguous spec** → post a question. Don't guess.")
     parts.append("- **Scope significantly larger than expected** → update phase to `needs-review` and explain.")
     parts.append("- **Blocking issue** (missing access, broken dependency) → post a question immediately.")
+    parts.append(f"- **Fundamental blocker you cannot resolve** → call `escalate(task_id='{task_id}', reason='...')` to flag the task for human review. Do not try to work around fundamental blockers.")
     if escalation_criteria:
         parts.append("")
         parts.append(escalation_criteria)
@@ -892,12 +893,12 @@ async def _run_sdk_session(
                 # Slot freed — drain FIFO queue
                 await _drain_queue()
             else:
-                await db.update_task(task_id, status="completed")
+                await db.update_task(task_id, status="pending-validation")
                 await db.write_audit_log(
                     task_id=task_id, action="completed",
                     triggered_by="system",
                     source_detail="_run_sdk_session (CC session completed)",
-                    previous_status="working", new_status="completed",
+                    previous_status="working", new_status="pending-validation",
                 )
                 await db.post_task_message(
                     task_id=task_id, author="dispatcher", type="status",

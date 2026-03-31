@@ -19,9 +19,9 @@ from switchboard.internal import api as internal_api
 import switchboard.db as db
 import switchboard.dispatch as tasks
 
-from switchboard.server.tools import TOOLS
+from switchboard.server.tools import TOOLS, WORKER_TOOLS, WORKER_TOOL_ALLOWLIST
 from switchboard.server.dispatch import _dispatch_tool
-from switchboard.server.context import set_request_context
+from switchboard.server.context import set_request_context, get_request_is_worker
 
 log = logging.getLogger("switchboard.server")
 
@@ -104,11 +104,21 @@ server = Server("switchboard", instructions=SERVER_INSTRUCTIONS)
 
 @server.list_tools()
 async def list_tools():
+    if get_request_is_worker():
+        # Worker endpoint: only expose the allowed subset + worker-specific tools
+        worker_tools = [t for t in TOOLS if t.name in WORKER_TOOL_ALLOWLIST]
+        worker_tools += WORKER_TOOLS
+        return worker_tools
     return TOOLS
 
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
+    if get_request_is_worker() and name not in WORKER_TOOL_ALLOWLIST:
+        return [TextContent(
+            type="text",
+            text=f"Error: Tool '{name}' is not available on the worker endpoint.",
+        )]
     try:
         result = await _dispatch_tool(name, arguments)
         return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]

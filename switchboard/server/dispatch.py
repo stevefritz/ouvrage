@@ -49,6 +49,7 @@ from switchboard.server.handlers.tasks import (
     _handle_update_checklist_item_text,
     _handle_get_pipeline,
     _handle_search_task_messages,
+    _handle_escalate,
 )
 from switchboard.server.handlers.components import (
     _handle_create_component,
@@ -163,6 +164,8 @@ TOOL_HANDLERS = {
     # Files
     "list_files": _handle_list_files,
     "add_task_file": _handle_add_task_file,
+    # Worker-only tools
+    "escalate": _handle_escalate,
 }
 
 

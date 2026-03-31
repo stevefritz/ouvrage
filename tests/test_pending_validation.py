@@ -1,0 +1,555 @@
+"""Tests for the pending-validation status flow and related changes.
+
+Covers:
+- sdk_session sets pending-validation (not completed) on CC finish
+- _check_and_dispatch_dependents sets status=completed when gate passes
+- resume_task accepts pending-validation
+- retry_task gate-stall check includes pending-validation
+- dispatch_task treats pending-validation as resumable
+- escalate tool: sets needs-review, posts escalation message
+- worker tool allowlist: list_tools filters, call_tool rejects
+- recovery: pending-validation tasks re-enter gate pipeline
+"""
+
+import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+import switchboard.db as db
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _set_worker_context():
+    from switchboard.server.context import set_request_context
+    set_request_context(user_id=None, is_token_auth=False, is_worker=True)
+
+
+def _set_user_context(user_id=1):
+    from switchboard.server.context import set_request_context
+    set_request_context(user_id=user_id, is_token_auth=True, is_worker=False)
+
+
+def _clear_context():
+    from switchboard.server.context import set_request_context
+    set_request_context(user_id=None, is_token_auth=False, is_worker=False)
+
+
+# ---------------------------------------------------------------------------
+# pending-validation status set by sdk_session
+# ---------------------------------------------------------------------------
+
+class TestSdkSessionSetsPendingValidation:
+    """CC session completion sets pending-validation, not completed."""
+
+    def test_status_is_pending_validation_in_source(self):
+        """Source code must set pending-validation, not completed, on CC finish."""
+        import inspect
+        import switchboard.dispatch.sdk_session as mod
+        source = inspect.getsource(mod)
+        # The normal completion path must use pending-validation
+        assert "pending-validation" in source
+
+
+# ---------------------------------------------------------------------------
+# _check_and_dispatch_dependents sets completed
+# ---------------------------------------------------------------------------
+
+class TestCheckAndDispatchSetsCompleted:
+    """_check_and_dispatch_dependents upgrades pending-validation → completed."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, sample_project):
+        self.drain_mock = patch(
+            "switchboard.dispatch.engine._drain_queue",
+            new_callable=AsyncMock,
+        )
+        self.release_mock = patch(
+            "switchboard.dispatch.engine._auto_release_worktree",
+            new_callable=AsyncMock,
+        )
+        self.pr_mock = patch(
+            "switchboard.dispatch.engine._maybe_create_pr",
+            new_callable=AsyncMock,
+        )
+        with self.drain_mock, self.release_mock, self.pr_mock:
+            yield
+
+    async def test_pending_validation_becomes_completed(self, db, sample_project):
+        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+
+        task = await db.create_task(
+            id="test-project/pv-task",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/pv-task",
+                             status="pending-validation",
+                             gate_status="passed",
+                             gate_passed_at=db.now_iso())
+
+        await _check_and_dispatch_dependents("test-project/pv-task")
+
+        updated = await db.get_task("test-project/pv-task")
+        assert updated["status"] == "completed"
+
+    async def test_turns_exhausted_becomes_completed(self, db, sample_project):
+        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+
+        task = await db.create_task(
+            id="test-project/te-task",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/te-task",
+                             status="turns-exhausted",
+                             gate_status="passed",
+                             gate_passed_at=db.now_iso())
+
+        await _check_and_dispatch_dependents("test-project/te-task")
+
+        updated = await db.get_task("test-project/te-task")
+        assert updated["status"] == "completed"
+
+    async def test_completed_status_unchanged(self, db, sample_project):
+        """Already-completed tasks should not be re-touched."""
+        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+
+        task = await db.create_task(
+            id="test-project/already-done",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/already-done",
+                             status="completed",
+                             gate_status="passed",
+                             gate_passed_at=db.now_iso())
+
+        await _check_and_dispatch_dependents("test-project/already-done")
+
+        updated = await db.get_task("test-project/already-done")
+        assert updated["status"] == "completed"
+
+    async def test_no_gate_passed_at_returns_early(self, db, sample_project):
+        """Without gate_passed_at the function should no-op."""
+        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+
+        task = await db.create_task(
+            id="test-project/no-gate",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/no-gate", status="pending-validation")
+
+        await _check_and_dispatch_dependents("test-project/no-gate")
+
+        updated = await db.get_task("test-project/no-gate")
+        # Should NOT have been updated to completed (gate never passed)
+        assert updated["status"] == "pending-validation"
+
+
+# ---------------------------------------------------------------------------
+# resume_task handles pending-validation
+# ---------------------------------------------------------------------------
+
+class TestResumeTaskPendingValidation:
+    """resume_task must accept pending-validation as a resumable status."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, sample_project):
+        self.dispatch_mock = patch(
+            "switchboard.dispatch.engine.dispatch_task",
+            new_callable=AsyncMock,
+            return_value={"status": "working"},
+        )
+        with self.dispatch_mock:
+            yield
+
+    async def test_resume_accepts_pending_validation(self, db, sample_project):
+        from switchboard.dispatch.engine import resume_task
+
+        task = await db.create_task(
+            id="test-project/pv-resume",
+            project_id="test-project",
+            goal="test resume",
+        )
+        await db.update_task("test-project/pv-resume", status="pending-validation")
+
+        # Should not raise ValueError
+        result = await resume_task("test-project/pv-resume")
+        # dispatch_task was called (mock returns {"status": "working"})
+        assert result is not None
+
+    async def test_resume_pending_validation_with_gate_passed_triggers_chain(self, db, sample_project):
+        """If gate already passed for a pending-validation task, re-trigger chain, not CC session."""
+        from switchboard.dispatch.engine import resume_task
+
+        with patch(
+            "switchboard.dispatch.engine._check_and_dispatch_dependents",
+            new_callable=AsyncMock,
+        ) as mock_chain:
+            task = await db.create_task(
+                id="test-project/pv-gate-done",
+                project_id="test-project",
+                goal="test",
+            )
+            await db.update_task("test-project/pv-gate-done",
+                                 status="pending-validation",
+                                 gate_passed_at=db.now_iso())
+
+            await resume_task("test-project/pv-gate-done")
+
+            mock_chain.assert_called_once_with("test-project/pv-gate-done")
+
+
+# ---------------------------------------------------------------------------
+# retry_task gate-stall check includes pending-validation
+# ---------------------------------------------------------------------------
+
+class TestRetryTaskPendingValidation:
+    """retry_task gate-stall path works for pending-validation tasks."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self, sample_project):
+        self.gate_mock = patch(
+            "switchboard.dispatch.gates._run_test_gate",
+            new_callable=AsyncMock,
+        )
+        with self.gate_mock as m:
+            self.run_test_gate = m
+            yield
+
+    async def test_pending_validation_with_stalled_gate_reruns_gate(self, db, sample_project):
+        """A pending-validation task with gate_status=review-failed should re-run gate, not launch CC."""
+        from switchboard.dispatch.engine import retry_task
+
+        # Need a project with test_command
+        await db.update_project("test-project", test_command="pytest tests/")
+
+        task = await db.create_task(
+            id="test-project/pv-stall",
+            project_id="test-project",
+            goal="test",
+            auto_test=True,
+        )
+        await db.update_task("test-project/pv-stall",
+                             status="pending-validation",
+                             gate_status="review-failed")
+
+        with patch("switchboard.dispatch.engine.asyncio.create_task") as mock_create_task:
+            await retry_task("test-project/pv-stall")
+            # create_task is called for the gate pipeline (not a CC session)
+            mock_create_task.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# escalate tool
+# ---------------------------------------------------------------------------
+
+class TestEscalateTool:
+    """escalate tool sets needs-review and posts escalation message."""
+
+    def teardown_method(self, _):
+        _clear_context()
+
+    async def test_escalate_sets_needs_review(self, db, sample_task):
+        from switchboard.server.handlers.tasks import _handle_escalate
+
+        _set_worker_context()
+        result = await _handle_escalate({
+            "task_id": sample_task["id"],
+            "reason": "Spec is ambiguous — cannot proceed without clarification.",
+        })
+
+        assert result.get("escalated") is True
+        assert result.get("status") == "needs-review"
+
+        updated = await db.get_task(sample_task["id"])
+        assert updated["status"] == "needs-review"
+
+    async def test_escalate_posts_escalation_message(self, db, sample_task):
+        from switchboard.server.handlers.tasks import _handle_escalate
+
+        _set_worker_context()
+        reason = "Blocked: missing external API credentials."
+        result = await _handle_escalate({
+            "task_id": sample_task["id"],
+            "reason": reason,
+        })
+
+        assert result.get("escalated") is True
+
+        thread = await db.read_task_messages(sample_task["id"])
+        msgs = thread.get("messages", [])
+        escalation = next(
+            (m for m in msgs if m.get("type") == "escalation"),
+            None,
+        )
+        assert escalation is not None
+        assert escalation["author"] == "cc-worker"
+        assert reason in escalation["content"]
+        assert "human review needed" in escalation.get("title", "").lower()
+
+    async def test_escalate_returns_error_for_missing_task(self, db):
+        from switchboard.server.handlers.tasks import _handle_escalate
+
+        result = await _handle_escalate({
+            "task_id": "nonexistent/task",
+            "reason": "something",
+        })
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Worker tool allowlist — list_tools filtering
+# ---------------------------------------------------------------------------
+
+class TestWorkerToolAllowlist:
+    """list_tools returns restricted set for workers; call_tool rejects non-allowlist tools."""
+
+    def teardown_method(self, _):
+        _clear_context()
+
+    async def test_worker_list_tools_only_shows_allowlist(self):
+        from switchboard.server.app import list_tools
+        from switchboard.server.tools import WORKER_TOOL_ALLOWLIST
+
+        _set_worker_context()
+        tools = await list_tools()
+
+        tool_names = {t.name for t in tools}
+        # All returned tools must be in the allowlist
+        for name in tool_names:
+            assert name in WORKER_TOOL_ALLOWLIST, f"Tool '{name}' not in WORKER_TOOL_ALLOWLIST"
+
+    async def test_worker_list_tools_includes_escalate(self):
+        from switchboard.server.app import list_tools
+
+        _set_worker_context()
+        tools = await list_tools()
+
+        names = [t.name for t in tools]
+        assert "escalate" in names
+
+    async def test_worker_list_tools_excludes_dispatch_task(self):
+        from switchboard.server.app import list_tools
+
+        _set_worker_context()
+        tools = await list_tools()
+
+        names = [t.name for t in tools]
+        assert "dispatch_task" not in names
+
+    async def test_worker_list_tools_excludes_cancel_task(self):
+        from switchboard.server.app import list_tools
+
+        _set_worker_context()
+        tools = await list_tools()
+
+        names = [t.name for t in tools]
+        assert "cancel_task" not in names
+
+    async def test_user_list_tools_shows_all(self):
+        from switchboard.server.app import list_tools
+        from switchboard.server.tools import TOOLS
+
+        _set_user_context()
+        tools = await list_tools()
+
+        # User gets the full TOOLS list
+        assert len(tools) == len(TOOLS)
+
+    async def test_worker_call_tool_rejects_non_allowlist(self):
+        from switchboard.server.app import call_tool
+
+        _set_worker_context()
+        result = await call_tool("dispatch_task", {"project_id": "x", "task_id": "y", "goal": "z"})
+
+        assert len(result) == 1
+        assert "not available on the worker endpoint" in result[0].text
+
+    async def test_worker_call_tool_rejects_get_context(self):
+        from switchboard.server.app import call_tool
+
+        _set_worker_context()
+        result = await call_tool("get_context", {})
+
+        assert len(result) == 1
+        assert "not available on the worker endpoint" in result[0].text
+
+    async def test_worker_call_tool_allows_post_task_message(self, db, sample_task):
+        from switchboard.server.app import call_tool
+        import json
+
+        _set_worker_context()
+        result = await call_tool("post_task_message", {
+            "task_id": sample_task["id"],
+            "author": "cc-worker",
+            "type": "progress",
+            "content": "Working on it.",
+        })
+
+        assert len(result) == 1
+        data = json.loads(result[0].text)
+        assert "error" not in str(data).lower() or "Error" not in result[0].text[:10]
+
+    async def test_worker_call_tool_allows_escalate(self, db, sample_task):
+        from switchboard.server.app import call_tool
+        import json
+
+        _set_worker_context()
+        result = await call_tool("escalate", {
+            "task_id": sample_task["id"],
+            "reason": "Test escalation from unit test.",
+        })
+
+        assert len(result) == 1
+        data = json.loads(result[0].text)
+        assert data.get("escalated") is True
+
+
+# ---------------------------------------------------------------------------
+# Recovery: pending-validation re-enters gate pipeline
+# ---------------------------------------------------------------------------
+
+class TestRecoveryPendingValidation:
+    """recover_orphaned_tasks re-enters gate pipeline for pending-validation tasks."""
+
+    @pytest.fixture(autouse=True)
+    def _patches(self):
+        self.resume_mock = patch(
+            "switchboard.dispatch.engine.resume_task",
+            new_callable=AsyncMock,
+        )
+        self.retry_mock = patch(
+            "switchboard.dispatch.engine.retry_task",
+            new_callable=AsyncMock,
+        )
+        with self.resume_mock, self.retry_mock:
+            yield
+
+    async def test_pending_validation_no_gate_runs_test_gate(self, db, sample_project):
+        from switchboard.dispatch.recovery import recover_orphaned_tasks
+
+        # Update project to have a test_command
+        await db.update_project("test-project", test_command="pytest")
+
+        task = await db.create_task(
+            id="test-project/pv-recovery-1",
+            project_id="test-project",
+            goal="test",
+            auto_test=True,
+        )
+        await db.update_task("test-project/pv-recovery-1",
+                             status="pending-validation",
+                             gate_status=None)
+
+        with patch(
+            "switchboard.dispatch.gates._run_test_gate",
+            new_callable=AsyncMock,
+        ) as mock_test_gate, patch(
+            "switchboard.dispatch.gates._dispatch_review",
+            new_callable=AsyncMock,
+        ) as mock_review:
+            await recover_orphaned_tasks()
+
+            mock_test_gate.assert_called_once()
+            mock_review.assert_not_called()
+
+    async def test_pending_validation_push_failed_skipped(self, db, sample_project):
+        """push-failed tasks should not be auto-recovered."""
+        from switchboard.dispatch.recovery import recover_orphaned_tasks
+
+        task = await db.create_task(
+            id="test-project/pv-push-failed",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/pv-push-failed",
+                             status="pending-validation",
+                             gate_status="push-failed")
+
+        with patch(
+            "switchboard.dispatch.gates._run_test_gate",
+            new_callable=AsyncMock,
+        ) as mock_test_gate, patch(
+            "switchboard.dispatch.gates._dispatch_review",
+            new_callable=AsyncMock,
+        ) as mock_review:
+            await recover_orphaned_tasks()
+
+            mock_test_gate.assert_not_called()
+            mock_review.assert_not_called()
+
+    async def test_pending_validation_review_failed_runs_review(self, db, sample_project):
+        from switchboard.dispatch.recovery import recover_orphaned_tasks
+
+        task = await db.create_task(
+            id="test-project/pv-review-failed",
+            project_id="test-project",
+            goal="test",
+            auto_review=True,
+        )
+        await db.update_task("test-project/pv-review-failed",
+                             status="pending-validation",
+                             gate_status="review-failed")
+
+        with patch(
+            "switchboard.dispatch.gates._run_test_gate",
+            new_callable=AsyncMock,
+        ) as mock_test_gate, patch(
+            "switchboard.dispatch.gates._dispatch_review",
+            new_callable=AsyncMock,
+        ) as mock_review:
+            await recover_orphaned_tasks()
+
+            mock_review.assert_called_once()
+
+    async def test_pending_validation_gate_passed_dispatches_chain(self, db, sample_project):
+        """pending-validation with gate_status=passed should dispatch chain."""
+        from switchboard.dispatch.recovery import recover_orphaned_tasks
+
+        task = await db.create_task(
+            id="test-project/pv-chain-dispatch",
+            project_id="test-project",
+            goal="test",
+        )
+        await db.update_task("test-project/pv-chain-dispatch",
+                             status="pending-validation",
+                             gate_status="passed",
+                             gate_passed_at=db.now_iso())
+
+        with patch(
+            "switchboard.dispatch.engine._check_and_dispatch_dependents",
+            new_callable=AsyncMock,
+        ) as mock_chain, patch(
+            "switchboard.dispatch.gates._run_test_gate",
+            new_callable=AsyncMock,
+        ), patch(
+            "switchboard.dispatch.gates._dispatch_review",
+            new_callable=AsyncMock,
+        ):
+            await recover_orphaned_tasks()
+
+            mock_chain.assert_called_once_with("test-project/pv-chain-dispatch")
+
+
+# ---------------------------------------------------------------------------
+# Prompt includes escalate tool note
+# ---------------------------------------------------------------------------
+
+class TestPromptIncludesEscalate:
+    """_build_task_prompt includes instructions about the escalate tool."""
+
+    async def test_prompt_mentions_escalate(self, db, sample_task, sample_project):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+
+        task = await db.get_task(sample_task["id"])
+        project = await db.get_project(sample_project["id"])
+
+        # Provide worktree_path so the prompt builds successfully
+        await db.update_task(sample_task["id"], worktree_path="/tmp/worktree")
+        task = await db.get_task(sample_task["id"])
+
+        prompt = await _build_task_prompt(project, task, None, [])
+        assert "escalate" in prompt
