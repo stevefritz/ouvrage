@@ -74,7 +74,7 @@ _UPDATE_TASK_FIELDS = {
     "max_turns", "max_wall_clock",
     "max_test_retries", "max_review_retries",
     "model", "review_model", "jira_ticket", "conversation_id", "claude_chat_url",
-    "held",
+    "held", "depends_on",
 }
 
 # Fields that CC workers are not allowed to modify via /mcp/worker.
@@ -316,6 +316,20 @@ async def _handle_update_task(arguments):
                 raise ValueError("Cannot re-hold a cancelled task")
             else:
                 raise ValueError(f"Cannot re-hold a task with status '{status}' — only ready tasks can be re-held")
+
+    # Linear chain enforcement: if depends_on is being updated, check for fan-out
+    if "depends_on" in fields and fields["depends_on"] is not None:
+        new_parent = fields["depends_on"]
+        existing_dependents = await db.get_dependents(new_parent)
+        # Exclude the task being updated itself (re-setting the same parent is ok)
+        blocking = [d for d in existing_dependents if d["id"] != task_id]
+        if blocking:
+            existing_id = blocking[0]["id"]
+            raise ValueError(
+                f"Task '{new_parent}' already has a dependent ('{existing_id}'). "
+                f"Chains are linear — each task can only have one successor. "
+                f"Remove the existing dependent first, or chain off '{existing_id}' instead."
+            )
 
     return await db.update_task(task_id, **fields)
 
