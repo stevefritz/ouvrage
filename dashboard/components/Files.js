@@ -230,7 +230,7 @@ function FileRow({ file, onRename, onDelete }) {
                                 cursor: (isImage || isMarkdown) ? 'pointer' : 'text',
                             }}
                             onClick=${() => (isImage || isMarkdown) ? setLightbox(true) : (setEditValue(file.filename), setEditing(true))}
-                            title=${isImage ? 'Click to preview' : isMarkdown ? 'Click to preview' : 'Click to rename'}
+                            title=${(isImage || isMarkdown) ? 'Click to preview' : 'Click to rename'}
                         >${file.filename}</span>`
                     }
                 </div>
