@@ -219,13 +219,12 @@ class TestRetryTaskPendingValidation:
             self.run_test_gate = m
             yield
 
-    async def test_pending_validation_with_stalled_gate_reruns_gate(self, db, sample_project):
-        """pending-validation task with gate_status=review-failed delegates to _resume_gate_pipeline.
+    async def test_pending_validation_with_review_failed_dispatches_cc(self, db, sample_project):
+        """pending-validation task with gate_status=review-failed launches a CC session.
 
-        The old behavior re-ran the gate directly. The new behavior routes through
-        _resume_gate_pipeline which handles review-failed by dispatching a fresh CC session
-        to address the review feedback. This is the correct behavior: review-failed means
-        code needs fixing, not just re-reviewing the same code.
+        review-failed is a rejection state (code needs fixing), not an interrupted state
+        (process died mid-flight). retry_task must NOT re-enter the gate pipeline —
+        it must dispatch a fresh CC session so the worker can fix the code.
         """
         from switchboard.dispatch.engine import retry_task
 
@@ -239,11 +238,14 @@ class TestRetryTaskPendingValidation:
                              status="pending-validation",
                              gate_status="review-failed")
 
-        mock_resume = AsyncMock(return_value={"id": "test-project/pv-stall"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
+        mock_dispatch = AsyncMock(return_value={"id": "test-project/pv-stall", "status": "working"})
+        mock_resume = AsyncMock()
+        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch), \
+             patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
             await retry_task("test-project/pv-stall")
 
-        mock_resume.assert_called_once_with("test-project/pv-stall", reason="retry")
+        mock_dispatch.assert_called_once()
+        mock_resume.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
