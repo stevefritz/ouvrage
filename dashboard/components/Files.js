@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { styles, SectionHeader, ConfirmAction } from './FormKit.js';
 import { colors, typography, spacing, layout, animation } from '../tokens.js';
 import { ImageLightbox, isImageFile } from './ImageLightbox.js';
+import { MarkdownLightbox, isMarkdownFile } from './MarkdownLightbox.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,6 +129,7 @@ function FileRow({ file, onRename, onDelete }) {
     const inputRef = useRef(null);
 
     const isImage = isImageFile(file.filename);
+    const isMarkdown = isMarkdownFile(file.filename);
     const downloadUrl = `/dashboard/api/files/${file.id}/download`;
 
     useEffect(() => {
@@ -224,11 +226,11 @@ function FileRow({ file, onRename, onDelete }) {
                             style=${{
                                 fontSize: typography.size.sm,
                                 fontWeight: typography.weight.medium,
-                                color: isImage ? colors.accent : colors.text,
-                                cursor: isImage ? 'pointer' : 'text',
+                                color: (isImage || isMarkdown) ? colors.accent : colors.text,
+                                cursor: (isImage || isMarkdown) ? 'pointer' : 'text',
                             }}
-                            onClick=${() => isImage ? setLightbox(true) : (setEditValue(file.filename), setEditing(true))}
-                            title=${isImage ? 'Click to preview' : 'Click to rename'}
+                            onClick=${() => (isImage || isMarkdown) ? setLightbox(true) : (setEditValue(file.filename), setEditing(true))}
+                            title=${isImage ? 'Click to preview' : isMarkdown ? 'Click to preview' : 'Click to rename'}
                         >${file.filename}</span>`
                     }
                 </div>
@@ -280,10 +282,17 @@ function FileRow({ file, onRename, onDelete }) {
             </div>
         </div>
 
-        ${lightbox && html`
+        ${lightbox && isImage && html`
             <${ImageLightbox}
                 src=${downloadUrl}
                 alt=${file.filename}
+                onClose=${() => setLightbox(false)}
+            />
+        `}
+        ${lightbox && isMarkdown && html`
+            <${MarkdownLightbox}
+                src=${downloadUrl}
+                filename=${file.filename}
                 onClose=${() => setLightbox(false)}
             />
         `}
