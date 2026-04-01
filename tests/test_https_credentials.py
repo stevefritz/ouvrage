@@ -212,6 +212,7 @@ class TestSetupCredentialHelper:
             patch("switchboard.git.worktree._run_as_worker", self.mock_run),
             patch("switchboard.git.worktree.db.get_project", self.mock_get_project),
             patch("switchboard.git.worktree._get_worker_ids", self.mock_get_worker_ids),
+            patch("switchboard.git.worktree.os.chown", MagicMock()),
         ]
         for p in self.patches:
             p.start()
@@ -229,23 +230,23 @@ class TestSetupCredentialHelper:
         assert result.endswith(".git-credential-helper.sh")
 
     @pytest.mark.asyncio
-    async def test_helper_written_via_run_as_worker(self):
-        """Helper script is written via _run_as_worker bash, not open()."""
+    async def test_helper_file_written(self):
+        """Helper script is written to worktree with correct content."""
         from switchboard.git.worktree import setup_credential_helper
         with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
-            await setup_credential_helper(self.worktree, self.project_id)
-        bash_calls = [c for c in self.mock_run.call_args_list if c.args[0] == "bash"]
-        assert len(bash_calls) >= 1
-        assert "username=oauth2" in str(bash_calls[0].args)
+            result = await setup_credential_helper(self.worktree, self.project_id)
+        assert os.path.exists(result)
+        content = open(result).read()
+        assert "username=oauth2" in content
+        assert self.pat in content
 
     @pytest.mark.asyncio
-    async def test_chmod_700_called(self):
+    async def test_helper_file_executable(self):
         from switchboard.git.worktree import setup_credential_helper
         with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
-            await setup_credential_helper(self.worktree, self.project_id)
-        chmod_calls = [c for c in self.mock_run.call_args_list if c.args[0] == "chmod"]
-        assert len(chmod_calls) == 1
-        assert "700" in chmod_calls[0].args
+            result = await setup_credential_helper(self.worktree, self.project_id)
+        mode = os.stat(result).st_mode
+        assert mode & 0o700 == 0o700
 
     @pytest.mark.asyncio
     async def test_credential_helper_worktree_scoped(self):
