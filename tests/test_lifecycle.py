@@ -179,7 +179,7 @@ class TestExecuteValidTransitions:
     """Test every transition in the table via execute() with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def _setup(self, db):
+    async def _setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         await db.create_project(
@@ -188,7 +188,7 @@ class TestExecuteValidTransitions:
             working_dir="/tmp/lifecycle-test",
         )
 
-    async def _make_task(self, task_id, status="ready", gate_status=None, reason=None):
+    async def _make_task(self, task_id, status="ready", gate_status=None, reason=None, **extra):
         task = await self.db.create_task(
             id=task_id, project_id=PROJECT_ID, goal="test",
         )
@@ -199,6 +199,7 @@ class TestExecuteValidTransitions:
             updates["gate_status"] = gate_status
         if reason is not None:
             updates["reason"] = reason
+        updates.update(extra)
         if updates:
             task = await self.db.update_task(task_id, **updates)
         return task
@@ -244,7 +245,7 @@ class TestExecuteValidTransitions:
         assert result["status"] == "cancelled"
 
     async def test_stopped_resume(self):
-        await self._make_task("t/8", status="stopped")
+        await self._make_task("t/8", status="stopped", session_id="ses-123")
         result = await self.lifecycle.execute("t/8", "resume")
         assert result["status"] == "working"
 
@@ -254,7 +255,7 @@ class TestExecuteValidTransitions:
         assert result["status"] == "working"
 
     async def test_stopped_start(self):
-        await self._make_task("t/10", status="stopped")
+        await self._make_task("t/10", status="stopped", reason="awaiting_feedback")
         result = await self.lifecycle.execute("t/10", "start")
         assert result["status"] == "working"
 
@@ -287,7 +288,7 @@ class TestExecuteValidTransitions:
         assert result["status"] == "working"
 
     async def test_cancelled_resume(self):
-        await self._make_task("t/16", status="cancelled")
+        await self._make_task("t/16", status="cancelled", session_id="ses-456")
         result = await self.lifecycle.execute("t/16", "resume")
         assert result["status"] == "working"
 
@@ -388,7 +389,7 @@ class TestExecuteValidTransitions:
 
     async def test_reason_cleared_on_state_change(self):
         """When transitioning to a new state without explicit reason, reason is cleared."""
-        await self._make_task("t/clear", status="stopped", reason="paused_by_user")
+        await self._make_task("t/clear", status="stopped", reason="paused_by_user", session_id="ses-789")
         result = await self.lifecycle.execute("t/clear", "resume")
         assert result["status"] == "working"
         assert result["reason"] is None
@@ -471,7 +472,7 @@ class TestExecuteIllegalTransitions:
 
 class TestPreconditionsAndSideEffects:
     @pytest.fixture(autouse=True)
-    async def _setup(self, db):
+    async def _setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         await db.create_project(
@@ -731,7 +732,7 @@ class TestTransitionTableCompleteness:
     def test_transition_count(self):
         """Verify we have the expected number of transitions from the design."""
         # 16 user + 9 system + 2 recovery = 27
-        assert len(TRANSITIONS) == 27
+        assert len(TRANSITIONS) == 31
 
     def test_all_user_actions_have_labels(self):
         """User-facing actions should have labels for dashboard buttons."""
@@ -793,7 +794,7 @@ class TestCancelBehavior:
     """Test cancel transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -849,7 +850,7 @@ class TestCloseBehavior:
     """Test close transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -924,7 +925,7 @@ class TestSkipGateBehavior:
     """Test skip_gate transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -1016,7 +1017,7 @@ class TestCancelChainBehavior:
     """Test cancel_chain routes through lifecycle."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         try:
             await db.create_project(
@@ -1075,7 +1076,7 @@ class TestStopBehavior:
     """Test stop_task transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:

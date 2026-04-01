@@ -55,6 +55,16 @@ from switchboard.dispatch.pr_sweep import (
 
 from switchboard.dispatch._state import _running_tasks, _active_clients
 
+from switchboard.dispatch.internals import (
+    setup_task_worktree,
+    resolve_session_config,
+    build_dispatch_prompt,
+    launch_sdk_session,
+    check_and_queue_if_full,
+    collect_review_feedback,
+    collect_reopen_feedback,
+)
+
 from switchboard.dispatch.engine import (
     _handle_task_exception,
     _resolve_limit,
@@ -127,6 +137,14 @@ __all__ = [
     "_check_pr_status",
     "_handle_pr_merged",
     "_pr_status_sweep",
+    # internals — status-agnostic dispatch building blocks
+    "setup_task_worktree",
+    "resolve_session_config",
+    "build_dispatch_prompt",
+    "launch_sdk_session",
+    "check_and_queue_if_full",
+    "collect_review_feedback",
+    "collect_reopen_feedback",
     # engine — public API
     "_running_tasks",
     "_active_clients",

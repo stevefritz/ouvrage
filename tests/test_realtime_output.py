@@ -146,7 +146,7 @@ class TestStructuredTestOutput:
             goal="Test output",
             auto_review=False,
         )
-        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed")
+        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="validating")
 
         with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("All tests passed\nOK", 0))):
             project = await db.get_project("test-project")
@@ -196,7 +196,7 @@ class TestStructuredTestOutput:
             goal="Test output lines",
             auto_review=False,
         )
-        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed")
+        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="validating")
 
         # Generate 200 lines of output
         big_output = "\n".join(f"line {i}" for i in range(200))
@@ -316,7 +316,7 @@ class TestAttemptTracking:
         msg2 = await db.post_task_message(task_id=task["id"], author="cc-worker", content="Attempt 2 work")
         assert msg2["attempt_number"] == 2
 
-    async def test_resume_does_not_increment_attempt(self, db, sample_project):
+    async def test_resume_does_not_increment_attempt(self, db, sample_project, mock_git, mock_sdk):
         """resume_task does NOT increment current_attempt (same attempt)."""
         from switchboard.dispatch.engine import resume_task
 
@@ -325,10 +325,10 @@ class TestAttemptTracking:
             project_id="test-project",
             goal="Resume no increment",
         )
-        await db.update_task(task["id"], status="needs-review", current_attempt=2)
+        await db.update_task(task["id"], status="needs-review", current_attempt=2,
+                             session_id="ses-resume-test")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})) as mock_dispatch:
-            await resume_task(task["id"])
+        await resume_task(task["id"])
 
         # current_attempt should still be 2 (resume_task doesn't touch it)
         updated = await db.get_task(task["id"])

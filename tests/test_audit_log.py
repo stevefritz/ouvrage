@@ -321,11 +321,11 @@ class TestAuditTriggeredBy:
         await reopen_task("trig-proj/reopen-test")
 
         logs = await self.db.get_audit_log("trig-proj/reopen-test")
-        reopen_logs = [l for l in logs if l["action"] == "reopened"]
+        reopen_logs = [l for l in logs if l["action"] == "reopen"]
         assert len(reopen_logs) == 1
         assert reopen_logs[0]["triggered_by"] == "user"
         assert reopen_logs[0]["previous_status"] == "completed"
-        assert reopen_logs[0]["new_status"] == "reopened"
+        assert reopen_logs[0]["new_status"] == "stopped"
 
     async def test_skip_gate_audit(self):
         """skip_gate writes audit with triggered_by=user."""

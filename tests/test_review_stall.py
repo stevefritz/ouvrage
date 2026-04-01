@@ -522,7 +522,7 @@ class TestRetryTaskGatePipeline:
             worktree_path="/tmp/fake-worktree",
         )
 
-    async def test_retry_task_dispatches_cc_for_completed_needs_review(self, db, sample_project):
+    async def test_retry_task_dispatches_cc_for_completed_needs_review(self, db, sample_project, mock_git, mock_sdk):
         """retry_task with completed + gate_status=needs-review launches CC, NOT gate pipeline.
 
         needs-review means the code was rejected (max retries exceeded or review stalled).
@@ -531,19 +531,17 @@ class TestRetryTaskGatePipeline:
         """
         task = await self._make_stalled_task(db, sample_project, "needs-review")
 
-        mock_test_gate = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
-        # Should have dispatched CC, NOT re-run the test gate
-        await asyncio.sleep(0)
-        mock_test_gate.assert_not_called()
-        mock_dispatch.assert_called_once()
+        # Should have dispatched CC, NOT re-run the gate pipeline
+        mock_resume_pipeline.assert_not_called()
+        updated = await db.get_task("test-project/stalled-gate-task")
+        assert updated["status"] == "working"
 
-    async def test_retry_task_dispatches_cc_for_completed_review_failed(self, db, sample_project):
+    async def test_retry_task_dispatches_cc_for_completed_review_failed(self, db, sample_project, mock_git, mock_sdk):
         """retry_task with completed + gate_status=review-failed launches CC, NOT gate pipeline.
 
         review-failed means the reviewer requested changes. CC must run again with the
@@ -552,21 +550,17 @@ class TestRetryTaskGatePipeline:
         """
         task = await self._make_stalled_task(db, sample_project, "review-failed")
 
-        mock_test_gate = AsyncMock()
         mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
         # Should NOT delegate to _resume_gate_pipeline, should dispatch CC instead
         mock_resume_pipeline.assert_not_called()
-        mock_test_gate.assert_not_called()
-        mock_dispatch.assert_called_once()
+        updated = await db.get_task("test-project/stalled-gate-task")
+        assert updated["status"] == "working"
 
-    async def test_retry_task_does_not_rerun_gate_for_completed_null_gate_status(self, db, sample_project):
+    async def test_retry_task_does_not_rerun_gate_for_completed_null_gate_status(self, db, sample_project, mock_git, mock_sdk):
         """retry_task with completed + gate_status=None goes through normal dispatch path.
 
         gate_status=None is ambiguous (gate never ran, or was reset) — it should NOT
@@ -576,52 +570,33 @@ class TestRetryTaskGatePipeline:
         task = await self._make_stalled_task(db, sample_project, None)
         await db.update_task("test-project/stalled-gate-task", gate_status=None)
 
-        mock_test_gate = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={
-            "task_id": "test-project/stalled-gate-task",
-            "status": "working",
-            "phase": "analysis",
-            "worktree_path": "/tmp/fake",
-            "branch": "stalled-gate-task",
-            "session_id": None,
-            "dispatch_count": 2,
-            "max_turns": 50,
-            "max_wall_clock": 30,
-            "model": "sonnet",
-            "resumed": False,
-            "queued": False,
-        })
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
-        await asyncio.sleep(0)
         # Gate pipeline should NOT have been called — normal dispatch path instead
-        mock_test_gate.assert_not_called()
-        mock_dispatch.assert_called_once()
+        mock_resume_pipeline.assert_not_called()
+        updated = await db.get_task("test-project/stalled-gate-task")
+        assert updated["status"] == "working"
 
-    async def test_retry_task_resets_gate_retries_on_cc_retry(self, db, sample_project):
+    async def test_retry_task_resets_gate_retries_on_cc_retry(self, db, sample_project, mock_git, mock_sdk):
         """Gate retries counter is reset when retry_task dispatches a new CC session."""
         task = await self._make_stalled_task(db, sample_project, "needs-review")
         await db.update_task("test-project/stalled-gate-task", gate_retries=2)
 
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/stalled-gate-task")
+        from switchboard.dispatch.engine import retry_task
+        await retry_task("test-project/stalled-gate-task")
 
         updated = await db.get_task("test-project/stalled-gate-task")
         assert (updated.get("gate_retries") or 0) == 0
 
-    async def test_retry_task_posts_attempt_message_for_needs_review(self, db, sample_project):
+    async def test_retry_task_posts_attempt_message_for_needs_review(self, db, sample_project, mock_git, mock_sdk):
         """retry_task posts an 'Attempt N starting' message when dispatching CC for needs-review."""
         task = await self._make_stalled_task(db, sample_project, "needs-review")
 
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/stalled-gate-task")
+        from switchboard.dispatch.engine import retry_task
+        await retry_task("test-project/stalled-gate-task")
 
         msgs = await db.read_task_messages("test-project/stalled-gate-task")
         attempt_msgs = [m for m in msgs["messages"]
@@ -630,7 +605,7 @@ class TestRetryTaskGatePipeline:
         assert len(attempt_msgs) >= 1
 
     async def test_retry_task_normal_behavior_for_non_completed_task(self, db, sample_project,
-                                                                       mock_git, tmp_path):
+                                                                       mock_git, mock_sdk):
         """retry_task launches a new CC session when task is NOT completed."""
         task = await db.create_task(
             id="test-project/normal-retry",
@@ -638,19 +613,19 @@ class TestRetryTaskGatePipeline:
             goal="Normal retry test",
         )
         await db.update_task(task["id"], status="needs-review",
-                             worktree_path=str(tmp_path))
+                             worktree_path="/tmp/fake-worktree")
 
-        mock_test_gate = AsyncMock()
-        # Patch dispatch_task to avoid actually dispatching
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})), \
-             patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate):
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/normal-retry")
 
         # For non-completed task, gate should NOT be re-triggered
-        mock_test_gate.assert_not_called()
+        mock_resume_pipeline.assert_not_called()
+        updated = await db.get_task("test-project/normal-retry")
+        assert updated["status"] == "working"
 
-    async def test_retry_task_does_not_rerun_gate_when_gate_already_passed(self, db, sample_project):
+    async def test_retry_task_does_not_rerun_gate_when_gate_already_passed(self, db, sample_project, mock_git, mock_sdk):
         """retry_task does NOT re-run gate for completed + gate_passed_at set."""
         task = await db.create_task(
             id="test-project/passed-task",
@@ -664,12 +639,9 @@ class TestRetryTaskGatePipeline:
             worktree_path="/tmp/fake",
         )
 
-        mock_test_gate = AsyncMock()
-        # This should fall through to the normal resume path, not re-run gate
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()):
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
-            # retry_task on a passed completed task should NOT re-run gate
             await retry_task("test-project/passed-task")
 
-        mock_test_gate.assert_not_called()
+        mock_resume_pipeline.assert_not_called()

@@ -548,12 +548,12 @@ class TestCheckAndDispatchWithAutoMerge:
 
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        self.mock_dispatch = AsyncMock()
+        self.mock_lifecycle_execute = AsyncMock()
         self.mock_pr = AsyncMock()
         self.mock_drain = AsyncMock()
 
         patches = [
-            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
             patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
             patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
         ]
@@ -604,7 +604,10 @@ class TestCheckAndDispatchWithAutoMerge:
 
         # Mid-chain: merge should NOT be called, dependent SHOULD be dispatched
         mock_merge.assert_not_awaited()
-        self.mock_dispatch.assert_awaited_once()
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "test-project/am-dep"
+        assert call_args[1] == "dispatch"
 
     async def test_queue_drained_after_chain(self, db, sample_project):
         """_drain_queue is called at the end of _check_and_dispatch_dependents."""

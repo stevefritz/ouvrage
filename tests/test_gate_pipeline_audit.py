@@ -260,56 +260,52 @@ class TestInterruptedGateRecovery:
 class TestRejectionStatesNotReenteredByRetry:
     """retry_task with rejection gate states must launch CC, not re-enter gates."""
 
-    async def test_review_failed_excluded_from_gate_reentry(self, db, sample_project):
+    async def test_review_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
         """Scenario 2: review-failed → retry_task launches fresh CC session."""
         await _make_task(db, status="completed", gate_status="review-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
+        # review-failed is NOT an interrupted state — CC gets a fresh session, not gate re-entry
         mock_resume_pipeline.assert_not_called()
-        mock_dispatch.assert_called_once()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
 
-    async def test_test_failed_excluded_from_gate_reentry(self, db, sample_project):
+    async def test_test_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
         """Scenario 3: test-failed → retry_task launches fresh CC session."""
         await _make_task(db, status="completed", gate_status="test-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
         mock_resume_pipeline.assert_not_called()
-        mock_dispatch.assert_called_once()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
 
-    async def test_needs_review_excluded_from_gate_reentry(self, db, sample_project):
+    async def test_needs_review_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
         """Scenario 8: needs-review → retry_task launches fresh CC session."""
         await _make_task(db, status="completed", gate_status="needs-review", gate_retries=2)
 
         mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
         mock_resume_pipeline.assert_not_called()
-        mock_dispatch.assert_called_once()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
 
-    async def test_retry_task_clears_gate_state_for_fresh_run(self, db, sample_project):
+    async def test_retry_task_clears_gate_state_for_fresh_run(self, db, sample_project, mock_git, mock_sdk):
         """retry_task resets gate_status and gate_retries for fresh CC run."""
         await _make_task(db, status="completed", gate_status="review-failed", gate_retries=2)
 
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/audit-task-1")
+        from switchboard.dispatch.engine import retry_task
+        await retry_task("test-project/audit-task-1")
 
         # After retry_task, gate state is cleared before dispatch_task is called
         task = await db.get_task("test-project/audit-task-1")
