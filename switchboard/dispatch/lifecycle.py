@@ -159,6 +159,326 @@ async def _post_stop_message(task: dict, **ctx: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Side-effect functions for dispatch
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
+    """Launch a CC session for a newly dispatched task."""
+    import os
+    from switchboard.dispatch.internals import (
+        check_and_queue_if_full, setup_task_worktree,
+        build_dispatch_prompt, launch_sdk_session, resolve_session_config,
+    )
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+
+    # Concurrency check — may queue instead
+    if await check_and_queue_if_full(task_id):
+        # Task was queued — revert status back to ready
+        await db.update_task(task_id, status="ready", queued_at=db.now_iso())
+        return
+
+    project = await db.get_project(task["project_id"])
+
+    # Setup worktree
+    worktree_path = await setup_task_worktree(project, task)
+    dispatch_count = (task.get("dispatch_count") or 0) + 1
+    await db.update_task(task_id,
+        worktree_path=worktree_path,
+        dispatch_count=dispatch_count,
+        last_activity=db.now_iso(),
+    )
+
+    # Build prompt
+    prompt = await build_dispatch_prompt(
+        project, task,
+        escalation_criteria=ctx.get("escalation_criteria"),
+        review_feedback=ctx.get("review_feedback"),
+    )
+
+    # Resolve config + launch
+    config = resolve_session_config(task, project)
+    await launch_sdk_session(
+        task_id=task_id, prompt=prompt,
+        worktree_path=worktree_path, **config,
+    )
+
+    # Notify Slack
+    checklist_items = await db.get_checklist(task_id)
+    spec_content = None
+    pinned = await db.get_task_pinned(task_id)
+    if pinned:
+        spec_content = pinned["content"]
+    await notify.task_dispatched(
+        task_id=task_id, goal=task["goal"], project_id=task["project_id"],
+        checklist_total=len(checklist_items or []),
+        checklist=checklist_items,
+        spec=spec_content,
+        resumed=False,
+    )
+
+    # Clear queued_at since we've dispatched
+    if task.get("queued_at"):
+        await db.update_task(task_id, queued_at=None)
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for resume
+# ---------------------------------------------------------------------------
+
+
+async def _resume_launch_session(task: dict, **ctx: Any) -> None:
+    """Resume a stopped/cancelled task's CC session."""
+    import os
+    from switchboard.dispatch.internals import (
+        setup_task_worktree, launch_sdk_session, resolve_session_config,
+    )
+    from switchboard.dispatch.sdk_session import _build_resume_prompt
+
+    task_id = task["id"]
+    prev_status = ctx.get("_previous_status")
+
+    # Gate-passed shortcut: re-trigger post-gate pipeline instead of CC launch
+    if (task.get("gate_passed_at")
+            and prev_status in ("completed", "merged", "pending-validation")
+            and task.get("pr_status") != "conflict"):
+        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        await _check_and_dispatch_dependents(task_id)
+        return
+
+    # DO NOT clear gate_status or gate_retries (Bug #2 fix)
+    # Only clear pr_status and optionally recovery_count
+    updates = {}
+    if task.get("pr_status"):
+        updates["pr_status"] = None
+    if ctx.get("reset_recovery_count", True) and task.get("recovery_count"):
+        updates["recovery_count"] = 0
+    if updates:
+        await db.update_task(task_id, **updates)
+
+    project = await db.get_project(task["project_id"])
+
+    # Worktree check — re-create if missing
+    worktree_path = task.get("worktree_path")
+    if not worktree_path or not os.path.exists(worktree_path):
+        worktree_path = await setup_task_worktree(project, task)
+        await db.update_task(task_id, worktree_path=worktree_path)
+
+    # Build resume prompt
+    prompt = await _build_resume_prompt(task_id)
+
+    # Launch with session_id for resume
+    config = resolve_session_config(task, project)
+    session_id = task.get("session_id")
+    await launch_sdk_session(
+        task_id=task_id, prompt=prompt, worktree_path=worktree_path,
+        session_id=session_id, is_resume=True, **config,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for retry
+# ---------------------------------------------------------------------------
+
+
+async def _retry_launch_session(task: dict, **ctx: Any) -> None:
+    """Launch a fresh CC session for a retried task."""
+    import os
+    from switchboard.dispatch.internals import (
+        setup_task_worktree, build_dispatch_prompt,
+        launch_sdk_session, resolve_session_config,
+        collect_review_feedback,
+    )
+    from switchboard.dispatch.engine import (
+        archive_task_logs, _invalidate_chain,
+    )
+
+    task_id = task["id"]
+
+    # Gate-interrupted shortcut: re-enter gate pipeline, don't re-run CC
+    INTERRUPTED = ("testing", "reviewing", "test-passed")
+    if (not task.get("gate_passed_at")
+            and task.get("gate_status") in INTERRUPTED):
+        from switchboard.dispatch.gates import _resume_gate_pipeline
+        await _resume_gate_pipeline(task_id, reason="retry")
+        return
+
+    project = await db.get_project(task["project_id"])
+
+    # Archive logs
+    if project:
+        await archive_task_logs(task, project, "retry")
+
+    # Revert punchlist
+    await db.revert_punchlist_items_for_task(task_id)
+
+    # Increment attempt + clear session/gate state
+    new_attempt = (task.get("current_attempt") or 1) + 1
+    await db.update_task(task_id,
+        session_id=None, gate_status=None, gate_passed_at=None,
+        gate_retries=0, current_attempt=new_attempt, held=False,
+    )
+
+    # Post message
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {new_attempt} starting",
+        content=f"Attempt {new_attempt} starting — fresh session launched.",
+    )
+
+    # Invalidate chain
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
+
+    # Collect feedback
+    review_feedback = await collect_review_feedback(task_id)
+
+    # Setup worktree + build prompt + launch
+    # Wrap in try/except to avoid ghost "working" tasks if launch fails
+    try:
+        worktree_path = task.get("worktree_path")
+        if not worktree_path or not os.path.exists(worktree_path):
+            worktree_path = await setup_task_worktree(project, task)
+            await db.update_task(task_id, worktree_path=worktree_path)
+
+        prompt = await build_dispatch_prompt(project, task, review_feedback=review_feedback)
+        config = resolve_session_config(task, project)
+        await launch_sdk_session(
+            task_id=task_id, prompt=prompt,
+            worktree_path=worktree_path, **config,
+        )
+    except Exception as exc:
+        logger.error("Auto-retry dispatch failed for %s: %s", task_id, exc)
+        await db.update_task(task_id, status="needs-review")
+        await db.post_task_message(
+            task_id=task_id, author="switchboard", type="status",
+            title="Auto-retry dispatch failed",
+            content=f"Dispatch failed during retry: {exc}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for reopen
+# ---------------------------------------------------------------------------
+
+
+async def _reopen_side_effects(task: dict, **ctx: Any) -> None:
+    """Increment attempt, clear session/gate, save reopen state, post message."""
+    task_id = task["id"]
+    prev_status = ctx.get("_previous_status")
+
+    # Read pre-transition task to get gate state before lifecycle cleared reason
+    # We need the original task's gate_status and gate_passed_at
+    new_attempt = (task.get("current_attempt") or 1) + 1
+    await db.update_task(
+        task_id,
+        current_attempt=new_attempt,
+        session_id=None,
+        gate_status=None,
+        gate_passed_at=None,
+        gate_retries=0,
+        reopen_saved_gate_status=ctx.get("_saved_gate_status"),
+        reopen_saved_gate_passed_at=ctx.get("_saved_gate_passed_at"),
+    )
+
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title="Task reopened — awaiting feedback",
+        content="Task reopened for revisions. Post feedback below, then click Start.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for start (reopened → working)
+# ---------------------------------------------------------------------------
+
+
+async def _start_launch_session(task: dict, **ctx: Any) -> None:
+    """Collect reopen feedback, sync branch, invalidate chain, launch CC."""
+    import os
+    from switchboard.dispatch.internals import (
+        setup_task_worktree, build_dispatch_prompt,
+        launch_sdk_session, resolve_session_config,
+        collect_reopen_feedback,
+    )
+    from switchboard.dispatch.engine import _invalidate_chain
+    from switchboard.git.operations import _sync_branch_with_base
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    current_attempt = task.get("current_attempt") or 1
+
+    # Collect reopen feedback
+    review_feedback = await collect_reopen_feedback(task_id, current_attempt)
+
+    # Post "Attempt N starting..."
+    await db.post_task_message(
+        task_id=task_id, author="switchboard", type="status",
+        title=f"Attempt {current_attempt} starting",
+        content=f"Attempt {current_attempt} starting — revision session launched.",
+    )
+
+    # Rebase onto base branch
+    await _sync_branch_with_base(task)
+
+    # Invalidate downstream chain
+    dependents = await db.get_dependents(task_id)
+    if dependents:
+        await _invalidate_chain(task_id)
+
+    project = await db.get_project(task["project_id"])
+
+    # Setup worktree if needed
+    worktree_path = task.get("worktree_path")
+    if not worktree_path or not os.path.exists(worktree_path):
+        worktree_path = await setup_task_worktree(project, task)
+        await db.update_task(task_id, worktree_path=worktree_path)
+
+    # Build prompt with feedback + launch
+    prompt = await build_dispatch_prompt(project, task, review_feedback=review_feedback)
+    config = resolve_session_config(task, project)
+    await launch_sdk_session(
+        task_id=task_id, prompt=prompt,
+        worktree_path=worktree_path, **config,
+    )
+
+    # Notify
+    await notify.task_attempt_starting(task_id, current_attempt, task["goal"])
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for cancel_reopen
+# ---------------------------------------------------------------------------
+
+
+async def _cancel_reopen_side_effects(task: dict, **ctx: Any) -> None:
+    """Restore saved gate state, decrement attempt, delete reopened messages."""
+    task_id = task["id"]
+    current_attempt = task.get("current_attempt") or 1
+    prev_attempt = max(1, current_attempt - 1)
+
+    # Delete messages stamped to the current (reopened) attempt
+    async with db.get_db() as conn:
+        await conn.execute(
+            "DELETE FROM messages WHERE task_id = ? AND attempt_number = ?",
+            (task_id, current_attempt),
+        )
+        await conn.commit()
+
+    await db.update_task(
+        task_id,
+        current_attempt=prev_attempt,
+        gate_status=task.get("reopen_saved_gate_status"),
+        gate_passed_at=task.get("reopen_saved_gate_passed_at"),
+        reopen_saved_gate_status=None,
+        reopen_saved_gate_passed_at=None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Precondition functions
 # ---------------------------------------------------------------------------
 
@@ -168,6 +488,33 @@ async def _reject_if_working(task: dict, **ctx: Any) -> None:
     if task["status"] == "working":
         raise ValueError(
             f"Task '{task['id']}' is still running. Cancel it first, then close."
+        )
+
+
+async def _require_session_or_gate_resumable(task: dict, **ctx: Any) -> None:
+    """Resume from stopped requires session_id, gate-resumable state, or worktree."""
+    if task.get("session_id"):
+        return
+    GATE_RESUMABLE = {"testing", "reviewing", "test-passed", "test-failed", "review-failed"}
+    if task.get("gate_status") in GATE_RESUMABLE:
+        return
+    if task.get("worktree_path"):
+        return  # Can use continue_conversation=True as fallback
+    raise ValueError(f"Task '{task['id']}' has no session to resume. Use retry.")
+
+
+async def _require_session_id(task: dict, **ctx: Any) -> None:
+    """Cancelled tasks can only resume if session_id exists."""
+    if not task.get("session_id"):
+        raise ValueError(f"Task '{task['id']}' has no session_id. Use retry for a fresh session.")
+
+
+async def _require_awaiting_feedback(task: dict, **ctx: Any) -> None:
+    """Start/cancel_reopen requires reason == 'awaiting_feedback'."""
+    if task.get("reason") != "awaiting_feedback":
+        raise ValueError(
+            f"Task '{task['id']}' is not awaiting feedback (reason={task.get('reason')}). "
+            f"Only tasks in 'awaiting_feedback' state can be started/cancel_reopened."
         )
 
 
@@ -252,6 +599,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="working",
         label="Dispatch",
         style="primary",
+        side_effects=[_dispatch_launch_session],
     ),
     ("ready", "cancel"): TransitionDef(
         to_state="cancelled",
@@ -302,16 +650,21 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="working",
         label="Resume",
         style="primary",
+        preconditions=[_require_session_or_gate_resumable],
+        side_effects=[_resume_launch_session],
     ),
     ("stopped", "retry"): TransitionDef(
         to_state="working",
         label="Retry",
         style="primary",
+        side_effects=[_retry_launch_session],
     ),
     ("stopped", "start"): TransitionDef(
         to_state="working",
         label="Start",
         style="primary",
+        preconditions=[_require_awaiting_feedback],
+        side_effects=[_start_launch_session],
     ),
     ("stopped", "skip_gate"): TransitionDef(
         to_state="completed",
@@ -337,22 +690,37 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         style="secondary",
         confirm=True,
     ),
+    ("completed", "retry"): TransitionDef(
+        to_state="working",
+        side_effects=[_retry_launch_session],
+    ),
     ("completed", "reopen"): TransitionDef(
         to_state="stopped",
         reason="awaiting_feedback",
         label="Reopen",
         style="secondary",
         confirm=True,
+        side_effects=[_reopen_side_effects],
     ),
     ("cancelled", "retry"): TransitionDef(
         to_state="working",
         label="Retry",
         style="primary",
+        side_effects=[_retry_launch_session],
     ),
     ("cancelled", "resume"): TransitionDef(
         to_state="working",
         label="Resume",
         style="primary",
+        preconditions=[_require_session_id],
+        side_effects=[_resume_launch_session],
+    ),
+    ("stopped", "cancel_reopen"): TransitionDef(
+        to_state="completed",
+        label="Cancel Reopen",
+        style="secondary",
+        preconditions=[_require_awaiting_feedback],
+        side_effects=[_cancel_reopen_side_effects],
     ),
     # --- System-Initiated Actions -----------------------------------------
     ("working", "complete"): TransitionDef(
@@ -392,6 +760,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "gate_retry"): TransitionDef(
         to_state="working",
         label="Gate Retry",
+    ),
+    ("validating", "retry"): TransitionDef(
+        to_state="working",
+        side_effects=[_retry_launch_session],
+    ),
+    ("validating", "resume"): TransitionDef(
+        to_state="working",
+        side_effects=[_resume_launch_session],
     ),
     ("working", "signal_kill"): TransitionDef(
         to_state="working",
@@ -568,6 +944,9 @@ class TaskLifecycle:
 
         # 8. Fire side effects (non-blocking errors logged, not raised)
         context["_previous_status"] = previous_status
+        # Expose pre-transition gate state for reopen side effects
+        context["_saved_gate_status"] = task.get("gate_status")
+        context["_saved_gate_passed_at"] = task.get("gate_passed_at")
         for effect in tdef.side_effects:
             try:
                 await effect(updated_task, **context)
@@ -576,8 +955,9 @@ class TaskLifecycle:
                     "Side effect failed for task %s action %s", task_id, action,
                 )
 
-        # 9. Return updated task
-        return updated_task
+        # 9. Re-read task in case side effects changed status (e.g. retry launch failure → needs-review)
+        final_task = await db.get_task(task_id)
+        return final_task or updated_task
 
     async def get_available_actions(self, task_id: str) -> list[dict]:
         """Return valid actions for the task's current state.
