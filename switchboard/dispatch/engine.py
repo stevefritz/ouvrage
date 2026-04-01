@@ -638,62 +638,44 @@ async def dispatch_task(
         }
 
     # Check concurrency limit — queue if full (FIFO)
-    active = await db.count_active_tasks()
-    _limit = await db.get_concurrency_limit()
-    if active >= _limit and not is_resume:
-        queued_at = db.now_iso()
-        await db.update_task(task_id, queued_at=queued_at)
-        log.info(f"Task {task_id} queued (concurrency full: {active}/{_limit})")
-        return {
-            "task_id": task_id, "status": "ready",
-            "branch": task["branch"],
-            "queued": True,
-            "queued_at": queued_at,
-        }
+    if not is_resume:
+        from switchboard.dispatch.internals import check_and_queue_if_full
+        queued = await check_and_queue_if_full(task_id)
+        if queued:
+            task = await db.get_task(task_id)
+            return {
+                "task_id": task_id, "status": "ready",
+                "branch": task["branch"],
+                "queued": True,
+                "queued_at": task.get("queued_at"),
+            }
 
-    # Setup worktree — dir_name is always filesystem-safe (no slashes)
-    # Branch may contain slashes (e.g. feature/foo)
-    short_name = task_id.split("/")[-1] if "/" in task_id else task_id
-    effective_branch = task["branch"] or short_name
-    if task["branch"] != effective_branch:
-        await db.update_task(task_id, branch=effective_branch)
-    worktree_path = await setup_worktree(project, short_name, effective_branch,
-                                         depends_on=task.get("depends_on"),
-                                         base_branch=task.get("base_branch"))
-
-    # Configure credential helper so CC's direct git pushes use PAT auth
-    await setup_credential_helper(worktree_path, project_id)
-
-    # Run setup command
-    await run_setup_command(project, worktree_path)
-
-    # Setup logging
-    log_dir = await _setup_log_dir(worktree_path)
+    # Setup worktree, credentials, and setup command
+    from switchboard.dispatch.internals import (
+        setup_task_worktree, resolve_session_config,
+        build_dispatch_prompt, launch_sdk_session,
+    )
+    worktree_path = await setup_task_worktree(project, task)
+    effective_branch = task["branch"] or (task_id.split("/")[-1] if "/" in task_id else task_id)
 
     # Resolve limits and model
-    effective_max_turns = _resolve_limit(
-        task.get("max_turns"), project.get("max_turns"), db.DEFAULT_MAX_TURNS
-    )
-    effective_max_wall_clock = _resolve_limit(
-        task.get("max_wall_clock"), project.get("max_wall_clock"), db.DEFAULT_MAX_WALL_CLOCK
-    )
-    effective_model = _resolve_limit(
-        task.get("model"), project.get("model"), DEFAULT_MODEL
-    )
+    config = resolve_session_config(task, project)
+    effective_max_turns = config["max_turns"]
+    effective_max_wall_clock = config["max_wall_clock"]
+    effective_model = config["model"]
 
     # Build prompt
+    prompt = await build_dispatch_prompt(project, task, escalation_criteria, review_feedback)
+
+    # Get session_id for resume
+    session_id = task.get("session_id") if is_resume else None
+
+    # Fetch checklist + spec for Slack notification
+    checklist_items = await db.get_checklist(task_id)
     spec_content = None
     pinned = await db.get_task_pinned(task_id)
     if pinned:
         spec_content = pinned["content"]
-
-    # Fetch checklist items with IDs so CC knows how to update them
-    checklist_items = await db.get_checklist(task_id)
-
-    prompt = await _build_task_prompt(project, task, spec_content, checklist_items, escalation_criteria, review_feedback)
-
-    # Get session_id for resume
-    session_id = task.get("session_id") if is_resume else None
 
     # Update task record
     prev_status = task.get("status", "ready")
@@ -713,30 +695,17 @@ async def dispatch_task(
         previous_status=prev_status, new_status="working",
     )
 
-    # Log dispatch
-    _write_dispatch_log(
-        log_dir, task_id, session_id or "(new)",
-        effective_max_turns, effective_max_wall_clock,
-        worktree_path, is_resume, effective_model,
-    )
-
     # Launch SDK session in background — non-blocking
-    task_handle = asyncio.create_task(
-        _run_sdk_session(
-            task_id=task_id,
-            prompt=prompt,
-            worktree_path=worktree_path,
-            session_id=session_id,
-            is_resume=is_resume,
-            max_turns=effective_max_turns,
-            max_wall_clock_minutes=effective_max_wall_clock,
-            log_dir=log_dir,
-            model=effective_model,
-        ),
-        name=f"sdk-session-{task_id}",
+    await launch_sdk_session(
+        task_id=task_id,
+        prompt=prompt,
+        worktree_path=worktree_path,
+        session_id=session_id,
+        is_resume=is_resume,
+        max_turns=effective_max_turns,
+        max_wall_clock=effective_max_wall_clock,
+        model=effective_model,
     )
-    _running_tasks.add(task_handle)
-    task_handle.add_done_callback(_handle_task_exception)
 
     # Notify Slack
     checklist_items = checklist_items or []
