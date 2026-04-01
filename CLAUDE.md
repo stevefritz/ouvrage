@@ -20,6 +20,31 @@ worktrees, test gates, review gates, dependency chains, and crash recovery.
 - Run targeted tests (specific files/functions) during development, the gate handles the full suite
 - If you need to stop a background process, use `timeout` on the original command instead
 
+## Turn economy — EVERY TURN COSTS MONEY
+
+You are a paid worker. Each tool call costs real money. Each 3-minute test run costs ~$0.50 in turns.
+Optimize for fewest turns to complete the task correctly.
+
+### Rules
+
+1. **The gate runs the official test suite.** You do NOT need to run the full suite yourself before completing.
+   Run targeted tests on the code you changed. The auto-test gate will catch anything you missed.
+
+2. **Never run a command just to get a number for your report.** If tests passed, say "tests pass."
+   Do NOT re-run the full suite to report "927 passed." Nobody cares about the count.
+
+3. **Never run the same command twice without changing code between runs.** If it passed, it passed.
+   If it failed, fix something before re-running.
+
+4. **Long commands (>60s) get ONE run.** The full test suite takes ~150 seconds. You get one shot
+   during development. After that, run only the tests relevant to your changes. The gate handles the rest.
+
+5. **Don't verify things you just did.** If you wrote a file, you don't need to `cat` it back.
+   If you ran a command that succeeded, you don't need to run it again to confirm.
+
+6. **Commit and report when done.** Don't run the full suite "one more time to be safe."
+   Push your branch, post your result. The gate pipeline exists for verification.
+
 ## Git environment — READ THIS
 
 You are working in a **git worktree**, not a regular clone. Your worktree is linked to a
@@ -37,14 +62,39 @@ shared bare repo. This has implications:
 
 If you need to see what's on main, use `git log origin/main` (read-only). Do not checkout or merge it.
 
-## Running tests
+## Running tests — READ THIS CAREFULLY
+
+This project has 900+ tests. Running them with `-v` produces massive truncated output.
+Follow this workflow or you WILL waste turns grepping through truncated output.
+
+### The pattern: quiet first, targeted second
 
 ```bash
-timeout 120 python3 -m pytest tests/ -v --tb=short   # full suite (gate runs this)
-timeout 60 python3 -m pytest tests/test_unit.py       # unit tests only
-timeout 60 python3 -m pytest tests/test_queue.py      # specific file
-timeout 60 python3 -m pytest tests/test_unit.py::TestTailLines  # specific class
+# Step 1: What failed? (quiet summary, fits on screen)
+timeout 200 python3 -m pytest tests/ -q --tb=line 2>&1 | tail -40
+
+# Step 2: Why did it fail? (details on ONLY the failures)
+timeout 60 python3 -m pytest tests/ --last-failed --tb=short -v
+
+# Step 3: Did my fix work? (re-run just the failures)
+timeout 60 python3 -m pytest tests/ --last-failed -v
+
+# Step 4: Full suite green? (one final quiet check)
+timeout 200 python3 -m pytest tests/ -q --tb=line 2>&1 | tail -40
 ```
+
+### Targeted runs during development
+```bash
+timeout 60 python3 -m pytest tests/test_unit.py -q              # one file
+timeout 60 python3 -m pytest tests/test_unit.py::TestTailLines  # one class
+timeout 60 python3 -m pytest tests/test_lifecycle.py -k "resume" # keyword match
+```
+
+### NEVER do this
+- NEVER run `pytest -v` on the full suite — 900+ PASSED lines will be truncated
+- NEVER run the full suite and pipe through `grep FAIL` repeatedly
+- NEVER re-run the same test command 3+ times without changing code between runs
+- If you catch yourself running pytest with different grep/tail combos, STOP — use `--last-failed`
 
 All tests are async (`pytest-asyncio`, `asyncio_mode=auto`). Use `python3`, not `python`.
 
