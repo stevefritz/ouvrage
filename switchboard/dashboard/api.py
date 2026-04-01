@@ -83,7 +83,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
                     "/advance-chain", "/cancel-chain", "/approve", "/chain",
                     "/review-task", "/messages", "/session-log", "/dispatch-log",
                     "/attempts", "/dispatch", "/reopen", "/cancel-reopen", "/start",
-                    "/test-output", "/gate-session-log", "/stop"):
+                    "/test-output", "/gate-session-log", "/stop", "/actions"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -309,6 +309,9 @@ async def handle_request(scope, receive, send):
                 if rest.endswith("/files"):
                     task_id = rest[:-len("/files")]
                     return await _handle_task_files(send, task_id)
+                if rest.endswith("/actions"):
+                    task_id = _extract_task_id(path, "/dashboard/api/tasks/")
+                    return await _handle_get_actions(send, task_id)
 
                 # GET /dashboard/api/tasks/{task_id} (detail)
                 return await _handle_get_task(send, rest)
@@ -937,6 +940,41 @@ async def _handle_get_attempts(send, task_id):
     except ValueError as e:
         return await _error(send, str(e), 404)
     await _json_response(send, {"task_id": task_id, "attempts": attempts})
+
+
+async def _handle_get_actions(send, task_id):
+    """GET /dashboard/api/tasks/{id}/actions — return available actions + state info."""
+    from switchboard.dispatch.lifecycle import lifecycle
+    task = await db.get_task(task_id)
+    if not task:
+        return await _error(send, f"Task '{task_id}' not found", 404)
+    try:
+        actions_raw = await lifecycle.get_available_actions(task_id)
+        state_info = await lifecycle.get_state_label(task_id)
+    except ValueError as e:
+        return await _error(send, str(e), 404)
+    # Convert underscore action names to hyphenated for frontend compatibility
+    actions = [
+        {
+            "name": a["name"].replace("_", "-"),
+            "label": a["label"],
+            "style": a["style"],
+            "confirm": a["confirm"],
+        }
+        for a in actions_raw
+    ]
+    response = {
+        "task_id": task_id,
+        "state": {
+            "status": state_info["state"],
+            "reason": state_info["reason"],
+            "label": state_info["label"],
+            "color": state_info["color"],
+            "pulse": state_info["pulse"],
+        },
+        "actions": actions,
+    }
+    await _json_response(send, response)
 
 
 # ── Actions ───────────────────────────────────────────────────────────────

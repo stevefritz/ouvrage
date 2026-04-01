@@ -99,6 +99,7 @@ export const api = {
     pauseProject: (id) => request(`/projects/${eid(id)}/pause`, { method: 'POST' }),
     resumeProject: (id) => request(`/projects/${eid(id)}/resume`, { method: 'POST' }),
     stopProject: (id) => request(`/projects/${eid(id)}/stop`, { method: 'POST' }),
+    getTaskActions: (id) => request(`/tasks/${eid(id)}/actions`),
     getChain: (id) => request(`/tasks/${eid(id)}/chain`),
     getReviewTask: (id) => request(`/tasks/${eid(id)}/review-task`),
     getTestOutput: (id) => request(`/tasks/${eid(id)}/test-output`),

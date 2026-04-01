@@ -260,7 +260,9 @@ class TestExecuteValidTransitions:
         assert result["status"] == "working"
 
     async def test_stopped_skip_gate(self):
+        # skip_gate from stopped requires a gate failure reason
         await self._make_task("t/11", status="stopped")
+        await self.db.update_task("t/11", reason="max_test_retries")
         result = await self.lifecycle.execute("t/11", "skip_gate")
         assert result["status"] == "completed"
         assert result["reason"] == "gate_skipped"
@@ -578,16 +580,21 @@ class TestGetAvailableActions:
         assert "cancel" in names
 
     async def test_stopped_actions(self):
+        # stopped with no reason, no session — preconditions filter start/skip_gate/resume
         await self._make_task("t/act3", status="stopped")
         actions = await self.lifecycle.get_available_actions("t/act3")
         names = {a["name"] for a in actions}
-        assert "resume" in names
+        # resume: filtered (no session_id/worktree/gate-resumable state)
+        # start: filtered (not awaiting_feedback)
+        # skip_gate: filtered (not a gate failure reason)
+        # recover: filtered (user_action=False)
         assert "retry" in names
-        assert "start" in names
-        assert "skip_gate" in names
         assert "cancel" in names
         assert "close" in names
-        assert "recover" in names
+        assert "resume" not in names
+        assert "start" not in names
+        assert "skip_gate" not in names
+        assert "recover" not in names
 
     async def test_completed_actions(self):
         await self._make_task("t/act4", status="completed")
@@ -597,11 +604,12 @@ class TestGetAvailableActions:
         assert len(names) == 1
 
     async def test_cancelled_actions(self):
+        # cancelled with no session_id — resume filtered by precondition
         await self._make_task("t/act5", status="cancelled")
         actions = await self.lifecycle.get_available_actions("t/act5")
         names = {a["name"] for a in actions}
         assert "retry" in names
-        assert "resume" in names
+        assert "resume" not in names  # filtered: no session_id
 
     async def test_action_includes_style_and_confirm(self):
         await self._make_task("t/act6")
@@ -963,7 +971,8 @@ class TestSkipGateBehavior:
         orig = tdef.side_effects[:]
         tdef.side_effects = [orig[0], orig[1], AsyncMock()]
         try:
-            await _seed(self.db, status="stopped")
+            # skip_gate from stopped requires a gate failure reason
+            await _seed(self.db, status="stopped", reason="max_test_retries")
             result = await self.lifecycle.execute(TASK_ID, "skip_gate")
             assert result["status"] == "completed"
             assert result.get("reason") == "gate_skipped"
@@ -1228,3 +1237,337 @@ class TestStopBehavior:
         with patch("switchboard.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
             await self.lifecycle.execute(TASK_ID, "stop")
             mock_drain.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Reason-aware action filtering tests
+# ---------------------------------------------------------------------------
+
+class TestActionsFiltered:
+    """Test get_available_actions for each (state, reason) pair in the button matrix."""
+
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        await db.create_project(
+            id="filt-proj",
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp/lifecycle-test",
+        )
+
+    async def _make(self, task_id, status="ready", reason=None, **kwargs):
+        task = await self.db.create_task(id=task_id, project_id="filt-proj", goal="test")
+        updates = {}
+        if status != "ready":
+            updates["status"] = status
+        if reason is not None:
+            updates["reason"] = reason
+        if kwargs:
+            updates.update(kwargs)
+        if updates:
+            task = await self.db.update_task(task_id, **updates)
+        return task
+
+    async def _names(self, task_id):
+        actions = await self.lifecycle.get_available_actions(task_id)
+        return {a["name"] for a in actions}
+
+    # ready sub-states
+    async def test_ready_dispatchable(self):
+        await self._make("f/r1")
+        names = await self._names("f/r1")
+        assert names == {"dispatch", "cancel"}
+
+    async def test_ready_held(self):
+        await self._make("f/r2", held=True)
+        names = await self._names("f/r2")
+        assert names == {"approve", "cancel"}
+
+    async def test_ready_queued(self):
+        from switchboard.db._helpers import now_iso
+        await self._make("f/r3", queued_at=now_iso())
+        names = await self._names("f/r3")
+        assert names == {"cancel"}
+
+    async def test_ready_blocked(self):
+        await self._make("f/r4", status="blocked")
+        names = await self._names("f/r4")
+        assert names == {"cancel"}
+
+    # working
+    async def test_working(self):
+        await self._make("f/w1", status="working")
+        names = await self._names("f/w1")
+        assert names == {"stop", "cancel"}
+
+    # validating
+    async def test_validating(self):
+        await self._make("f/v1", status="validating")
+        names = await self._names("f/v1")
+        assert names == {"stop", "skip_gate", "cancel"}
+
+    # stopped — paused_by_user / turns_exhausted / wall_clock_timeout / rate_limited
+    async def test_stopped_paused_by_user(self):
+        await self._make("f/s1", status="stopped", reason="paused_by_user",
+                         session_id="sess123")
+        names = await self._names("f/s1")
+        assert "resume" in names
+        assert "retry" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+        assert "start" not in names
+
+    async def test_stopped_turns_exhausted_with_session(self):
+        await self._make("f/s2", status="stopped", reason="turns_exhausted",
+                         session_id="sess456")
+        names = await self._names("f/s2")
+        assert "resume" in names
+        assert "retry" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+
+    async def test_stopped_rate_limited_with_session(self):
+        await self._make("f/s3", status="stopped", reason="rate_limited",
+                         session_id="sess789")
+        names = await self._names("f/s3")
+        assert "resume" in names
+        assert "retry" in names
+        assert "cancel" in names
+
+    # stopped — gate failure reasons → skip_gate appears
+    async def test_stopped_max_test_retries(self):
+        await self._make("f/s4", status="stopped", reason="max_test_retries")
+        names = await self._names("f/s4")
+        assert "retry" in names
+        assert "skip_gate" in names
+        assert "cancel" in names
+        assert "resume" not in names
+
+    async def test_stopped_max_review_retries(self):
+        await self._make("f/s5", status="stopped", reason="max_review_retries")
+        names = await self._names("f/s5")
+        assert "skip_gate" in names
+        assert "retry" in names
+
+    async def test_stopped_review_stalled(self):
+        await self._make("f/s6", status="stopped", reason="review_stalled")
+        names = await self._names("f/s6")
+        assert "skip_gate" in names
+        assert "retry" in names
+
+    # stopped — dispatch_error / push_failed → no skip_gate
+    async def test_stopped_dispatch_error(self):
+        await self._make("f/s7", status="stopped", reason="dispatch_error")
+        names = await self._names("f/s7")
+        assert "retry" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+
+    async def test_stopped_push_failed(self):
+        await self._make("f/s8", status="stopped", reason="push_failed")
+        names = await self._names("f/s8")
+        assert "retry" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+
+    # stopped — awaiting_feedback → start, cancel_reopen (no close)
+    async def test_stopped_awaiting_feedback(self):
+        await self._make("f/s9", status="stopped", reason="awaiting_feedback")
+        names = await self._names("f/s9")
+        assert "start" in names
+        assert "cancel_reopen" in names
+        assert "close" not in names
+        assert "resume" not in names
+
+    # stopped — recovery_limit → retry, cancel (no skip_gate)
+    async def test_stopped_recovery_limit(self):
+        await self._make("f/s10", status="stopped", reason="recovery_limit")
+        names = await self._names("f/s10")
+        assert "retry" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+
+    # completed
+    async def test_completed(self):
+        await self._make("f/c1", status="completed")
+        names = await self._names("f/c1")
+        assert names == {"reopen"}
+
+    # cancelled
+    async def test_cancelled_no_session(self):
+        await self._make("f/ca1", status="cancelled")
+        names = await self._names("f/ca1")
+        assert names == {"retry"}
+
+    async def test_cancelled_with_session(self):
+        await self._make("f/ca2", status="cancelled", session_id="sess_can")
+        names = await self._names("f/ca2")
+        assert "retry" in names
+        assert "resume" in names
+
+    # Precondition filtering: resume without session filtered
+    async def test_no_resume_without_session_stopped(self):
+        await self._make("f/pr1", status="stopped", reason="paused_by_user")
+        names = await self._names("f/pr1")
+        assert "resume" not in names
+
+    # System actions never appear
+    async def test_no_system_actions_in_working(self):
+        await self._make("f/sys1", status="working")
+        names = await self._names("f/sys1")
+        assert "complete" not in names
+        assert "exhaust_turns" not in names
+        assert "timeout" not in names
+        assert "rate_limit" not in names
+        assert "error" not in names
+        assert "recover" not in names
+
+
+# ---------------------------------------------------------------------------
+# get_state_label: ready sub-state reason derivation
+# ---------------------------------------------------------------------------
+
+class TestGetStateLabelReadySubstates:
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        await db.create_project(
+            id="lbl-proj2",
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp/lifecycle-test",
+        )
+
+    async def test_ready_held_label(self):
+        task = await self.db.create_task(id="lbl-proj2/h1", project_id="lbl-proj2", goal="test")
+        await self.db.update_task("lbl-proj2/h1", held=True)
+        label = await self.lifecycle.get_state_label("lbl-proj2/h1")
+        assert label["label"] == "Held"
+
+    async def test_ready_blocked_label(self):
+        task = await self.db.create_task(id="lbl-proj2/b1", project_id="lbl-proj2", goal="test")
+        await self.db.update_task("lbl-proj2/b1", status="blocked")
+        label = await self.lifecycle.get_state_label("lbl-proj2/b1")
+        assert label["label"] == "Blocked"
+
+    async def test_ready_dispatchable_label(self):
+        await self.db.create_task(id="lbl-proj2/d1", project_id="lbl-proj2", goal="test")
+        label = await self.lifecycle.get_state_label("lbl-proj2/d1")
+        assert label["label"] == "Ready"
+
+
+# ---------------------------------------------------------------------------
+# Dashboard API: GET /dashboard/api/tasks/{id}/actions endpoint
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+def _make_api_scope(path: str, method: str = "GET") -> dict:
+    return {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "query_string": b"",
+        "headers": [],
+        "session_user": {"id": 1, "email": "owner@localhost", "name": "Owner", "role": "owner"},
+    }
+
+
+def _make_api_receive():
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    return receive
+
+
+class _ApiCapture:
+    def __init__(self):
+        self.status = None
+        self.body = b""
+
+    async def __call__(self, message):
+        if message["type"] == "http.response.start":
+            self.status = message["status"]
+        elif message["type"] == "http.response.body":
+            self.body += message.get("body", b"")
+
+    def json(self):
+        return _json.loads(self.body)
+
+
+class TestDashboardActionsEndpoint:
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db):
+        self.db = db
+        await db.create_project(
+            id="api-act-proj",
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp",
+        )
+        self.task = await db.create_task(
+            id="api-act-proj/t1",
+            project_id="api-act-proj",
+            goal="test actions endpoint",
+        )
+
+    async def test_actions_200_shape(self):
+        from switchboard.dashboard.api import handle_request
+        scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
+        resp = _ApiCapture()
+        await handle_request(scope, _make_api_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["task_id"] == "api-act-proj/t1"
+        assert "state" in data
+        assert "actions" in data
+        state = data["state"]
+        assert "status" in state
+        assert "label" in state
+        assert "color" in state
+        assert "pulse" in state
+        # ready task should have dispatch and cancel actions (hyphenated names)
+        action_names = {a["name"] for a in data["actions"]}
+        assert "dispatch" in action_names
+        assert "cancel" in action_names
+        # Each action has required fields
+        for action in data["actions"]:
+            assert "name" in action
+            assert "label" in action
+            assert "style" in action
+            assert "confirm" in action
+
+    async def test_actions_404_nonexistent(self):
+        from switchboard.dashboard.api import handle_request
+        scope = _make_api_scope("/dashboard/api/tasks/nonexistent%2Ftask/actions")
+        resp = _ApiCapture()
+        await handle_request(scope, _make_api_receive(), resp)
+        assert resp.status == 404
+
+    async def test_actions_hyphenated_names(self):
+        """Action names returned by endpoint use hyphens, not underscores."""
+        from switchboard.dashboard.api import handle_request
+        # Set task to stopped with awaiting_feedback to get cancel_reopen action
+        await self.db.update_task("api-act-proj/t1", status="stopped", reason="awaiting_feedback")
+        scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
+        resp = _ApiCapture()
+        await handle_request(scope, _make_api_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        names = {a["name"] for a in data["actions"]}
+        assert "cancel-reopen" in names  # cancel_reopen → cancel-reopen
+        assert "cancel_reopen" not in names  # underscore version should NOT appear
+
+    async def test_actions_state_matches_task(self):
+        """State label in response matches lifecycle.get_state_label output."""
+        from switchboard.dashboard.api import handle_request
+        from switchboard.dispatch.lifecycle import lifecycle
+        await self.db.update_task("api-act-proj/t1", status="working")
+        scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
+        resp = _ApiCapture()
+        await handle_request(scope, _make_api_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        direct = await lifecycle.get_state_label("api-act-proj/t1")
+        assert data["state"]["label"] == direct["label"]
+        assert data["state"]["color"] == direct["color"]

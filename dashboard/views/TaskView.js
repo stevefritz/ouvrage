@@ -107,7 +107,7 @@ const GATE_PRIMARY = {
     'reviewing': { label: 'IN REVIEW', color: colors.yellow },
 };
 
-function StatusLine({ task, onEdit }) {
+function StatusLine({ task, taskState, onEdit }) {
     // When gate is actively testing or reviewing, show that as the primary label
     const gatePrimary = task.gate_status ? GATE_PRIMARY[task.gate_status] : null;
 
@@ -117,15 +117,21 @@ function StatusLine({ task, onEdit }) {
         ? task.gate_status.toUpperCase().replace(/-/g, ' ')
         : null;
 
-    const statusLabel = gatePrimary ? gatePrimary.label : (task.status || 'ready').toUpperCase();
-    const statusColor = gatePrimary ? gatePrimary.color : (statusColors[task.status] || colors.textSecondary);
+    // Use API-provided state label/color when available, fall back to legacy logic
+    const statusLabel = gatePrimary
+        ? gatePrimary.label
+        : (taskState ? taskState.label : (task.status || 'ready').toUpperCase());
+    const statusColor = gatePrimary
+        ? gatePrimary.color
+        : (taskState ? taskState.color : (statusColors[task.status] || colors.textSecondary));
+    const dotPulse = taskState ? taskState.pulse : undefined;
 
     return html`
         <div style=${{
             display: 'flex', alignItems: 'center', gap: '10px',
             padding: '12px 0', flexWrap: 'wrap',
         }}>
-            <${StatusDot} status=${task.status} size=${10} />
+            <${StatusDot} status=${task.status} pulse=${dotPulse} size=${10} />
             <span style=${{
                 fontFamily: typography.fontMono, fontSize: typography.size.sm,
                 fontWeight: typography.weight.semibold,
@@ -551,11 +557,18 @@ const ACTION_TOOLTIPS = {
     'cancel-chain':    'Cancel this task and all dependents.',
 };
 
-function ActionToolbar({ task, chain, onAction }) {
+// Map lifecycle style names to color tokens
+const STYLE_COLORS = {
+    primary:   { bg: colors.greenBg,  fg: colors.green },
+    secondary: { bg: colors.yellowBg, fg: colors.yellow },
+    danger:    { bg: colors.redBg,    fg: colors.red },
+};
+
+function ActionToolbar({ task, chain, apiActions, onAction }) {
     const actions = [];
 
-    const btn = (action, label, bg, fg) => html`
-        <button key=${action} onClick=${() => onAction(action, task.id)}
+    const btn = (action, label, bg, fg, needsConfirm = true) => html`
+        <button key=${action} onClick=${() => onAction(action, task.id, needsConfirm)}
             title=${ACTION_TOOLTIPS[action] || ''}
             style=${{
                 padding: '4px 12px', borderRadius: layout.borderRadius.sm,
@@ -569,53 +582,60 @@ function ActionToolbar({ task, chain, onAction }) {
         </button>
     `;
 
-    if (task.status === 'ready' && task.held) {
-        actions.push(btn('approve', 'Approve', colors.greenBg, colors.green));
-    } else if (task.status === 'ready') {
-        actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue));
-        actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow));
-        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    // API-driven buttons (from /actions endpoint)
+    if (apiActions && apiActions.length > 0) {
+        for (const action of apiActions) {
+            const coloring = STYLE_COLORS[action.style] || STYLE_COLORS.secondary;
+            actions.push(btn(action.name, action.label, coloring.bg, coloring.fg, action.confirm));
+        }
+    } else {
+        // Fallback: legacy hardcoded logic (used while actions API is loading)
+        if (task.status === 'ready' && task.held) {
+            actions.push(btn('approve', 'Approve', colors.greenBg, colors.green, false));
+        } else if (task.status === 'ready') {
+            actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue, false));
+            actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow, true));
+            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
+        }
+        if (task.status === 'working') {
+            actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow, false));
+            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
+        }
+        if (['turns-exhausted', 'needs-review'].includes(task.status)) {
+            actions.push(btn('resume', 'Resume', colors.greenBg, colors.green, true));
+            actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow, true));
+            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
+        }
+        if (task.status === 'rate-limited') {
+            actions.push(btn('resume', 'Resume', colors.greenBg, colors.green, true));
+        }
+        if (task.status === 'completed') {
+            actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow, true));
+        }
+        if (task.status === 'reopened') {
+            actions.push(btn('start', 'Start', colors.greenBg, colors.green, false));
+            actions.push(btn('cancel-reopen', 'Cancel Reopen', colors.redBg, colors.red, true));
+        }
+        if (['failed', 'cancelled'].includes(task.status)) {
+            actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow, true));
+        }
     }
-    if (task.status === 'working') {
-        actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow));
-        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
-    }
-    if (task.status === 'pending-validation' && ['testing', 'reviewing'].includes(task.gate_status)) {
-        actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow));
-    }
-    if (['turns-exhausted', 'needs-review'].includes(task.status)) {
-        actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
-        actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
-        actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
-    }
-    if (task.status === 'rate-limited') {
-        actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
-    }
-    if (task.status === 'completed') {
-        actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow));
-        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
-    }
-    if (task.status === 'reopened') {
-        actions.push(btn('start', 'Start', colors.greenBg, colors.green));
-        actions.push(btn('cancel-reopen', 'Cancel', colors.redBg, colors.red));
-    }
-    if (['failed', 'cancelled'].includes(task.status)) {
-        actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow));
-        actions.push(btn('close', 'Close', statusBgs.cancelled, colors.textTertiary));
-    }
-    if (task.gate_status && ['testing', 'test-passed', 'reviewing', 'test-failed', 'review-failed'].includes(task.gate_status)) {
-        actions.push(btn('skip-gate', 'Skip Gate', 'rgba(139, 92, 246, 0.12)', '#8b5cf6'));
+
+    // Special actions not in transition table — always hardcoded
+    // Hold button: only on ready+dispatchable (not held, not queued)
+    if (task.status === 'ready' && !task.held && !task.queued_at) {
+        actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow, true));
     }
     if (task.status === 'completed' && task.gate_status === 'passed') {
-        actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent));
+        actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent, true));
     }
     if (task.worktree_path) {
-        actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c'));
+        actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c', true));
     }
     // Show Cancel Chain when this task is part of a chain (has depends_on OR has dependents)
     const hasChainContext = task.depends_on || (chain && chain.some(t => t.depends_on === task.id));
     if (hasChainContext) {
-        actions.push(btn('cancel-chain', 'Cancel Chain', colors.redBg, colors.red));
+        actions.push(btn('cancel-chain', 'Cancel Chain', colors.redBg, colors.red, true));
     }
 
     const done = task.checklist_done || 0;
@@ -2526,6 +2546,8 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [confirmAction, setConfirmAction] = useState(null);
     const [showStartOverlay, setShowStartOverlay] = useState(false);
     const [showEditPanel, setShowEditPanel] = useState(false);
+    const [taskActions, setTaskActions] = useState(null);
+    const [taskState, setTaskState] = useState(null);
     const mountedRef = useRef(true);
     const loadedRef = useRef(false);
 
@@ -2547,6 +2569,24 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 // are silently logged to avoid flashing the error screen.
                 if (!loadedRef.current) setError(e.message);
             }
+        }
+    }, [id]);
+
+    const loadActions = useCallback(async () => {
+        try {
+            const data = await api.getTaskActions(id);
+            if (mountedRef.current && data) {
+                setTaskActions(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(data.actions)) return prev;
+                    return data.actions || [];
+                });
+                setTaskState(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(data.state)) return prev;
+                    return data.state || null;
+                });
+            }
+        } catch {
+            // Silent on errors — actions will fall back to legacy rendering
         }
     }, [id]);
 
@@ -2607,10 +2647,12 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const loadAttemptsRef = useRef(loadAttempts);
     const loadChainRef = useRef(loadChain);
     const loadBlockerRef = useRef(loadBlocker);
+    const loadActionsRef = useRef(loadActions);
     useEffect(() => { loadTaskRef.current = loadTask; }, [loadTask]);
     useEffect(() => { loadAttemptsRef.current = loadAttempts; }, [loadAttempts]);
     useEffect(() => { loadChainRef.current = loadChain; }, [loadChain]);
     useEffect(() => { loadBlockerRef.current = loadBlocker; }, [loadBlocker]);
+    useEffect(() => { loadActionsRef.current = loadActions; }, [loadActions]);
 
     // Initial load + unified polling — always runs while view is mounted
     useEffect(() => {
@@ -2621,17 +2663,21 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         setError(null);
         setBlockerTask(null);
         setChain(null);
+        setTaskActions(null);
+        setTaskState(null);
         setPollTick(0);
 
         // Immediate first load
         loadTask();
         loadAttempts();
         loadChain();
+        loadActions();
 
-        // Unified 5s poll — task + attempts + pollTick (drives FilesDrawer)
+        // Unified 5s poll — task + attempts + actions + pollTick (drives FilesDrawer)
         const mainTimer = setInterval(() => {
             loadTaskRef.current();
             loadAttemptsRef.current();
+            loadActionsRef.current();
             setPollTick(t => (t + 1) % 1000);
         }, 5000);
 
@@ -2652,21 +2698,27 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     useEffect(() => { loadBlocker(); }, [loadBlocker]);
 
     // Action handler
-    const handleAction = useCallback(async (action, taskId) => {
+    const handleAction = useCallback(async (action, taskId, needsConfirm = true) => {
         if (action === 'start') {
             setShowStartOverlay(true);
-        } else if (action === 'stop') {
-            // Stop is safe and reversible — execute immediately without confirmation
+        } else if (!needsConfirm) {
+            // Execute immediately without confirmation dialog
             try {
-                await api.stopTask(id);
-                setTimeout(() => { loadTask(); loadAttempts(); }, 500);
+                const actionMap = {
+                    stop: () => api.stopTask(id),
+                    approve: () => api.approveTask(id),
+                    dispatch: () => api.dispatchTask(id),
+                };
+                const fn = actionMap[action];
+                if (fn) await fn();
+                setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
             } catch (e) {
-                console.error('Stop error:', e);
+                console.error('Action error:', e);
             }
         } else {
             setConfirmAction(action);
         }
-    }, []);
+    }, [id, loadTask, loadAttempts, loadActions]);
 
     const executeAction = useCallback(async () => {
         if (!confirmAction || !task) return;
@@ -2692,21 +2744,21 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             const fn = actionMap[action];
             if (fn) await fn();
             // Reload after action
-            setTimeout(() => { loadTask(); loadAttempts(); }, 500);
+            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
         } catch (e) {
             console.error('Action error:', e);
         }
-    }, [confirmAction, id, task, loadTask, loadAttempts]);
+    }, [confirmAction, id, task, loadTask, loadAttempts, loadActions]);
 
     const executeStart = useCallback(async (overrides) => {
         setShowStartOverlay(false);
         try {
             await api.startTask(id, overrides);
-            setTimeout(() => { loadTask(); loadAttempts(); }, 500);
+            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
         } catch (e) {
             console.error('Start action error:', e);
         }
-    }, [id, loadTask, loadAttempts]);
+    }, [id, loadTask, loadAttempts, loadActions]);
 
     // Loading state
     if (error) {
@@ -2951,7 +3003,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
 
                 <!-- Actions -->
-                <${ActionToolbar} task=${task} chain=${chain} onAction=${handleAction} />
+                <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
 
                 <!-- Open → full task page -->
                 <a href=${routes.task(id)}
@@ -2991,12 +3043,12 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ${backLabel}
             </a>
 
-            <${StatusLine} task=${task} onEdit=${() => setShowEditPanel(true)} />
+            <${StatusLine} task=${task} taskState=${taskState} onEdit=${() => setShowEditPanel(true)} />
             <${GitFlowLineage} task=${task} chain=${chain} />
             <${ChainStrip} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ChainInvalidationWarning} task=${task} chain=${chain} />
-            <${ActionToolbar} task=${task} chain=${chain} onAction=${handleAction} />
+            <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
             ${showStartOverlay ? html`
                 <${StartConfigOverlay}
                     task=${task}
