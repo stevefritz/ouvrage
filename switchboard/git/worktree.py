@@ -170,6 +170,16 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         base_ref = base_branch if base_branch.startswith("origin/") else f"origin/{base_branch}"
         log.info(f"Explicit base_branch: branching from '{base_ref}'")
 
+    # If the branch already exists on origin (e.g. reopened task), use it as base
+    # so the new worktree starts with all previous commits instead of fresh from main.
+    remote_ref = f"origin/{branch}"
+    _, _, rev_rc = await _run_as_worker(
+        "git", "-C", bare_path, "rev-parse", "--verify", remote_ref,
+    )
+    if rev_rc == 0 and not depends_on:
+        log.info(f"Branch '{branch}' exists on origin — using {remote_ref} as base (reopened task)")
+        base_ref = remote_ref
+
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
         "-b", branch, worktree_path, base_ref,
