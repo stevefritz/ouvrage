@@ -1335,6 +1335,7 @@ class TestActionsFiltered:
         names = await self._names("f/s1")
         assert "resume" in names
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
         assert "skip_gate" not in names
         assert "start" not in names
@@ -1345,6 +1346,7 @@ class TestActionsFiltered:
         names = await self._names("f/s2")
         assert "resume" in names
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
         assert "skip_gate" not in names
 
@@ -1354,6 +1356,7 @@ class TestActionsFiltered:
         names = await self._names("f/s3")
         assert "resume" in names
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
 
     # stopped — gate failure reasons → skip_gate appears
@@ -1362,6 +1365,7 @@ class TestActionsFiltered:
         names = await self._names("f/s4")
         assert "retry" in names
         assert "skip_gate" in names
+        assert "close" in names
         assert "cancel" in names
         assert "resume" not in names
 
@@ -1370,18 +1374,21 @@ class TestActionsFiltered:
         names = await self._names("f/s5")
         assert "skip_gate" in names
         assert "retry" in names
+        assert "close" in names
 
     async def test_stopped_review_stalled(self):
         await self._make("f/s6", status="stopped", reason="review_stalled")
         names = await self._names("f/s6")
         assert "skip_gate" in names
         assert "retry" in names
+        assert "close" in names
 
-    # stopped — dispatch_error / push_failed → no skip_gate
+    # stopped — dispatch_error / push_failed / worktree_missing → no skip_gate
     async def test_stopped_dispatch_error(self):
         await self._make("f/s7", status="stopped", reason="dispatch_error")
         names = await self._names("f/s7")
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
         assert "skip_gate" not in names
 
@@ -1389,8 +1396,18 @@ class TestActionsFiltered:
         await self._make("f/s8", status="stopped", reason="push_failed")
         names = await self._names("f/s8")
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
         assert "skip_gate" not in names
+
+    async def test_stopped_worktree_missing(self):
+        await self._make("f/s11", status="stopped", reason="worktree_missing")
+        names = await self._names("f/s11")
+        assert "retry" in names
+        assert "close" in names
+        assert "cancel" in names
+        assert "skip_gate" not in names
+        assert "resume" not in names
 
     # stopped — awaiting_feedback → start, cancel_reopen (no close)
     async def test_stopped_awaiting_feedback(self):
@@ -1401,11 +1418,12 @@ class TestActionsFiltered:
         assert "close" not in names
         assert "resume" not in names
 
-    # stopped — recovery_limit → retry, cancel (no skip_gate)
+    # stopped — recovery_limit → retry, close, cancel (no skip_gate)
     async def test_stopped_recovery_limit(self):
         await self._make("f/s10", status="stopped", reason="recovery_limit")
         names = await self._names("f/s10")
         assert "retry" in names
+        assert "close" in names
         assert "cancel" in names
         assert "skip_gate" not in names
 
