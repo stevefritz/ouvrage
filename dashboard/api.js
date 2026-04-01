@@ -71,6 +71,7 @@ export const api = {
     }),
 
     // Actions
+    stopTask: (id) => request(`/tasks/${eid(id)}/stop`, { method: 'POST' }),
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
     retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {
         method: 'POST', body: JSON.stringify({ clean }),

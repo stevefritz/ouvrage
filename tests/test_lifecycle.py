@@ -1062,3 +1062,144 @@ class TestCancelChainBehavior:
         cancel_logs = [l for l in logs if l["action"] == "cancel"]
         assert len(cancel_logs) == 1
         assert cancel_logs[0]["triggered_by"] == "cancel-chain"
+
+
+# ---------------------------------------------------------------------------
+# Stop behavior tests
+# ---------------------------------------------------------------------------
+
+
+class TestStopBehavior:
+    """Test stop_task transition through lifecycle with real DB."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        try:
+            await db.create_project(
+                id=PROJECT_ID,
+                repo="https://github.com/test/repo.git",
+                working_dir="/tmp/lifecycle-test",
+            )
+        except Exception:
+            pass
+
+    async def test_stop_from_working(self):
+        """Stop from working → stopped(paused_by_user), session_id preserved."""
+        await _seed(self.db, status="working")
+        # Set a session_id to verify preservation
+        await self.db.update_task(TASK_ID, session_id="sess-123")
+        result = await self.lifecycle.execute(TASK_ID, "stop")
+        assert result["status"] == "stopped"
+        assert result.get("reason") == "paused_by_user"
+        # session_id must be preserved
+        task = await self.db.get_task(TASK_ID)
+        assert task["session_id"] == "sess-123"
+
+    async def test_stop_from_validating_testing(self):
+        """Stop from validating (testing) → stopped, gate_status preserved."""
+        await _seed(self.db, status="pending-validation", gate_status="testing")
+        result = await self.lifecycle.execute(TASK_ID, "stop")
+        assert result["status"] == "stopped"
+        assert result.get("reason") == "paused_by_user"
+        # gate_status preserved (lifecycle only sets status+reason, not gate_status)
+        task = await self.db.get_task(TASK_ID)
+        assert task["gate_status"] == "testing"
+
+    async def test_stop_from_validating_reviewing(self):
+        """Stop from validating (reviewing) → stopped, gate_status preserved."""
+        await _seed(self.db, status="pending-validation", gate_status="reviewing")
+        result = await self.lifecycle.execute(TASK_ID, "stop")
+        assert result["status"] == "stopped"
+        assert result.get("reason") == "paused_by_user"
+        task = await self.db.get_task(TASK_ID)
+        assert task["gate_status"] == "reviewing"
+
+    async def test_stop_from_ready_rejected(self):
+        """Cannot stop a task that isn't running."""
+        await _seed(self.db, status="ready")
+        with pytest.raises(IllegalTransition):
+            await self.lifecycle.execute(TASK_ID, "stop")
+
+    async def test_stop_from_stopped_rejected(self):
+        """Cannot stop what's already stopped."""
+        await _seed(self.db, status="stopped")
+        with pytest.raises(IllegalTransition):
+            await self.lifecycle.execute(TASK_ID, "stop")
+
+    async def test_stop_from_completed_rejected(self):
+        """Cannot stop a completed task."""
+        await _seed(self.db, status="completed")
+        with pytest.raises(IllegalTransition):
+            await self.lifecycle.execute(TASK_ID, "stop")
+
+    async def test_stop_does_not_increment_attempt(self):
+        """Stop is a pause, not a new run — current_attempt stays the same."""
+        await _seed(self.db, status="working")
+        await self.db.update_task(TASK_ID, current_attempt=2)
+        await self.lifecycle.execute(TASK_ID, "stop")
+        task = await self.db.get_task(TASK_ID)
+        assert task["current_attempt"] == 2
+
+    async def test_stop_posts_message(self):
+        """Stop should post a status message."""
+        await _seed(self.db, status="working")
+        await self.lifecycle.execute(TASK_ID, "stop")
+        result = await self.db.read_task_messages(TASK_ID)
+        stop_msgs = [m for m in result["messages"] if m["title"] == "Task stopped"]
+        assert len(stop_msgs) == 1
+        assert "Session preserved" in stop_msgs[0]["content"]
+
+    async def test_stop_drains_queue(self):
+        """Stop from working should call _drain_queue (via side effect)."""
+        from unittest.mock import AsyncMock, patch
+        await _seed(self.db, status="working")
+        with patch("switchboard.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
+            await self.lifecycle.execute(TASK_ID, "stop")
+            mock_drain.assert_called_once()
+
+    async def test_stop_writes_audit_log(self):
+        """Stop should write an audit log entry."""
+        await _seed(self.db, status="working")
+        await self.lifecycle.execute(TASK_ID, "stop")
+        logs = await self.db.get_audit_log(TASK_ID)
+        stop_logs = [l for l in logs if l["action"] == "stop"]
+        assert len(stop_logs) == 1
+        assert stop_logs[0]["previous_status"] == "working"
+        assert stop_logs[0]["new_status"] == "stopped"
+
+    async def test_resume_after_stop(self):
+        """After stop, resume should work and preserve session_id."""
+        await _seed(self.db, status="working")
+        await self.db.update_task(TASK_ID, session_id="sess-456")
+        await self.lifecycle.execute(TASK_ID, "stop")
+        # Now resume
+        result = await self.lifecycle.execute(TASK_ID, "resume")
+        assert result["status"] == "working"
+        task = await self.db.get_task(TASK_ID)
+        assert task["session_id"] == "sess-456"
+
+    async def test_cancel_after_stop(self):
+        """After stop, cancel should work."""
+        await _seed(self.db, status="working")
+        await self.lifecycle.execute(TASK_ID, "stop")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_stop_preserves_gate_retries(self):
+        """gate_retries must be preserved for gate resume."""
+        await _seed(self.db, status="pending-validation", gate_status="testing")
+        await self.db.update_task(TASK_ID, gate_retries=2)
+        await self.lifecycle.execute(TASK_ID, "stop")
+        task = await self.db.get_task(TASK_ID)
+        assert task["gate_retries"] == 2
+
+    async def test_stop_preserves_worktree_and_branch(self):
+        """worktree_path and branch must be preserved for resume."""
+        await _seed(self.db, status="working")
+        await self.db.update_task(TASK_ID, worktree_path="/tmp/wt", branch="my-branch")
+        await self.lifecycle.execute(TASK_ID, "stop")
+        task = await self.db.get_task(TASK_ID)
+        assert task["worktree_path"] == "/tmp/wt"
+        assert task["branch"] == "my-branch"

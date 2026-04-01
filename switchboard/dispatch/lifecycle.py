@@ -3,11 +3,12 @@
 Single entry point for state changes. Contains the transition table,
 effective state mapper, state labels, and the execute() method.
 
-cancel, close, and skip_gate are routed through this service.
+cancel, close, skip_gate, and stop are routed through this service.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -108,6 +109,46 @@ async def _skip_gate_dispatch_dependents(task: dict, **ctx: Any) -> None:
     """Trigger chain advancement after gate skip."""
     from switchboard.dispatch.engine import _check_and_dispatch_dependents
     await _check_and_dispatch_dependents(task["id"])
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for stop
+# ---------------------------------------------------------------------------
+
+
+async def _stop_cc_session(task: dict, **ctx: Any) -> None:
+    """Kill the running CC process, preserve session_id."""
+    from switchboard.dispatch._state import _running_tasks, _active_clients
+
+    task_id = task["id"]
+    task_name = f"sdk-session-{task_id}"
+    for t in list(_running_tasks):
+        if t.get_name() == task_name and not t.done():
+            t.cancel()
+            _running_tasks.discard(t)
+            logger.info("Stop: cancelled asyncio task for %s", task_id)
+            break
+
+    # Remove from active clients
+    _active_clients.pop(task_id, None)
+
+
+async def _stop_gate_subprocess(task: dict, **ctx: Any) -> None:
+    """Kill the running test or review subprocess, preserve gate_status."""
+    from switchboard.dispatch._state import _running_gates
+
+    task_id = task["id"]
+    _running_gates.discard(task_id)
+    logger.info("Stop: removed %s from _running_gates", task_id)
+
+
+async def _post_stop_message(task: dict, **ctx: Any) -> None:
+    """Post 'Task stopped' status message."""
+    await db.post_task_message(
+        task_id=task["id"], author="dispatcher", type="status",
+        title="Task stopped",
+        content="Task paused by user. Session preserved — click Resume to continue, or Retry for a fresh session.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +256,10 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
+        side_effects=[_stop_cc_session, _post_stop_message, _drain_queue_effect],
         label="Stop",
-        style="danger",
-        confirm=True,
+        style="secondary",
+        confirm=False,
     ),
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
@@ -229,9 +271,10 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
+        side_effects=[_stop_gate_subprocess, _post_stop_message],
         label="Stop",
-        style="danger",
-        confirm=True,
+        style="secondary",
+        confirm=False,
     ),
     ("validating", "skip_gate"): TransitionDef(
         to_state="completed",

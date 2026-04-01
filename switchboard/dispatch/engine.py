@@ -1101,6 +1101,17 @@ async def start_reopened_task(
     return result
 
 
+async def stop_task(task_id: str) -> dict:
+    """Stop a running task through the lifecycle service.
+
+    Pauses the task while preserving session_id for resume.
+    Side effects (process kill, message, queue drain) handled by lifecycle.execute().
+    """
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(task_id, "stop", triggered_by="stop-api", source_detail="stop_task")
+    return {"task_id": task_id, "status": "stopped"}
+
+
 async def cancel_task(task_id: str) -> dict:
     """Cancel a task through the lifecycle service.
 
