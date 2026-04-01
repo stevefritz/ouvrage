@@ -472,7 +472,7 @@ class TestExecuteIllegalTransitions:
 
 class TestPreconditionsAndSideEffects:
     @pytest.fixture(autouse=True)
-    async def _setup(self, db):
+    async def _setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         await db.create_project(
@@ -794,7 +794,7 @@ class TestCancelBehavior:
     """Test cancel transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -850,7 +850,7 @@ class TestCloseBehavior:
     """Test close transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -925,7 +925,7 @@ class TestSkipGateBehavior:
     """Test skip_gate transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:
@@ -1017,7 +1017,7 @@ class TestCancelChainBehavior:
     """Test cancel_chain routes through lifecycle."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         try:
             await db.create_project(
@@ -1076,7 +1076,7 @@ class TestStopBehavior:
     """Test stop_task transition through lifecycle with real DB."""
 
     @pytest.fixture(autouse=True)
-    async def setup(self, db):
+    async def setup(self, db, mock_git, mock_sdk):
         self.db = db
         self.lifecycle = TaskLifecycle()
         try:

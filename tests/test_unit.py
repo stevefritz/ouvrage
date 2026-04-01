@@ -183,12 +183,10 @@ class TestProcessReviewResultInline:
             ]
         }
         await _process_review_result_inline("task-1")
-        # Should update gate to passed
-        assert any(
-            call.kwargs.get("gate_status") == "passed"
-            for call in self.mock_update_task.await_args_list
-        )
-        self.mock_check_deps.assert_awaited_once_with("task-1")
+        # Should call lifecycle gate_pass (handles status + deps as side effects)
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args
+        assert call_args[0] == ("task-1", "gate_pass")
 
     async def test_rejected_retries_if_under_limit(self):
         from switchboard.dispatch.gates import _process_review_result_inline
@@ -220,11 +218,10 @@ class TestProcessReviewResultInline:
             "max_gate_retries": 3,
         }
         await _process_review_result_inline("task-1")
-        self.mock_lifecycle_execute.assert_not_awaited()
-        # Should mark needs-review
+        # Should call lifecycle gate_fail (max review retries exceeded)
         assert any(
-            call.kwargs.get("status") == "needs-review"
-            for call in self.mock_update_task.await_args_list
+            call[0] == ("task-1", "gate_fail")
+            for call in self.mock_lifecycle_execute.await_args_list
         )
 
     async def test_no_review_message_goes_to_rejection_path(self):

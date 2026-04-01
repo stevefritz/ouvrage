@@ -169,21 +169,23 @@ async def completed_chain(db, sample_project):
 
 @pytest.fixture
 def mock_git():
-    """Mock all git/subprocess operations in dispatch engine.
+    """Mock all git/subprocess operations in dispatch engine and lifecycle.
 
-    Patches: _run_as_worker, setup_worktree, cleanup_worktree.
+    Patches: _run_as_worker, setup_worktree, cleanup_worktree, _ensure_branch_pushed.
     Returns a dict of the mocks for assertion.
     """
     mocks = {
         "run_as_worker": AsyncMock(return_value=(b"", b"", 0)),
         "setup_worktree": AsyncMock(return_value="/tmp/fake-worktree"),
         "cleanup_worktree": AsyncMock(),
+        "ensure_branch_pushed": AsyncMock(return_value=True),
     }
 
     patches = [
         patch("switchboard.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
         patch("switchboard.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
         patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
+        patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
     ]
     for p in patches:
         p.start()
