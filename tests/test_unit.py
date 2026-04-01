@@ -1171,7 +1171,7 @@ class TestPushFailureBlocksGatePipeline:
 
         patches = [
             patch("switchboard.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client),
-            patch("switchboard.dispatch.sdk_session._ensure_branch_pushed",
+            patch("switchboard.git.operations._ensure_branch_pushed",
                   AsyncMock(return_value=False)),
             patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
             patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),

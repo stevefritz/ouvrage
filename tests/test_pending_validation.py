@@ -40,23 +40,24 @@ def _clear_context():
 # ---------------------------------------------------------------------------
 
 class TestSdkSessionSetsPendingValidation:
-    """CC session completion sets pending-validation, not completed."""
+    """CC session completion goes through lifecycle, entering validating state."""
 
-    def test_status_is_pending_validation_in_source(self):
-        """Source code must set pending-validation, not completed, on CC finish."""
+    def test_completion_uses_lifecycle_execute(self):
+        """Source code must use lifecycle.execute('complete') on CC finish."""
         import inspect
         import switchboard.dispatch.sdk_session as mod
         source = inspect.getsource(mod)
-        # The normal completion path must use pending-validation
-        assert "pending-validation" in source
+        # The normal completion path must use lifecycle.execute("complete")
+        assert 'lifecycle.execute' in source
+        assert '"complete"' in source
 
 
 # ---------------------------------------------------------------------------
 # _check_and_dispatch_dependents sets completed
 # ---------------------------------------------------------------------------
 
-class TestCheckAndDispatchSetsCompleted:
-    """_check_and_dispatch_dependents upgrades pending-validation → completed."""
+class TestGatePassCompletesTask:
+    """lifecycle.execute('gate_pass') transitions validating → completed."""
 
     @pytest.fixture(autouse=True)
     def _patches(self, sample_project):
@@ -75,8 +76,8 @@ class TestCheckAndDispatchSetsCompleted:
         with self.drain_mock, self.release_mock, self.pr_mock:
             yield
 
-    async def test_pending_validation_becomes_completed(self, db, sample_project):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    async def test_validating_becomes_completed_via_gate_pass(self, db, sample_project):
+        from switchboard.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/pv-task",
@@ -84,29 +85,29 @@ class TestCheckAndDispatchSetsCompleted:
             goal="test",
         )
         await db.update_task("test-project/pv-task",
-                             status="pending-validation",
-                             gate_status="passed",
-                             gate_passed_at=db.now_iso())
+                             status="validating")
 
-        await _check_and_dispatch_dependents("test-project/pv-task")
+        result = await lifecycle.execute("test-project/pv-task", "gate_pass",
+                                         triggered_by="gate-pipeline")
 
         updated = await db.get_task("test-project/pv-task")
         assert updated["status"] == "completed"
 
-    async def test_turns_exhausted_becomes_completed(self, db, sample_project):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    async def test_pending_validation_becomes_completed_via_gate_pass(self, db, sample_project):
+        """Legacy pending-validation status is mapped to validating by lifecycle."""
+        from switchboard.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/te-task",
             project_id="test-project",
             goal="test",
         )
+        # Legacy status still works via _STATUS_MAP
         await db.update_task("test-project/te-task",
-                             status="turns-exhausted",
-                             gate_status="passed",
-                             gate_passed_at=db.now_iso())
+                             status="pending-validation")
 
-        await _check_and_dispatch_dependents("test-project/te-task")
+        result = await lifecycle.execute("test-project/te-task", "gate_pass",
+                                         triggered_by="gate-pipeline")
 
         updated = await db.get_task("test-project/te-task")
         assert updated["status"] == "completed"

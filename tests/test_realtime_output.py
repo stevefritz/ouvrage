@@ -146,7 +146,7 @@ class TestStructuredTestOutput:
             goal="Test output",
             auto_review=False,
         )
-        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed")
+        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="validating")
 
         with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("All tests passed\nOK", 0))):
             project = await db.get_project("test-project")
@@ -196,7 +196,7 @@ class TestStructuredTestOutput:
             goal="Test output lines",
             auto_review=False,
         )
-        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed")
+        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="validating")
 
         # Generate 200 lines of output
         big_output = "\n".join(f"line {i}" for i in range(200))
