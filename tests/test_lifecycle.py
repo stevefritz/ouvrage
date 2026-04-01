@@ -577,7 +577,17 @@ class TestGetAvailableActions:
         actions = await self.lifecycle.get_available_actions("t/act2")
         names = {a["name"] for a in actions}
         assert "stop" in names
-        assert "cancel" in names
+        # Cancel not shown in dashboard for working state — Stop first, then Cancel from stopped
+        assert "cancel" not in names
+
+    async def test_validating_actions(self):
+        await self._make_task("t/act2b", status="validating")
+        actions = await self.lifecycle.get_available_actions("t/act2b")
+        names = {a["name"] for a in actions}
+        assert "stop" in names
+        assert "skip_gate" in names
+        # Cancel not shown in dashboard for validating state — Stop first, then Cancel from stopped
+        assert "cancel" not in names
 
     async def test_stopped_actions(self):
         # stopped with no reason, no session — preconditions filter start/skip_gate/resume
@@ -746,8 +756,10 @@ class TestTransitionTableCompleteness:
         """User-facing actions should have labels for dashboard buttons."""
         user_actions = [
             ("ready", "dispatch"), ("ready", "cancel"),
-            ("working", "stop"), ("working", "cancel"),
-            ("validating", "stop"), ("validating", "skip_gate"), ("validating", "cancel"),
+            ("working", "stop"),
+            # ("working", "cancel") — intentionally no label; not shown in dashboard
+            ("validating", "stop"), ("validating", "skip_gate"),
+            # ("validating", "cancel") — intentionally no label; not shown in dashboard
             ("stopped", "resume"), ("stopped", "retry"), ("stopped", "start"),
             ("stopped", "skip_gate"), ("stopped", "cancel"), ("stopped", "close"),
             ("completed", "reopen"),
@@ -755,6 +767,15 @@ class TestTransitionTableCompleteness:
         ]
         for key in user_actions:
             assert TRANSITIONS[key].label, f"Missing label for user action {key}"
+
+    def test_working_cancel_and_validating_cancel_have_no_label(self):
+        """Cancel for working/validating has no label — not shown in dashboard UI.
+
+        User flow: Stop first (lands in stopped), then Cancel from stopped.
+        Transitions still exist for MCP tools and programmatic use.
+        """
+        assert not TRANSITIONS[("working", "cancel")].label
+        assert not TRANSITIONS[("validating", "cancel")].label
 
     def test_status_map_covers_all_old_values(self):
         expected = {

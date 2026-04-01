@@ -922,7 +922,8 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
-        label="Cancel",
+        # No label — Cancel not shown in dashboard for working state.
+        # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
         confirm=True,
     ),
@@ -945,7 +946,8 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "cancel"): TransitionDef(
         to_state="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
-        label="Cancel",
+        # No label — Cancel not shown in dashboard for validating state.
+        # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
         confirm=True,
     ),
