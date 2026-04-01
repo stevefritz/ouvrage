@@ -153,7 +153,7 @@ class TestCancelTaskUnaffectedByIsolation:
 
         try:
             result = await cancel_task(task_id)
-            assert result["async_task_cancelled"] is True
+            assert result["status"] == "cancelled"
             assert asyncio_task.cancelled() or asyncio_task.done()
         finally:
             _running_tasks.discard(asyncio_task)

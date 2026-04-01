@@ -777,3 +777,288 @@ class TestImportability:
         assert callable(lc.get_available_actions)
         assert callable(lc.get_state_label)
         assert callable(lc._effective_state)
+
+    def test_singleton_exists(self):
+        from switchboard.dispatch.lifecycle import lifecycle
+        assert isinstance(lifecycle, TaskLifecycle)
+
+
+# ---------------------------------------------------------------------------
+# Behavior tests — cancel / close / skip_gate through lifecycle.execute()
+# ---------------------------------------------------------------------------
+
+class TestCancelBehavior:
+    """Test cancel transition through lifecycle with real DB."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        try:
+            await db.create_project(
+                id=PROJECT_ID,
+                repo="https://github.com/test/repo.git",
+                working_dir="/tmp/lifecycle-test",
+            )
+        except Exception:
+            pass
+
+    async def test_cancel_from_working(self):
+        await _seed(self.db, status="working")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+        logs = await self.db.get_audit_log(TASK_ID)
+        cancel_logs = [l for l in logs if l["action"] == "cancel"]
+        assert len(cancel_logs) == 1
+
+    async def test_cancel_from_ready(self):
+        await _seed(self.db, status="ready")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_cancel_from_stopped(self):
+        await _seed(self.db, status="stopped")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_cancel_from_validating(self):
+        await _seed(self.db, status="pending-validation")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_cancel_from_completed_rejected(self):
+        await _seed(self.db, status="completed")
+        with pytest.raises(IllegalTransition, match="cancel"):
+            await self.lifecycle.execute(TASK_ID, "cancel")
+
+    async def test_cancel_from_cancelled_rejected(self):
+        await _seed(self.db, status="cancelled")
+        with pytest.raises(IllegalTransition, match="cancel"):
+            await self.lifecycle.execute(TASK_ID, "cancel")
+
+    async def test_cancel_clears_reason(self):
+        await _seed(self.db, status="stopped", reason="paused_by_user")
+        result = await self.lifecycle.execute(TASK_ID, "cancel")
+        assert result["status"] == "cancelled"
+        assert result.get("reason") is None
+
+
+class TestCloseBehavior:
+    """Test close transition through lifecycle with real DB."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        try:
+            await db.create_project(
+                id=PROJECT_ID,
+                repo="https://github.com/test/repo.git",
+                working_dir="/tmp/lifecycle-test",
+            )
+        except Exception:
+            pass
+
+    async def test_close_from_stopped(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        tdef = TRANSITIONS[("stopped", "close")]
+        orig = tdef.side_effects[:]
+        # Replace archive/cleanup side effect with no-op
+        from unittest.mock import AsyncMock
+        mock_cleanup = AsyncMock()
+        tdef.side_effects = [mock_cleanup, tdef.side_effects[-1]]
+        try:
+            await _seed(self.db, status="stopped")
+            result = await self.lifecycle.execute(TASK_ID, "close")
+            assert result["status"] == "completed"
+            assert result.get("reason") == "manually_closed"
+        finally:
+            tdef.side_effects = orig
+
+    async def test_close_from_stopped_writes_audit(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("stopped", "close")]
+        orig = tdef.side_effects[:]
+        tdef.side_effects = [AsyncMock(), tdef.side_effects[-1]]
+        try:
+            await _seed(self.db, status="stopped")
+            await self.lifecycle.execute(TASK_ID, "close")
+            logs = await self.db.get_audit_log(TASK_ID)
+            close_logs = [l for l in logs if l["action"] == "close"]
+            assert len(close_logs) == 1
+        finally:
+            tdef.side_effects = orig
+
+    async def test_close_from_working_rejected(self):
+        """close has a precondition that rejects working tasks."""
+        await _seed(self.db, status="working")
+        # working→close is not in the transition table, so IllegalTransition
+        with pytest.raises(IllegalTransition):
+            await self.lifecycle.execute(TASK_ID, "close")
+
+    async def test_close_from_completed_rejected(self):
+        await _seed(self.db, status="completed")
+        with pytest.raises(IllegalTransition):
+            await self.lifecycle.execute(TASK_ID, "close")
+
+    async def test_close_from_needs_review(self):
+        """needs-review maps to stopped, so close should work."""
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("stopped", "close")]
+        orig = tdef.side_effects[:]
+        tdef.side_effects = [AsyncMock(), tdef.side_effects[-1]]
+        try:
+            await _seed(self.db, status="needs-review")
+            result = await self.lifecycle.execute(TASK_ID, "close")
+            assert result["status"] == "completed"
+            assert result.get("reason") == "manually_closed"
+        finally:
+            tdef.side_effects = orig
+
+
+class TestSkipGateBehavior:
+    """Test skip_gate transition through lifecycle with real DB."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, db):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        try:
+            await db.create_project(
+                id=PROJECT_ID,
+                repo="https://github.com/test/repo.git",
+                working_dir="/tmp/lifecycle-test",
+            )
+        except Exception:
+            pass
+
+    async def test_skip_gate_from_validating(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("validating", "skip_gate")]
+        orig = tdef.side_effects[:]
+        # Mock dispatch_dependents only, keep gate field setting
+        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        try:
+            await _seed(self.db, status="pending-validation")
+            result = await self.lifecycle.execute(TASK_ID, "skip_gate")
+            assert result["status"] == "completed"
+            assert result.get("reason") == "gate_skipped"
+            # Verify gate_status was set by side effect
+            task = await self.db.get_task(TASK_ID)
+            assert task["gate_status"] == "passed"
+            assert task["gate_passed_at"] is not None
+        finally:
+            tdef.side_effects = orig
+
+    async def test_skip_gate_from_stopped(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("stopped", "skip_gate")]
+        orig = tdef.side_effects[:]
+        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        try:
+            await _seed(self.db, status="stopped")
+            result = await self.lifecycle.execute(TASK_ID, "skip_gate")
+            assert result["status"] == "completed"
+            assert result.get("reason") == "gate_skipped"
+        finally:
+            tdef.side_effects = orig
+
+    async def test_skip_gate_from_completed_rejected(self):
+        await _seed(self.db, status="completed")
+        with pytest.raises(IllegalTransition, match="skip_gate"):
+            await self.lifecycle.execute(TASK_ID, "skip_gate")
+
+    async def test_skip_gate_from_working_rejected(self):
+        await _seed(self.db, status="working")
+        with pytest.raises(IllegalTransition, match="skip_gate"):
+            await self.lifecycle.execute(TASK_ID, "skip_gate")
+
+    async def test_skip_gate_writes_audit(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("validating", "skip_gate")]
+        orig = tdef.side_effects[:]
+        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        try:
+            await _seed(self.db, status="pending-validation")
+            await self.lifecycle.execute(TASK_ID, "skip_gate")
+            logs = await self.db.get_audit_log(TASK_ID)
+            skip_logs = [l for l in logs if l["action"] == "skip_gate"]
+            assert len(skip_logs) == 1
+            assert skip_logs[0]["new_status"] == "completed"
+        finally:
+            tdef.side_effects = orig
+
+    async def test_skip_gate_posts_message(self):
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from unittest.mock import AsyncMock
+        tdef = TRANSITIONS[("validating", "skip_gate")]
+        orig = tdef.side_effects[:]
+        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        try:
+            await _seed(self.db, status="pending-validation")
+            await self.lifecycle.execute(TASK_ID, "skip_gate")
+            result = await self.db.read_task_messages(TASK_ID)
+            messages = result["messages"]
+            gate_msgs = [m for m in messages if m.get("title") == "Gate skipped"]
+            assert len(gate_msgs) == 1
+        finally:
+            tdef.side_effects = orig
+
+
+class TestCancelChainBehavior:
+    """Test cancel_chain routes through lifecycle."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, db):
+        self.db = db
+        try:
+            await db.create_project(
+                id="chain-proj",
+                repo="https://github.com/test/repo.git",
+                working_dir="/tmp/chain-test",
+            )
+        except Exception:
+            pass
+        await db.create_task(
+            id="chain-proj/root", project_id="chain-proj", goal="root",
+        )
+        await db.update_task("chain-proj/root", status="working")
+        await db.create_task(
+            id="chain-proj/child", project_id="chain-proj", goal="child",
+            depends_on="chain-proj/root",
+        )
+        await db.create_task(
+            id="chain-proj/grandchild", project_id="chain-proj", goal="grandchild",
+            depends_on="chain-proj/child",
+        )
+
+    async def test_cancel_chain_cancels_all(self):
+        from switchboard.dispatch.engine import cancel_chain
+        result = await cancel_chain("chain-proj/root")
+        assert "chain-proj/root" in result["cancelled"]
+        assert "chain-proj/child" in result["cancelled"]
+        assert "chain-proj/grandchild" in result["cancelled"]
+        for tid in ("chain-proj/root", "chain-proj/child", "chain-proj/grandchild"):
+            task = await self.db.get_task(tid)
+            assert task["status"] == "cancelled"
+
+    async def test_cancel_chain_skips_completed(self):
+        from switchboard.dispatch.engine import cancel_chain
+        await self.db.update_task("chain-proj/child", status="completed")
+        result = await cancel_chain("chain-proj/root")
+        assert "chain-proj/child" not in result["cancelled"]
+        # grandchild should still be cancelled (it's ready)
+        assert "chain-proj/grandchild" in result["cancelled"]
+
+    async def test_cancel_chain_writes_audit_via_lifecycle(self):
+        from switchboard.dispatch.engine import cancel_chain
+        await cancel_chain("chain-proj/root")
+        logs = await self.db.get_audit_log("chain-proj/root")
+        cancel_logs = [l for l in logs if l["action"] == "cancel"]
+        assert len(cancel_logs) == 1
+        assert cancel_logs[0]["triggered_by"] == "cancel-chain"

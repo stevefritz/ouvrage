@@ -219,7 +219,8 @@ class TestArchiveCallSites:
             goal="Close test",
             branch="close-me",
         )
-        task = await db.update_task(task["id"], status="completed", dispatch_count=2,
+        # Use "stopped" — close is only valid from stopped state
+        task = await db.update_task(task["id"], status="stopped", dispatch_count=2,
                                     worktree_path=str(tmp_path / "close-me"))
         _write_switchboard(str(tmp_path / "close-me"), dispatch_text="dispatch\n")
 
@@ -228,9 +229,20 @@ class TestArchiveCallSites:
         async def fake_archive(t, p, reason):
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
-        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
-             patch("switchboard.dispatch.engine.cleanup_worktree", AsyncMock()):
+        async def fake_close_side_effect(task, **ctx):
+            """Replacement that calls our fake_archive but skips real cleanup."""
+            project = await db.get_project(task["project_id"])
+            if project:
+                await fake_archive(task, project, "close")
+
+        from switchboard.dispatch.lifecycle import TRANSITIONS
+        tdef = TRANSITIONS[("stopped", "close")]
+        orig_effects = tdef.side_effects[:]
+        tdef.side_effects = [fake_close_side_effect, tdef.side_effects[-1]]  # keep post_close_message
+        try:
             await _engine.close_task("test-project/close-me")
+        finally:
+            tdef.side_effects = orig_effects
 
         assert len(archived_calls) == 1
         assert archived_calls[0]["reason"] == "close"
