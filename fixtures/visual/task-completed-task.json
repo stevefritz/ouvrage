@@ -1,0 +1,53 @@
+{
+  "id": "add-dark-mode",
+  "project_id": "demo-project",
+  "goal": "Add dark mode toggle to settings page",
+  "status": "completed",
+  "reason": "gate_passed",
+  "phase": "completed",
+  "branch": "add-dark-mode",
+  "model": "sonnet",
+  "dispatch_count": 1,
+  "total_cost_usd": 0.82,
+  "total_input_tokens": 32000,
+  "total_output_tokens": 8000,
+  "auto_test": 1,
+  "auto_review": 1,
+  "gate_status": "passed",
+  "gate_passed_at": "2026-03-28T16:00:00Z",
+  "gate_retries": 0,
+  "max_gate_retries": 3,
+  "last_activity": "2026-03-28T16:00:00Z",
+  "created_at": "2026-03-28T15:00:00Z",
+  "updated_at": "2026-03-28T16:00:00Z",
+  "pid": null,
+  "alive": false,
+  "checklist": [
+    { "id": 20, "item": "Add dark mode CSS variables", "done": true },
+    { "id": 21, "item": "Settings toggle component", "done": true },
+    { "id": 22, "item": "Persist preference to localStorage", "done": true }
+  ],
+  "checklist_total": 3,
+  "checklist_done": 3,
+  "messages": [
+    {
+      "id": 301,
+      "type": "result",
+      "author": "cc-worker",
+      "title": "Dark mode implemented",
+      "content": "All checklist items complete. CSS variables added, toggle component built, preference persists across sessions.",
+      "created_at": "2026-03-28T15:55:00Z"
+    },
+    {
+      "id": 302,
+      "type": "review",
+      "author": "cc-opus",
+      "title": "APPROVED",
+      "content": "Code is clean and well-tested. Dark mode toggle works correctly.",
+      "created_at": "2026-03-28T16:00:00Z"
+    }
+  ],
+  "artifacts": [],
+  "tags": ["ui", "settings"],
+  "subtasks": []
+}

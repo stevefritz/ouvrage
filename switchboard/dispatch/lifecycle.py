@@ -800,6 +800,26 @@ async def _require_awaiting_feedback(task: dict, **ctx: Any) -> None:
         )
 
 
+_GATE_FAILURE_REASONS = frozenset({"max_test_retries", "max_review_retries", "review_stalled"})
+
+
+async def _require_gate_failure_reason(task: dict, **ctx: Any) -> None:
+    """Skip gate from stopped requires a gate failure reason."""
+    if task.get("reason") not in _GATE_FAILURE_REASONS:
+        raise ValueError(
+            f"Task '{task['id']}' cannot skip gate: reason '{task.get('reason')}' is not a gate failure. "
+            f"Skip gate is only available for: {', '.join(sorted(_GATE_FAILURE_REASONS))}."
+        )
+
+
+async def _reject_if_awaiting_feedback_close(task: dict, **ctx: Any) -> None:
+    """Close on stopped should not appear when reason is awaiting_feedback (use cancel_reopen)."""
+    if task.get("reason") == "awaiting_feedback":
+        raise ValueError(
+            f"Task '{task['id']}' is awaiting feedback — use Cancel Reopen instead of Close."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -841,6 +861,7 @@ class TransitionDef:
     label: str = ""  # button label for dashboard
     style: str = "secondary"  # primary, secondary, danger
     confirm: bool = False  # require confirmation dialog
+    user_action: bool = True  # False for system-initiated transitions (not shown as dashboard buttons)
 
     def resolve_target(self, task: dict, **ctx: Any) -> tuple[str, str | None]:
         """Resolve the target state and reason, handling dynamic callables."""
@@ -901,7 +922,8 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
-        label="Cancel",
+        # No label — Cancel not shown in dashboard for working state.
+        # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
         confirm=True,
     ),
@@ -924,7 +946,8 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "cancel"): TransitionDef(
         to_state="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
-        label="Cancel",
+        # No label — Cancel not shown in dashboard for validating state.
+        # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
         confirm=True,
     ),
@@ -951,6 +974,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("stopped", "skip_gate"): TransitionDef(
         to_state="completed",
         reason="gate_skipped",
+        preconditions=[_require_gate_failure_reason],
         side_effects=[_skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
         label="Skip Gate",
         style="secondary",
@@ -966,7 +990,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("stopped", "close"): TransitionDef(
         to_state="completed",
         reason="manually_closed",
-        preconditions=[_reject_if_working],
+        preconditions=[_reject_if_working, _reject_if_awaiting_feedback_close],
         side_effects=[_close_archive_and_cleanup, _post_close_message],
         label="Close",
         style="secondary",
@@ -1008,69 +1032,82 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "complete"): TransitionDef(
         to_state="validating",
         label="Complete",
+        user_action=False,
         side_effects=[_on_sdk_complete],
     ),
     ("working", "exhaust_turns"): TransitionDef(
         to_state=_exhaust_turns_state,
         reason=_exhaust_turns_reason,
         label="Exhaust Turns",
+        user_action=False,
         side_effects=[_on_exhaust_turns],
     ),
     ("working", "timeout"): TransitionDef(
         to_state="stopped",
         reason="wall_clock_timeout",
         label="Timeout",
+        user_action=False,
         side_effects=[_on_timeout],
     ),
     ("working", "rate_limit"): TransitionDef(
         to_state="stopped",
         reason="rate_limited",
         label="Rate Limit",
+        user_action=False,
         side_effects=[_on_rate_limit],
     ),
     ("working", "error"): TransitionDef(
         to_state="stopped",
         reason="dispatch_error",
         label="Error",
+        user_action=False,
         side_effects=[_on_error],
     ),
     ("validating", "gate_pass"): TransitionDef(
         to_state="completed",
         reason="gate_passed",
         label="Gate Pass",
+        user_action=False,
         side_effects=[_on_gate_pass],
     ),
     ("validating", "gate_fail"): TransitionDef(
         to_state="stopped",
         reason=_gate_fail_reason,
         label="Gate Fail",
+        user_action=False,
         side_effects=[_on_gate_fail],
     ),
     ("validating", "gate_retry"): TransitionDef(
         to_state="working",
         label="Gate Retry",
+        user_action=False,
     ),
     ("validating", "retry"): TransitionDef(
         to_state="working",
+        user_action=False,
         side_effects=[_retry_launch_session],
     ),
     ("validating", "resume"): TransitionDef(
         to_state="working",
+        user_action=False,
         side_effects=[_resume_launch_session],
     ),
     ("working", "signal_kill"): TransitionDef(
         to_state="working",
         label="Signal Kill",
+        user_action=False,
         side_effects=[_on_signal_kill],
     ),
     # --- Recovery Actions -------------------------------------------------
     ("working", "recover"): TransitionDef(
         to_state="working",
         label="Recover",
+        user_action=False,
     ),
     ("stopped", "recover"): TransitionDef(
         to_state="working",
         label="Recover",
+        user_action=False,
     ),
 }
 
@@ -1145,6 +1182,26 @@ _STATE_FALLBACKS: dict[str, dict[str, Any]] = {
     "completed": {"label": "Completed", "color": "#10b981", "pulse": False},
     "cancelled": {"label": "Cancelled", "color": "#6b7280", "pulse": False},
 }
+
+
+# ---------------------------------------------------------------------------
+# Helpers for derived state
+# ---------------------------------------------------------------------------
+
+
+def _effective_ready_reason(task: dict) -> str | None:
+    """Derive the display reason for a ready-state task.
+
+    The raw DB status can be "blocked" (depends_on not met), or the task
+    can have held=True or queued_at set. None means dispatchable.
+    """
+    if task.get("status") == "blocked":
+        return "blocked"
+    if task.get("held"):
+        return "held"
+    if task.get("queued_at"):
+        return "queued"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1250,8 +1307,9 @@ class TaskLifecycle:
         return final_task or updated_task
 
     async def get_available_actions(self, task_id: str) -> list[dict]:
-        """Return valid actions for the task's current state.
+        """Return valid user-facing actions for the task's current state.
 
+        Evaluates preconditions to filter reason-specific actions.
         Dashboard uses this to render action buttons.
         """
         task = await db.get_task(task_id)
@@ -1259,9 +1317,40 @@ class TaskLifecycle:
             raise ValueError(f"Task '{task_id}' not found")
 
         effective = self._effective_state(task)
+
+        # Handle ready sub-states: held / queued / blocked / dispatchable
+        if effective == "ready":
+            cancel_def = TRANSITIONS[("ready", "cancel")]
+            cancel_action = {
+                "name": "cancel",
+                "label": cancel_def.label,
+                "style": cancel_def.style,
+                "confirm": cancel_def.confirm,
+            }
+            if task.get("held"):
+                return [
+                    {"name": "approve", "label": "Approve", "style": "primary", "confirm": False},
+                    cancel_action,
+                ]
+            if task.get("queued_at") or task.get("status") == "blocked":
+                return [cancel_action]
+            # Dispatchable — use transition table (dispatch + cancel)
+
         actions = []
         for (state, action), tdef in TRANSITIONS.items():
-            if state == effective and tdef.label:
+            if state != effective:
+                continue
+            if not tdef.label or not tdef.user_action:
+                continue
+            # Evaluate preconditions — exclude action if any precondition fails
+            precond_passed = True
+            for precond in tdef.preconditions:
+                try:
+                    await precond(task)
+                except ValueError:
+                    precond_passed = False
+                    break
+            if precond_passed:
                 actions.append({
                     "name": action,
                     "label": tdef.label,
@@ -1277,7 +1366,11 @@ class TaskLifecycle:
             raise ValueError(f"Task '{task_id}' not found")
 
         effective = self._effective_state(task)
-        reason = task.get("reason")
+        # For ready state, reason is derived from task fields (not stored in DB)
+        if effective == "ready":
+            reason = _effective_ready_reason(task)
+        else:
+            reason = task.get("reason")
 
         # Try exact (state, reason) match first
         info = STATE_LABELS.get((effective, reason))

@@ -1,0 +1,53 @@
+{
+  "id": "fix-auth-bug",
+  "project_id": "demo-project",
+  "goal": "Fix authentication token expiry bug",
+  "status": "stopped",
+  "reason": "paused_by_user",
+  "phase": "implementing: Fixed token validation",
+  "branch": "fix-auth-bug",
+  "session_id": "sess-abc123",
+  "model": "sonnet",
+  "dispatch_count": 1,
+  "total_cost_usd": 0.45,
+  "total_input_tokens": 18000,
+  "total_output_tokens": 4500,
+  "auto_test": 1,
+  "auto_review": 1,
+  "gate_status": null,
+  "gate_retries": 0,
+  "max_gate_retries": 3,
+  "last_activity": "2026-03-28T14:30:00Z",
+  "created_at": "2026-03-28T14:00:00Z",
+  "updated_at": "2026-03-28T14:30:00Z",
+  "pid": null,
+  "alive": false,
+  "checklist": [
+    { "id": 10, "item": "Identify token expiry logic", "done": true },
+    { "id": 11, "item": "Fix validation function", "done": false },
+    { "id": 12, "item": "Add regression test", "done": false }
+  ],
+  "checklist_total": 3,
+  "checklist_done": 1,
+  "messages": [
+    {
+      "id": 201,
+      "type": "progress",
+      "author": "cc-worker",
+      "title": "Located the bug",
+      "content": "Found token expiry check in auth/middleware.py line 142. The comparison uses `<=` instead of `<`.",
+      "created_at": "2026-03-28T14:15:00Z"
+    },
+    {
+      "id": 202,
+      "type": "status",
+      "author": "dispatcher",
+      "title": "Task stopped",
+      "content": "Task paused by user. Session preserved — click Resume to continue, or Retry for a fresh session.",
+      "created_at": "2026-03-28T14:30:00Z"
+    }
+  ],
+  "artifacts": [],
+  "tags": ["bugfix", "auth"],
+  "subtasks": []
+}

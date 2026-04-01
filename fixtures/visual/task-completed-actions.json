@@ -1,0 +1,13 @@
+{
+  "task_id": "add-dark-mode",
+  "state": {
+    "status": "completed",
+    "reason": "gate_passed",
+    "label": "Completed",
+    "color": "#10b981",
+    "pulse": false
+  },
+  "actions": [
+    {"name": "reopen", "label": "Reopen", "style": "secondary", "confirm": true}
+  ]
+}

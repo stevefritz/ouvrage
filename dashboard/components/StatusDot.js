@@ -13,10 +13,11 @@ const html = htm.bind(h);
  *   status  — task status string (working, completed, failed, needs-review, etc.)
  *   size    — dot diameter in px (default: 8)
  *   style   — additional inline styles
+ *   pulse   — optional override for pulse animation (defaults to status === 'working')
  */
-export function StatusDot({ status, size = 8, style: extraStyle }) {
+export function StatusDot({ status, size = 8, style: extraStyle, pulse }) {
     const color = statusColors[status] || colors.textTertiary;
-    const isPulsing = status === 'working';
+    const isPulsing = pulse !== undefined ? pulse : (status === 'working');
 
     const dotStyle = {
         display: 'inline-block',

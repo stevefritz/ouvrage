@@ -247,6 +247,42 @@
       "wait_after_clicks_ms": 1500,
       "full_page": false,
       "wait_ms": 2000
+    },
+    "task-working-actions": {
+      "url": "/foreman#/task/implement-auth",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/implement-auth/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/implement-auth/actions": "fixtures/visual/task-working-actions.json",
+        "/dashboard/api/tasks/implement-auth": "fixtures/visual/task-detail-task.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000
+    },
+    "task-stopped-actions": {
+      "url": "/foreman#/task/fix-auth-bug",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/fix-auth-bug/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/fix-auth-bug/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/fix-auth-bug/actions": "fixtures/visual/task-stopped-actions.json",
+        "/dashboard/api/tasks/fix-auth-bug": "fixtures/visual/task-stopped-task.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000
+    },
+    "task-completed-actions": {
+      "url": "/foreman#/task/add-dark-mode",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/add-dark-mode/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/add-dark-mode/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/add-dark-mode/actions": "fixtures/visual/task-completed-actions.json",
+        "/dashboard/api/tasks/add-dark-mode": "fixtures/visual/task-completed-task.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000
     }
   }
 }

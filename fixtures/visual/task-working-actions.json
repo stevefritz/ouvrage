@@ -1,0 +1,14 @@
+{
+  "task_id": "implement-auth",
+  "state": {
+    "status": "working",
+    "reason": null,
+    "label": "Working",
+    "color": "#3b82f6",
+    "pulse": true
+  },
+  "actions": [
+    {"name": "stop", "label": "Stop", "style": "secondary", "confirm": false},
+    {"name": "cancel", "label": "Cancel", "style": "danger", "confirm": true}
+  ]
+}

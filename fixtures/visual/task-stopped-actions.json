@@ -1,0 +1,15 @@
+{
+  "task_id": "fix-auth-bug",
+  "state": {
+    "status": "stopped",
+    "reason": "paused_by_user",
+    "label": "Paused",
+    "color": "#f59e0b",
+    "pulse": false
+  },
+  "actions": [
+    {"name": "resume", "label": "Resume", "style": "primary", "confirm": false},
+    {"name": "retry", "label": "Retry", "style": "secondary", "confirm": true},
+    {"name": "cancel", "label": "Cancel", "style": "danger", "confirm": true}
+  ]
+}
