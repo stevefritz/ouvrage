@@ -131,7 +131,7 @@ class TestChainCancellationIsolation:
         await cancel_task("chain-proj/sibling-a")
 
         logs = await self.db.get_audit_log("chain-proj/sibling-a")
-        cancel_logs = [l for l in logs if l["action"] == "cancelled"]
+        cancel_logs = [l for l in logs if l["action"] == "cancel"]
         assert len(cancel_logs) == 1
         assert cancel_logs[0]["triggered_by"] == "cancel-api"
         assert cancel_logs[0]["previous_status"] == "working"
@@ -215,7 +215,7 @@ class TestCancelChain:
 
         for tid in ("cc-proj/root", "cc-proj/child", "cc-proj/grandchild"):
             logs = await self.db.get_audit_log(tid)
-            chain_cancel_logs = [l for l in logs if l["action"] == "cancelled" and l["triggered_by"] == "cancel-chain"]
+            chain_cancel_logs = [l for l in logs if l["action"] == "cancel" and l["triggered_by"] == "cancel-chain"]
             assert len(chain_cancel_logs) >= 1, f"Missing cancel-chain audit log for {tid}"
 
     async def test_cancel_chain_skips_already_completed(self):
@@ -335,12 +335,14 @@ class TestAuditTriggeredBy:
             id="trig-proj/gate-test", project_id="trig-proj",
             goal="Test skip gate audit",
         )
-        await self.db.update_task("trig-proj/gate-test", status="completed")
+        # Put in pending-validation (maps to "validating" effective state)
+        await self.db.update_task("trig-proj/gate-test", status="pending-validation")
 
-        await skip_gate("trig-proj/gate-test")
+        with patch("switchboard.dispatch.lifecycle._skip_gate_dispatch_dependents", new_callable=AsyncMock):
+            await skip_gate("trig-proj/gate-test")
 
         logs = await self.db.get_audit_log("trig-proj/gate-test")
-        gate_logs = [l for l in logs if l["action"] == "gate_passed"]
+        gate_logs = [l for l in logs if l["action"] == "skip_gate"]
         assert len(gate_logs) == 1
         assert gate_logs[0]["triggered_by"] == "user"
         assert "skip_gate" in gate_logs[0]["source_detail"]
@@ -355,12 +357,11 @@ class TestAuditTriggeredBy:
         )
         await self.db.update_task("trig-proj/close-test", status="needs-review")
 
-        with patch("switchboard.dispatch.engine.cleanup_worktree", new_callable=AsyncMock):
-            with patch("switchboard.dispatch.engine.archive_task_logs", new_callable=AsyncMock):
-                await close_task("trig-proj/close-test", cleanup=False)
+        with patch("switchboard.dispatch.lifecycle._close_archive_and_cleanup", new_callable=AsyncMock):
+            await close_task("trig-proj/close-test", cleanup=False)
 
         logs = await self.db.get_audit_log("trig-proj/close-test")
-        close_logs = [l for l in logs if l["action"] == "closed"]
+        close_logs = [l for l in logs if l["action"] == "close"]
         assert len(close_logs) == 1
         assert close_logs[0]["triggered_by"] == "user"
         assert close_logs[0]["previous_status"] == "needs-review"

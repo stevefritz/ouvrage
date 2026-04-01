@@ -17,3 +17,6 @@ _active_clients: dict[str, ClaudeSDKClient] = {}
 # Track tasks with active gate coroutines in this process.
 # Empty on startup — all gates are orphaned by definition (server restart killed them).
 _running_gates: set[str] = set()
+
+# Track gate asyncio.Task objects by task_id for cancellation (stop action).
+_gate_tasks: dict[str, asyncio.Task] = {}

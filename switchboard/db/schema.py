@@ -315,9 +315,11 @@ async def init_db():
                     ALTER TABLE messages_new RENAME TO messages;
                 """)
 
-        # Migrate tasks table: add jira_ticket, conversation_id columns if missing
+        # Migrate tasks table: add columns if missing
         task_columns = await conn.execute_fetchall("PRAGMA table_info(tasks)")
         task_col_names = [c["name"] for c in task_columns]
+        if "reason" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN reason TEXT")
         if "pid" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN pid INTEGER")
         if "jira_ticket" not in task_col_names:

@@ -34,7 +34,7 @@ from switchboard.notifications import slack as notify
 from switchboard.config.settings import WORKER_USER
 from switchboard.git.worktree import _run_as_worker
 from switchboard.dispatch.sdk_session import _open_shared
-from switchboard.dispatch._state import _running_gates
+from switchboard.dispatch._state import _running_gates, _gate_tasks
 
 log = logging.getLogger(__name__)
 
@@ -360,10 +360,12 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
         log.warning(f"Gate already running for {task_id}, skipping duplicate")
         return
     _running_gates.add(task_id)
+    _gate_tasks[task_id] = asyncio.current_task()
     try:
         await _run_test_gate_inner(task_id, project, task)
     finally:
         _running_gates.discard(task_id)
+        _gate_tasks.pop(task_id, None)
 
 
 async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
@@ -493,10 +495,12 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
         log.warning(f"Review already in progress for {task_id}, skipping duplicate")
         return
     _running_gates.add(task_id)
+    _gate_tasks[task_id] = asyncio.current_task()
     try:
         await _dispatch_review_inner(task_id, project, task)
     finally:
         _running_gates.discard(task_id)
+        _gate_tasks.pop(task_id, None)
 
 
 async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> None:

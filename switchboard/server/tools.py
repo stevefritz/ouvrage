@@ -402,6 +402,17 @@ TASK_TOOLS = [
         },
     ),
     Tool(
+        name="stop_task",
+        description="Stop a running task. Preserves session for resume. Use when you want to pause work, post feedback, then continue.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task to stop"},
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
         name="cancel_task",
         description="Kill a running task. SIGTERM the CC process, mark as cancelled. Worktree preserved.",
         inputSchema={

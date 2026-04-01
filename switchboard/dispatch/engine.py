@@ -1101,63 +1101,40 @@ async def start_reopened_task(
     return result
 
 
+async def stop_task(task_id: str) -> dict:
+    """Stop a running task through the lifecycle service.
+
+    Pauses the task while preserving session_id for resume.
+    Side effects (process kill, message, queue drain) handled by lifecycle.execute().
+    """
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(task_id, "stop", triggered_by="stop-api", source_detail="stop_task")
+    return {"task_id": task_id, "status": "stopped"}
+
+
 async def cancel_task(task_id: str) -> dict:
-    """Kill a running task — cancel the asyncio Task, then update DB status."""
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
+    """Cancel a task through the lifecycle service.
 
-    # Find and cancel the running asyncio task
-    cancelled_async = False
-    task_name = f"sdk-session-{task_id}"
-    for t in list(_running_tasks):
-        if t.get_name() == task_name and not t.done():
-            t.cancel()
-            cancelled_async = True
-            log.info(f"Cancelled asyncio task for {task_id}")
-            break
-
-    if not cancelled_async and task.get("status") == "working":
-        log.warning(f"Could not find running asyncio task for {task_id} — it may have been lost on restart")
-
-    prev_status = task.get("status")
-    await db.update_task(task_id, status="cancelled", held=False)
-    await db.write_audit_log(
-        task_id=task_id, action="cancelled",
-        triggered_by="cancel-api",
-        source_detail="cancel_task",
-        previous_status=prev_status, new_status="cancelled",
-    )
-
-    # Revert any punchlist items claimed by this task back to 'open'
-    reverted = await db.revert_punchlist_items_for_task(task_id)
-    if reverted:
-        log.info(f"Task {task_id}: reverted {reverted} punchlist item(s) on cancel")
-
-    # A slot freed up — drain the FIFO queue
-    await _drain_queue()
-
-    return {"task_id": task_id, "status": "cancelled", "async_task_cancelled": cancelled_async}
+    Status transition, audit logging, and side effects (process kill,
+    punchlist revert, queue drain) are all handled by lifecycle.execute().
+    """
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(task_id, "cancel", triggered_by="cancel-api", source_detail="cancel_task")
+    return {"task_id": task_id, "status": "cancelled"}
 
 
 async def skip_gate(task_id: str) -> dict:
-    """Manually bypass the test/review gate, marking it as passed."""
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-    await db.write_audit_log(
-        task_id=task_id, action="gate_passed",
-        triggered_by="user",
-        source_detail="skip_gate (manual bypass)",
-        previous_status=task.get("status"), new_status=task.get("status"),
+    """Skip the gate through the lifecycle service.
+
+    Status transition to completed(gate_skipped), audit logging, and side
+    effects (set gate fields, post message, dispatch dependents) are all
+    handled by lifecycle.execute().
+    """
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "skip_gate",
+        triggered_by="user", source_detail="skip_gate (manual bypass)",
     )
-    await db.post_task_message(
-        task_id=task_id, author="dispatcher", type="status",
-        title="Gate skipped",
-        content="Gate manually bypassed by user.",
-    )
-    await _check_and_dispatch_dependents(task_id)
     return {"task_id": task_id, "gate_status": "passed"}
 
 
@@ -1187,26 +1164,22 @@ async def advance_chain(task_id: str) -> dict:
 
 
 async def cancel_chain(task_id: str) -> dict:
-    """Cancel a task and all its dependents recursively."""
+    """Cancel a task and all its dependents recursively via lifecycle."""
+    from switchboard.dispatch.lifecycle import lifecycle, IllegalTransition
+
     cancelled = []
 
     async def _cancel_recursive(tid: str):
-        task = await db.get_task(tid)
-        if not task or task["status"] in ("cancelled", "completed"):
-            return
-        prev_status = task["status"]
-        # Cancel running tasks
-        if task["status"] == "working":
-            await cancel_task(tid)
-        else:
-            await db.update_task(tid, status="cancelled")
-        await db.write_audit_log(
-            task_id=tid, action="cancelled",
-            triggered_by="cancel-chain",
-            source_detail=f"cancel_chain (root={task_id})",
-            previous_status=prev_status, new_status="cancelled",
-        )
-        cancelled.append(tid)
+        try:
+            await lifecycle.execute(
+                tid, "cancel",
+                triggered_by="cancel-chain",
+                source_detail=f"cancel_chain (root={task_id})",
+            )
+            cancelled.append(tid)
+        except (IllegalTransition, ValueError):
+            # Already completed/cancelled or not found — skip
+            pass
         # Recurse into dependents
         deps = await db.get_dependents(tid)
         for dep in deps:
@@ -1270,48 +1243,18 @@ async def approve_task(task_id: str) -> dict:
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:
-    """Manually close a task — no gates, no chain advancement, work ends here."""
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
+    """Close a task through the lifecycle service.
 
-    if task["status"] == "working":
-        raise ValueError(
-            f"Task '{task_id}' is still running. Cancel it first, then close."
-        )
-
-    project = await db.get_project(task["project_id"])
-
-    # Archive logs before destroying the worktree
-    if project:
-        await archive_task_logs(task, project, "close")
-
-    prev_status = task.get("status")
-    if cleanup and project:
-        await cleanup_worktree(project, task, force_delete_branch)
-        await db.update_task(
-            task_id, status="completed", worktree_path=None,
-            gate_passed_at=None, held=False,
-        )
-    else:
-        await db.update_task(
-            task_id, status="completed",
-            gate_passed_at=None, held=False,
-        )
-    await db.write_audit_log(
-        task_id=task_id, action="closed",
-        triggered_by="user",
-        source_detail="close_task (manual close)",
-        previous_status=prev_status, new_status="completed",
+    Precondition (reject working), status transition to completed(manually_closed),
+    audit logging, and side effects (archive, worktree cleanup, message) are
+    all handled by lifecycle.execute().
+    """
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "close",
+        cleanup=cleanup, force_delete_branch=force_delete_branch,
+        triggered_by="user", source_detail="close_task (manual close)",
     )
-
-    # Post status message so it's clear this was a manual close
-    await db.post_task_message(
-        task_id=task_id, author="dispatcher", type="status",
-        title="Manually closed",
-        content="Task was manually closed — no gates or chain actions triggered.",
-    )
-
     return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup, "manually_closed": True}
 
 

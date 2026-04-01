@@ -56,6 +56,8 @@ TASK_MUTABLE_FIELDS = {
     "held",
     # reopen gate state save/restore
     "reopen_saved_gate_status", "reopen_saved_gate_passed_at",
+    # lifecycle service
+    "reason",
 }
 
 COMPONENT_CONFIG_FIELDS = {

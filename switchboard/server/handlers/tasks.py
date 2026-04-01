@@ -189,6 +189,10 @@ async def _handle_start_reopened_task(arguments):
     return await task_engine.start_reopened_task(**kwargs)
 
 
+async def _handle_stop_task(arguments):
+    return await task_engine.stop_task(arguments["task_id"])
+
+
 async def _handle_cancel_task(arguments):
     return await task_engine.cancel_task(arguments["task_id"])
 

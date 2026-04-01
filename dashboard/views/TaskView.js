@@ -538,6 +538,7 @@ const ACTION_TOOLTIPS = {
     approve:           'Release this held task and dispatch CC.',
     dispatch:          'Create worktree and launch CC session.',
     hold:              'Put on hold. Requires manual approval before dispatch.',
+    stop:              'Pause the task. Session preserved for resume.',
     cancel:            'Kill the running CC process. Code changes preserved.',
     resume:            'Continue the existing CC session with full history.',
     retry:             'Start a fresh CC session. Previous context is lost.',
@@ -576,7 +577,11 @@ function ActionToolbar({ task, chain, onAction }) {
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
     }
     if (task.status === 'working') {
+        actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow));
         actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red));
+    }
+    if (task.status === 'pending-validation' && ['testing', 'reviewing'].includes(task.gate_status)) {
+        actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow));
     }
     if (['turns-exhausted', 'needs-review'].includes(task.status)) {
         actions.push(btn('resume', 'Resume', colors.greenBg, colors.green));
@@ -2647,9 +2652,17 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     useEffect(() => { loadBlocker(); }, [loadBlocker]);
 
     // Action handler
-    const handleAction = useCallback((action, taskId) => {
+    const handleAction = useCallback(async (action, taskId) => {
         if (action === 'start') {
             setShowStartOverlay(true);
+        } else if (action === 'stop') {
+            // Stop is safe and reversible — execute immediately without confirmation
+            try {
+                await api.stopTask(id);
+                setTimeout(() => { loadTask(); loadAttempts(); }, 500);
+            } catch (e) {
+                console.error('Stop error:', e);
+            }
         } else {
             setConfirmAction(action);
         }
@@ -2661,6 +2674,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         setConfirmAction(null);
         try {
             const actionMap = {
+                stop: () => api.stopTask(id),
                 cancel: () => api.cancelTask(id),
                 'cancel-reopen': () => api.cancelReopen(id),
                 retry: () => api.retryTask(id),

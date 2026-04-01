@@ -83,7 +83,7 @@ def _extract_task_id(path: str, prefix: str) -> str:
                     "/advance-chain", "/cancel-chain", "/approve", "/chain",
                     "/review-task", "/messages", "/session-log", "/dispatch-log",
                     "/attempts", "/dispatch", "/reopen", "/cancel-reopen", "/start",
-                    "/test-output", "/gate-session-log"):
+                    "/test-output", "/gate-session-log", "/stop"):
         if rest.endswith(suffix):
             return rest[:-len(suffix)]
     return rest
@@ -227,6 +227,9 @@ async def handle_request(scope, receive, send):
 
             # POST actions
             if method == "POST":
+                if rest.endswith("/stop"):
+                    task_id = rest[:-len("/stop")]
+                    return await _handle_stop(send, task_id)
                 if rest.endswith("/cancel"):
                     task_id = rest[:-len("/cancel")]
                     return await _handle_cancel(send, task_id)
@@ -937,6 +940,11 @@ async def _handle_get_attempts(send, task_id):
 
 
 # ── Actions ───────────────────────────────────────────────────────────────
+
+async def _handle_stop(send, task_id):
+    result = await tasks.stop_task(task_id)
+    await _json_response(send, result)
+
 
 async def _handle_cancel(send, task_id):
     result = await tasks.cancel_task(task_id)
