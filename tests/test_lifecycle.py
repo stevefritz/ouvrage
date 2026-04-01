@@ -4,6 +4,8 @@ Uses real in-memory SQLite DB via the `db` fixture. Tests state transitions
 through the service interface — no mocking of db.update_task.
 """
 
+import asyncio
+
 import pytest
 
 from switchboard.dispatch.lifecycle import (
@@ -1203,3 +1205,25 @@ class TestStopBehavior:
         task = await self.db.get_task(TASK_ID)
         assert task["worktree_path"] == "/tmp/wt"
         assert task["branch"] == "my-branch"
+
+    async def test_stop_validating_cancels_gate_task(self):
+        """Stop from validating should cancel the gate asyncio task via _gate_tasks."""
+        from switchboard.dispatch._state import _gate_tasks
+        await _seed(self.db, status="pending-validation", gate_status="testing")
+        # Create a mock gate asyncio task
+        mock_task = asyncio.Future()
+        _gate_tasks[TASK_ID] = mock_task
+        try:
+            await self.lifecycle.execute(TASK_ID, "stop")
+            assert mock_task.cancelled()
+            assert TASK_ID not in _gate_tasks
+        finally:
+            _gate_tasks.pop(TASK_ID, None)
+
+    async def test_stop_validating_drains_queue(self):
+        """Stop from validating should also drain the queue."""
+        from unittest.mock import AsyncMock, patch
+        await _seed(self.db, status="pending-validation", gate_status="testing")
+        with patch("switchboard.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
+            await self.lifecycle.execute(TASK_ID, "stop")
+            mock_drain.assert_called_once()

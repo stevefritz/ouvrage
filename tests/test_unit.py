@@ -1240,6 +1240,67 @@ class TestPushFailureBlocksGatePipeline:
         self.mock_dispatch_review.assert_not_called()
         self.mock_check_dependents.assert_not_called()
 
+    async def test_session_id_captured_from_system_init(self, db, sample_project, tmp_path):
+        """session_id should be captured early from SystemMessage(subtype='init')."""
+        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from claude_agent_sdk import SystemMessage as _SM, ResultMessage as _RM
+
+        task = await db.create_task(
+            id="test-project/early-session",
+            project_id="test-project",
+            goal="Test early session_id capture",
+            auto_test=False,
+            auto_review=False,
+        )
+        await db.update_task(task["id"], status="working",
+                             worktree_path=self.worktree)
+
+        # Create a SystemMessage with subtype="init" carrying session_id
+        init_msg = MagicMock(spec=_SM)
+        init_msg.subtype = "init"
+        init_msg.data = {"session_id": "early-sess-789"}
+
+        result_msg = MagicMock(spec=_RM)
+        result_msg.is_error = False
+        result_msg.result = "Done."
+        result_msg.stop_reason = "end_turn"
+        result_msg.num_turns = 1
+        result_msg.total_cost_usd = 0.001
+        result_msg.duration_ms = 5000
+        result_msg.duration_api_ms = 4800
+        result_msg.session_id = None  # ResultMessage has no session_id
+        result_msg.usage = {
+            "input_tokens": 10, "output_tokens": 5,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        }
+
+        async def _gen_with_init():
+            yield init_msg
+            yield result_msg
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=_gen_with_init())
+
+        with patch("switchboard.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client):
+            await _run_sdk_session(
+                task_id="test-project/early-session",
+                prompt="do the thing",
+                worktree_path=self.worktree,
+                session_id=None,
+                is_resume=False,
+                max_turns=10,
+                max_wall_clock_minutes=30,
+                log_dir=self.log_dir,
+            )
+
+        updated = await db.get_task("test-project/early-session")
+        assert updated["session_id"] == "early-sess-789", (
+            f"Expected session_id='early-sess-789', got {updated['session_id']!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _build_task_prompt — prompt construction

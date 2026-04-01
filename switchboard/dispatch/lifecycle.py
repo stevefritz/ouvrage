@@ -135,11 +135,18 @@ async def _stop_cc_session(task: dict, **ctx: Any) -> None:
 
 async def _stop_gate_subprocess(task: dict, **ctx: Any) -> None:
     """Kill the running test or review subprocess, preserve gate_status."""
-    from switchboard.dispatch._state import _running_gates
+    from switchboard.dispatch._state import _running_gates, _gate_tasks
 
     task_id = task["id"]
     _running_gates.discard(task_id)
-    logger.info("Stop: removed %s from _running_gates", task_id)
+
+    # Cancel the gate asyncio task if tracked
+    gate_task = _gate_tasks.pop(task_id, None)
+    if gate_task and not gate_task.done():
+        gate_task.cancel()
+        logger.info("Stop: cancelled gate asyncio task for %s", task_id)
+    else:
+        logger.info("Stop: no active gate task found for %s (already finished or untracked)", task_id)
 
 
 async def _post_stop_message(task: dict, **ctx: Any) -> None:
@@ -271,7 +278,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
-        side_effects=[_stop_gate_subprocess, _post_stop_message],
+        side_effects=[_stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
         label="Stop",
         style="secondary",
         confirm=False,

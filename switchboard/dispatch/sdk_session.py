@@ -721,6 +721,12 @@ async def _run_sdk_session(
                     async for message in client.receive_response():
                         _log_message(message)
 
+                        # Capture session_id early from init so stop→resume works
+                        if isinstance(message, SystemMessage) and getattr(message, 'subtype', None) == "init":
+                            sid = (message.data or {}).get("session_id") if hasattr(message, 'data') else None
+                            if sid:
+                                await db.update_task(task_id, session_id=sid)
+
                         if isinstance(message, AssistantMessage):
                             turn_count += 1
                             for block in (message.content or []):
@@ -755,6 +761,16 @@ async def _run_sdk_session(
                     except asyncio.CancelledError:
                         pass
                     _active_clients.pop(task_id, None)
+                    # Fallback: capture session_id via list_sessions if not yet stored
+                    try:
+                        task_check = await db.get_task(task_id)
+                        if task_check and not task_check.get("session_id"):
+                            from claude_agent_sdk import list_sessions
+                            sessions = list_sessions(directory=worktree_path, limit=1)
+                            if sessions:
+                                await db.update_task(task_id, session_id=sessions[0].session_id)
+                    except Exception:
+                        pass
 
         try:
             await asyncio.wait_for(_run(), timeout=timeout_seconds)
