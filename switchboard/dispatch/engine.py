@@ -128,16 +128,16 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
             # Neither auto_pr nor auto_merge — still try PR (manual flag check inside)
             await _maybe_create_pr(task_id)
     else:
-        # Mid-chain: dispatch dependents
+        # Mid-chain: dispatch dependents via lifecycle
+        from switchboard.dispatch.lifecycle import lifecycle
         for dep in dependents:
             if dep["status"] == "ready" and not dep.get("held"):
                 log.info(f"Auto-dispatching dependent task {dep['id']} (parent {task_id} gate passed)")
                 try:
-                    await dispatch_task(
-                        project_id=dep["project_id"],
-                        task_id=dep["id"],
-                        goal=dep["goal"],
-                        auto_test=dep.get("auto_test", True),
+                    await lifecycle.execute(
+                        dep["id"], "dispatch",
+                        triggered_by="chain-advancement",
+                        source_detail=f"_check_and_dispatch_dependents (parent {task_id} gate passed)",
                     )
                 except Exception as e:
                     log.error(f"Failed to auto-dispatch dependent {dep['id']}: {e}")
@@ -240,11 +240,11 @@ async def _rebase_and_redispatch(dep: dict, parent: dict) -> None:
     )
 
     # Re-dispatch with rebase context as review feedback
-    await dispatch_task(
-        project_id=dep["project_id"],
-        task_id=dep["id"],
-        goal=dep["goal"],
-        phase="revisions",
+    from switchboard.dispatch.lifecycle import lifecycle
+    await lifecycle.execute(
+        dep["id"], "dispatch",
+        triggered_by="chain-rebase",
+        source_detail=f"_rebase_and_redispatch (parent {dep.get('depends_on')} updated)",
         review_feedback=[{
             "author": "dispatcher",
             "title": "Parent Updated",
@@ -637,356 +637,120 @@ async def dispatch_task(
             "queued": False,
         }
 
-    # Check concurrency limit — queue if full (FIFO)
-    if not is_resume:
-        from switchboard.dispatch.internals import check_and_queue_if_full
-        queued = await check_and_queue_if_full(task_id)
-        if queued:
-            task = await db.get_task(task_id)
-            return {
-                "task_id": task_id, "status": "ready",
-                "branch": task["branch"],
-                "queued": True,
-                "queued_at": task.get("queued_at"),
-            }
+    # Route through lifecycle service
+    from switchboard.dispatch.lifecycle import lifecycle
 
-    # Setup worktree, credentials, and setup command
-    from switchboard.dispatch.internals import (
-        setup_task_worktree, resolve_session_config,
-        build_dispatch_prompt, launch_sdk_session,
-    )
-    worktree_path = await setup_task_worktree(project, task)
+    if is_resume:
+        # Existing tasks in terminal/stopped states use the resume action
+        updated = await lifecycle.execute(
+            task_id, "resume",
+            triggered_by="system",
+            source_detail=f"dispatch_task (resume=True)",
+            review_feedback=review_feedback,
+        )
+    else:
+        # New tasks in ready state use the dispatch action
+        updated = await lifecycle.execute(
+            task_id, "dispatch",
+            triggered_by="user",
+            source_detail="dispatch_task",
+            escalation_criteria=escalation_criteria,
+            review_feedback=review_feedback,
+        )
+
+    # Re-read task to get final state (may have been queued by side effect)
+    task = await db.get_task(task_id)
+    is_queued = task.get("status") == "ready" and task.get("queued_at") is not None
+
+    # Set phase if provided (lifecycle doesn't handle phase)
+    if not is_queued and phase:
+        await db.update_task(task_id, phase=phase)
+
     effective_branch = task["branch"] or (task_id.split("/")[-1] if "/" in task_id else task_id)
-
-    # Resolve limits and model
-    config = resolve_session_config(task, project)
-    effective_max_turns = config["max_turns"]
-    effective_max_wall_clock = config["max_wall_clock"]
-    effective_model = config["model"]
-
-    # Build prompt
-    prompt = await build_dispatch_prompt(project, task, escalation_criteria, review_feedback)
-
-    # Get session_id for resume
-    session_id = task.get("session_id") if is_resume else None
-
-    # Fetch checklist + spec for Slack notification
-    checklist_items = await db.get_checklist(task_id)
-    spec_content = None
-    pinned = await db.get_task_pinned(task_id)
-    if pinned:
-        spec_content = pinned["content"]
-
-    # Update task record
-    prev_status = task.get("status", "ready")
-    dispatch_count = (task.get("dispatch_count") or 0) + 1
-    await db.update_task(
-        task_id,
-        status="working",
-        phase=phase,
-        worktree_path=worktree_path,
-        dispatch_count=dispatch_count,
-        last_activity=db.now_iso(),
-    )
-    await db.write_audit_log(
-        task_id=task_id, action="dispatched",
-        triggered_by="system" if is_resume else "user",
-        source_detail=f"dispatch_task (dispatch_count={dispatch_count}, resume={is_resume})",
-        previous_status=prev_status, new_status="working",
-    )
-
-    # Launch SDK session in background — non-blocking
-    await launch_sdk_session(
-        task_id=task_id,
-        prompt=prompt,
-        worktree_path=worktree_path,
-        session_id=session_id,
-        is_resume=is_resume,
-        max_turns=effective_max_turns,
-        max_wall_clock=effective_max_wall_clock,
-        model=effective_model,
-    )
-
-    # Notify Slack
-    checklist_items = checklist_items or []
-    await notify.task_dispatched(
-        task_id=task_id, goal=goal, project_id=project_id,
-        checklist_total=len(checklist_items),
-        checklist=checklist_items,
-        spec=spec_content,
-        resumed=is_resume,
-    )
-
-    # Clear queued_at since we've dispatched
-    if task.get("queued_at"):
-        await db.update_task(task_id, queued_at=None)
 
     return {
         "task_id": task_id,
-        "status": "working",
+        "status": task["status"],
         "phase": phase,
-        "worktree_path": worktree_path,
+        "worktree_path": task.get("worktree_path"),
         "branch": effective_branch,
-        "session_id": session_id,
-        "dispatch_count": dispatch_count,
-        "max_turns": effective_max_turns,
-        "max_wall_clock": effective_max_wall_clock,
-        "model": effective_model,
+        "session_id": task.get("session_id"),
+        "dispatch_count": task.get("dispatch_count"),
+        "max_turns": task.get("max_turns"),
+        "max_wall_clock": task.get("max_wall_clock"),
+        "model": task.get("model"),
         "resumed": is_resume,
-        "queued": False,
+        "queued": is_queued,
+        "queued_at": task.get("queued_at") if is_queued else None,
     }
 
 
 async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
     """Resume a paused task with the same session ID.
 
-    If worktree was auto-released, it will be re-attached automatically
-    by setup_worktree() in dispatch_task().
-
-    If the task already passed the gate, re-triggers the post-gate pipeline
-    (auto-merge, chain advancement) instead of launching a new CC session.
+    Thin wrapper around lifecycle.execute("resume"). The lifecycle service
+    handles status transition, audit logging, and side effects (worktree check,
+    session launch, gate-passed shortcut).
 
     reset_recovery_count: set False when called from auto-recovery so the
     recovery_count increment is preserved.
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    resumable = ("needs-review", "turns-exhausted", "completed", "merged", "rate-limited", "pending-validation")
-    if task["status"] not in resumable:
-        raise ValueError(f"Task '{task_id}' is in status '{task['status']}', expected one of: {', '.join(resumable)}")
-
-    await db.write_audit_log(
-        task_id=task_id, action="resumed",
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "resume",
         triggered_by="user",
         source_detail=f"resume_task (reset_recovery={reset_recovery_count})",
-        previous_status=task.get("status"), new_status="working",
+        reset_recovery_count=reset_recovery_count,
     )
-
-    # If gate already passed AND task is in a terminal state (not needs-review),
-    # re-trigger post-gate pipeline instead of launching a new CC session.
-    # Exceptions: needs-review or pr_status=conflict mean CC still has work to do.
-    if (task.get("gate_passed_at")
-            and task["status"] in ("completed", "merged", "pending-validation")
-            and task.get("pr_status") != "conflict"):
-        log.info(f"Resume {task_id}: gate already passed, re-triggering post-gate pipeline")
-        await _check_and_dispatch_dependents(task_id)
-        return await db.get_task(task_id)
-
-    # Clear stale pr_status; optionally reset recovery_count (skip for auto-recovery
-    # so the increment from recover_orphaned_tasks is preserved for flap detection).
-    # Always reset gate_status and gate_retries — stale gate state from the previous
-    # attempt must not persist into the new session.
-    updates: dict = {"gate_status": None, "gate_retries": 0}
-    if task.get("pr_status"):
-        updates["pr_status"] = None
-    if reset_recovery_count and task.get("recovery_count"):
-        updates["recovery_count"] = 0
-    await db.update_task(task_id, **updates)
-
-    return await dispatch_task(
-        project_id=task["project_id"],
-        task_id=task_id,
-        goal=task["goal"],
-        phase=task.get("phase") or "implementing",
-    )
+    return result
 
 
 async def retry_task(task_id: str, clean: bool = False) -> dict:
-    """Start a fresh session. Optionally clean worktree.
+    """Start a fresh session — thin wrapper around lifecycle.execute("retry").
 
-    If review/feedback messages were posted after the last CC result,
-    they are injected into the prompt so CC knows to apply revisions.
+    The lifecycle service handles status transition, audit logging, and side effects
+    (archive, punchlist revert, attempt increment, gate state clear, chain invalidation,
+    feedback collection, worktree setup, prompt building, SDK launch).
 
-    Special case: if the task is completed but the gate stalled (gate_status=needs-review
-    or review-failed, gate_passed_at not set), re-run the gate pipeline instead of
-    launching a new CC session — the code is already written and committed.
+    Gate-interrupted shortcut (re-enter gate pipeline) is handled by the side effect.
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-
-    # Gate was INTERRUPTED (process died mid-flight) — re-run the gate, don't re-run CC.
-    # Only interrupted states qualify: the code is fine, the gate just needs to run again.
-    # Normal rejections (test-failed, review-failed, needs-review) must NOT re-enter the gate
-    # pipeline — CC needs to run again with the feedback so it can fix the code.
-    INTERRUPTED_GATE_STATES = ("testing", "reviewing", "test-passed")
-    if (task.get("status") in ("completed", "pending-validation", "turns-exhausted")
-            and not task.get("gate_passed_at")
-            and task.get("gate_status") in INTERRUPTED_GATE_STATES):
-        log.info(f"retry_task {task_id}: gate was interrupted (gate_status={task.get('gate_status')}), re-entering gate pipeline")
-        from switchboard.dispatch.gates import _resume_gate_pipeline  # lazy import
-        await _resume_gate_pipeline(task_id, reason="retry")
-        return await db.get_task(task_id)
-
-    await db.write_audit_log(
-        task_id=task_id, action="retried",
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "retry",
         triggered_by="user",
         source_detail=f"retry_task (clean={clean})",
-        previous_status=task.get("status"), new_status="working",
     )
-
-    # Archive current attempt's logs before overwriting on next dispatch
-    project = await db.get_project(task["project_id"])
-    if project:
-        await archive_task_logs(task, project, "retry")
-
-    # Revert any punchlist items claimed by this task back to 'open'
-    reverted = await db.revert_punchlist_items_for_task(task_id)
-    if reverted:
-        log.info(f"Task {task_id}: reverted {reverted} punchlist item(s) on retry")
-
-    # Clear session and gate state to force fresh run through the pipeline
-    # Increment current_attempt — this is a new attempt, not a resume
-    # Also clear held flag so retried tasks dispatch normally
-    new_attempt = (task.get("current_attempt") or 1) + 1
-    await db.update_task(task_id, session_id=None, gate_status=None, gate_passed_at=None,
-                         gate_retries=0, current_attempt=new_attempt, held=False)
-
-    # Post "Attempt N starting..." so the attempt group appears in Foreman immediately
-    # (before CC posts anything). Must happen after update_task so attempt_number is correct.
-    await db.post_task_message(
-        task_id=task_id, author="switchboard", type="status",
-        title=f"Attempt {new_attempt} starting",
-        content=f"Attempt {new_attempt} starting — fresh session launched.",
-    )
-
-    # Invalidate downstream chain if this task has dependents
-    dependents = await db.get_dependents(task_id)
-    if dependents:
-        await _invalidate_chain(task_id)
-
-    # Optionally clean worktree
-    if clean and task.get("worktree_path") and os.path.exists(task["worktree_path"]):
-        proc = await asyncio.create_subprocess_exec(
-            "git", "-C", task["worktree_path"], "checkout", ".",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-
-    # Find review feedback posted after the last CC result message.
-    # These are messages the user posted after task completion — CC needs
-    # to treat them as revision instructions, not just context.
-    review_feedback = None
-    thread = await db.read_task_messages(task_id)
-    messages = thread.get("messages", [])
-    last_result_idx = None
-    for i, msg in enumerate(messages):
-        if msg.get("author") == "cc-worker" and msg.get("type") == "result":
-            last_result_idx = i
-    if last_result_idx is not None:
-        feedback = [
-            m for m in messages[last_result_idx + 1:]
-            if m.get("author") != "dispatcher"  # Skip system status messages
-        ]
-        if feedback:
-            review_feedback = feedback
-
-    try:
-        return await dispatch_task(
-            project_id=task["project_id"],
-            task_id=task_id,
-            goal=task["goal"],
-            phase="revisions" if review_feedback else "analysis",
-            review_feedback=review_feedback,
-        )
-    except Exception as dispatch_err:
-        # Dispatch failed after we already incremented current_attempt and posted
-        # "Attempt N starting". Roll the task back to a retryable state so it
-        # surfaces as attention-needed rather than silently becoming a ghost attempt.
-        log.error(f"retry_task: dispatch failed for {task_id} (attempt {new_attempt}): {dispatch_err}")
-        await db.update_task(task_id, status="needs-review")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Auto-retry dispatch failed",
-            content=(
-                f"Failed to dispatch attempt {new_attempt}: {dispatch_err}\n\n"
-                f"Manual retry needed."
-            ),
-        )
-        await notify.task_needs_review(
-            task_id=task_id,
-            reason=f"Auto-retry dispatch failed: {dispatch_err}",
-        )
-        return {"task_id": task_id, "status": "needs-review", "error": str(dispatch_err)}
+    return result
 
 
 async def reopen_task(task_id: str) -> dict:
-    """Reopen a completed task for revisions.
+    """Reopen a completed task for revisions — thin wrapper around lifecycle.execute("reopen").
 
-    Increments current_attempt, sets status to 'reopened', clears session/gate state,
-    and posts a status message. Does NOT dispatch or touch git — that's start_reopened_task's job.
+    The lifecycle service handles status transition (completed → stopped/awaiting_feedback),
+    audit logging, and side effects (attempt increment, gate state save/clear, status message).
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    if task.get("status") != "completed":
-        raise ValueError(f"Task '{task_id}' must be 'completed' to reopen (current: {task.get('status')})")
-
-    new_attempt = (task.get("current_attempt") or 1) + 1
-    await db.update_task(
-        task_id,
-        status="reopened",
-        current_attempt=new_attempt,
-        session_id=None,
-        gate_status=None,
-        gate_passed_at=None,
-        gate_retries=0,
-        reopen_saved_gate_status=task.get("gate_status"),
-        reopen_saved_gate_passed_at=task.get("gate_passed_at"),
-    )
-    await db.write_audit_log(
-        task_id=task_id, action="reopened",
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "reopen",
         triggered_by="user",
-        source_detail=f"reopen_task (attempt={new_attempt})",
-        previous_status="completed", new_status="reopened",
+        source_detail="reopen_task",
     )
-
-    # Post status message — auto-stamped to new_attempt since current_attempt is now updated
-    await db.post_task_message(
-        task_id=task_id, author="switchboard", type="status",
-        title="Task reopened — awaiting feedback",
-        content="Task reopened for revisions. Post feedback below, then click Start.",
-    )
-
-    return await db.get_task(task_id)
+    return result
 
 
 async def cancel_reopen(task_id: str) -> dict:
-    """Cancel a re-open — return the task to 'completed' status.
+    """Cancel a re-open — thin wrapper around lifecycle.execute("cancel_reopen").
 
-    Only callable on 'reopened' tasks. Decrements current_attempt back to the
-    previous value and deletes the messages posted during the reopened state
-    (the status message and any feedback notes).
+    The lifecycle service handles status transition (stopped/awaiting_feedback → completed),
+    audit logging, and side effects (gate state restore, attempt decrement, message cleanup).
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    if task.get("status") != "reopened":
-        raise ValueError(f"Task '{task_id}' must be 'reopened' to cancel re-open (current: {task.get('status')})")
-
-    current_attempt = task.get("current_attempt") or 1
-    prev_attempt = max(1, current_attempt - 1)
-
-    # Delete messages stamped to the current (reopened) attempt
-    async with db.get_db() as conn:
-        await conn.execute(
-            "DELETE FROM messages WHERE task_id = ? AND attempt_number = ?",
-            (task_id, current_attempt),
-        )
-        await conn.commit()
-
-    await db.update_task(
-        task_id,
-        status="completed",
-        current_attempt=prev_attempt,
-        gate_status=task.get("reopen_saved_gate_status"),
-        gate_passed_at=task.get("reopen_saved_gate_passed_at"),
-        reopen_saved_gate_status=None,
-        reopen_saved_gate_passed_at=None,
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "cancel_reopen",
+        triggered_by="user",
+        source_detail="cancel_reopen",
     )
-
-    return await db.get_task(task_id)
+    return result
 
 
 async def start_reopened_task(
@@ -994,79 +758,18 @@ async def start_reopened_task(
     auto_test: bool | None = None,
     auto_review: bool | None = None,
 ) -> dict:
-    """Start a reopened task — collect feedback, rebase, and dispatch.
+    """Start a reopened task — thin wrapper around lifecycle.execute("start").
 
-    Only callable on 'reopened' tasks. Collects user messages posted since the
-    reopen status message, posts 'Attempt N starting...', rebases onto base branch,
-    invalidates chain dependents, then dispatches CC with the feedback as review_feedback.
-
-    auto_test / auto_review override the task's defaults for this dispatch only.
+    The lifecycle service handles status transition (stopped/awaiting_feedback → working),
+    audit logging, and side effects (feedback collection, branch sync, chain invalidation,
+    prompt building, SDK launch, notification).
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    if task.get("status") != "reopened":
-        raise ValueError(f"Task '{task_id}' must be 'reopened' to start (current: {task.get('status')})")
-
-    current_attempt = task.get("current_attempt") or 1
-
-    # Find feedback messages: everything posted by non-switchboard authors after the
-    # reopen status message (first message stamped to current_attempt)
-    thread = await db.read_task_messages(task_id)
-    messages = thread.get("messages", [])
-
-    # Find the index of the first message with the new attempt_number (the reopen status msg)
-    reopen_msg_idx = None
-    for i, msg in enumerate(messages):
-        if (msg.get("attempt_number") or 1) == current_attempt:
-            reopen_msg_idx = i
-            break
-
-    review_feedback = None
-    if reopen_msg_idx is not None:
-        feedback = [
-            m for m in messages[reopen_msg_idx + 1:]
-            if m.get("author") not in ("switchboard", "dispatcher", "cc-worker")
-        ]
-        if feedback:
-            review_feedback = feedback
-
-    # Post "Attempt N starting..." so the group appears in Foreman before CC posts anything
-    await db.post_task_message(
-        task_id=task_id, author="switchboard", type="status",
-        title=f"Attempt {current_attempt} starting",
-        content=f"Attempt {current_attempt} starting — revision session launched.",
+    from switchboard.dispatch.lifecycle import lifecycle
+    result = await lifecycle.execute(
+        task_id, "start",
+        triggered_by="user",
+        source_detail="start_reopened_task",
     )
-
-    # Rebase onto base branch before dispatch
-    rebase_ok = await _sync_branch_with_base(task)
-    if not rebase_ok:
-        # Rebase conflict posted to thread — stop here so user can resolve
-        return await db.get_task(task_id)
-
-    # Invalidate downstream chain (deferred from reopen to here)
-    dependents = await db.get_dependents(task_id)
-    if dependents:
-        await _invalidate_chain(task_id)
-
-    # Build dispatch kwargs, applying per-dispatch overrides if provided
-    dispatch_kwargs: dict = dict(
-        project_id=task["project_id"],
-        task_id=task_id,
-        goal=task["goal"],
-        phase="revisions",
-        review_feedback=review_feedback,
-    )
-    if auto_test is not None:
-        dispatch_kwargs["auto_test"] = auto_test
-    if auto_review is not None:
-        dispatch_kwargs["auto_review"] = auto_review
-
-    result = await dispatch_task(**dispatch_kwargs)
-
-    # Notify that a new attempt is starting
-    await notify.task_attempt_starting(task_id, current_attempt, task["goal"])
-
     return result
 
 
@@ -1115,16 +818,16 @@ async def advance_chain(task_id: str) -> dict:
     if not task.get("gate_passed_at"):
         raise ValueError(f"Task '{task_id}' gate has not passed yet")
 
+    from switchboard.dispatch.lifecycle import lifecycle
     dependents = await db.get_dependents(task_id)
     dispatched = []
     for dep in dependents:
         if dep["status"] == "ready":
             try:
-                await dispatch_task(
-                    project_id=dep["project_id"],
-                    task_id=dep["id"],
-                    goal=dep["goal"],
-                    auto_test=dep.get("auto_test", True),
+                await lifecycle.execute(
+                    dep["id"], "dispatch",
+                    triggered_by="chain-advancement",
+                    source_detail=f"advance_chain (parent {task_id})",
                 )
                 dispatched.append(dep["id"])
             except Exception as e:

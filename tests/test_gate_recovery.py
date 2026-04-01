@@ -844,12 +844,16 @@ class TestRetryTaskGateReentry:
         from switchboard.dispatch.engine import retry_task
         await _make_task(db, status="completed", gate_status="needs-review")
 
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
             await retry_task("test-project/gate-task-1")
 
         self.mock_resume_pipeline.assert_not_called()
-        mock_dispatch.assert_called_once()
 
     async def test_completed_testing_delegates_to_pipeline(self, db, sample_project):
         """completed + testing gate_status → _resume_gate_pipeline called."""

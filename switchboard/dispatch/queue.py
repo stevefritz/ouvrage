@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 async def _drain_queue() -> None:
     """Dispatch the oldest eligible queued task if a concurrency slot is available."""
-    from switchboard.dispatch.engine import dispatch_task
+    from switchboard.dispatch.lifecycle import lifecycle
 
     active = await db.count_active_tasks()
     limit = await db.get_concurrency_limit()
@@ -31,11 +31,10 @@ async def _drain_queue() -> None:
     task = queued[0]  # FIFO — oldest first
     log.info(f"Queue drain: dispatching {task['id']} (queued_at={task['queued_at']})")
     try:
-        await dispatch_task(
-            project_id=task["project_id"],
-            task_id=task["id"],
-            goal=task["goal"],
-            auto_test=task.get("auto_test", True),
+        await lifecycle.execute(
+            task["id"], "dispatch",
+            triggered_by="queue-drain",
+            source_detail="_drain_queue (FIFO)",
         )
     except Exception as e:
         log.error(f"Queue drain failed for {task['id']}: {e}")

@@ -157,7 +157,7 @@ class TestProcessReviewResultInline:
         self.mock_update_task = AsyncMock()
         self.mock_get_task = AsyncMock()
         self.mock_check_deps = AsyncMock()
-        self.mock_retry = AsyncMock()
+        self.mock_lifecycle_execute = AsyncMock()
         self.mock_notify = AsyncMock()
 
         patches = [
@@ -166,7 +166,7 @@ class TestProcessReviewResultInline:
             patch("switchboard.db.get_task", self.mock_get_task),
             patch("switchboard.db.write_audit_log", AsyncMock()),
             patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_deps),
-            patch("switchboard.dispatch.engine.retry_task", self.mock_retry),
+            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
             patch("switchboard.notifications.slack.task_needs_review", self.mock_notify),
         ]
         for p in patches:
@@ -202,7 +202,9 @@ class TestProcessReviewResultInline:
             "max_gate_retries": 3,
         }
         await _process_review_result_inline("task-1")
-        self.mock_retry.assert_awaited_once()
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args
+        assert call_args[0] == ("task-1", "retry")
 
     async def test_rejected_escalates_after_max_retries(self):
         from switchboard.dispatch.gates import _process_review_result_inline
@@ -218,7 +220,7 @@ class TestProcessReviewResultInline:
             "max_gate_retries": 3,
         }
         await _process_review_result_inline("task-1")
-        self.mock_retry.assert_not_awaited()
+        self.mock_lifecycle_execute.assert_not_awaited()
         # Should mark needs-review
         assert any(
             call.kwargs.get("status") == "needs-review"
@@ -237,7 +239,9 @@ class TestProcessReviewResultInline:
         }
         await _process_review_result_inline("task-1")
         # With no review message, review_msg is None, condition fails → rejection path
-        self.mock_retry.assert_awaited_once()
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args
+        assert call_args[0] == ("task-1", "retry")
 
     async def test_not_approved_title_does_not_pass_gate(self):
         """'NOT APPROVED' must not trigger approval — exact match only."""
@@ -271,7 +275,7 @@ class TestCheckAndDispatchDependents:
     def _setup_patches(self):
         self.mock_get_task = AsyncMock()
         self.mock_get_dependents = AsyncMock()
-        self.mock_dispatch = AsyncMock()
+        self.mock_lifecycle_execute = AsyncMock()
         self.mock_rebase = AsyncMock()
         self.mock_pr = AsyncMock()
         self.mock_drain = AsyncMock()
@@ -286,7 +290,7 @@ class TestCheckAndDispatchDependents:
             patch("switchboard.db.get_dependents", self.mock_get_dependents),
             patch("switchboard.db.update_task", self.mock_update_task),
             patch("switchboard.db.write_audit_log", AsyncMock()),
-            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
             patch("switchboard.dispatch.engine._rebase_and_redispatch", self.mock_rebase),
             patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
             patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
@@ -312,9 +316,10 @@ class TestCheckAndDispatchDependents:
              "project_id": "proj", "goal": "do B"},
         ]
         await _check_and_dispatch_dependents("task-a")
-        self.mock_dispatch.assert_awaited_once()
-        call_kwargs = self.mock_dispatch.await_args.kwargs
-        assert call_kwargs["task_id"] == "task-b"
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "task-b"
+        assert call_args[1] == "dispatch"
 
     async def test_rebases_stale_completed(self):
         from switchboard.dispatch.engine import _check_and_dispatch_dependents
@@ -359,10 +364,10 @@ class TestCheckAndDispatchDependents:
              "project_id": "proj", "goal": "do B"},
         ]
         await _check_and_dispatch_dependents("task-a")
-        self.mock_dispatch.assert_not_awaited()
+        self.mock_lifecycle_execute.assert_not_awaited()
 
     async def test_non_held_ready_task_actually_dispatches(self):
-        """Fix 1: non-held ready dependent task must actually call dispatch_task."""
+        """Fix 1: non-held ready dependent task calls lifecycle.execute('dispatch')."""
         from switchboard.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
@@ -372,8 +377,10 @@ class TestCheckAndDispatchDependents:
              "project_id": "proj", "goal": "do B", "auto_test": True},
         ]
         await _check_and_dispatch_dependents("task-a")
-        self.mock_dispatch.assert_awaited_once()
-        assert self.mock_dispatch.await_args.kwargs["task_id"] == "task-b"
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "task-b"
+        assert call_args[1] == "dispatch"
 
     async def test_mixed_held_and_non_held(self):
         """Fix 1: only the non-held ready task dispatches; held one is skipped."""
@@ -388,8 +395,10 @@ class TestCheckAndDispatchDependents:
              "project_id": "proj", "goal": "do C"},
         ]
         await _check_and_dispatch_dependents("task-a")
-        self.mock_dispatch.assert_awaited_once()
-        assert self.mock_dispatch.await_args.kwargs["task_id"] == "task-b"
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "task-b"
+        assert call_args[1] == "dispatch"
 
 
 # ---------------------------------------------------------------------------
@@ -1569,13 +1578,13 @@ class TestRebaseAndRedispatch:
         self.mock_run = AsyncMock()
         self.mock_update_task = AsyncMock()
         self.mock_post_msg = AsyncMock()
-        self.mock_dispatch = AsyncMock()
+        self.mock_lifecycle_execute = AsyncMock()
 
         patches = [
             patch("switchboard.git.operations._run_as_worker", self.mock_run),
             patch("switchboard.db.update_task", self.mock_update_task),
             patch("switchboard.db.post_task_message", self.mock_post_msg),
-            patch("switchboard.dispatch.engine.dispatch_task", self.mock_dispatch),
+            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
         ]
         for p in patches:
             p.start()
@@ -1603,8 +1612,11 @@ class TestRebaseAndRedispatch:
         assert reset_call.kwargs["gate_status"] is None
         assert reset_call.kwargs["gate_retries"] == 0
 
-        # Should dispatch
-        self.mock_dispatch.assert_awaited_once()
+        # Should dispatch via lifecycle
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "task-b"
+        assert call_args[1] == "dispatch"
 
     async def test_rebase_conflict_aborts_and_dispatches(self):
         from switchboard.dispatch.engine import _rebase_and_redispatch
@@ -1625,8 +1637,11 @@ class TestRebaseAndRedispatch:
         abort_call = self.mock_run.await_args_list[2]
         assert "--abort" in abort_call.args
 
-        # Should still dispatch (CC handles conflicts)
-        self.mock_dispatch.assert_awaited_once()
+        # Should still dispatch via lifecycle (CC handles conflicts)
+        self.mock_lifecycle_execute.assert_awaited_once()
+        call_args = self.mock_lifecycle_execute.await_args[0]
+        assert call_args[0] == "task-b"
+        assert call_args[1] == "dispatch"
 
 
 # ---------------------------------------------------------------------------

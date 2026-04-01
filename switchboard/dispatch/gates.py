@@ -8,7 +8,9 @@ Handles the full gate pipeline:
   - _process_review_result: check review outcome from separate review task
 
 Lazy imports from switchboard.dispatch.engine (to break circular dependency):
-  resume_task, retry_task, _check_and_dispatch_dependents, _update_usage
+  _check_and_dispatch_dependents, _update_usage
+Lazy imports from switchboard.dispatch.lifecycle:
+  lifecycle (for resume/retry via lifecycle.execute)
 """
 
 import asyncio
@@ -370,7 +372,8 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
 
 async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
     """Inner implementation of test gate (called by _run_test_gate after liveness check)."""
-    from switchboard.dispatch.engine import resume_task, retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    from switchboard.dispatch.lifecycle import lifecycle
 
     test_command = project.get("test_command")
     if not test_command:
@@ -444,7 +447,8 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
                         ),
                     )
                     # Resume the same CC session (same attempt) — do NOT increment attempt
-                    await resume_task(task_id)
+                    await lifecycle.execute(task_id, "resume", triggered_by="gate",
+                                            source_detail="dirty-worktree cleanup")
                     return  # Do not proceed to reviewer
             await _dispatch_review(task_id, project, task)
         else:
@@ -474,7 +478,8 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
         if retries < max_retries:
             # Auto-retry: dispatch new session with test failure as review feedback
             log.info(f"Task {task_id}: auto-retrying after test failure")
-            await retry_task(task_id)
+            await lifecycle.execute(task_id, "retry", triggered_by="gate",
+                                    source_detail="test failure auto-retry")
         else:
             await db.update_task(task_id, status="needs-review")
             await notify.task_needs_review(
@@ -505,8 +510,6 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
 
 async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> None:
     """Inner implementation of review dispatch (called by _dispatch_review after liveness check)."""
-    from switchboard.dispatch.engine import retry_task
-
     await db.update_task(task_id, gate_status="reviewing")
 
     # --- Component context ---
@@ -838,7 +841,8 @@ mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', typ
 
 async def _process_review_result_inline(task_id: str) -> None:
     """Check review messages on task and process approval/rejection."""
-    from switchboard.dispatch.engine import retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    from switchboard.dispatch.lifecycle import lifecycle
 
     msgs = await db.read_task_messages(task_id)
     review_msg = next(
@@ -871,7 +875,8 @@ async def _process_review_result_inline(task_id: str) -> None:
         log.warning(f"Review failed for {task_id} (attempt {retries}/{max_retries})")
 
         if retries < max_retries:
-            await retry_task(task_id)
+            await lifecycle.execute(task_id, "retry", triggered_by="review",
+                                    source_detail="review rejection auto-retry (inline)")
         else:
             await db.update_task(task_id, status="needs-review")
             await notify.task_needs_review(task_id, reason="Review failed after max retries.")
@@ -879,7 +884,8 @@ async def _process_review_result_inline(task_id: str) -> None:
 
 async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
     """Check if review approved or requested changes."""
-    from switchboard.dispatch.engine import retry_task, _check_and_dispatch_dependents
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    from switchboard.dispatch.lifecycle import lifecycle
 
     msgs = await db.read_task_messages(parent_task_id)
     review_msg = next(
@@ -912,7 +918,8 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
         log.warning(f"Review failed for {parent_task_id} (attempt {retries}/{max_retries})")
 
         if retries < max_retries:
-            await retry_task(parent_task_id)
+            await lifecycle.execute(parent_task_id, "retry", triggered_by="review",
+                                    source_detail="review rejection auto-retry")
         else:
             await db.update_task(parent_task_id, status="needs-review")
             await notify.task_needs_review(

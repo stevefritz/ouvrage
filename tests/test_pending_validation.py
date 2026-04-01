@@ -238,13 +238,19 @@ class TestRetryTaskPendingValidation:
                              status="pending-validation",
                              gate_status="review-failed")
 
-        mock_dispatch = AsyncMock(return_value={"id": "test-project/pv-stall", "status": "working"})
+        mock_run_sdk = AsyncMock()
         mock_resume = AsyncMock()
-        with patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch), \
+        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk), \
              patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
             await retry_task("test-project/pv-stall")
 
-        mock_dispatch.assert_called_once()
+        mock_run_sdk.assert_called_once()
         mock_resume.assert_not_called()
 
 

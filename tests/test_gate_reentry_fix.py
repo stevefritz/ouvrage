@@ -53,15 +53,21 @@ class TestRetryTaskReviewFailed:
         await _make_completed_task(db, "review-failed", gate_retries=1)
 
         mock_test_gate = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        mock_run_sdk = AsyncMock()
         with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
         mock_test_gate.assert_not_called()
-        mock_dispatch.assert_called_once()
+        mock_run_sdk.assert_called_once()
 
     async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
         """review-failed must NOT delegate to _resume_gate_pipeline (that re-runs gates)."""
@@ -89,15 +95,21 @@ class TestRetryTaskTestFailed:
         await _make_completed_task(db, "test-failed", gate_retries=1)
 
         mock_test_gate = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
+        mock_run_sdk = AsyncMock()
         with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk):
             from switchboard.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
         mock_test_gate.assert_not_called()
-        mock_dispatch.assert_called_once()
+        mock_run_sdk.assert_called_once()
 
     async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
         """test-failed must NOT delegate to _resume_gate_pipeline."""

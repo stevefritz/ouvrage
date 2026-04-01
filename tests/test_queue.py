@@ -134,10 +134,12 @@ class TestQueueDrain:
         )
         await db.update_task(t2["id"], queued_at="2026-01-01T01:00:00Z")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+        mock_execute = AsyncMock(return_value={})
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", mock_execute):
             await _drain_queue()
-            mock_dispatch.assert_awaited_once()
-            assert mock_dispatch.await_args.kwargs["task_id"] == "test-project/q1"
+            mock_execute.assert_awaited_once()
+            assert mock_execute.await_args[0][0] == "test-project/q1"
+            assert mock_execute.await_args[0][1] == "dispatch"
 
     async def test_no_drain_when_concurrency_full(self, db, sample_project):
         """Queue does not drain if concurrency slots are full."""
@@ -155,15 +157,17 @@ class TestQueueDrain:
         )
         await db.update_task(t["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+        mock_execute = AsyncMock(return_value={})
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", mock_execute):
             await _drain_queue()
-            mock_dispatch.assert_not_awaited()
+            mock_execute.assert_not_awaited()
 
     async def test_no_drain_when_queue_empty(self, db, sample_project):
         """Nothing happens when queue is empty."""
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+        mock_execute = AsyncMock(return_value={})
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", mock_execute):
             await _drain_queue()
-            mock_dispatch.assert_not_awaited()
+            mock_execute.assert_not_awaited()
 
     async def test_skips_task_with_unfinished_depends(self, db, sample_project):
         """Queued task with unfinished depends_on is skipped."""
@@ -179,9 +183,10 @@ class TestQueueDrain:
         )
         await db.update_task(child["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+        mock_execute = AsyncMock(return_value={})
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", mock_execute):
             await _drain_queue()
-            mock_dispatch.assert_not_awaited()
+            mock_execute.assert_not_awaited()
 
     async def test_dispatches_when_depends_on_passed(self, db, sample_project):
         """Queued task with passed depends_on is eligible."""
@@ -197,10 +202,12 @@ class TestQueueDrain:
         )
         await db.update_task(child["id"], queued_at="2026-01-01T00:00:00Z")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+        mock_execute = AsyncMock(return_value={})
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", mock_execute):
             await _drain_queue()
-            mock_dispatch.assert_awaited_once()
-            assert mock_dispatch.await_args.kwargs["task_id"] == "test-project/child"
+            mock_execute.assert_awaited_once()
+            assert mock_execute.await_args[0][0] == "test-project/child"
+            assert mock_execute.await_args[0][1] == "dispatch"
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +241,11 @@ class TestChainPriority:
 
         dispatch_order = []
 
-        async def mock_dispatch(**kwargs):
-            dispatch_order.append(kwargs["task_id"])
+        original_execute = None
+        async def mock_execute(task_id, action, **ctx):
+            dispatch_order.append(task_id)
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(side_effect=mock_dispatch)):
+        with patch("switchboard.dispatch.lifecycle.lifecycle.execute", AsyncMock(side_effect=mock_execute)):
             with patch("switchboard.dispatch.engine._maybe_create_pr", AsyncMock()):
                 with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
                     with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
