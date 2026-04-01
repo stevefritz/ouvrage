@@ -96,6 +96,18 @@ timeout 60 python3 -m pytest tests/test_lifecycle.py -k "resume" # keyword match
 - NEVER re-run the same test command 3+ times without changing code between runs
 - If you catch yourself running pytest with different grep/tail combos, STOP — use `--last-failed`
 
+### Debugging gate failures
+
+If the gate reports exit_code != 0 but all tests show PASSED:
+
+1. **It's NOT a test failure.** Something is killing the process before pytest writes its summary.
+2. **Common causes:**
+   - **Timeout** — the suite takes ~150s, `timeout 180` barely clears it. If the VPS is under load, it can exceed the limit.
+   - **Interactive stdin hang** — a test makes a real git call (push/fetch/clone) without mocking. Git prompts for `Username for 'https://github.com':`, the process hangs, timeout kills it.
+   - **Thread leak** — `conftest.py` has an `os._exit()` hook that fires when leaked threads are detected after all tests pass.
+3. **How to diagnose:** Run the suite locally and WATCH for hangs. `grep -rn` for unmocked git calls in the test that was most recently added. Check conftest.py for cleanup hooks.
+4. **Do NOT re-run the full suite trying to find a failure that doesn't exist.**
+
 All tests are async (`pytest-asyncio`, `asyncio_mode=auto`). Use `python3`, not `python`.
 
 ## Architecture
@@ -112,6 +124,8 @@ switchboard/
       punchlist.py, ops.py, tokens.py, common.py
   dispatch/
     engine.py         — Task lifecycle: dispatch, resume, retry, cancel, close, approve
+    lifecycle.py      — TaskLifecycle state machine — single owner of ALL status transitions
+    internals.py      — Status-agnostic dispatch building blocks (worktree, prompt, SDK launch)
     gates.py          — Test gate, review gate, subtask execution
     sdk_session.py    — CC SDK session management, prompt building, message loop
     queue.py          — FIFO queue drain for concurrency management
@@ -226,6 +240,21 @@ It should only go up, never down.
 ### Test tiers
 - **Unit tests** (`tests/test_*.py`) — Test functions in isolation with mocked DB/git
 - **Integration tests** (`tests/test_integration.py`) — Real SQLite DB, real git, no CC sessions
+
+### Critical: mock ALL git and network operations
+
+Every test that touches dispatch, lifecycle, gates, or SDK code MUST mock:
+- `switchboard.git.worktree.setup_worktree` — creates real git worktrees
+- `switchboard.git.worktree.setup_credential_helper` — writes git config
+- `switchboard.git.worktree.cleanup_worktree` — removes worktrees
+- `switchboard.git.operations._ensure_branch_pushed` — does real `git push`
+- `switchboard.git.operations._maybe_create_pr` — calls GitHub API
+- `switchboard.git.operations._perform_auto_merge` — calls GitHub API
+- `switchboard.dispatch.sdk_session._run_sdk_session` — launches real CC process
+
+Use the `mock_git` fixture from conftest.py, or patch individual functions.
+
+**If you skip a mock, the test will make a REAL call to GitHub.** Git will prompt for credentials, the test hangs, the gate times out, and exit_code=1 with zero visible failures. This is extremely hard to debug — the only symptom is "all tests pass but gate says failed."
 
 ## Auth model
 
