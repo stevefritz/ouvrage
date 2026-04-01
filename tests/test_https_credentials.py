@@ -76,6 +76,7 @@ class TestCreateProjectNormalizesUrl:
             patch("os.path.realpath", side_effect=lambda p: p),
             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)),
             patch("switchboard.server.handlers.projects.SKIP_CREDENTIAL_CHECK", False),
+            patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"),
         ]
         for p in self.patches:
             p.start()

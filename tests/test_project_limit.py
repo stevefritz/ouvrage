@@ -113,7 +113,8 @@ class TestCreateProjectLimitEnforcement:
              patch("switchboard.server.handlers.projects.get_request_user_id",
                    return_value=None), \
              patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                   new=AsyncMock(return_value=None)):
+                   new=AsyncMock(return_value=None)), \
+             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
             yield
 
     async def test_create_succeeds_when_under_limit(self, db):
