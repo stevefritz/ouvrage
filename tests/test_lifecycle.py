@@ -363,15 +363,39 @@ class TestExecuteValidTransitions:
 
     # --- Recovery ---
 
-    async def test_working_recover(self):
+    async def test_working_recover_park(self):
         await self._make_task("t/26", status="working")
-        result = await self.lifecycle.execute("t/26", "recover")
-        assert result["status"] == "working"
+        result = await self.lifecycle.execute("t/26", "recover_park")
+        assert result["status"] == "stopped"
+        assert result["reason"] == "recovery_pending"
 
-    async def test_stopped_recover(self):
+    async def test_stopped_recover_park(self):
         await self._make_task("t/27", status="stopped")
-        result = await self.lifecycle.execute("t/27", "recover")
-        assert result["status"] == "working"
+        result = await self.lifecycle.execute("t/27", "recover_park")
+        assert result["status"] == "stopped"
+        assert result["reason"] == "recovery_pending"
+
+    async def test_stopped_recover_queue(self):
+        await self._make_task("t/28", status="stopped")
+        result = await self.lifecycle.execute("t/28", "recover_queue")
+        assert result["status"] == "ready"
+
+    async def test_stopped_recover_fail(self):
+        await self._make_task("t/29", status="stopped")
+        result = await self.lifecycle.execute("t/29", "recover_fail")
+        assert result["status"] == "stopped"
+        assert result["reason"] == "recovery_failed"
+
+    async def test_working_recover_cancel(self):
+        await self._make_task("t/30", status="working")
+        result = await self.lifecycle.execute("t/30", "recover_cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_working_recover_fail(self):
+        await self._make_task("t/31", status="working")
+        result = await self.lifecycle.execute("t/31", "recover_fail")
+        assert result["status"] == "stopped"
+        assert result["reason"] == "recovery_failed"
 
     # --- Audit log ---
 
@@ -749,8 +773,8 @@ class TestTransitionTableCompleteness:
 
     def test_transition_count(self):
         """Verify we have the expected number of transitions from the design."""
-        # 16 user + 9 system + 2 recovery = 27
-        assert len(TRANSITIONS) == 31
+        # 16 user + 9 system + 7 recovery = 32
+        assert len(TRANSITIONS) == 36
 
     def test_all_user_actions_have_labels(self):
         """User-facing actions should have labels for dashboard buttons."""
