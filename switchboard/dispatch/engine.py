@@ -87,17 +87,8 @@ async def _check_and_dispatch_dependents(task_id: str) -> None:
     if not task or not task.get("gate_passed_at"):
         return
 
-    # All gates passed and push confirmed — mark task as truly completed now.
-    # Only transition from in-pipeline statuses; leave completed/merged untouched.
-    if task.get("status") in ("pending-validation", "turns-exhausted"):
-        await db.update_task(task_id, status="completed")
-        await db.write_audit_log(
-            task_id=task_id, action="gate_passed",
-            triggered_by="gate-pipeline",
-            source_detail="_check_and_dispatch_dependents (all gates passed)",
-            previous_status=task.get("status"), new_status="completed",
-        )
-        task = await db.get_task(task_id)
+    # Status transition to "completed" is now handled by lifecycle.execute("gate_pass")
+    # which fires before _check_and_dispatch_dependents is called as a side effect.
 
     await db.write_audit_log(
         task_id=task_id, action="chain_advanced",

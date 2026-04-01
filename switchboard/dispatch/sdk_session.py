@@ -45,7 +45,6 @@ from switchboard.notifications import slack as notify
 from switchboard.config.settings import WORKER_USER
 from switchboard.config.constants import MESSAGE_POLL_INTERVAL, DEFAULT_MODEL
 from switchboard.git.worktree import _run_as_worker
-from switchboard.git.operations import _ensure_branch_pushed
 
 log = logging.getLogger(__name__)
 
@@ -537,10 +536,8 @@ async def _run_sdk_session(
     log_dir: Path, model: str = "sonnet",
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
-    # Lazy imports to break circular dependency with dispatch.engine
-    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review, _process_review_result
-    from switchboard.dispatch.engine import _check_and_dispatch_dependents, _update_usage
-    from switchboard.dispatch.queue import _drain_queue
+    # Lazy imports to break circular dependency
+    from switchboard.dispatch.lifecycle import lifecycle
     from switchboard.dispatch._state import _active_clients
 
     stderr_path = log_dir / "cc-stderr.log"
@@ -776,22 +773,10 @@ async def _run_sdk_session(
             await asyncio.wait_for(_run(), timeout=timeout_seconds)
         except asyncio.TimeoutError:
             log.warning(f"Task {task_id}: wall clock timeout ({max_wall_clock_minutes}m)")
-            await db.update_task(task_id, status="needs-review")
-            await db.write_audit_log(
-                task_id=task_id, action="wall_clock_timeout",
+            await lifecycle.execute(task_id, "timeout",
                 triggered_by="system",
                 source_detail=f"_run_sdk_session (timeout {max_wall_clock_minutes}m)",
-                previous_status="working", new_status="needs-review",
-            )
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Wall clock timeout",
-                content=f"Task hit the {max_wall_clock_minutes} minute wall clock limit. "
-                        "Work is preserved in the worktree. Resume or adjust limits.",
-            )
-            await notify.task_needs_review(
-                task_id=task_id,
-                reason=f"Wall clock timeout ({max_wall_clock_minutes}m). Work preserved in worktree.",
+                max_wall_clock_minutes=max_wall_clock_minutes,
             )
             with _open_shared(log_dir / "dispatch.log") as f:
                 f.write(f"[{db.now_iso()}] Wall clock timeout ({max_wall_clock_minutes}m)\n")
@@ -800,52 +785,18 @@ async def _run_sdk_session(
         # Process result
         if result_msg:
             _log_result(log_dir, result_msg)
-            await _update_usage(task_id, result_msg)
 
             if result_msg.stop_reason == "max_turns" or (
                 result_msg.num_turns and result_msg.num_turns >= max_turns
             ):
-                await db.update_task(task_id, status="turns-exhausted")
-                await db.write_audit_log(
-                    task_id=task_id, action="turns_exhausted",
+                project = await db.get_project((await db.get_task(task_id))["project_id"])
+                await lifecycle.execute(task_id, "exhaust_turns",
                     triggered_by="system",
                     source_detail=f"_run_sdk_session (max_turns={max_turns})",
-                    previous_status="working", new_status="turns-exhausted",
+                    result_msg=result_msg,
+                    project=project,
+                    review_reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
                 )
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Turns exhausted",
-                    content=f"CC session hit the {max_turns}-turn limit.\n\n"
-                            f"Turns: {result_msg.num_turns} | "
-                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
-                            f"Work is preserved in the worktree. Resume to continue with the same session.",
-                )
-
-                # Still push and try the gate — CC may have finished the work
-                task = await db.get_task(task_id)
-                push_ok = await _ensure_branch_pushed(task_id, task)
-                if not push_ok:
-                    await db.update_task(task_id, gate_status="push-failed")
-                    await db.post_task_message(
-                        task_id=task_id, author="dispatcher", type="status",
-                        title="Gate pipeline blocked — push failed",
-                        content="Push failed. Gates will not run until code is pushed. "
-                                "Fix the PAT or push manually, then resume.",
-                    )
-                elif not task.get("gate_passed_at"):
-                    project = await db.get_project(task["project_id"])
-                    if task.get("auto_test") and project and project.get("test_command"):
-                        await _run_test_gate(task_id, project, task)
-                    elif task.get("auto_review"):
-                        await _dispatch_review(task_id, project, task)
-
-                # Only notify for manual review if gate didn't auto-handle it
-                task = await db.get_task(task_id)
-                if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing", "test-passed"):
-                    await notify.task_needs_review(
-                        task_id=task_id,
-                        reason=f"Turns exhausted ({result_msg.num_turns}/{max_turns}). Resume to continue.",
-                    )
             elif result_msg.is_error and result_msg.result and "hit your limit" in result_msg.result.lower():
                 # Rate limited — compute retry_after and auto-retry when limits reset
                 reset_match = re.search(r'resets?\s+(\d{1,2})(am|pm)?\s*\(?(\w+)?\)?', result_msg.result, re.IGNORECASE)
@@ -867,121 +818,32 @@ async def _run_sdk_session(
                     retry_after_iso = retry_at.strftime("%Y-%m-%dT%H:%M:%SZ")
                     reset_info = f" Will auto-retry at {retry_at.strftime('%H:%M UTC')}."
 
-                await db.update_task(task_id, status="rate-limited",
-                                     retry_after=retry_after_iso)
-                await db.write_audit_log(
-                    task_id=task_id, action="rate_limited",
+                log.warning(f"Task {task_id}: rate limited, retry_after={retry_after_iso}")
+                await lifecycle.execute(task_id, "rate_limit",
                     triggered_by="system",
                     source_detail="_run_sdk_session (API rate limit hit)",
-                    previous_status="working", new_status="rate-limited",
+                    retry_after=retry_after_iso,
+                    reset_info=reset_info,
+                    result_msg=result_msg,
                 )
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Rate limited",
-                    content=f"CC hit usage limits.{reset_info}\n\n"
-                            f"Turns: {result_msg.num_turns} | "
-                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
-                            f"Work is preserved.{' Auto-retry scheduled.' if retry_after_iso else ' Retry manually after limits reset.'}",
-                )
-                log.warning(f"Task {task_id}: rate limited, retry_after={retry_after_iso}")
-                await _drain_queue()
             elif result_msg.is_error:
-                await db.update_task(task_id, status="failed")
-                await db.write_audit_log(
-                    task_id=task_id, action="failed",
+                await lifecycle.execute(task_id, "error",
                     triggered_by="system",
                     source_detail=f"_run_sdk_session (error: {result_msg.stop_reason})",
-                    previous_status="working", new_status="failed",
+                    result_msg=result_msg,
                 )
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Task failed",
-                    content=f"CC session ended with error.\n\nStop reason: {result_msg.stop_reason}\n"
-                            f"Turns: {result_msg.num_turns}\n\n"
-                            f"Result: {result_msg.result or '(no result)'}",
-                )
-                await notify.task_failed(
-                    task_id=task_id,
-                    error=result_msg.result or result_msg.stop_reason or "Unknown error",
-                    turns=result_msg.num_turns,
-                    cost_usd=result_msg.total_cost_usd or 0,
-                )
-                # Slot freed — drain FIFO queue
-                await _drain_queue()
             else:
-                await db.update_task(task_id, status="pending-validation")
-                await db.write_audit_log(
-                    task_id=task_id, action="completed",
+                await lifecycle.execute(task_id, "complete",
                     triggered_by="system",
                     source_detail="_run_sdk_session (CC session completed)",
-                    previous_status="working", new_status="pending-validation",
+                    result_msg=result_msg,
                 )
-                await db.post_task_message(
-                    task_id=task_id, author="dispatcher", type="status",
-                    title="Task completed",
-                    content=f"CC session completed successfully.\n\n"
-                            f"Turns: {result_msg.num_turns} | "
-                            f"Duration: {result_msg.duration_ms / 1000:.0f}s | "
-                            f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
-                            f"Result: {result_msg.result or '(no result)'}",
-                )
-                checklist = await db.get_checklist(task_id)
-                done = sum(1 for c in checklist if c.get("done"))
-                await notify.task_completed(
-                    task_id=task_id,
-                    turns=result_msg.num_turns,
-                    duration_s=(result_msg.duration_ms or 0) / 1000,
-                    cost_usd=result_msg.total_cost_usd or 0,
-                    checklist_done=done,
-                    checklist_total=len(checklist),
-                    result_preview=result_msg.result,
-                )
-
-                # Auto-push branch before gate pipeline
-                task = await db.get_task(task_id)
-                push_ok = await _ensure_branch_pushed(task_id, task)
-                if not push_ok:
-                    await db.update_task(task_id, gate_status="push-failed")
-                    await db.post_task_message(
-                        task_id=task_id, author="dispatcher", type="status",
-                        title="Gate pipeline blocked — push failed",
-                        content="Push failed. Gates will not run until code is pushed. "
-                                "Fix the PAT or push manually, then resume.",
-                    )
-                # Check if this is a review task — process result on parent
-                elif task.get("parent_task_id"):
-                    await _process_review_result(task_id, task["parent_task_id"])
-                elif task.get("gate_passed_at"):
-                    # Gate already passed previously — this is a manual resume (e.g. fixing merge conflicts)
-                    # Re-trigger post-gate pipeline so auto-merge / chain advancement runs again
-                    log.info(f"Task {task_id}: gate already passed, re-triggering post-gate pipeline (manual resume)")
-                    await _check_and_dispatch_dependents(task_id)
-                else:
-                    # First-pass completion — run the gate pipeline
-                    project = await db.get_project(task["project_id"])
-                    if task.get("auto_test") and project and project.get("test_command"):
-                        await _run_test_gate(task_id, project, task)
-                    elif task.get("auto_review"):
-                        await _dispatch_review(task_id, project, task)
-                    else:
-                        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-                        await _check_and_dispatch_dependents(task_id)
         else:
             # No result message — shouldn't happen but handle gracefully
-            await db.update_task(task_id, status="needs-review")
-            await db.write_audit_log(
-                task_id=task_id, action="failed",
+            await lifecycle.execute(task_id, "error",
                 triggered_by="system",
                 source_detail="_run_sdk_session (no ResultMessage received)",
-                previous_status="working", new_status="needs-review",
-            )
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Session ended without result",
-                content="CC session ended but no ResultMessage was received. Check logs.",
-            )
-            await notify.task_needs_review(
-                task_id=task_id, reason="Session ended without a ResultMessage. Check logs.",
+                reason="no_result",
             )
 
     except Exception as e:
@@ -989,41 +851,22 @@ async def _run_sdk_session(
         is_sigterm = any(s in error_str for s in ("exit code -15", "exit code -9", "exit code 143", "exit code 137"))
 
         if is_sigterm:
-            # SIGTERM/SIGKILL — external kill (service restart, OOM), not a real failure.
-            # Keep as working so startup recovery auto-resumes.
             log.warning(f"SDK session killed by signal for task {task_id}: {e}")
-            await db.update_task(task_id, recovery_priority=True)
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Session killed by signal",
-                content=f"CC process was killed externally (likely service restart).\n"
-                        f"Task will auto-resume on next startup.\n\n```\n{error_str}\n```",
+            await lifecycle.execute(task_id, "signal_kill",
+                triggered_by="system",
+                source_detail=f"_run_sdk_session (signal: {error_str[:200]})",
+                error_message=error_str,
             )
         else:
             log.exception(f"SDK session error for task {task_id}: {e}")
-            await db.update_task(task_id, status="failed")
-            await db.write_audit_log(
-                task_id=task_id, action="failed",
+            await lifecycle.execute(task_id, "error",
                 triggered_by="system",
                 source_detail=f"_run_sdk_session (exception: {error_str[:200]})",
-                previous_status="working", new_status="failed",
+                error_message=error_str,
+                error_title="Dispatch error",
+                error_content=f"SDK session raised an exception:\n\n```\n{e}\n```",
             )
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Dispatch error",
-                content=f"SDK session raised an exception:\n\n```\n{e}\n```",
-            )
-        # If this was a review task, still try to process any review it posted
-        task = await db.get_task(task_id)
-        if task and task.get("parent_task_id"):
-            try:
-                await _process_review_result(task_id, task["parent_task_id"])
-            except Exception:
-                log.exception(f"Failed to process review result for crashed review task {task_id}")
-        await notify.task_failed(task_id=task_id, error=str(e))
         with _open_shared(log_dir / "dispatch.log") as f:
             f.write(f"[{db.now_iso()}] SDK error: {e}\n")
-        # Slot freed — drain FIFO queue
-        await _drain_queue()
     finally:
         stderr_log.close()

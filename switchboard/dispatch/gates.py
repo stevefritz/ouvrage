@@ -372,7 +372,6 @@ async def _run_test_gate(task_id: str, project: dict, task: dict) -> None:
 
 async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
     """Inner implementation of test gate (called by _run_test_gate after liveness check)."""
-    from switchboard.dispatch.engine import _check_and_dispatch_dependents
     from switchboard.dispatch.lifecycle import lifecycle
 
     test_command = project.get("test_command")
@@ -409,7 +408,7 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
         if task.get("auto_review"):
             await db.update_task(task_id, gate_status="test-passed")
         else:
-            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+            await db.update_task(task_id, gate_status="passed")
         await db.write_audit_log(
             task_id=task_id, action="gate_passed",
             triggered_by="gate-pipeline",
@@ -452,10 +451,11 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
                     return  # Do not proceed to reviewer
             await _dispatch_review(task_id, project, task)
         else:
-            await notify.task_needs_review(
-                task_id=task_id, reason="Gate passed: tests passed.",
+            # Tests passed, no review needed — complete via lifecycle
+            await lifecycle.execute(task_id, "gate_pass",
+                triggered_by="gate-pipeline",
+                source_detail="_run_test_gate (tests passed, no review)",
             )
-            await _check_and_dispatch_dependents(task_id)
     else:
         # Refresh task to get current retry count
         task = await db.get_task(task_id)
@@ -481,10 +481,10 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
             await lifecycle.execute(task_id, "retry", triggered_by="gate",
                                     source_detail="test failure auto-retry")
         else:
-            await db.update_task(task_id, status="needs-review")
-            await notify.task_needs_review(
-                task_id=task_id,
-                reason=f"Tests failed {retries} times. Manual intervention needed.",
+            await lifecycle.execute(task_id, "gate_fail",
+                triggered_by="gate-pipeline",
+                source_detail=f"_run_test_gate (tests failed {retries} times)",
+                reason="max_test_retries",
             )
 
 
@@ -820,8 +820,11 @@ mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', typ
                 log.info(f"Retrying review for {task_id} (attempt {retries + 1})")
                 await _dispatch_review_inner(task_id, await db.get_project(task["project_id"]), task)
             else:
-                await db.update_task(task_id, status="needs-review")
-                await notify.task_needs_review(task_id, reason="Review failed after max retries.")
+                await lifecycle.execute(task_id, "gate_fail",
+                    triggered_by="gate-pipeline",
+                    source_detail="Review subtask failed after max retries",
+                    reason="max_review_retries",
+                )
     except Exception as e:
         log.error(f"Failed to run review subtask for {task_id}: {e}")
         task = await db.get_task(task_id)
@@ -833,15 +836,21 @@ mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', typ
                 await _dispatch_review_inner(task_id, await db.get_project(task["project_id"]), task)
             except Exception:
                 log.exception(f"Review retry also failed for {task_id}")
-                await db.update_task(task_id, status="needs-review")
+                await lifecycle.execute(task_id, "gate_fail",
+                    triggered_by="gate-pipeline",
+                    source_detail="Review retry also failed",
+                    reason="max_review_retries",
+                )
         else:
-            await db.update_task(task_id, status="needs-review")
-            await notify.task_needs_review(task_id, reason=f"Review failed: {e}")
+            await lifecycle.execute(task_id, "gate_fail",
+                triggered_by="gate-pipeline",
+                source_detail=f"Review failed: {e}",
+                reason="max_review_retries",
+            )
 
 
 async def _process_review_result_inline(task_id: str) -> None:
     """Check review messages on task and process approval/rejection."""
-    from switchboard.dispatch.engine import _check_and_dispatch_dependents
     from switchboard.dispatch.lifecycle import lifecycle
 
     msgs = await db.read_task_messages(task_id)
@@ -853,14 +862,10 @@ async def _process_review_result_inline(task_id: str) -> None:
 
     if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {task_id}")
-        await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-        await db.write_audit_log(
-            task_id=task_id, action="gate_passed",
+        await lifecycle.execute(task_id, "gate_pass",
             triggered_by="gate-pipeline",
             source_detail="_process_review_result_inline (review approved)",
-            previous_status="completed", new_status="completed",
         )
-        await _check_and_dispatch_dependents(task_id)
     else:
         task = await db.get_task(task_id)
         retries = (task.get("gate_retries") or 0) + 1
@@ -878,13 +883,15 @@ async def _process_review_result_inline(task_id: str) -> None:
             await lifecycle.execute(task_id, "retry", triggered_by="review",
                                     source_detail="review rejection auto-retry (inline)")
         else:
-            await db.update_task(task_id, status="needs-review")
-            await notify.task_needs_review(task_id, reason="Review failed after max retries.")
+            await lifecycle.execute(task_id, "gate_fail",
+                triggered_by="gate-pipeline",
+                source_detail=f"_process_review_result_inline (review failed {retries} times)",
+                reason="max_review_retries",
+            )
 
 
 async def _process_review_result(review_task_id: str, parent_task_id: str) -> None:
     """Check if review approved or requested changes."""
-    from switchboard.dispatch.engine import _check_and_dispatch_dependents
     from switchboard.dispatch.lifecycle import lifecycle
 
     msgs = await db.read_task_messages(parent_task_id)
@@ -896,14 +903,10 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
 
     if review_msg and (review_msg.get("title") or "").strip().upper() == "APPROVED":
         log.info(f"Review approved for {parent_task_id}")
-        await db.update_task(parent_task_id, gate_status="passed", gate_passed_at=db.now_iso())
-        await db.write_audit_log(
-            task_id=parent_task_id, action="gate_passed",
+        await lifecycle.execute(parent_task_id, "gate_pass",
             triggered_by="gate-pipeline",
             source_detail="_process_review_result (review approved)",
-            previous_status="completed", new_status="completed",
         )
-        await _check_and_dispatch_dependents(parent_task_id)
     else:
         parent = await db.get_task(parent_task_id)
         retries = (parent.get("gate_retries") or 0) + 1
@@ -921,10 +924,10 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
             await lifecycle.execute(parent_task_id, "retry", triggered_by="review",
                                     source_detail="review rejection auto-retry")
         else:
-            await db.update_task(parent_task_id, status="needs-review")
-            await notify.task_needs_review(
-                parent_task_id,
-                reason="Review failed after max retries.",
+            await lifecycle.execute(parent_task_id, "gate_fail",
+                triggered_by="gate-pipeline",
+                source_detail=f"_process_review_result (review failed {retries} times)",
+                reason="max_review_retries",
             )
 
 

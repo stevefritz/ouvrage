@@ -479,6 +479,288 @@ async def _cancel_reopen_side_effects(task: dict, **ctx: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Side-effect functions for system events (SDK session outcomes)
+# ---------------------------------------------------------------------------
+
+
+async def _on_sdk_complete(task: dict, **ctx: Any) -> None:
+    """SDK session completed normally — update usage, push, enter gate pipeline, notify."""
+    from switchboard.dispatch.engine import _update_usage, _check_and_dispatch_dependents
+    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review
+    from switchboard.git.operations import _ensure_branch_pushed
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    result_msg = ctx.get("result_msg")
+
+    # Update usage from result
+    if result_msg:
+        await _update_usage(task_id, result_msg)
+
+    # Post completion message
+    if result_msg:
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Task completed",
+            content=f"CC session completed successfully.\n\n"
+                    f"Turns: {result_msg.num_turns} | "
+                    f"Duration: {result_msg.duration_ms / 1000:.0f}s | "
+                    f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                    f"Result: {result_msg.result or '(no result)'}",
+        )
+
+    # Notify
+    checklist = await db.get_checklist(task_id)
+    done = sum(1 for c in checklist if c.get("done"))
+    if result_msg:
+        await notify.task_completed(
+            task_id=task_id,
+            turns=result_msg.num_turns,
+            duration_s=(result_msg.duration_ms or 0) / 1000,
+            cost_usd=result_msg.total_cost_usd or 0,
+            checklist_done=done,
+            checklist_total=len(checklist),
+            result_preview=result_msg.result,
+        )
+
+    # Re-read task after status change
+    task = await db.get_task(task_id)
+
+    # Auto-push branch before gate pipeline
+    push_ok = await _ensure_branch_pushed(task_id, task)
+    if not push_ok:
+        await db.update_task(task_id, gate_status="push-failed")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Gate pipeline blocked — push failed",
+            content="Push failed. Gates will not run until code is pushed. "
+                    "Fix the PAT or push manually, then resume.",
+        )
+        return
+
+    # Check if this is a review task — process result on parent
+    if task.get("parent_task_id"):
+        from switchboard.dispatch.gates import _process_review_result
+        await _process_review_result(task_id, task["parent_task_id"])
+    elif task.get("gate_passed_at"):
+        # Gate already passed previously — re-trigger post-gate pipeline
+        logger.info("Task %s: gate already passed, re-triggering post-gate pipeline", task_id)
+        await _check_and_dispatch_dependents(task_id)
+    else:
+        # First-pass completion — run the gate pipeline
+        project = await db.get_project(task["project_id"])
+        if task.get("auto_test") and project and project.get("test_command"):
+            await _run_test_gate(task_id, project, task)
+        elif task.get("auto_review"):
+            await _dispatch_review(task_id, project, task)
+        else:
+            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+            await _check_and_dispatch_dependents(task_id)
+
+
+async def _on_exhaust_turns(task: dict, **ctx: Any) -> None:
+    """Turns exhausted — post message, push branch, try gates if configured."""
+    from switchboard.dispatch.engine import _update_usage
+    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review
+    from switchboard.git.operations import _ensure_branch_pushed
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    result_msg = ctx.get("result_msg")
+
+    # Update usage
+    if result_msg:
+        await _update_usage(task_id, result_msg)
+
+    # Post message
+    if result_msg:
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Turns exhausted",
+            content=f"CC session hit the turn limit.\n\n"
+                    f"Turns: {result_msg.num_turns} | "
+                    f"Cost: ${result_msg.total_cost_usd or 0:.4f}\n\n"
+                    f"Work is preserved in the worktree. Resume to continue with the same session.",
+        )
+
+    # Re-read task after status change
+    task = await db.get_task(task_id)
+
+    # Push branch and try gates
+    push_ok = await _ensure_branch_pushed(task_id, task)
+    if not push_ok:
+        await db.update_task(task_id, gate_status="push-failed")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Gate pipeline blocked — push failed",
+            content="Push failed. Gates will not run until code is pushed. "
+                    "Fix the PAT or push manually, then resume.",
+        )
+    elif not task.get("gate_passed_at"):
+        project = await db.get_project(task["project_id"])
+        if task.get("auto_test") and project and project.get("test_command"):
+            await _run_test_gate(task_id, project, task)
+        elif task.get("auto_review"):
+            await _dispatch_review(task_id, project, task)
+
+    # Only notify for manual review if gate didn't auto-handle it
+    task = await db.get_task(task_id)
+    if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing", "test-passed"):
+        await notify.task_needs_review(
+            task_id=task_id,
+            reason=ctx.get("review_reason", "Turns exhausted. Resume to continue."),
+        )
+
+
+async def _on_timeout(task: dict, **ctx: Any) -> None:
+    """Wall clock timeout hit — post message, notify, drain queue."""
+    from switchboard.dispatch.queue import _drain_queue
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    max_wall_clock = ctx.get("max_wall_clock_minutes", "?")
+
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Wall clock timeout",
+        content=f"Task hit the {max_wall_clock} minute wall clock limit. "
+                "Work is preserved in the worktree. Resume or adjust limits.",
+    )
+    await notify.task_needs_review(
+        task_id=task_id,
+        reason=f"Wall clock timeout ({max_wall_clock}m). Work preserved in worktree.",
+    )
+    await _drain_queue()
+
+
+async def _on_rate_limit(task: dict, **ctx: Any) -> None:
+    """API rate limit hit — set retry_after, post message, drain queue."""
+    from switchboard.dispatch.queue import _drain_queue
+
+    task_id = task["id"]
+    retry_after_iso = ctx.get("retry_after")
+    reset_info = ctx.get("reset_info", "")
+    result_msg = ctx.get("result_msg")
+
+    if retry_after_iso:
+        await db.update_task(task_id, retry_after=retry_after_iso)
+
+    num_turns = result_msg.num_turns if result_msg else "?"
+    cost = f"${result_msg.total_cost_usd or 0:.4f}" if result_msg else "?"
+
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Rate limited",
+        content=f"CC hit usage limits.{reset_info}\n\n"
+                f"Turns: {num_turns} | Cost: {cost}\n\n"
+                f"Work is preserved.{' Auto-retry scheduled.' if retry_after_iso else ' Retry manually after limits reset.'}",
+    )
+    await _drain_queue()
+
+
+async def _on_error(task: dict, **ctx: Any) -> None:
+    """SDK error or exception — post message, notify, drain queue."""
+    from switchboard.dispatch.queue import _drain_queue
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    result_msg = ctx.get("result_msg")
+    error_message = ctx.get("error_message")
+
+    if result_msg:
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Task failed",
+            content=f"CC session ended with error.\n\nStop reason: {result_msg.stop_reason}\n"
+                    f"Turns: {result_msg.num_turns}\n\n"
+                    f"Result: {result_msg.result or '(no result)'}",
+        )
+        await notify.task_failed(
+            task_id=task_id,
+            error=result_msg.result or result_msg.stop_reason or "Unknown error",
+            turns=result_msg.num_turns,
+            cost_usd=result_msg.total_cost_usd or 0,
+        )
+    elif error_message:
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title=ctx.get("error_title", "Dispatch error"),
+            content=ctx.get("error_content", f"SDK session raised an exception:\n\n```\n{error_message}\n```"),
+        )
+        await notify.task_failed(task_id=task_id, error=error_message)
+    else:
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Session ended without result",
+            content="CC session ended but no ResultMessage was received. Check logs.",
+        )
+        await notify.task_needs_review(
+            task_id=task_id, reason="Session ended without a ResultMessage. Check logs.",
+        )
+
+    # Handle review task crash — still try to process review
+    task = await db.get_task(task_id)
+    if task and task.get("parent_task_id"):
+        try:
+            from switchboard.dispatch.gates import _process_review_result
+            await _process_review_result(task_id, task["parent_task_id"])
+        except Exception:
+            logger.exception("Failed to process review result for crashed review task %s", task_id)
+
+    await _drain_queue()
+
+
+async def _on_signal_kill(task: dict, **ctx: Any) -> None:
+    """SIGTERM/SIGKILL recovery — set recovery_priority, post message."""
+    task_id = task["id"]
+    error_str = ctx.get("error_message", "Unknown signal")
+
+    await db.update_task(task_id, recovery_priority=True)
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Session killed by signal",
+        content=f"CC process was killed externally (likely service restart).\n"
+                f"Task will auto-resume on next startup.\n\n```\n{error_str}\n```",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for gate outcomes
+# ---------------------------------------------------------------------------
+
+
+async def _on_gate_pass(task: dict, **ctx: Any) -> None:
+    """All gates passed — set gate_passed_at, resolve punchlist, chain advance, drain queue."""
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    from switchboard.dispatch.queue import _drain_queue
+
+    task_id = task["id"]
+
+    await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
+
+    # Resolve punchlist items claimed by this task
+    resolved = await db.resolve_punchlist_items_for_task(task_id)
+    if resolved:
+        logger.info("Task %s: resolved %d punchlist item(s) on gate pass", task_id, resolved)
+
+    # Chain advancement
+    await _check_and_dispatch_dependents(task_id)
+
+    # Drain queue (slot freed)
+    await _drain_queue()
+
+
+async def _on_gate_fail(task: dict, **ctx: Any) -> None:
+    """Gate failed after max retries — notify for manual review."""
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    reason = ctx.get("reason", "gate_failed")
+
+    await notify.task_needs_review(task_id=task_id, reason=reason)
+
+
+# ---------------------------------------------------------------------------
 # Precondition functions
 # ---------------------------------------------------------------------------
 
@@ -726,36 +1008,43 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "complete"): TransitionDef(
         to_state="validating",
         label="Complete",
+        side_effects=[_on_sdk_complete],
     ),
     ("working", "exhaust_turns"): TransitionDef(
         to_state=_exhaust_turns_state,
         reason=_exhaust_turns_reason,
         label="Exhaust Turns",
+        side_effects=[_on_exhaust_turns],
     ),
     ("working", "timeout"): TransitionDef(
         to_state="stopped",
         reason="wall_clock_timeout",
         label="Timeout",
+        side_effects=[_on_timeout],
     ),
     ("working", "rate_limit"): TransitionDef(
         to_state="stopped",
         reason="rate_limited",
         label="Rate Limit",
+        side_effects=[_on_rate_limit],
     ),
     ("working", "error"): TransitionDef(
         to_state="stopped",
         reason="dispatch_error",
         label="Error",
+        side_effects=[_on_error],
     ),
     ("validating", "gate_pass"): TransitionDef(
         to_state="completed",
         reason="gate_passed",
         label="Gate Pass",
+        side_effects=[_on_gate_pass],
     ),
     ("validating", "gate_fail"): TransitionDef(
         to_state="stopped",
         reason=_gate_fail_reason,
         label="Gate Fail",
+        side_effects=[_on_gate_fail],
     ),
     ("validating", "gate_retry"): TransitionDef(
         to_state="working",
@@ -772,6 +1061,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "signal_kill"): TransitionDef(
         to_state="working",
         label="Signal Kill",
+        side_effects=[_on_signal_kill],
     ),
     # --- Recovery Actions -------------------------------------------------
     ("working", "recover"): TransitionDef(
