@@ -1320,13 +1320,13 @@ class TestActionsFiltered:
     async def test_working(self):
         await self._make("f/w1", status="working")
         names = await self._names("f/w1")
-        assert names == {"stop", "cancel"}
+        assert names == {"stop"}
 
     # validating
     async def test_validating(self):
         await self._make("f/v1", status="validating")
         names = await self._names("f/v1")
-        assert names == {"stop", "skip_gate", "cancel"}
+        assert names == {"stop", "skip_gate"}
 
     # stopped — paused_by_user / turns_exhausted / wall_clock_timeout / rate_limited
     async def test_stopped_paused_by_user(self):
