@@ -3,8 +3,7 @@
 Single entry point for state changes. Contains the transition table,
 effective state mapper, state labels, and the execute() method.
 
-Nothing in the system calls this yet — Tasks 2 and 3 will migrate
-existing code paths through this service.
+cancel, close, and skip_gate are routed through this service.
 """
 
 from __future__ import annotations
@@ -17,6 +16,111 @@ import switchboard.db as db
 from switchboard.db.audit import write_audit_log
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Side-effect functions for cancel / close / skip_gate
+# ---------------------------------------------------------------------------
+
+
+async def _cancel_running_process(task: dict, **ctx: Any) -> None:
+    """Find and cancel the asyncio task from _running_tasks."""
+    from switchboard.dispatch._state import _running_tasks
+
+    task_id = task["id"]
+    task_name = f"sdk-session-{task_id}"
+    for t in list(_running_tasks):
+        if t.get_name() == task_name and not t.done():
+            t.cancel()
+            logger.info("Cancelled asyncio task for %s", task_id)
+            return
+    # Only warn if the task was previously in working state
+    prev = ctx.get("_previous_status")
+    if prev == "working":
+        logger.warning(
+            "Could not find running asyncio task for %s — it may have been lost on restart",
+            task_id,
+        )
+
+
+async def _revert_punchlist(task: dict, **ctx: Any) -> None:
+    """Revert any punchlist items claimed by this task back to 'open'."""
+    reverted = await db.revert_punchlist_items_for_task(task["id"])
+    if reverted:
+        logger.info("Task %s: reverted %d punchlist item(s) on cancel", task["id"], reverted)
+
+
+async def _drain_queue_effect(task: dict, **ctx: Any) -> None:
+    """A slot freed up — drain the FIFO queue."""
+    from switchboard.dispatch.queue import _drain_queue
+    await _drain_queue()
+
+
+async def _clear_held_flag(task: dict, **ctx: Any) -> None:
+    """Clear the held flag on cancel/close."""
+    await db.update_task(task["id"], held=False)
+
+
+async def _close_archive_and_cleanup(task: dict, **ctx: Any) -> None:
+    """Archive logs + cleanup worktree + clear extra fields for close."""
+    from switchboard.dispatch.engine import archive_task_logs
+    from switchboard.git.worktree import cleanup_worktree
+
+    project = await db.get_project(task["project_id"])
+    if project:
+        await archive_task_logs(task, project, "close")
+
+    cleanup = ctx.get("cleanup", True)
+    force_delete_branch = ctx.get("force_delete_branch", False)
+
+    update_fields: dict[str, Any] = {"gate_passed_at": None, "held": False}
+    if cleanup and project:
+        await cleanup_worktree(project, task, force_delete_branch)
+        update_fields["worktree_path"] = None
+
+    await db.update_task(task["id"], **update_fields)
+
+
+async def _post_close_message(task: dict, **ctx: Any) -> None:
+    """Post 'Manually closed' status message."""
+    await db.post_task_message(
+        task_id=task["id"], author="dispatcher", type="status",
+        title="Manually closed",
+        content="Task was manually closed — no gates or chain actions triggered.",
+    )
+
+
+async def _skip_gate_set_fields(task: dict, **ctx: Any) -> None:
+    """Set gate_status=passed and gate_passed_at for skip_gate."""
+    await db.update_task(task["id"], gate_status="passed", gate_passed_at=db.now_iso())
+
+
+async def _skip_gate_post_message(task: dict, **ctx: Any) -> None:
+    """Post 'Gate skipped' status message."""
+    await db.post_task_message(
+        task_id=task["id"], author="dispatcher", type="status",
+        title="Gate skipped",
+        content="Gate manually bypassed by user.",
+    )
+
+
+async def _skip_gate_dispatch_dependents(task: dict, **ctx: Any) -> None:
+    """Trigger chain advancement after gate skip."""
+    from switchboard.dispatch.engine import _check_and_dispatch_dependents
+    await _check_and_dispatch_dependents(task["id"])
+
+
+# ---------------------------------------------------------------------------
+# Precondition functions
+# ---------------------------------------------------------------------------
+
+
+async def _reject_if_working(task: dict, **ctx: Any) -> None:
+    """Precondition: reject close if task is still working."""
+    if task["status"] == "working":
+        raise ValueError(
+            f"Task '{task['id']}' is still running. Cancel it first, then close."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +207,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("ready", "cancel"): TransitionDef(
         to_state="cancelled",
+        side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect],
         label="Cancel",
         style="danger",
         confirm=True,
@@ -116,6 +221,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
+        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
         label="Cancel",
         style="danger",
         confirm=True,
@@ -130,12 +236,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "skip_gate"): TransitionDef(
         to_state="completed",
         reason="gate_skipped",
+        side_effects=[_skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
         label="Skip Gate",
         style="secondary",
         confirm=True,
     ),
     ("validating", "cancel"): TransitionDef(
         to_state="cancelled",
+        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
         label="Cancel",
         style="danger",
         confirm=True,
@@ -158,12 +266,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("stopped", "skip_gate"): TransitionDef(
         to_state="completed",
         reason="gate_skipped",
+        side_effects=[_skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
         label="Skip Gate",
         style="secondary",
         confirm=True,
     ),
     ("stopped", "cancel"): TransitionDef(
         to_state="cancelled",
+        side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect],
         label="Cancel",
         style="danger",
         confirm=True,
@@ -171,6 +281,8 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("stopped", "close"): TransitionDef(
         to_state="completed",
         reason="manually_closed",
+        preconditions=[_reject_if_working],
+        side_effects=[_close_archive_and_cleanup, _post_close_message],
         label="Close",
         style="secondary",
         confirm=True,
@@ -405,6 +517,7 @@ class TaskLifecycle:
         )
 
         # 8. Fire side effects (non-blocking errors logged, not raised)
+        context["_previous_status"] = previous_status
         for effect in tdef.side_effects:
             try:
                 await effect(updated_task, **context)
@@ -489,3 +602,7 @@ class TaskLifecycle:
         # Unknown status — pass through (defensive)
         logger.warning("Unknown task status '%s', passing through", raw_status)
         return raw_status
+
+
+# Module-level singleton
+lifecycle = TaskLifecycle()
