@@ -306,13 +306,14 @@ class TestFlapDetection:
             p.stop()
 
     async def test_flap_detection_escalates(self, db, sample_project):
-        """Task with recovery_count >= MAX_RECOVERY_ATTEMPTS goes to needs-review."""
+        """Task with recovery_count >= MAX_RECOVERY_ATTEMPTS goes to stopped (recovery_failed)."""
         await _create_orphan(db, recovery_count=3)  # Already at max (default 3)
 
         await recover_orphaned_tasks()
 
         task = await db.get_task("test-project/orphan-1")
-        assert task["status"] == "needs-review"
+        assert task["status"] == "stopped"
+        assert task["reason"] == "recovery_failed"
 
         # Check message was posted
         thread = await db.read_task_messages("test-project/orphan-1")
@@ -327,7 +328,8 @@ class TestFlapDetection:
         await recover_orphaned_tasks()
 
         task = await db.get_task("test-project/orphan-1")
-        assert task["status"] == "needs-review"
+        assert task["status"] == "stopped"
+        assert task["reason"] == "recovery_failed"
         # Count should NOT be incremented — we checked before incrementing
         assert task["recovery_count"] == 3
 
@@ -417,8 +419,8 @@ class TestRecoveryPriority:
 class TestRecoveryDisabled:
     """RECOVERY_ENABLED=false skips auto-recovery."""
 
-    async def test_disabled_marks_needs_review(self, db, sample_project):
-        """When disabled, orphans are just marked needs-review (old behavior)."""
+    async def test_disabled_marks_stopped_recovery_pending(self, db, sample_project):
+        """When disabled, orphans are parked as stopped/recovery_pending."""
         await _create_orphan(db)
 
         with patch("switchboard.dispatch.recovery.RECOVERY_ENABLED", False), \
@@ -426,7 +428,8 @@ class TestRecoveryDisabled:
             await recover_orphaned_tasks()
 
         task = await db.get_task("test-project/orphan-1")
-        assert task["status"] == "needs-review"
+        assert task["status"] == "stopped"
+        assert task["reason"] == "recovery_pending"
 
 
 # ---------------------------------------------------------------------------
@@ -647,14 +650,12 @@ class TestRecoveryStatusMessages:
 # ---------------------------------------------------------------------------
 
 class TestRecoverSingleTask:
-    """_recover_single_task sets status=needs-review before calling resume/retry (Fix 2).
+    """_recover_single_task parks task (stopped/recovery_pending) before calling resume/retry.
 
-    Before Fix 2, resume_task/retry_task were called while status='working',
-    causing them to reject the task. The exception handler then set needs-review,
-    so recovery only worked on the SECOND health check cycle.
-
-    After Fix 2, status is set to needs-review atomically in the same update_task
-    call as recovery_count increment, so resume/retry always succeed on first attempt.
+    Before the lifecycle migration, this was done by setting status=needs-review.
+    Now recovery uses lifecycle.execute("recover_park") which sets status=stopped,
+    reason=recovery_pending. The effective state is "stopped" in both cases, which
+    is what resume_task/retry_task require.
     """
 
     @pytest.fixture(autouse=True)
@@ -672,28 +673,28 @@ class TestRecoverSingleTask:
         for p in patches:
             p.stop()
 
-    async def test_status_set_to_needs_review_before_resume(self, db, sample_project):
-        """Fix 2: task status is needs-review when resume_task is called."""
+    async def test_status_set_to_stopped_before_resume(self, db, sample_project):
+        """Task is parked as stopped/recovery_pending when resume_task is called."""
         task = await _create_orphan(db, session_id="sess-xyz")
 
         status_at_resume = {}
 
-        async def capturing_resume(task_id):
+        async def capturing_resume(task_id, reset_recovery_count=True):
             t = await db.get_task(task_id)
             status_at_resume["status"] = t["status"]
-            # Call real resume (patches are in place for dispatch)
-            await _recover_with_resume(task_id, t)
+            status_at_resume["reason"] = t.get("reason")
 
         with patch("switchboard.dispatch.engine.resume_task", side_effect=capturing_resume):
             await _recover_single_task(task)
 
-        assert status_at_resume.get("status") == "needs-review", (
-            "Task must be in needs-review status when resume_task is called, "
+        assert status_at_resume.get("status") == "stopped", (
+            "Task must be in stopped status when resume_task is called, "
             "not 'working' — otherwise resume_task will reject it"
         )
+        assert status_at_resume.get("reason") == "recovery_pending"
 
-    async def test_status_set_to_needs_review_before_retry(self, db, sample_project):
-        """Fix 2: task status is needs-review when retry_task is called."""
+    async def test_status_set_to_stopped_before_retry(self, db, sample_project):
+        """Task is parked as stopped/recovery_pending when retry_task is called."""
         task = await _create_orphan(db, session_id=None)
 
         status_at_retry = {}
@@ -701,14 +702,15 @@ class TestRecoverSingleTask:
         async def capturing_retry(task_id, clean=False):
             t = await db.get_task(task_id)
             status_at_retry["status"] = t["status"]
-            await _recover_with_retry(task_id, t)
+            status_at_retry["reason"] = t.get("reason")
 
         with patch("switchboard.dispatch.engine.retry_task", side_effect=capturing_retry):
             await _recover_single_task(task)
 
-        assert status_at_retry.get("status") == "needs-review", (
-            "Task must be in needs-review status when retry_task is called"
+        assert status_at_retry.get("status") == "stopped", (
+            "Task must be in stopped status when retry_task is called"
         )
+        assert status_at_retry.get("reason") == "recovery_pending"
 
     async def test_recovery_count_incremented(self, db, sample_project):
         """_recover_single_task increments recovery_count before calling resume/retry."""
@@ -760,4 +762,142 @@ class TestRecoverSingleTask:
 
         assert resume_called == [], "resume_task must not be called when flap limit reached"
         result = await db.get_task(task["id"])
-        assert result["status"] == "needs-review"
+        assert result["status"] == "stopped"
+        assert result["reason"] == "recovery_failed"
+
+
+# ---------------------------------------------------------------------------
+# Recovery-through-lifecycle integration tests
+# ---------------------------------------------------------------------------
+
+class TestRecoveryThroughLifecycle:
+    """Verify that recovery.py has zero direct db.update_task(status=...) calls
+    and all transitions go through lifecycle.execute()."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_patches(self):
+        patches = [
+            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    async def test_no_direct_status_calls_in_recovery_module(self):
+        """Static check: recovery.py must not contain db.update_task(status=...)."""
+        import inspect
+        import switchboard.dispatch.recovery as recovery_mod
+        source = inspect.getsource(recovery_mod)
+        # Allow db.update_task calls but NOT ones with status= parameter
+        import re
+        status_calls = re.findall(r'db\.update_task\([^)]*status=', source)
+        assert status_calls == [], (
+            f"recovery.py still has {len(status_calls)} direct db.update_task(status=...) call(s). "
+            "All status changes must go through lifecycle.execute()."
+        )
+
+    async def test_recover_park_produces_audit_log(self, db, sample_project):
+        """recover_park writes an audit entry via lifecycle."""
+        task = await _create_orphan(db)
+        await recover_orphaned_tasks()
+
+        log = await db.get_audit_log("test-project/orphan-1")
+        park_entries = [e for e in log if e["action"] == "recover_park"]
+        assert len(park_entries) >= 1
+        assert park_entries[0]["previous_status"] == "working"
+        assert park_entries[0]["new_status"] == "stopped"
+
+    async def test_recover_fail_produces_audit_log(self, db, sample_project):
+        """recover_fail writes an audit entry when flap limit reached."""
+        task = await _create_orphan(db, recovery_count=MAX_RECOVERY_ATTEMPTS)
+        await recover_orphaned_tasks()
+
+        log = await db.get_audit_log("test-project/orphan-1")
+        fail_entries = [e for e in log if e["action"] == "recover_fail"]
+        assert len(fail_entries) >= 1
+        assert fail_entries[0]["new_status"] == "stopped"
+
+    async def test_signal_killed_task_parked_via_lifecycle(self, db, sample_project):
+        """Failed tasks killed by signal are parked through lifecycle, not direct status set."""
+        task = await db.create_task(id="test-project/signal-killed",
+                                     project_id="test-project", goal="Signal killed")
+        await db.update_task("test-project/signal-killed", status="failed")
+        await db.post_task_message(
+            task_id="test-project/signal-killed", author="dispatcher", type="status",
+            title="Failed", content="exit code -15",
+        )
+
+        await recover_orphaned_tasks()
+
+        # Should be parked then recovered
+        log = await db.get_audit_log("test-project/signal-killed")
+        park_entries = [e for e in log if e["action"] == "recover_park"]
+        assert len(park_entries) >= 1, "Signal-killed task must be parked through lifecycle"
+
+    async def test_recover_queue_produces_audit_log(self, db, sample_project):
+        """recover_queue writes an audit entry when concurrency is full."""
+        import os
+        # Fill all concurrency slots
+        max_concurrent = _db.DEFAULT_MAX_CONCURRENT
+        for i in range(max_concurrent):
+            t = await db.create_task(id=f"test-project/active-{i}",
+                                      project_id="test-project", goal=f"Active {i}")
+            await db.update_task(t["id"], status="working", pid=os.getpid())
+
+        task = await _create_orphan(db, session_id="s1")
+        await recover_orphaned_tasks()
+
+        log = await db.get_audit_log("test-project/orphan-1")
+        queue_entries = [e for e in log if e["action"] == "recover_queue"]
+        assert len(queue_entries) >= 1
+        assert queue_entries[0]["new_status"] == "ready"
+
+    async def test_gate_subtask_cancel_via_lifecycle(self, db, sample_project):
+        """Gate subtask cancellation goes through lifecycle.execute('recover_cancel')."""
+        from switchboard.dispatch.gates import _run_test_gate
+        parent = await db.create_task(id="test-project/parent", project_id="test-project",
+                                       goal="Parent task")
+        await db.update_task("test-project/parent", status="completed",
+                             gate_status="testing", auto_test=True,
+                             worktree_path="/tmp/fake-worktree")
+
+        await _create_orphan(db, task_id="test-project/gate-sub",
+                             parent_task_id="test-project/parent",
+                             session_id="sess-sub")
+
+        with patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()), \
+             patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()), \
+             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("switchboard.dispatch.gates.os.path.exists", return_value=True):
+            await recover_orphaned_tasks()
+
+        log = await db.get_audit_log("test-project/gate-sub")
+        cancel_entries = [e for e in log if e["action"] == "recover_cancel"]
+        assert len(cancel_entries) >= 1
+        assert cancel_entries[0]["new_status"] == "cancelled"
+
+    async def test_health_check_recovery_through_lifecycle(self, db, sample_project):
+        """_recover_single_task parks via lifecycle before dispatching."""
+        task = await _create_orphan(db, session_id=None)
+
+        lifecycle_actions = []
+        from switchboard.dispatch.lifecycle import lifecycle as lc
+        original_execute = lc.execute
+
+        async def tracking_execute(task_id, action, **ctx):
+            lifecycle_actions.append(action)
+            return await original_execute(task_id, action, **ctx)
+
+        with patch.object(lc, "execute", side_effect=tracking_execute), \
+             patch("switchboard.dispatch.engine.retry_task", AsyncMock()):
+            await _recover_single_task(task)
+
+        assert "recover_park" in lifecycle_actions, (
+            "Health check recovery must park via lifecycle.execute('recover_park')"
+        )

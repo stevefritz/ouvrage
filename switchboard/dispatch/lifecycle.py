@@ -710,6 +710,22 @@ async def _on_error(task: dict, **ctx: Any) -> None:
     await _drain_queue()
 
 
+async def _recover_queue_side_effects(task: dict, **ctx: Any) -> None:
+    """Queue a recovering task when concurrency is full."""
+    await db.update_task(task["id"], queued_at=db.now_iso(), recovery_priority=True)
+
+
+async def _recover_fail_post_message(task: dict, **ctx: Any) -> None:
+    """Post a message explaining why recovery failed."""
+    message = ctx.get("fail_message")
+    title = ctx.get("fail_title", "Recovery failed")
+    if message:
+        await db.post_task_message(
+            task_id=task["id"], author="dispatcher", type="status",
+            title=title, content=message,
+        )
+
+
 async def _on_signal_kill(task: dict, **ctx: Any) -> None:
     """SIGTERM/SIGKILL recovery — set recovery_priority, post message."""
     task_id = task["id"]
@@ -1099,15 +1115,43 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         side_effects=[_on_signal_kill],
     ),
     # --- Recovery Actions -------------------------------------------------
-    ("working", "recover"): TransitionDef(
-        to_state="working",
-        label="Recover",
+    ("working", "recover_park"): TransitionDef(
+        to_state="stopped",
+        reason="recovery_pending",
+        user_action=False,
+        side_effects=[_drain_queue_effect],
+    ),
+    ("stopped", "recover_park"): TransitionDef(
+        to_state="stopped",
+        reason="recovery_pending",
         user_action=False,
     ),
-    ("stopped", "recover"): TransitionDef(
-        to_state="working",
-        label="Recover",
+    ("stopped", "recover_queue"): TransitionDef(
+        to_state="ready",
         user_action=False,
+        side_effects=[_recover_queue_side_effects],
+    ),
+    ("stopped", "recover_fail"): TransitionDef(
+        to_state="stopped",
+        reason="recovery_failed",
+        user_action=False,
+        side_effects=[_recover_fail_post_message],
+    ),
+    ("working", "recover_fail"): TransitionDef(
+        to_state="stopped",
+        reason="recovery_failed",
+        user_action=False,
+        side_effects=[_recover_fail_post_message, _drain_queue_effect],
+    ),
+    ("working", "recover_cancel"): TransitionDef(
+        to_state="cancelled",
+        user_action=False,
+        side_effects=[_revert_punchlist],
+    ),
+    ("stopped", "recover_cancel"): TransitionDef(
+        to_state="cancelled",
+        user_action=False,
+        side_effects=[_revert_punchlist],
     ),
 }
 
@@ -1164,6 +1208,8 @@ STATE_LABELS: dict[tuple[str, str | None], dict[str, Any]] = {
     ("stopped", "worktree_missing"): {"label": "Worktree Missing", "color": "#ef4444", "pulse": False},
     ("stopped", "push_failed"): {"label": "Push Failed", "color": "#ef4444", "pulse": False},
     ("stopped", "awaiting_feedback"): {"label": "Awaiting Feedback", "color": "#f59e0b", "pulse": False},
+    ("stopped", "recovery_pending"): {"label": "Recovering", "color": "#f59e0b", "pulse": True},
+    ("stopped", "recovery_failed"): {"label": "Recovery Failed", "color": "#ef4444", "pulse": False},
     ("stopped", "recovery_limit"): {"label": "Recovery Failed", "color": "#ef4444", "pulse": False},
     ("stopped", None): {"label": "Stopped", "color": "#f59e0b", "pulse": False},
     ("completed", "gate_passed"): {"label": "Completed", "color": "#10b981", "pulse": False},

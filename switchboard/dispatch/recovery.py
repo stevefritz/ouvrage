@@ -171,6 +171,7 @@ async def recover_orphaned_tasks():
     """
     # Lazy imports to break circular dependency with dispatch.engine
     from switchboard.dispatch.gates import _resume_gate_pipeline  # noqa: PLC0415
+    from switchboard.dispatch.lifecycle import lifecycle  # noqa: PLC0415
 
     # Unified sweep for tasks stuck in intermediate gate states across all terminal statuses.
     # Replaces the previous separate Category 1 (completed) and Category 2 (pending-validation)
@@ -228,22 +229,27 @@ async def recover_orphaned_tasks():
         if killed_by_signal or not has_worker_output:
             reason = "killed by signal" if killed_by_signal else "no worker output"
             log.warning(f"Startup recovery: task {task['id']} failed ({reason}), treating as orphan")
-            await db.update_task(task["id"], status="working")
+            # Park directly — failed maps to effective state "stopped", so use recover_park
+            await lifecycle.execute(
+                task["id"], "recover_park",
+                triggered_by="recovery-sweep",
+                source_detail=f"recover_orphaned_tasks (failed task: {reason})",
+            )
             orphans.append(task)
 
     if not orphans:
         return
 
-    # Mark all orphans as needs-review immediately so they don't count against
-    # concurrency while we process them one by one with stagger delays
+    # Park all orphans via lifecycle — frees concurrency slots so they don't
+    # count against the limit while we process them one-by-one with stagger delays.
+    # Failed tasks were already parked above; only park working tasks here.
     for task in orphans:
-        await db.update_task(task["id"], status="needs-review")
-        await db.write_audit_log(
-            task_id=task["id"], action="recovered",
-            triggered_by="recovery-sweep",
-            source_detail="recover_orphaned_tasks (marked needs-review)",
-            previous_status=task.get("status"), new_status="needs-review",
-        )
+        if task.get("status") == "working":
+            await lifecycle.execute(
+                task["id"], "recover_park",
+                triggered_by="recovery-sweep",
+                source_detail="recover_orphaned_tasks (park orphan)",
+            )
 
     # If recovery is disabled, just post messages (already marked needs-review above)
     if not RECOVERY_ENABLED:
@@ -274,12 +280,13 @@ async def recover_orphaned_tasks():
         # Flap detection — check BEFORE incrementing
         if current_count >= MAX_RECOVERY_ATTEMPTS:
             log.warning(f"Recovery limit reached for {task_id} ({current_count} attempts)")
-            await db.update_task(task_id, status="needs-review")
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Recovery limit reached",
-                content=f"Recovery limit reached ({current_count} attempts). "
-                        "Manual intervention required.",
+            await lifecycle.execute(
+                task_id, "recover_fail",
+                triggered_by="recovery-sweep",
+                source_detail=f"recover_orphaned_tasks (flap limit: {current_count} attempts)",
+                fail_title="Recovery limit reached",
+                fail_message=f"Recovery limit reached ({current_count} attempts). "
+                             "Manual intervention required.",
             )
             continue
 
@@ -308,8 +315,11 @@ async def recover_orphaned_tasks():
         if active >= _limit:
             # Queue with recovery priority (front of FIFO queue)
             log.info(f"Recovery: queuing {task_id} with priority (concurrency full: {active}/{_limit})")
-            await db.update_task(task_id, status="ready",
-                                 queued_at=db.now_iso(), recovery_priority=True)
+            await lifecycle.execute(
+                task_id, "recover_queue",
+                triggered_by="recovery-sweep",
+                source_detail=f"recover_orphaned_tasks (concurrency full: {active}/{_limit})",
+            )
             continue
 
         # Dispatch based on method
@@ -317,11 +327,12 @@ async def recover_orphaned_tasks():
             await _recover_task(task_id, task, method)
         except Exception as e:
             log.error(f"Recovery failed for {task_id}: {e}", exc_info=True)
-            await db.update_task(task_id, status="needs-review")
-            await db.post_task_message(
-                task_id=task_id, author="dispatcher", type="status",
-                title="Recovery failed",
-                content=f"Auto-recovery failed:\n```\n{e}\n```\nMarked as needs-review.",
+            await lifecycle.execute(
+                task_id, "recover_fail",
+                triggered_by="recovery-sweep",
+                source_detail=f"recover_orphaned_tasks (dispatch failed: {e})",
+                fail_title="Recovery failed",
+                fail_message=f"Auto-recovery failed:\n```\n{e}\n```\nMarked for manual review.",
             )
 
 
@@ -339,21 +350,38 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
     """Re-trigger parent gate pipeline for an orphaned gate subtask."""
     # Lazy imports to break circular dependency
     from switchboard.dispatch.gates import _run_test_gate, _dispatch_review  # noqa: PLC0415
+    from switchboard.dispatch.lifecycle import lifecycle  # noqa: PLC0415
 
     parent_id = task["parent_task_id"]
     parent = await db.get_task(parent_id)
     if not parent:
-        log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} not found, falling back to needs-review")
-        await db.update_task(task_id, status="needs-review")
+        log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} not found, falling back to recover_fail")
+        await lifecycle.execute(
+            task_id, "recover_fail",
+            triggered_by="recovery-sweep",
+            source_detail=f"_recover_gate_subtask (parent {parent_id} not found)",
+            fail_title="Recovery failed",
+            fail_message=f"Gate subtask parent `{parent_id}` not found. Manual intervention required.",
+        )
         return
 
     project = await db.get_project(parent["project_id"])
     if not project:
-        await db.update_task(task_id, status="needs-review")
+        await lifecycle.execute(
+            task_id, "recover_fail",
+            triggered_by="recovery-sweep",
+            source_detail=f"_recover_gate_subtask (project not found for parent {parent_id})",
+            fail_title="Recovery failed",
+            fail_message="Parent task's project not found. Manual intervention required.",
+        )
         return
 
-    # Cancel the orphaned subtask
-    await db.update_task(task_id, status="cancelled")
+    # Cancel the orphaned subtask via lifecycle
+    await lifecycle.execute(
+        task_id, "recover_cancel",
+        triggered_by="recovery-sweep",
+        source_detail=f"_recover_gate_subtask (cancelling orphaned subtask, re-triggering parent {parent_id})",
+    )
 
     # Re-trigger the appropriate gate step on the parent
     gate = parent.get("gate_status")
@@ -365,7 +393,6 @@ async def _recover_gate_subtask(task_id: str, task: dict) -> None:
         await _dispatch_review(parent_id, project, parent)
     else:
         log.warning(f"Recovery: gate subtask {task_id} parent {parent_id} gate_status={gate}, cannot re-trigger")
-        await db.update_task(task_id, status="needs-review")
 
 
 async def _recover_with_resume(task_id: str, task: dict) -> None:
@@ -384,7 +411,7 @@ async def _recover_with_resume(task_id: str, task: dict) -> None:
         await _recover_with_retry(task_id, task)
         return
 
-    # Task is already in needs-review status (set at start of recovery)
+    # Task is already in stopped/recovery_pending status (set at start of recovery)
     try:
         await resume_task(task_id, reset_recovery_count=False)
         log.info(f"Recovery: resumed {task_id} with session {task.get('session_id')}")
@@ -395,8 +422,16 @@ async def _recover_with_resume(task_id: str, task: dict) -> None:
             title="Resume failed",
             content=f"Could not resume session: {e}\nFalling back to fresh retry.",
         )
-        # Ensure task is in a retryable state
-        await db.update_task(task_id, status="needs-review")
+        # Ensure task is in a retryable state — re-park via lifecycle
+        from switchboard.dispatch.lifecycle import lifecycle  # noqa: PLC0415
+        try:
+            await lifecycle.execute(
+                task_id, "recover_park",
+                triggered_by="recovery-sweep",
+                source_detail=f"_recover_with_resume (resume failed, re-parking for retry)",
+            )
+        except Exception:
+            pass  # Already in stopped state, ignore transition errors
         await _recover_with_retry(task_id, task)
 
 
@@ -405,13 +440,24 @@ async def _recover_with_retry(task_id: str, task: dict) -> None:
     # Lazy import to break circular dependency
     from switchboard.dispatch.engine import retry_task  # noqa: PLC0415
 
-    # Task is already in needs-review status (set at start of recovery)
+    # Task is already in stopped/recovery_pending status (set at start of recovery)
     try:
         await retry_task(task_id)
         log.info(f"Recovery: retried {task_id} with fresh session")
     except Exception as e:
         log.warning(f"Recovery: retry failed for {task_id}: {e}")
-        await db.update_task(task_id, status="needs-review")
+        # Re-park via lifecycle so task stays in stopped state
+        from switchboard.dispatch.lifecycle import lifecycle  # noqa: PLC0415
+        try:
+            await lifecycle.execute(
+                task_id, "recover_fail",
+                triggered_by="recovery-sweep",
+                source_detail=f"_recover_with_retry (retry failed: {e})",
+                fail_title="Recovery retry failed",
+                fail_message=f"Auto-retry failed: {e}",
+            )
+        except Exception:
+            pass  # Best-effort; task may already be in the right state
         raise
 
 
@@ -419,22 +465,29 @@ async def _recover_single_task(task: dict):
     """Attempt to recover a single dead/orphaned task."""
     # Lazy imports to break circular dependency
     from switchboard.dispatch.engine import resume_task, retry_task  # noqa: PLC0415
+    from switchboard.dispatch.lifecycle import lifecycle  # noqa: PLC0415
 
     task_id = task["id"]
     current_count = task.get("recovery_count") or 0
 
     if current_count >= MAX_RECOVERY_ATTEMPTS:
         log.warning(f"Recovery limit reached for {task_id} ({current_count} attempts)")
-        await db.update_task(task_id, status="needs-review")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Recovery limit reached",
-            content=f"Auto-recovery failed {current_count} times. Manual intervention required.",
+        await lifecycle.execute(
+            task_id, "recover_fail",
+            triggered_by="health-check",
+            source_detail=f"_recover_single_task (flap limit: {current_count} attempts)",
+            fail_title="Recovery limit reached",
+            fail_message=f"Auto-recovery failed {current_count} times. Manual intervention required.",
         )
         return
 
+    # Park via lifecycle, then update recovery tracking fields
+    await lifecycle.execute(
+        task_id, "recover_park",
+        triggered_by="health-check",
+        source_detail=f"_recover_single_task (park before resume/retry)",
+    )
     await db.update_task(task_id,
-                         status="needs-review",
                          recovery_count=current_count + 1,
                          last_recovery_at=db.now_iso())
 
@@ -447,11 +500,12 @@ async def _recover_single_task(task: dict):
             await retry_task(task_id)
     except Exception as e:
         log.warning(f"Health check recovery failed for {task_id}: {e}")
-        await db.update_task(task_id, status="needs-review")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Auto-recovery failed",
-            content=f"Recovery attempt failed: {e}",
+        await lifecycle.execute(
+            task_id, "recover_fail",
+            triggered_by="health-check",
+            source_detail=f"_recover_single_task (dispatch failed: {e})",
+            fail_title="Auto-recovery failed",
+            fail_message=f"Recovery attempt failed: {e}",
         )
 
 
