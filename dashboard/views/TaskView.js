@@ -601,12 +601,6 @@ function ActionToolbar({ task, chain, apiActions, onAction }) {
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c', true));
     }
-    // Show Cancel Chain when this task is part of a chain (has depends_on OR has dependents)
-    const hasChainContext = task.depends_on || (chain && chain.some(t => t.depends_on === task.id));
-    if (hasChainContext) {
-        actions.push(btn('cancel-chain', 'Cancel Chain', colors.redBg, colors.red, true));
-    }
-
     const done = task.checklist_done || 0;
     const total = task.checklist_total || 0;
 
