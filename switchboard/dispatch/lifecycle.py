@@ -99,10 +99,12 @@ async def _skip_gate_set_fields(task: dict, **ctx: Any) -> None:
 
 async def _skip_gate_post_message(task: dict, **ctx: Any) -> None:
     """Post 'Gate skipped' status message."""
+    gate = task.get("gate_status") or "unknown"
+    gate_label = gate.replace("-", " ").replace("_", " ")
     await db.post_task_message(
         task_id=task["id"], author="dispatcher", type="status",
         title="Gate skipped",
-        content="Gate manually bypassed by user.",
+        content=f"Gate manually bypassed by user (was: {gate_label}).",
     )
 
 
