@@ -260,7 +260,7 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     """Resume a stopped/cancelled task's CC session."""
     import os
     from switchboard.dispatch.internals import (
-        setup_task_worktree, launch_sdk_session, resolve_session_config,
+        checkout_existing_worktree, launch_sdk_session, resolve_session_config,
     )
     from switchboard.dispatch.sdk_session import _build_resume_prompt
 
@@ -287,10 +287,10 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
 
     project = await db.get_project(task["project_id"])
 
-    # Worktree check — re-create if missing
+    # Worktree check — checkout from origin if missing
     worktree_path = task.get("worktree_path")
     if not worktree_path or not os.path.exists(worktree_path):
-        worktree_path = await setup_task_worktree(project, task)
+        worktree_path = await checkout_existing_worktree(project, task)
         await db.update_task(task_id, worktree_path=worktree_path)
 
     # Build resume prompt
@@ -446,15 +446,14 @@ async def _reopen_side_effects(task: dict, **ctx: Any) -> None:
 
 
 async def _start_launch_session(task: dict, **ctx: Any) -> None:
-    """Collect reopen feedback, sync branch, invalidate chain, launch CC (forking from previous attempt)."""
+    """Collect reopen feedback, checkout existing branch, invalidate chain, launch CC (forking from previous attempt)."""
     import os
     from switchboard.dispatch.internals import (
-        setup_task_worktree, build_dispatch_prompt,
+        checkout_existing_worktree, build_dispatch_prompt,
         launch_sdk_session, resolve_session_config,
         collect_reopen_feedback,
     )
     from switchboard.dispatch.engine import _invalidate_chain
-    from switchboard.git.operations import _sync_branch_with_base
     from switchboard.notifications import slack as notify
 
     task_id = task["id"]
@@ -477,9 +476,6 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
         content=f"Attempt {current_attempt} starting — {fork_note}.",
     )
 
-    # Rebase onto base branch
-    await _sync_branch_with_base(task)
-
     # Invalidate downstream chain
     dependents = await db.get_dependents(task_id)
     if dependents:
@@ -487,10 +483,10 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
 
     project = await db.get_project(task["project_id"])
 
-    # Setup worktree if needed
+    # Checkout existing branch from origin (no rebase, no depends_on logic)
     worktree_path = task.get("worktree_path")
     if not worktree_path or not os.path.exists(worktree_path):
-        worktree_path = await setup_task_worktree(project, task)
+        worktree_path = await checkout_existing_worktree(project, task)
         await db.update_task(task_id, worktree_path=worktree_path)
 
     # Build prompt with feedback + launch

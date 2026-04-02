@@ -15,6 +15,7 @@ engine.py so that existing test patches on engine.* bindings still apply.
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 
 import switchboard.db as db
@@ -34,8 +35,71 @@ def _resolve_limit(task_val, project_val, global_default):
 
 
 # ---------------------------------------------------------------------------
-# 1. setup_task_worktree
+# 1. setup_task_worktree / checkout_existing_worktree
 # ---------------------------------------------------------------------------
+
+async def checkout_existing_worktree(project: dict, task: dict) -> str:
+    """Checkout an existing branch from origin into a worktree. Returns worktree_path.
+
+    For reopen/resume — checks out the branch as it exists on origin.
+    No depends_on logic, no branch deletion, no rebasing.
+    Falls back to setup_task_worktree if the branch doesn't exist on origin.
+    """
+    import switchboard.dispatch.engine as _engine
+    from switchboard.git.worktree import _run_as_worker
+
+    task_id = task["id"]
+    short_name = task_id.split("/")[-1] if "/" in task_id else task_id
+    branch = task["branch"] or short_name
+    base = project["working_dir"]
+    worktree_path = os.path.join(base, short_name)
+    bare_path = os.path.join(base, ".bare")
+
+    # If worktree already exists, just fetch and pull
+    if os.path.exists(worktree_path):
+        log.info(f"Worktree already exists: {worktree_path}, fetching latest")
+        await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
+        await _run_as_worker(
+            "git", "-C", worktree_path, "merge", "--ff-only",
+            f"origin/{branch}",
+        )
+        await _engine.setup_credential_helper(worktree_path, task["project_id"])
+        return worktree_path
+
+    # Fetch so origin refs are current
+    await _run_as_worker("git", "-C", bare_path, "fetch", "origin")
+
+    # Check if branch exists on origin
+    _, _, rc = await _run_as_worker(
+        "git", "-C", bare_path, "rev-parse", "--verify", f"origin/{branch}",
+    )
+
+    if rc != 0:
+        # Branch doesn't exist on origin — fall back to full setup
+        log.info(f"Branch '{branch}' not on origin, falling back to setup_task_worktree")
+        return await setup_task_worktree(project, task)
+
+    # Delete stale local ref if it exists (prevents worktree add conflict)
+    await _run_as_worker("git", "-C", bare_path, "branch", "-D", branch)
+
+    # Checkout from origin — no -b flag reuse, create branch tracking origin
+    stdout, stderr, rc = await _run_as_worker(
+        "git", "-C", bare_path, "worktree", "add",
+        "-b", branch, worktree_path, f"origin/{branch}",
+    )
+    if rc != 0:
+        raise RuntimeError(f"Failed to checkout existing branch: {stderr.decode()}")
+
+    # Make worktree group-writable for service user
+    await _run_as_worker("chmod", "g+w", worktree_path)
+
+    log.info(f"Checked out existing branch '{branch}' from origin into {worktree_path}")
+
+    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    await _engine.run_setup_command(project, worktree_path)
+
+    return worktree_path
+
 
 async def setup_task_worktree(project: dict, task: dict) -> str:
     """Create worktree, setup credentials, run setup_command. Returns worktree_path.
