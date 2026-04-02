@@ -22,6 +22,7 @@ Both layers bypass localhost connections (CC workers on the same host).
 
 import json
 import logging
+import posixpath
 import time
 from typing import Any
 from urllib.parse import quote
@@ -356,9 +357,17 @@ def auth_middleware(inner_app):
             return
 
         # ── Session auth for /dashboard* (except /dashboard/api/*) ──────────
-        # /dashboard/login is public; everything else requires a session.
+        # /dashboard/login is public; static assets (paths with file extension)
+        # pass through without auth so the login page can load CSS/JS.
         # /dashboard/api/* is handled separately below.
-        if path.startswith("/dashboard") and path != "/dashboard/login" and not path.startswith("/dashboard/api/"):
+        if path.startswith("/dashboard") and not path.startswith("/dashboard/api/"):
+            # Public paths: login page and static assets (have file extension)
+            if path == "/dashboard/login":
+                return await inner_app(scope, receive, send)
+            basename = posixpath.basename(path)
+            if '.' in basename:
+                return await inner_app(scope, receive, send)
+            # SPA routes — session required
             user = await get_session_user(scope)
             if user is None:
                 if AUTH_MODE == "saas":

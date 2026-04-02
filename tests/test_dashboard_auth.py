@@ -184,24 +184,41 @@ class TestDashboardApiSessionRequired:
         assert "error" in data
 
 
-# ── Dashboard SPA: session required (except /dashboard/login) ────────────
+# ── Dashboard SPA routes vs static assets ──────────────────────────────────
 
 class TestDashboardSPARequiresAuth:
 
     async def test_dashboard_root_requires_session(self, db):
+        """SPA route (no extension) requires session auth."""
         status, headers, _, _ = await _call_middleware("/dashboard")
         assert status == 302
         assert "/dashboard/login" in headers["location"]
 
-    async def test_dashboard_html_requires_session(self, db):
-        status, headers, _, _ = await _call_middleware("/dashboard/index.html")
-        assert status == 302
-        assert "/dashboard/login" in headers["location"]
+    async def test_dashboard_static_html_passes_without_session(self, db):
+        """Static assets (have file extension) pass through without auth."""
+        status, _, body, _ = await _call_middleware("/dashboard/index.html")
+        assert status == 200
 
-    async def test_dashboard_js_requires_session(self, db):
-        status, headers, _, _ = await _call_middleware("/dashboard/app.js")
+    async def test_dashboard_static_js_passes_without_session(self, db):
+        """Static assets (have file extension) pass through without auth."""
+        status, _, _, _ = await _call_middleware("/dashboard/app.js")
+        assert status == 200
+
+
+# ── Legacy /foreman redirect ──────────────────────────────────────────────
+
+class TestLegacyForemanRedirect:
+
+    async def test_foreman_redirects_to_dashboard(self, db):
+        """Legacy /foreman paths redirect to /dashboard equivalent."""
+        status, headers, _, _ = await _call_middleware("/foreman")
         assert status == 302
-        assert "/dashboard/login" in headers["location"]
+        assert headers["location"] == "/dashboard"
+
+    async def test_foreman_subpath_redirects_to_dashboard(self, db):
+        status, headers, _, _ = await _call_middleware("/foreman/login")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
 
 
 # ── Localhost bypass ────────────────────────────────────────────────────────
@@ -229,3 +246,20 @@ class TestLocalhostBypass:
         )
         assert status == 200
         assert body == b"OK"
+
+
+# ── Legacy /foreman redirect ──────────────────────────────────────────────
+
+class TestLegacyForemanRedirect:
+
+    async def test_foreman_redirects_to_dashboard(self, db):
+        """/foreman should redirect to /dashboard (via middleware catch-all)."""
+        status, headers, _, _ = await _call_middleware("/foreman")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
+
+    async def test_foreman_nested_redirects_to_dashboard(self, db):
+        """/foreman/tasks should redirect to /dashboard (via middleware catch-all)."""
+        status, headers, _, _ = await _call_middleware("/foreman/tasks")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
