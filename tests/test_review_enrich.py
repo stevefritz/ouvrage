@@ -229,7 +229,7 @@ class TestDispatchReviewPromptStructure:
         }
         if task_overrides:
             task.update(task_overrides)
-        project = {"id": "test-project", "test_command": "pytest -v", **(project_overrides or {})}
+        project = {"id": "test-project", "test_command": "pytest -v", "default_branch": "main", **(project_overrides or {})}
         captured = {}
 
         async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
@@ -276,7 +276,7 @@ class TestDispatchReviewPromptStructure:
         prompt = await self._run({"base_branch": "develop"})
         assert "origin/develop...HEAD" in prompt
 
-    async def test_base_branch_defaults_to_main(self, tmp_db):
+    async def test_base_branch_falls_back_to_project_default(self, tmp_db):
         prompt = await self._run({"base_branch": None})
         assert "origin/main...HEAD" in prompt
 
@@ -329,7 +329,7 @@ class TestDispatchReviewPunchlistClaims:
             "id": "test-project/my-task", "goal": "Fix bugs", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "test_command": "pytest"}
+        project = {"id": "test-project", "test_command": "pytest", "default_branch": "main"}
         fake_component = {
             "id": "api", "name": "API", "description": None, "phase": "dev",
         }
@@ -367,7 +367,7 @@ class TestDispatchReviewPunchlistClaims:
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
         }
-        project = {"id": "test-project", "test_command": "pytest"}
+        project = {"id": "test-project", "test_command": "pytest", "default_branch": "main"}
         fake_component = {
             "id": "api", "name": "API", "description": None, "phase": "dev",
         }
@@ -402,7 +402,7 @@ class TestDispatchReviewPriorReviewHistory:
             "project_id": "test-project", "base_branch": "main",
             "current_attempt": current_attempt,
         }
-        project = {"id": "test-project", "test_command": "pytest"}
+        project = {"id": "test-project", "test_command": "pytest", "default_branch": "main"}
         captured = {}
 
         # Build messages: prior reviews have type="review", author="cc-worker", attempt_number < current
@@ -454,7 +454,7 @@ class TestDispatchReviewPriorReviewHistory:
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
             "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
         }
-        project = {"id": "test-project", "test_command": "pytest"}
+        project = {"id": "test-project", "test_command": "pytest", "default_branch": "main"}
         captured = {}
 
         human_msg = {"type": "note", "author": "stephen", "title": "Scope change",
@@ -497,7 +497,7 @@ class TestDispatchReviewFetchBeforeDiff:
         }
         if task_overrides:
             task.update(task_overrides)
-        project = {"id": "test-project", "test_command": "pytest -v"}
+        project = {"id": "test-project", "test_command": "pytest -v", "default_branch": "main"}
         fetch_calls = []
         prompt_captured = {}
 
@@ -537,7 +537,7 @@ class TestDispatchReviewFetchBeforeDiff:
             for args in fetch_calls
         )
 
-    async def test_fetch_defaults_to_main(self, tmp_db):
+    async def test_fetch_falls_back_to_project_default(self, tmp_db):
         fetch_calls, _ = await self._run_capturing_fetch({"base_branch": None})
         assert any(
             "fetch" in args and "origin" in args and "main" in args

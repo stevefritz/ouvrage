@@ -600,7 +600,9 @@ async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> Non
             "Do NOT reject for style, naming, or cosmetic issues on retries.\n"
         )
 
-    base_branch = task.get("base_branch") or "main"
+    base_branch = task.get("base_branch") or project.get("default_branch")
+    if not base_branch:
+        raise ValueError(f"Task {task_id}: no base_branch on task and no default_branch on project — cannot build review diff")
     worktree_path = task.get("worktree_path") or "(unknown)"
     test_command = project.get("test_command") or "(none configured)"
 
