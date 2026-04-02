@@ -344,8 +344,8 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
         return None
 
     slug = _task_slug(task["id"])
-    dispatch_count = task.get("dispatch_count") or 1
-    dest = Path(project["working_dir"]) / ".task-history" / slug / f"attempt-{dispatch_count}"
+    attempt = task.get("current_attempt") or task.get("dispatch_count") or 1
+    dest = Path(project["working_dir"]) / ".task-history" / slug / f"attempt-{attempt}"
 
     try:
         # Create dest dir as worker user (project working_dir owned by worker)
@@ -358,7 +358,7 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
 
         metadata = {
             "task_id": task["id"],
-            "attempt": dispatch_count,
+            "attempt": attempt,
             "reason": reason,
             "session_id": task.get("session_id"),
             "cost_usd": task.get("total_cost_usd"),
@@ -372,7 +372,7 @@ async def archive_task_logs(task: dict, project: dict, reason: str) -> Path | No
             tmp.write(metadata_json)
             tmp_path = tmp.name
         await _run_as_worker("mv", tmp_path, str(dest / "metadata.json"))
-        log.info(f"Archived logs for {task['id']} attempt {dispatch_count} to {dest} (reason={reason})")
+        log.info(f"Archived logs for {task['id']} attempt {attempt} to {dest} (reason={reason})")
         return dest
     except Exception as e:
         log.warning(f"archive_task_logs failed for {task['id']}: {e}")
