@@ -126,7 +126,8 @@ class TestReopenTask:
         await reopen_task(task["id"])
 
         updated = await db.get_task(task["id"])
-        assert updated["session_id"] is None
+        # session_id preserved for fork-on-start (no longer cleared on reopen)
+        assert updated["session_id"] == "ses_abc123"
 
     async def test_reopen_clears_gate_status(self, db, sample_project):
         from switchboard.dispatch.engine import reopen_task

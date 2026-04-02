@@ -133,8 +133,8 @@ class TestRecoverWithResume:
 
         task = await db.get_task("test-project/orphan-1")
         assert task["status"] == "working"
-        # session_id should be cleared (retry clears it)
-        assert task["session_id"] is None
+        # session_id preserved for fork-on-retry (no longer cleared)
+        assert task["session_id"] == "sess-123"
 
 
 # ---------------------------------------------------------------------------
