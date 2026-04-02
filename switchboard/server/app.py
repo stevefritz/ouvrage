@@ -139,7 +139,7 @@ _MIME_TYPES = {
 
 
 async def _serve_dashboard(scope, send):
-    """Serve static files from dashboard/. No SPA fallback — use /foreman for the dashboard."""
+    """Serve static files from dashboard/. No SPA fallback — use /dashboard for the SPA."""
     path = scope["path"]
     # Strip /dashboard prefix to get file path
     file_path = path[len("/dashboard"):].lstrip("/")
@@ -178,15 +178,15 @@ async def _serve_dashboard(scope, send):
 async def _serve_foreman(scope, send):
     """Serve foreman.html and its assets from dashboard/."""
     path = scope["path"]
-    # /foreman or /foreman.html → foreman.html at app root
-    # /foreman/anything → serve from dashboard/ (shared JS/CSS)
+    # /dashboard, /dashboard/, /dashboard/login → foreman.html at app root
+    # /dashboard/anything-else → serve from dashboard/ dir (shared JS/CSS)
     _app_root = os.path.dirname(os.path.abspath(__file__))
     _project_root = os.path.join(_app_root, "..", "..")
-    if path in ("/foreman", "/foreman.html", "/foreman/", "/foreman/login"):
+    if path in ("/dashboard", "/dashboard/", "/dashboard/login"):
         file_path = os.path.join(_project_root, "foreman.html")
     else:
-        # Strip /foreman prefix, serve from dashboard dir (shared assets)
-        rel = path[len("/foreman"):].lstrip("/")
+        # Strip /dashboard prefix, serve from dashboard dir (shared assets)
+        rel = path[len("/dashboard"):].lstrip("/")
         file_path = os.path.join(_DASHBOARD_DIR, rel)
         file_path = os.path.realpath(file_path)
         if not file_path.startswith(os.path.realpath(_DASHBOARD_DIR)):
@@ -310,13 +310,13 @@ async def main():
             await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)
-        elif path == "/dashboard" or path == "/dashboard/":
-            await send({"type": "http.response.start", "status": 302, "headers": [[b"location", b"/foreman"]]})
-            await send({"type": "http.response.body", "body": b""})
         elif path.startswith("/dashboard"):
-            await _serve_dashboard(scope, send)
-        elif path.startswith("/foreman"):
             await _serve_foreman(scope, send)
+        elif path.startswith("/foreman"):
+            # Legacy redirect: /foreman* → /dashboard equivalent
+            new_path = "/dashboard" + path[len("/foreman"):]
+            await send({"type": "http.response.start", "status": 302, "headers": [[b"location", new_path.encode()]]})
+            await send({"type": "http.response.body", "body": b""})
         # OAuth authorization server endpoints
         elif path == "/.well-known/openid-configuration" and method == "GET":
             await oauth_server.handle_openid_configuration(scope, receive, send)
@@ -341,11 +341,11 @@ async def main():
         elif path == "/oauth/revoke" and method == "POST":
             await oauth_server.handle_revoke(scope, receive, send)
         else:
-            # Redirect unknown paths to /foreman (dashboard)
+            # Redirect unknown paths to /dashboard
             await send({
                 "type": "http.response.start",
                 "status": 302,
-                "headers": [[b"location", b"/foreman"]],
+                "headers": [[b"location", b"/dashboard"]],
             })
             await send({"type": "http.response.body", "body": b""})
 

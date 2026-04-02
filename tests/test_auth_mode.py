@@ -3,9 +3,9 @@
 Covers:
 - AUTH_MODE defaults to 'local' when env var not set
 - local mode: /dashboard/api/* no session → 401 (unchanged)
-- local mode: /foreman* no session → 302 to /foreman/login (unchanged)
+- local mode: /dashboard* no session → 302 to /dashboard/login (unchanged)
 - saas mode: /dashboard/api/* no session → 302 to control plane
-- saas mode: /foreman* no session → 302 to control plane
+- saas mode: /dashboard* no session → 302 to control plane
 - Redirect URL format: {CONTROL_PLANE_URL}/login?redirect={instance_url}/auth/sso
 """
 
@@ -106,9 +106,9 @@ class TestAuthModeConfig:
 
     def test_control_plane_url_reads_from_env(self):
         import switchboard.config.settings as settings
-        with patch.dict(os.environ, {"CONTROL_PLANE_URL": "https://foreman.dev"}):
+        with patch.dict(os.environ, {"CONTROL_PLANE_URL": "https://dashboard.dev"}):
             importlib.reload(settings)
-            assert settings.CONTROL_PLANE_URL == "https://foreman.dev"
+            assert settings.CONTROL_PLANE_URL == "https://dashboard.dev"
         importlib.reload(settings)
 
 
@@ -129,14 +129,14 @@ class TestLocalModeUnchanged:
         assert data["error"] == "authentication_required"
 
     async def test_foreman_no_session_redirects_to_local_login(self, db):
-        """Local mode: /foreman/* no session → 302 to /foreman/login."""
-        status, headers, _ = await _call_middleware("/foreman/")
+        """Local mode: /dashboard/* no session → 302 to /dashboard/login."""
+        status, headers, _ = await _call_middleware("/dashboard/")
         assert status == 302
-        assert headers["location"].startswith("/foreman/login?next=")
+        assert headers["location"].startswith("/dashboard/login?next=")
 
     async def test_foreman_login_is_public(self, db):
-        """Local mode: /foreman/login is public (no auth required)."""
-        status, _, body = await _call_middleware("/foreman/login")
+        """Local mode: /dashboard/login is public (no auth required)."""
+        status, _, body = await _call_middleware("/dashboard/login")
         assert status == 200
         assert body == b"OK"
 
@@ -148,7 +148,7 @@ class TestSaasModeRedirect:
     @pytest.fixture(autouse=True)
     def set_saas_mode(self):
         with patch("switchboard.auth.middleware.AUTH_MODE", "saas"), \
-             patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://foreman.dev"):
+             patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://dashboard.dev"):
             yield
 
     async def test_dashboard_api_no_session_returns_302(self, db):
@@ -162,7 +162,7 @@ class TestSaasModeRedirect:
             "/dashboard/api/tasks", host="tenant.foreman.dev"
         )
         location = headers["location"]
-        assert location.startswith("https://foreman.dev/login?redirect=")
+        assert location.startswith("https://dashboard.dev/login?redirect=")
         # /auth/sso is URL-encoded inside the redirect param
         assert "%2Fauth%2Fsso" in location or "/auth/sso" in location
 
@@ -177,22 +177,22 @@ class TestSaasModeRedirect:
         assert "auth%2Fsso" in location or "/auth/sso" in location
 
     async def test_foreman_no_session_redirects_to_control_plane(self, db):
-        """SaaS mode: /foreman/* no session → 302 to control plane (not /foreman/login)."""
-        status, headers, _ = await _call_middleware("/foreman/")
+        """SaaS mode: /dashboard/* no session → 302 to control plane (not /dashboard/login)."""
+        status, headers, _ = await _call_middleware("/dashboard/")
         assert status == 302
         location = headers["location"]
-        assert location.startswith("https://foreman.dev/login")
-        assert "/foreman/login" not in location
+        assert location.startswith("https://dashboard.dev/login")
+        assert "/dashboard/login" not in location
 
     async def test_foreman_redirect_includes_sso_path(self, db):
-        """SaaS mode: /foreman redirect includes /auth/sso return path."""
-        _, headers, _ = await _call_middleware("/foreman/", host="tenant.foreman.dev")
+        """SaaS mode: /dashboard redirect includes /auth/sso return path."""
+        _, headers, _ = await _call_middleware("/dashboard/", host="tenant.foreman.dev")
         location = headers["location"]
         assert "auth" in location and "sso" in location
 
     async def test_foreman_login_still_public_in_saas_mode(self, db):
-        """/foreman/login is public even in SaaS mode."""
-        status, _, body = await _call_middleware("/foreman/login")
+        """/dashboard/login is public even in SaaS mode."""
+        status, _, body = await _call_middleware("/dashboard/login")
         assert status == 200
         assert body == b"OK"
 
@@ -214,7 +214,7 @@ class TestSaasModeRedirect:
         sid = await create_session(user["id"])
         cookie = f"switchboard_session={sid}"
 
-        status, _, body = await _call_middleware("/foreman/", cookie=cookie)
+        status, _, body = await _call_middleware("/dashboard/", cookie=cookie)
         assert status == 200
         assert body == b"OK"
 
@@ -248,19 +248,19 @@ class TestSaasRedirectUrlConstruction:
 
     def test_saas_redirect_url_format(self):
         from switchboard.auth.middleware import _saas_redirect_url
-        with patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://foreman.dev"):
+        with patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://dashboard.dev"):
             scope = {"headers": [(b"host", b"tenant.foreman.dev")]}
             result = _saas_redirect_url(scope)
-        assert result.startswith("https://foreman.dev/login?redirect=")
+        assert result.startswith("https://dashboard.dev/login?redirect=")
         assert "tenant.foreman.dev" in result
         assert "auth" in result
         assert "sso" in result
 
     def test_saas_redirect_url_strips_trailing_slash_from_cp(self):
         from switchboard.auth.middleware import _saas_redirect_url
-        with patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://foreman.dev/"):
+        with patch("switchboard.auth.middleware.CONTROL_PLANE_URL", "https://dashboard.dev/"):
             scope = {"headers": [(b"host", b"tenant.foreman.dev")]}
             result = _saas_redirect_url(scope)
         # Should not have double slash
-        assert "https://foreman.dev/login" in result
-        assert "https://foreman.dev//login" not in result
+        assert "https://dashboard.dev/login" in result
+        assert "https://dashboard.dev//login" not in result

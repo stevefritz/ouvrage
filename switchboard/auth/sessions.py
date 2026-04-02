@@ -195,7 +195,7 @@ async def handle_login(scope, receive, send):
     Request body: JSON {"email": "...", "password": "...", "next": "..."}
     or URL-encoded form (also accepted).
 
-    Success: 200 {"redirect": "/foreman/" or next param}
+    Success: 200 {"redirect": "/dashboard/" or next param}
     Failure: 401 {"error": "invalid_credentials"}
     Locked:  429 {"error": "account_locked", "message": "..."}
     """
@@ -296,7 +296,7 @@ async def handle_login(scope, receive, send):
     session_id = await create_session(user["id"])
 
     # Determine redirect target
-    redirect = _safe_next_url(next_url) or "/foreman/"
+    redirect = _safe_next_url(next_url) or "/dashboard/"
 
     cookie_header = _build_session_cookie(session_id)
     await send({

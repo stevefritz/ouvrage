@@ -19,9 +19,9 @@ export function LoginView() {
     const nextUrl = (() => {
         try {
             const params = new URLSearchParams(window.location.search);
-            return params.get('next') || '/foreman/';
+            return params.get('next') || '/dashboard/';
         } catch {
-            return '/foreman/';
+            return '/dashboard/';
         }
     })();
 

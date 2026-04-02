@@ -2,7 +2,7 @@
   "serve_dir": ".",
   "pages": {
     "settings": {
-      "url": "/foreman#/settings",
+      "url": "/dashboard#/settings",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
@@ -14,7 +14,7 @@
       "wait_ms": 1500
     },
     "settings-tokens": {
-      "url": "/foreman#/settings",
+      "url": "/dashboard#/settings",
       "viewport": { "width": 1280, "height": 1100 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
@@ -25,7 +25,7 @@
       "wait_ms": 1500
     },
     "settings-mobile": {
-      "url": "/foreman#/settings",
+      "url": "/dashboard#/settings",
       "viewport": { "width": 375, "height": 812 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
@@ -37,7 +37,7 @@
       "wait_ms": 1500
     },
     "settings-runtime-info": {
-      "url": "/foreman#/settings",
+      "url": "/dashboard#/settings",
       "viewport": { "width": 1280, "height": 1800 },
       "mocks": {
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
@@ -48,7 +48,7 @@
       "wait_ms": 1500
     },
     "landing": {
-      "url": "/foreman#/",
+      "url": "/dashboard#/",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/projects": "fixtures/visual/projects.json"
@@ -57,7 +57,7 @@
       "wait_ms": 1500
     },
     "files": {
-      "url": "/foreman#/files",
+      "url": "/dashboard#/files",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/files": "fixtures/visual/files.json"
@@ -65,7 +65,7 @@
       "wait_ms": 1500
     },
     "files-markdown-lightbox": {
-      "url": "/foreman#/files",
+      "url": "/dashboard#/files",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/files": "fixtures/visual/files.json",
@@ -77,7 +77,7 @@
       "wait_ms": 1500
     },
     "task-detail": {
-      "url": "/foreman#/task/implement-auth",
+      "url": "/dashboard#/task/implement-auth",
       "viewport": { "width": 1280, "height": 1200 },
       "mocks": {
         "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
@@ -89,7 +89,7 @@
       "click": [".foreman-attempt-header:has-text('Files')"]
     },
     "task-detail-spec-lightbox": {
-      "url": "/foreman#/task/implement-auth",
+      "url": "/dashboard#/task/implement-auth",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
@@ -102,20 +102,20 @@
       "click": ["button:has-text('View formatted')"]
     },
     "project-create": {
-      "url": "/foreman#/project/new",
+      "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1200 },
       "mocks": {},
       "wait_ms": 1000
     },
     "project-create-optional": {
-      "url": "/foreman#/project/new",
+      "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1800 },
       "mocks": {},
       "wait_ms": 1000,
       "click": ["button:has-text('OPTIONAL')"]
     },
     "task-edit": {
-      "url": "/foreman#/task/implement-auth",
+      "url": "/dashboard#/task/implement-auth",
       "viewport": { "width": 1280, "height": 1200 },
       "mocks": {
         "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
@@ -128,7 +128,7 @@
       "click": [".foreman-edit-task-btn"]
     },
     "project-view-component-panel": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-view-project.json",
@@ -144,7 +144,7 @@
       "wait_ms": 2000
     },
     "project-view-new-component": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 1280, "height": 1200 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
@@ -157,7 +157,7 @@
       "wait_ms": 2000
     },
     "task-detail-mobile": {
-      "url": "/foreman#/task/implement-auth",
+      "url": "/dashboard#/task/implement-auth",
       "viewport": { "width": 375, "height": 812 },
       "mocks": {
         "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
@@ -169,7 +169,7 @@
       "click": [".foreman-attempt-header:has-text('Files')"]
     },
     "project-view": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
@@ -181,7 +181,7 @@
       "wait_ms": 2000
     },
     "project-view-component-panel": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
@@ -195,7 +195,7 @@
       "click": ["text=Foreman Hardening"]
     },
     "project-view-mobile": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 375, "height": 812 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
@@ -207,7 +207,7 @@
       "wait_ms": 2000
     },
     "project-edit": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
@@ -221,19 +221,19 @@
       "wait_ms": 2000
     },
     "docs": {
-      "url": "/foreman#/docs",
+      "url": "/dashboard#/docs",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {},
       "wait_ms": 1500
     },
     "docs-mobile": {
-      "url": "/foreman#/docs",
+      "url": "/dashboard#/docs",
       "viewport": { "width": 375, "height": 812 },
       "mocks": {},
       "wait_ms": 1500
     },
     "project-view-component-panel-mobile": {
-      "url": "/foreman#/project/mcp-switchboard",
+      "url": "/dashboard#/project/mcp-switchboard",
       "viewport": { "width": 375, "height": 812 },
       "mocks": {
         "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-view-project.json",
@@ -249,7 +249,7 @@
       "wait_ms": 2000
     },
     "task-working-actions": {
-      "url": "/foreman#/task/implement-auth",
+      "url": "/dashboard#/task/implement-auth",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/tasks/implement-auth/files": "fixtures/visual/task-detail-files.json",
@@ -261,7 +261,7 @@
       "wait_ms": 2000
     },
     "task-stopped-actions": {
-      "url": "/foreman#/task/fix-auth-bug",
+      "url": "/dashboard#/task/fix-auth-bug",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/tasks/fix-auth-bug/files": "fixtures/visual/task-detail-files.json",
@@ -273,7 +273,7 @@
       "wait_ms": 2000
     },
     "task-completed-actions": {
-      "url": "/foreman#/task/add-dark-mode",
+      "url": "/dashboard#/task/add-dark-mode",
       "viewport": { "width": 1280, "height": 900 },
       "mocks": {
         "/dashboard/api/tasks/add-dark-mode/files": "fixtures/visual/task-detail-files.json",
