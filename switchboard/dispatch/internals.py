@@ -132,6 +132,7 @@ async def launch_sdk_session(
     worktree_path: str,
     session_id: str | None = None,
     is_resume: bool = False,
+    fork_session_id: str | None = None,
     max_turns: int = 200,
     max_wall_clock: int = 60,
     model: str = "sonnet",
@@ -140,13 +141,16 @@ async def launch_sdk_session(
 
     Returns the asyncio.Task handle. Does NOT check or set task status.
     Adds the task to _running_tasks with exception handler.
+
+    fork_session_id: if set, the new session forks from this session_id
+    (inherits full message history but diverges). Used for retries.
     """
     import switchboard.dispatch.engine as _engine
 
     log_dir = await _engine._setup_log_dir(worktree_path, clean=not is_resume)
 
     _engine._write_dispatch_log(
-        log_dir, task_id, session_id or "(new)",
+        log_dir, task_id, session_id or fork_session_id or "(new)",
         max_turns, max_wall_clock,
         worktree_path, is_resume, model,
     )
@@ -158,6 +162,7 @@ async def launch_sdk_session(
             worktree_path=worktree_path,
             session_id=session_id,
             is_resume=is_resume,
+            fork_session_id=fork_session_id,
             max_turns=max_turns,
             max_wall_clock_minutes=max_wall_clock,
             log_dir=log_dir,
