@@ -318,6 +318,7 @@ UNPROTECTED_PATHS = {
     "/health",
     "/.well-known/oauth-protected-resource",
     "/.well-known/openid-configuration",
+    "/.well-known/oauth-authorization-server",
     "/jwks",
     "/oauth/authorize",
     "/oauth/token",

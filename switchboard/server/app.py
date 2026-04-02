@@ -318,7 +318,7 @@ async def main():
             await send({"type": "http.response.start", "status": 302, "headers": [[b"location", new_path.encode()]]})
             await send({"type": "http.response.body", "body": b""})
         # OAuth authorization server endpoints
-        elif path == "/.well-known/openid-configuration" and method == "GET":
+        elif path in ("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server") and method == "GET":
             await oauth_server.handle_openid_configuration(scope, receive, send)
         elif path == "/jwks" and method == "GET":
             await oauth_server.handle_jwks(scope, receive, send)
