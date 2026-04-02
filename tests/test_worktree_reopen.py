@@ -115,7 +115,7 @@ class TestSetupWorktreeReopenedTask:
         assert len(worktree_add_calls) == 1
 
         call = worktree_add_calls[0]
-        # depends_on should win over the remote branch
-        assert call[-1] == "parent-branch", (
-            f"Expected base_ref 'parent-branch' (from depends_on) but got '{call[-1]}'"
+        # depends_on should win over the remote branch, using origin/ prefix
+        assert call[-1] == "origin/parent-branch", (
+            f"Expected base_ref 'origin/parent-branch' (from depends_on) but got '{call[-1]}'"
         )

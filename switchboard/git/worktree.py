@@ -164,7 +164,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     if depends_on:
         parent_task = await db.get_task(depends_on)
         if parent_task and parent_task.get("branch"):
-            base_ref = parent_task["branch"]
+            base_ref = f"origin/{parent_task['branch']}"
             log.info(f"Branch chaining: branching from parent branch '{base_ref}' (depends_on={depends_on})")
     elif base_branch:
         base_ref = base_branch if base_branch.startswith("origin/") else f"origin/{base_branch}"
