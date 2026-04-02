@@ -577,8 +577,11 @@ async def _on_sdk_complete(task: dict, **ctx: Any) -> None:
         elif task.get("auto_review"):
             await _dispatch_review(task_id, project, task)
         else:
-            await db.update_task(task_id, gate_status="passed", gate_passed_at=db.now_iso())
-            await _check_and_dispatch_dependents(task_id)
+            # No gates configured — pass straight through via lifecycle
+            await lifecycle.execute(task_id, "gate_pass",
+                triggered_by="gate-pipeline",
+                source_detail="_on_complete_enter_gate (no gates configured)",
+            )
 
 
 async def _on_exhaust_turns(task: dict, **ctx: Any) -> None:
