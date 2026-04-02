@@ -538,6 +538,7 @@ async def _run_sdk_session(
     session_id: str | None, is_resume: bool,
     max_turns: int, max_wall_clock_minutes: int,
     log_dir: Path, model: str = "sonnet",
+    fork_session_id: str | None = None,
 ) -> None:
     """Run a CC session via the Agent SDK. Blocks until complete."""
     # Lazy imports to break circular dependency
@@ -591,6 +592,14 @@ async def _run_sdk_session(
     # If resuming, use the resume option
     if is_resume and session_id:
         options.resume = session_id
+    # If forking from a previous attempt's session
+    elif fork_session_id:
+        options.resume = fork_session_id
+        options.fork_session = True
+
+    # Capture the current attempt number for writing to attempt records
+    _task_for_attempt = await db.get_task(task_id)
+    _current_attempt = (_task_for_attempt.get("current_attempt") or 1) if _task_for_attempt else 1
 
     try:
         result_msg = None
@@ -727,6 +736,7 @@ async def _run_sdk_session(
                             sid = (message.data or {}).get("session_id") if hasattr(message, 'data') else None
                             if sid:
                                 await db.update_task(task_id, session_id=sid)
+                                await db.update_attempt(task_id, _current_attempt, session_id=sid)
 
                         if isinstance(message, AssistantMessage):
                             turn_count += 1
@@ -738,6 +748,7 @@ async def _run_sdk_session(
                             result_msg = message
                             if message.session_id:
                                 await db.update_task(task_id, session_id=message.session_id)
+                                await db.update_attempt(task_id, _current_attempt, session_id=message.session_id)
                             running_cost = message.total_cost_usd or 0
 
                         # Heartbeat
@@ -769,7 +780,9 @@ async def _run_sdk_session(
                             from claude_agent_sdk import list_sessions
                             sessions = list_sessions(directory=worktree_path, limit=1)
                             if sessions:
-                                await db.update_task(task_id, session_id=sessions[0].session_id)
+                                sid = sessions[0].session_id
+                                await db.update_task(task_id, session_id=sid)
+                                await db.update_attempt(task_id, _current_attempt, session_id=sid)
                     except Exception:
                         pass
 

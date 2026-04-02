@@ -300,7 +300,8 @@ class TestRetryAction:
         with patch("os.path.exists", return_value=True):
             await self.lifecycle.execute(task_id, "retry")
         task = await self.db_mod.get_task(task_id)
-        assert task["session_id"] is None
+        # session_id preserved for fork-on-retry (no longer cleared)
+        assert task["session_id"] == "old-sess"
         assert task["gate_status"] is None
         assert task["gate_passed_at"] is None
         assert task["gate_retries"] == 0

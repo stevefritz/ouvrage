@@ -606,6 +606,19 @@ async def init_db():
                 concurrency_limit INTEGER,
                 max_projects INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS task_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                session_id TEXT,
+                started_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                finished_at TIMESTAMP,
+                outcome TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                UNIQUE(task_id, attempt_number)
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_attempts_task ON task_attempts(task_id, attempt_number);
         """)
 
         # Credential encryption migration: encrypt any plaintext values in user_credentials.
@@ -655,6 +668,26 @@ async def init_db():
                         _logging.getLogger(__name__).info(
                             "Migrated GitHub PAT from user credentials to instance level."
                         )
+
+        # Migrate task_attempts: backfill from existing tasks with session_id
+        attempts_table = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='task_attempts'"
+        )
+        if attempts_table:
+            # Backfill: for any task that has a session_id but no attempt record,
+            # create an attempt row for the current_attempt
+            backfill_rows = await conn.execute_fetchall(
+                """SELECT t.id, t.current_attempt, t.session_id
+                   FROM tasks t
+                   LEFT JOIN task_attempts ta ON t.id = ta.task_id AND t.current_attempt = ta.attempt_number
+                   WHERE t.session_id IS NOT NULL AND ta.id IS NULL"""
+            )
+            for row in backfill_rows:
+                await conn.execute(
+                    """INSERT OR IGNORE INTO task_attempts (task_id, attempt_number, session_id, started_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (row["id"], row["current_attempt"] or 1, row["session_id"], now_iso()),
+                )
 
         # Migrate projects: normalize SSH repo URLs to HTTPS
         # git@github.com:owner/repo.git → https://github.com/owner/repo.git

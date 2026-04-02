@@ -221,6 +221,10 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
         review_feedback=ctx.get("review_feedback"),
     )
 
+    # Create attempt record for attempt 1
+    current_attempt = task.get("current_attempt") or 1
+    await db.create_attempt(task_id, current_attempt)
+
     # Resolve config + launch
     config = resolve_session_config(task, project)
     await launch_sdk_session(
@@ -292,9 +296,12 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     # Build resume prompt
     prompt = await _build_resume_prompt(task_id)
 
-    # Launch with session_id for resume
+    # Launch with session_id for resume — try attempt record first, fall back to task-level
+    current_attempt = task.get("current_attempt") or 1
+    attempt = await db.get_attempt(task_id, current_attempt)
+    session_id = (attempt.get("session_id") if attempt else None) or task.get("session_id")
+
     config = resolve_session_config(task, project)
-    session_id = task.get("session_id")
     await launch_sdk_session(
         task_id=task_id, prompt=prompt, worktree_path=worktree_path,
         session_id=session_id, is_resume=True, **config,
@@ -307,7 +314,7 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
 
 
 async def _retry_launch_session(task: dict, **ctx: Any) -> None:
-    """Launch a fresh CC session for a retried task."""
+    """Launch a CC session for a retried task, forking from the previous attempt."""
     import os
     from switchboard.dispatch.internals import (
         setup_task_worktree, build_dispatch_prompt,
@@ -337,18 +344,29 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
     # Revert punchlist
     await db.revert_punchlist_items_for_task(task_id)
 
-    # Increment attempt + clear session/gate state
-    new_attempt = (task.get("current_attempt") or 1) + 1
+    # Look up previous attempt's session_id for forking before incrementing
+    current_attempt = task.get("current_attempt") or 1
+    fork_session_id = await db.get_previous_attempt_session_id(task_id, current_attempt + 1)
+    # Fallback: if no attempt record, use task-level session_id
+    if not fork_session_id:
+        fork_session_id = task.get("session_id")
+
+    # Increment attempt + clear gate state (keep session_id for reference)
+    new_attempt = current_attempt + 1
     await db.update_task(task_id,
-        session_id=None, gate_status=None, gate_passed_at=None,
+        gate_status=None, gate_passed_at=None,
         gate_retries=0, current_attempt=new_attempt, held=False,
     )
 
+    # Create attempt record for the new attempt
+    await db.create_attempt(task_id, new_attempt)
+
     # Post message
+    fork_note = "forked from previous session" if fork_session_id else "fresh session"
     await db.post_task_message(
         task_id=task_id, author="switchboard", type="status",
         title=f"Attempt {new_attempt} starting",
-        content=f"Attempt {new_attempt} starting — fresh session launched.",
+        content=f"Attempt {new_attempt} starting — {fork_note}.",
     )
 
     # Invalidate chain
@@ -371,7 +389,9 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
         config = resolve_session_config(task, project)
         await launch_sdk_session(
             task_id=task_id, prompt=prompt,
-            worktree_path=worktree_path, **config,
+            worktree_path=worktree_path,
+            fork_session_id=fork_session_id,
+            **config,
         )
     except Exception as exc:
         logger.error("Auto-retry dispatch failed for %s: %s", task_id, exc)
@@ -389,7 +409,11 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
 
 
 async def _reopen_side_effects(task: dict, **ctx: Any) -> None:
-    """Increment attempt, clear session/gate, save reopen state, post message."""
+    """Increment attempt, clear gate state, save reopen state, post message.
+
+    Does NOT clear session_id — the previous attempt's session_id is preserved
+    on the task record so _start_launch_session can fork from it.
+    """
     task_id = task["id"]
     prev_status = ctx.get("_previous_status")
 
@@ -399,13 +423,15 @@ async def _reopen_side_effects(task: dict, **ctx: Any) -> None:
     await db.update_task(
         task_id,
         current_attempt=new_attempt,
-        session_id=None,
         gate_status=None,
         gate_passed_at=None,
         gate_retries=0,
         reopen_saved_gate_status=ctx.get("_saved_gate_status"),
         reopen_saved_gate_passed_at=ctx.get("_saved_gate_passed_at"),
     )
+
+    # Create attempt record for the new attempt
+    await db.create_attempt(task_id, new_attempt)
 
     await db.post_task_message(
         task_id=task_id, author="switchboard", type="status",
@@ -420,7 +446,7 @@ async def _reopen_side_effects(task: dict, **ctx: Any) -> None:
 
 
 async def _start_launch_session(task: dict, **ctx: Any) -> None:
-    """Collect reopen feedback, sync branch, invalidate chain, launch CC."""
+    """Collect reopen feedback, sync branch, invalidate chain, launch CC (forking from previous attempt)."""
     import os
     from switchboard.dispatch.internals import (
         setup_task_worktree, build_dispatch_prompt,
@@ -434,14 +460,21 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
     task_id = task["id"]
     current_attempt = task.get("current_attempt") or 1
 
+    # Look up previous attempt's session_id for forking
+    fork_session_id = await db.get_previous_attempt_session_id(task_id, current_attempt)
+    # Fallback: use task-level session_id if no attempt record
+    if not fork_session_id:
+        fork_session_id = task.get("session_id")
+
     # Collect reopen feedback
     review_feedback = await collect_reopen_feedback(task_id, current_attempt)
 
     # Post "Attempt N starting..."
+    fork_note = "forked from previous session" if fork_session_id else "fresh session"
     await db.post_task_message(
         task_id=task_id, author="switchboard", type="status",
         title=f"Attempt {current_attempt} starting",
-        content=f"Attempt {current_attempt} starting — revision session launched.",
+        content=f"Attempt {current_attempt} starting — {fork_note}.",
     )
 
     # Rebase onto base branch
@@ -465,7 +498,9 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
     config = resolve_session_config(task, project)
     await launch_sdk_session(
         task_id=task_id, prompt=prompt,
-        worktree_path=worktree_path, **config,
+        worktree_path=worktree_path,
+        fork_session_id=fork_session_id,
+        **config,
     )
 
     # Notify
