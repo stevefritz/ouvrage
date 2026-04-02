@@ -109,22 +109,22 @@ async def _classify_with_dependents(task: dict) -> tuple[int, str]:
 
 async def _verify_worktree(task: dict) -> bool:
     """Check if a task's worktree exists, looks valid, and is clean."""
+    from switchboard.git.worktree import _run_as_worker
+
     worktree = task.get("worktree_path")
     if not worktree or not os.path.exists(worktree):
         return False
     # Check for .git file/dir (worktree marker)
     if not os.path.exists(os.path.join(worktree, ".git")):
         return False
-    # Verify worktree is clean and not corrupted
+    # Verify worktree is not corrupted — run as worker user to avoid
+    # git's "dubious ownership" rejection (worktree owned by worker,
+    # service process runs as service user).
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", "status", "--porcelain",
-            cwd=worktree,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _, stderr, rc = await _run_as_worker(
+            "git", "-C", worktree, "status", "--porcelain",
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
+        if rc != 0:
             return False  # corrupted worktree
         # Dirty worktree is expected for SIGTERM'd tasks — CC will resume
         # into whatever state was left. Only reject truly corrupted worktrees.
