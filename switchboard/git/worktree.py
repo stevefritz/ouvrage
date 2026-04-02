@@ -216,6 +216,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
 
+    # Make worktree group-writable so the service user (switchboard-svc) can
+    # write files like the credential helper into worker-owned directories.
+    await _run_as_worker("chmod", "g+w", worktree_path)
+
     # Lock git author to the worker's global config — CC workers sometimes
     # override user.name/email in the repo config, which sticks for all future tasks.
     await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.name")
