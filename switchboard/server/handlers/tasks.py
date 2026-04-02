@@ -161,51 +161,28 @@ async def _handle_release_worktree(arguments):
     return await task_engine.release_worktree(arguments["task_id"])
 
 
-async def _handle_resume_task(arguments):
-    return await task_engine.resume_task(arguments["task_id"])
-
-
-async def _handle_approve_task(arguments):
-    return await task_engine.approve_task(arguments["task_id"])
-
-
-async def _handle_retry_task(arguments):
-    return await task_engine.retry_task(
-        task_id=arguments["task_id"],
-        clean=arguments.get("clean", False),
-    )
-
-
-async def _handle_reopen_task(arguments):
-    return await task_engine.reopen_task(arguments["task_id"])
-
-
-async def _handle_start_reopened_task(arguments):
-    kwargs = {"task_id": arguments["task_id"]}
-    if "auto_test" in arguments:
-        kwargs["auto_test"] = arguments["auto_test"]
-    if "auto_review" in arguments:
-        kwargs["auto_review"] = arguments["auto_review"]
-    return await task_engine.start_reopened_task(**kwargs)
-
-
-async def _handle_stop_task(arguments):
-    return await task_engine.stop_task(arguments["task_id"])
-
-
-async def _handle_cancel_task(arguments):
-    return await task_engine.cancel_task(arguments["task_id"])
-
-
-async def _handle_close_task(arguments):
-    return await task_engine.close_task(
-        task_id=arguments["task_id"],
-        cleanup=arguments.get("cleanup", True),
-        force_delete_branch=arguments.get("force_delete_branch", False),
-    )
+async def _handle_transition_task(arguments):
+    from switchboard.dispatch.lifecycle import lifecycle, IllegalTransition
+    task_id = arguments["task_id"]
+    action = arguments["action"]
+    options = arguments.get("options") or {}
+    try:
+        result = await lifecycle.execute(
+            task_id, action,
+            triggered_by="user",
+            source_detail=f"transition_task ({action})",
+            **options,
+        )
+        return result
+    except IllegalTransition as e:
+        return {"error": str(e), "task_id": task_id, "action": action}
+    except ValueError as e:
+        return {"error": str(e), "task_id": task_id, "action": action}
 
 
 async def _handle_get_task_status(arguments):
+    from switchboard.dispatch.lifecycle import lifecycle
+
     result = await db.get_task_status(arguments["task_id"])
 
     # Liveness detection based on status + last_activity
@@ -220,6 +197,12 @@ async def _handle_get_task_status(arguments):
     else:
         result["stale"] = False
     result["stale_seconds"] = stale_seconds
+
+    # Available actions — used by callers to discover valid transition_task actions
+    try:
+        available_actions = await lifecycle.get_available_actions(arguments["task_id"])
+    except Exception:
+        available_actions = []
 
     include_detail = arguments.get("include_detail", False)
 
@@ -248,6 +231,7 @@ async def _handle_get_task_status(arguments):
                 for c in result.get("checklist", [])
             ]
 
+        result["available_actions"] = available_actions
         return result
 
     # Slim summary — only the fields a caller needs for "is this done yet?"
@@ -274,6 +258,7 @@ async def _handle_get_task_status(arguments):
         "pr_status": result.get("pr_status"),
         "last_message_excerpt": excerpt,
         "last_message_at": last_message_at,
+        "available_actions": available_actions,
     }
 
 

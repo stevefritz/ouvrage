@@ -341,99 +341,32 @@ TASK_TOOLS = [
         },
     ),
     Tool(
-        name="resume_task",
-        description="Resume a paused or completed task. Reuses the same session for context preservation. Works for needs-review, turns-exhausted, or completed tasks.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to resume"},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="retry_task",
-        description="Start a fresh CC session for a task. If review feedback was posted (via post_task_message) after the last CC result, it is automatically injected as revision instructions. Workflow: post feedback with type='review', then retry. Optionally clean the worktree (git checkout .).",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to retry"},
-                "clean": {"type": "boolean", "description": "If true, git checkout . to discard CC's changes", "default": False},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="reopen_task",
-        description="Reopen a completed task for revisions. Increments current_attempt, sets status to 'reopened', clears session/gate state, and posts an awaiting-feedback message. After reopening, post feedback via post_task_message, then call start_reopened_task to dispatch CC.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Completed task to reopen"},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="start_reopened_task",
-        description="Start a reopened task. Collects feedback messages posted since reopen, rebases onto base branch, invalidates chain dependents, and dispatches CC with feedback as revision instructions. Only callable on 'reopened' tasks.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Reopened task to start"},
-                "auto_test": {"type": "boolean", "description": "Override test gate for this attempt only"},
-                "auto_review": {"type": "boolean", "description": "Override review gate for this attempt only"},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="approve_task",
+        name="transition_task",
         description=(
-            "Release a held task for dispatch. Held tasks are checkpoints that won't auto-dispatch "
-            "until manually approved. This clears the hold and dispatches the task."
+            "Execute a lifecycle action on a task. "
+            "Call get_task_status first to see available_actions for the current state.\n\n"
+            "Actions: resume, retry, reopen, start, stop, cancel, close, approve, skip_gate\n\n"
+            "options dict (action-specific):\n"
+            "  close: cleanup (bool, default true) — remove worktree; "
+            "force_delete_branch (bool, default false) — git branch -D\n"
+            "  retry: clean (bool, default false) — git checkout . before starting"
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Held task to approve and dispatch"},
+                "task_id": {"type": "string"},
+                "action": {
+                    "type": "string",
+                    "enum": ["resume", "retry", "reopen", "start", "stop",
+                             "cancel", "close", "approve", "skip_gate"],
+                },
+                "options": {
+                    "type": "object",
+                    "description": "Action-specific options. See tool description.",
+                    "default": {},
+                },
             },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="stop_task",
-        description="Stop a running task. Preserves session for resume. Use when you want to pause work, post feedback, then continue.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to stop"},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="cancel_task",
-        description="Kill a running task. SIGTERM the CC process, mark as cancelled. Worktree preserved.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to cancel"},
-            },
-            "required": ["task_id"],
-        },
-    ),
-    Tool(
-        name="close_task",
-        description="Mark task as completed and optionally clean up worktree + branch.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to close"},
-                "cleanup": {"type": "boolean", "description": "Remove worktree and delete branch", "default": True},
-                "force_delete_branch": {"type": "boolean", "description": "Use git branch -D instead of -d (for unmerged branches)", "default": False},
-            },
-            "required": ["task_id"],
+            "required": ["task_id", "action"],
         },
     ),
     Tool(
