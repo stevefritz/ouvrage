@@ -215,6 +215,10 @@ export function TaskCreateView({ project: initialProject }) {
     const [maxReviewRetries, setMaxReviewRetries] = useState('');
     const [componentId, setComponentId] = useState('');
     const [dependsOn, setDependsOn] = useState('');
+    const [dependsOnCandidates, setDependsOnCandidates] = useState([]);
+    const [dependsOnSearch, setDependsOnSearch] = useState('');
+    const [dependsOnOpen, setDependsOnOpen] = useState(false);
+    const dependsOnRef = useRef(null);
     const [baseBranch, setBaseBranch] = useState('');
     const [tags, setTags] = useState('');
     const [escalationCriteria, setEscalationCriteria] = useState('');
@@ -271,6 +275,29 @@ export function TaskCreateView({ project: initialProject }) {
         }).catch(() => setProjectData(null));
     }, [selectedProject]);
 
+    // ---- Fetch depends-on candidates when project changes ----
+    useEffect(() => {
+        if (!selectedProject) {
+            setDependsOnCandidates([]);
+            return;
+        }
+        fetch(`/dashboard/api/tasks/depends-on-candidates?project_id=${encodeURIComponent(selectedProject)}`)
+            .then(r => r.ok ? r.json() : [])
+            .then(data => setDependsOnCandidates(data || []))
+            .catch(() => setDependsOnCandidates([]));
+    }, [selectedProject]);
+
+    // ---- Close depends-on dropdown on outside click ----
+    useEffect(() => {
+        const handler = (e) => {
+            if (dependsOnRef.current && !dependsOnRef.current.contains(e.target)) {
+                setDependsOnOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
     // ---- Auto-suggest task ID from goal on blur ----
     const handleGoalBlur = useCallback(() => {
         if (!taskId.trim() && goal.trim()) {
@@ -300,11 +327,22 @@ export function TaskCreateView({ project: initialProject }) {
         if (val === 'on') setAutoPr('inherit');
     };
 
-    // ---- Depends_on auto-uncheck held ----
-    const handleDependsOnChange = (val) => {
-        setDependsOn(val);
-        if (val.trim()) setHeld(false);
+    // ---- Depends_on selection ----
+    const handleDependsOnSelect = (candidate) => {
+        setDependsOn(candidate.id);
+        setDependsOnSearch('');
+        setDependsOnOpen(false);
+        setHeld(false);
     };
+    const handleDependsOnClear = () => {
+        setDependsOn('');
+        setDependsOnSearch('');
+    };
+    const filteredCandidates = dependsOnCandidates.filter(c => {
+        if (!dependsOnSearch) return true;
+        const q = dependsOnSearch.toLowerCase();
+        return c.id.toLowerCase().includes(q) || (c.goal || '').toLowerCase().includes(q);
+    });
 
     // ---- Checklist helpers ----
     const addChecklistItem = () => setChecklist(cl => [...cl, '']);
@@ -324,23 +362,6 @@ export function TaskCreateView({ project: initialProject }) {
         if (Object.keys(errors).length > 0) {
             setFieldErrors(errors);
             return;
-        }
-
-        // Pre-submit: check if depends_on parent already has a dependent (linear chains only)
-        if (dependsOn.trim()) {
-            try {
-                const chain = await api.getChain(dependsOn.trim());
-                if (chain && chain.chain) {
-                    const parentIdx = chain.chain.findIndex(t => t.id === dependsOn.trim());
-                    if (parentIdx !== -1 && parentIdx < chain.chain.length - 1) {
-                        const existingId = chain.chain[parentIdx + 1].id;
-                        setFieldErrors({ depends_on: `Task '${dependsOn.trim()}' already has a dependent ('${existingId}'). Chains are linear — each task can only have one successor.` });
-                        return;
-                    }
-                }
-            } catch (_) {
-                // If chain fetch fails, let server handle validation
-            }
         }
 
         setSubmitting(true);
@@ -756,15 +777,42 @@ export function TaskCreateView({ project: initialProject }) {
                             </div>
 
                             <!-- Depends On -->
-                            <div style=${fieldStyle}>
+                            <div style=${fieldStyle} ref=${dependsOnRef}>
                                 <${FieldLabel} label="Depends On" tooltip="Task ID of a prerequisite task (in the same project). This task won't start until the dependency's gates pass." />
-                                <input
-                                    type="text"
-                                    value=${dependsOn}
-                                    onInput=${e => handleDependsOnChange(e.target.value)}
-                                    placeholder="task-id (in this project)"
-                                    style=${{ ...monoInputStyle, ...(fieldErrors.depends_on ? { borderColor: colors.red } : {}) }}
-                                />
+                                ${dependsOn ? html`
+                                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: colors.bg2, border: '1px solid ' + colors.border, borderRadius: '6px', fontFamily: typography.mono }}>
+                                        <span style=${{ flex: 1, fontSize: typography.size.sm }}>${dependsOn.includes('/') ? dependsOn.split('/').slice(1).join('/') : dependsOn}</span>
+                                        <button type="button" onClick=${handleDependsOnClear} style=${{ background: 'none', border: 'none', color: colors.muted, cursor: 'pointer', padding: '2px 4px', fontSize: '14px' }}>✕</button>
+                                    </div>
+                                ` : html`
+                                    <div style=${{ position: 'relative' }}>
+                                        <input
+                                            type="text"
+                                            value=${dependsOnSearch}
+                                            onInput=${e => { setDependsOnSearch(e.target.value); setDependsOnOpen(true); }}
+                                            onFocus=${() => setDependsOnOpen(true)}
+                                            placeholder=${dependsOnCandidates.length ? 'Search tasks...' : 'Select a project first'}
+                                            disabled=${!selectedProject || dependsOnCandidates.length === 0}
+                                            style=${{ ...monoInputStyle, ...(fieldErrors.depends_on ? { borderColor: colors.red } : {}) }}
+                                        />
+                                        ${dependsOnOpen && filteredCandidates.length > 0 ? html`
+                                            <div style=${{ position: 'absolute', top: '100%', left: 0, right: 0, maxHeight: '200px', overflowY: 'auto', background: colors.bg2, border: '1px solid ' + colors.border, borderRadius: '0 0 6px 6px', zIndex: 10 }}>
+                                                ${filteredCandidates.map(c => html`
+                                                    <div
+                                                        key=${c.id}
+                                                        onClick=${() => handleDependsOnSelect(c)}
+                                                        style=${{ padding: '6px 10px', cursor: 'pointer', borderBottom: '1px solid ' + colors.border, fontSize: typography.size.sm }}
+                                                        onMouseOver=${e => e.currentTarget.style.background = colors.bg3}
+                                                        onMouseOut=${e => e.currentTarget.style.background = 'transparent'}
+                                                    >
+                                                        <div style=${{ fontFamily: typography.mono, fontWeight: 500 }}>${c.id.includes('/') ? c.id.split('/').slice(1).join('/') : c.id}</div>
+                                                        ${c.goal ? html`<div style=${{ color: colors.muted, fontSize: typography.size.xs, marginTop: '2px' }}>${c.goal}</div>` : null}
+                                                    </div>
+                                                `)}
+                                            </div>
+                                        ` : null}
+                                    </div>
+                                `}
                                 ${fieldErrors.depends_on ? html`<div style=${{ color: colors.red, fontSize: typography.size.xs, marginTop: '4px' }}>${fieldErrors.depends_on}</div>` : null}
                             </div>
 

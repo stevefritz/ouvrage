@@ -321,19 +321,15 @@ async def _handle_update_task(arguments):
             else:
                 raise ValueError(f"Cannot re-hold a task with status '{status}' — only ready tasks can be re-held")
 
-    # Linear chain enforcement: if depends_on is being updated, check for fan-out
+    # Full depends_on validation: resolve, normalize, check existence, same-project, no forks
     if "depends_on" in fields and fields["depends_on"] is not None:
-        new_parent = fields["depends_on"]
-        existing_dependents = await db.get_dependents(new_parent)
-        # Exclude the task being updated itself (re-setting the same parent is ok)
-        blocking = [d for d in existing_dependents if d["id"] != task_id]
-        if blocking:
-            existing_id = blocking[0]["id"]
-            raise ValueError(
-                f"Task '{new_parent}' already has a dependent ('{existing_id}'). "
-                f"Chains are linear — each task can only have one successor. "
-                f"Remove the existing dependent first, or chain off '{existing_id}' instead."
-            )
+        task_for_dep = await db.get_task(task_id)
+        if task_for_dep is None:
+            raise ValueError(f"Task '{task_id}' not found")
+        project_id = task_for_dep.get("project_id", task_id.split("/")[0])
+        fields["depends_on"] = await task_engine.validate_depends_on(
+            fields["depends_on"], project_id, task_id
+        )
 
     return await db.update_task(task_id, **fields)
 
