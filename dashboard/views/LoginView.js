@@ -110,7 +110,7 @@ export function LoginView() {
                         fontWeight: typography.weight.semibold,
                         color: colors.text,
                         letterSpacing: '-0.3px',
-                    }}>Switchboard</div>
+                    }}>Ouvrage</div>
                     <div style=${{
                         fontSize: typography.size.sm,
                         color: colors.textTertiary,

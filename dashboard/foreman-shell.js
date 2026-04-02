@@ -16,7 +16,7 @@ const html = htm.bind(h);
 export function ForemanHeader({ children }) {
     return html`
         <header class="foreman-header">
-            <a href="#/" class="foreman-header-brand">Foreman</a>
+            <a href="#/" class="foreman-header-brand">Ouvrage</a>
             <span class="foreman-header-version">v5</span>
             <span class="foreman-header-spacer"></span>
             <a href="#/docs" class="foreman-header-settings">📖 Docs</a>

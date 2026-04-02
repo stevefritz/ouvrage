@@ -7,13 +7,13 @@ self.addEventListener('push', (event) => {
     try {
         payload = event.data.json();
     } catch (e) {
-        payload = { title: 'Switchboard', body: event.data.text() };
+        payload = { title: 'Ouvrage', body: event.data.text() };
     }
 
-    const title = payload.title || 'Switchboard';
+    const title = payload.title || 'Ouvrage';
     const options = {
         body: payload.body || '',
-        tag: payload.tag || 'switchboard',
+        tag: payload.tag || 'ouvrage',
         icon: '/dashboard/icon.png',
         badge: '/dashboard/icon.png',
         data: payload.data || {},

@@ -2053,7 +2053,7 @@ const FIELD_TOOLTIPS = {
     model:              'Claude model for the CC worker session.',
     review_model:       'Claude model used for the AI review gate.',
     jira_ticket:        'Associated Jira ticket key (e.g. PROJ-123).',
-    conversation_id:    'Linked Switchboard conversation ID for context injection.',
+    conversation_id:    'Linked Ouvrage conversation ID for context injection.',
     claude_chat_url:    'URL of the Claude.ai chat used to spec this task.',
 };
 

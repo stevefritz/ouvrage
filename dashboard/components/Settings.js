@@ -242,7 +242,7 @@ function OAuthCard({ oauth, onRegenerated }) {
         <div style=${styles.card}>
             <div style=${{ ...styles.cardTitle, marginBottom: '4px' }}>OAuth / MCP connection</div>
             <div style=${{ fontSize: '12px', color: colors.textSecondary, marginBottom: '14px' }}>
-                Use these credentials to connect Claude.ai to your Switchboard instance
+                Use these credentials to connect Claude.ai to your Ouvrage instance
             </div>
 
             <${SecretRow} label="Client ID" value=${oauth.client_id} alwaysVisible=${true} />
@@ -847,7 +847,7 @@ function RuntimeSection() {
                         borderTop: `0.5px solid ${colors.borderSubtle}`,
                         paddingTop: '10px',
                     }}>
-                        These runtimes are pre-installed in your Foreman instance.
+                        These runtimes are pre-installed in your Ouvrage instance.
                         Use the project's Setup Command to install your project's specific dependencies
                         (e.g. <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>composer install</code>,
                         <code style=${{ fontFamily: 'monospace', color: colors.textSecondary }}>pip install -r requirements.txt</code>).
