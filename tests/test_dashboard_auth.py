@@ -1,9 +1,9 @@
-"""Tests for session-based auth protection of /foreman* and /dashboard/api/*.
+"""Tests for session-based auth protection of /dashboard* and /dashboard/api/*.
 
 Covers:
-- /foreman/* without session → 302 redirect to /foreman/login?next=...
-- /foreman/* with session → passes through (200)
-- /foreman/login → public, no redirect
+- /dashboard/* without session → 302 redirect to /dashboard/login?next=...
+- /dashboard/* with session → passes through (200)
+- /dashboard/login → public, no redirect
 - /dashboard/api/* without session → 401 JSON {"error": "authentication_required"}
 - /dashboard/api/* with session → passes through, session_user injected into scope
 - /dashboard/ static → passes without session
@@ -88,33 +88,33 @@ async def _call_middleware(path, cookie=None, client=("10.0.0.1", 12345),
 class TestForemanSessionRequired:
 
     async def test_foreman_root_no_session_redirects(self, db):
-        status, headers, _, _ = await _call_middleware("/foreman/")
+        status, headers, _, _ = await _call_middleware("/dashboard/")
         assert status == 302
-        assert headers["location"].startswith("/foreman/login?next=")
+        assert headers["location"].startswith("/dashboard/login?next=")
 
     async def test_foreman_nested_no_session_redirects(self, db):
-        status, headers, _, _ = await _call_middleware("/foreman/tasks")
+        status, headers, _, _ = await _call_middleware("/dashboard/tasks")
         assert status == 302
-        assert "/foreman/login?next=" in headers["location"]
+        assert "/dashboard/login?next=" in headers["location"]
 
     async def test_foreman_redirect_encodes_next_path(self, db):
-        status, headers, _, _ = await _call_middleware("/foreman/tasks")
+        status, headers, _, _ = await _call_middleware("/dashboard/tasks")
         location = headers["location"]
         assert "next=" in location
         # next= should contain the original path (URL-encoded)
-        assert "foreman" in location
+        assert "dashboard" in location
 
     async def test_foreman_redirect_includes_query_string(self, db):
         status, headers, _, _ = await _call_middleware(
-            "/foreman/tasks", query_string=b"status=working"
+            "/dashboard/tasks", query_string=b"status=working"
         )
         location = headers["location"]
         # The query string should be included in next=
         assert "status" in location or "working" in location
 
     async def test_foreman_login_is_public(self, db):
-        """GET /foreman/login should pass through without session."""
-        status, _, body, _ = await _call_middleware("/foreman/login")
+        """GET /dashboard/login should pass through without session."""
+        status, _, body, _ = await _call_middleware("/dashboard/login")
         assert status == 200
         assert body == b"OK"
 
@@ -124,7 +124,7 @@ class TestForemanSessionRequired:
         sid = await create_session(user["id"])
         cookie = f"switchboard_session={sid}"
 
-        status, _, body, _ = await _call_middleware("/foreman/", cookie=cookie)
+        status, _, body, _ = await _call_middleware("/dashboard/", cookie=cookie)
         assert status == 200
         assert body == b"OK"
 
@@ -134,7 +134,7 @@ class TestForemanSessionRequired:
         sid = await create_session(user["id"])
         cookie = f"switchboard_session={sid}"
 
-        _, _, _, inner_scope = await _call_middleware("/foreman/", cookie=cookie)
+        _, _, _, inner_scope = await _call_middleware("/dashboard/", cookie=cookie)
         assert inner_scope is not None
         assert "session_user" in inner_scope
         assert inner_scope["session_user"]["id"] == user["id"]
@@ -184,21 +184,41 @@ class TestDashboardApiSessionRequired:
         assert "error" in data
 
 
-# ── Dashboard static: no auth needed ───────────────────────────────────────
+# ── Dashboard SPA routes vs static assets ──────────────────────────────────
 
-class TestDashboardStaticNoAuth:
+class TestDashboardSPARequiresAuth:
 
-    async def test_dashboard_root_passes_without_session(self, db):
-        status, _, body, _ = await _call_middleware("/dashboard")
+    async def test_dashboard_root_requires_session(self, db):
+        """SPA route (no extension) requires session auth."""
+        status, headers, _, _ = await _call_middleware("/dashboard")
+        assert status == 302
+        assert "/dashboard/login" in headers["location"]
+
+    async def test_dashboard_static_html_passes_without_session(self, db):
+        """Static assets (have file extension) pass through without auth."""
+        status, _, body, _ = await _call_middleware("/dashboard/index.html")
         assert status == 200
 
-    async def test_dashboard_html_passes_without_session(self, db):
-        status, _, _, _ = await _call_middleware("/dashboard/index.html")
-        assert status == 200
-
-    async def test_dashboard_js_passes_without_session(self, db):
+    async def test_dashboard_static_js_passes_without_session(self, db):
+        """Static assets (have file extension) pass through without auth."""
         status, _, _, _ = await _call_middleware("/dashboard/app.js")
         assert status == 200
+
+
+# ── Legacy /foreman redirect ──────────────────────────────────────────────
+
+class TestLegacyForemanRedirect:
+
+    async def test_foreman_redirects_to_dashboard(self, db):
+        """Legacy /foreman paths redirect to /dashboard equivalent."""
+        status, headers, _, _ = await _call_middleware("/foreman")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
+
+    async def test_foreman_subpath_redirects_to_dashboard(self, db):
+        status, headers, _, _ = await _call_middleware("/foreman/login")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
 
 
 # ── Localhost bypass ────────────────────────────────────────────────────────
@@ -206,16 +226,16 @@ class TestDashboardStaticNoAuth:
 class TestLocalhostBypass:
 
     async def test_localhost_bypasses_foreman_auth(self, db):
-        """127.0.0.1 skips session check on /foreman/."""
+        """127.0.0.1 skips session check on /dashboard/."""
         status, _, body, _ = await _call_middleware(
-            "/foreman/", client=("127.0.0.1", 5000)
+            "/dashboard/", client=("127.0.0.1", 5000)
         )
         assert status == 200
         assert body == b"OK"
 
     async def test_localhost_ipv6_bypasses_foreman_auth(self, db):
         status, _, body, _ = await _call_middleware(
-            "/foreman/", client=("::1", 5000)
+            "/dashboard/", client=("::1", 5000)
         )
         assert status == 200
 
@@ -226,3 +246,20 @@ class TestLocalhostBypass:
         )
         assert status == 200
         assert body == b"OK"
+
+
+# ── Legacy /foreman redirect ──────────────────────────────────────────────
+
+class TestLegacyForemanRedirect:
+
+    async def test_foreman_redirects_to_dashboard(self, db):
+        """/foreman should redirect to /dashboard (via middleware catch-all)."""
+        status, headers, _, _ = await _call_middleware("/foreman")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
+
+    async def test_foreman_nested_redirects_to_dashboard(self, db):
+        """/foreman/tasks should redirect to /dashboard (via middleware catch-all)."""
+        status, headers, _, _ = await _call_middleware("/foreman/tasks")
+        assert status == 302
+        assert headers["location"] == "/dashboard"

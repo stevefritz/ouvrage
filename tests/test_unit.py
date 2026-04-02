@@ -1366,7 +1366,7 @@ class TestBuildTaskPrompt:
             self._make_project(),
             self._make_task(dispatched_by="stephen", worktree_path="/work/t1"),
             "do the thing")
-        assert "Foreman worker" in result
+        assert "Ouvrage worker" in result
         assert "stephen" in result
         assert "/work/t1" in result
 
@@ -1375,7 +1375,7 @@ class TestBuildTaskPrompt:
         # dispatched_by and worktree_path absent — should not crash
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
-        assert "Foreman worker" in result
+        assert "Ouvrage worker" in result
         assert "system" in result  # default dispatched_by fallback
 
     async def test_component_context_included(self):

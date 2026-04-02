@@ -1,7 +1,7 @@
 """Tests for the /auth/sso endpoint.
 
 Covers:
-- Valid JWT → session created, redirect to /foreman
+- Valid JWT → session created, redirect to /dashboard
 - Expired JWT → 401
 - Wrong audience → 401
 - Tampered signature → 401
@@ -271,7 +271,7 @@ class TestValidJwtFlow:
             yield
 
     async def test_valid_jwt_creates_session_and_redirects(self, db):
-        """Valid JWT → session cookie set, 302 to /foreman."""
+        """Valid JWT → session cookie set, 302 to /dashboard."""
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
@@ -280,7 +280,7 @@ class TestValidJwtFlow:
             status, headers, _ = await _call_sso(token=token)
 
         assert status == 302
-        assert headers["location"] == "/foreman"
+        assert headers["location"] == "/dashboard"
         assert "set-cookie" in headers
         cookie = headers["set-cookie"] if isinstance(headers["set-cookie"], str) else headers["set-cookie"][0]
         assert "switchboard_session=" in cookie
@@ -292,13 +292,13 @@ class TestValidJwtFlow:
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
 
         with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            status, headers, _ = await _call_sso(token=token, redirect="/foreman/tasks")
+            status, headers, _ = await _call_sso(token=token, redirect="/dashboard/tasks")
 
         assert status == 302
-        assert headers["location"] == "/foreman/tasks"
+        assert headers["location"] == "/dashboard/tasks"
 
     async def test_redirect_absolute_url_falls_back_to_foreman(self, db):
-        """Absolute redirect URL → rejected, falls back to /foreman."""
+        """Absolute redirect URL → rejected, falls back to /dashboard."""
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
@@ -309,7 +309,7 @@ class TestValidJwtFlow:
             )
 
         assert status == 302
-        assert headers["location"] == "/foreman"
+        assert headers["location"] == "/dashboard"
 
 
 # ── Tests: user upsert ────────────────────────────────────────────────────────

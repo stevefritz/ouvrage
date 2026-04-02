@@ -163,7 +163,7 @@ function TabSystemArchitecture() {
         <div>
             <h2 style=${S.h2}>System Architecture</h2>
             <p style=${{ color: colors.textSecondary, marginBottom: '24px', lineHeight: 1.6 }}>
-                Switchboard (branded "Foreman" in the UI) is a raw ASGI task orchestration platform.
+                Ouvrage is a raw ASGI task orchestration platform.
                 It dispatches Claude Code workers to isolated git worktrees, manages gates, and surfaces
                 everything through a CDN-loaded Preact dashboard.
             </p>
@@ -564,7 +564,7 @@ function TabConfigInheritance() {
                 <ul style=${{ color: colors.textSecondary, fontSize: '13px', lineHeight: 1.8, paddingLeft: '20px', margin: 0 }}>
                     <li>Components have <strong style=${{ color: colors.text }}>zero config at creation</strong> — all fields null. They inherit from project.</li>
                     <li>Tasks are <strong style=${{ color: colors.text }}>held by default</strong> (held=1) unless explicitly released or dispatched with held=0.</li>
-                    <li>auto_pr=1 means Switchboard calls gh CLI — <strong style=${{ color: colors.red }}>never call gh CLI yourself</strong>.</li>
+                    <li>auto_pr=1 means Ouvrage calls gh CLI — <strong style=${{ color: colors.red }}>never call gh CLI yourself</strong>.</li>
                     <li>review_model defaults to "opus" regardless of the task model — reviews need the smarter model.</li>
                 </ul>
             </div>
@@ -591,7 +591,7 @@ function TabAuthSecurity() {
                     {
                         title: 'Layer 1: Session Auth',
                         color: colors.blue,
-                        subtitle: 'Dashboard (Foreman UI)',
+                        subtitle: 'Dashboard (Ouvrage UI)',
                         file: 'auth/sessions.py',
                         items: [
                             'Cookie: switchboard_session',
@@ -957,7 +957,7 @@ function TabRecovery() {
                 <h3 style=${{ ...S.h3, color: colors.red }}>CRITICAL: anyio Monkey-Patch</h3>
                 <p style=${{ color: colors.textSecondary, fontSize: '13px', lineHeight: 1.6, margin: 0 }}>
                     <code style=${{ fontFamily: typography.fontMono, color: colors.accent }}>dispatch/sdk_session.py:53-75</code> patches anyio to prevent CC from sending signals to the host process.
-                    Without this, a CC worker could kill the Switchboard server itself. <strong style=${{ color: colors.red }}>Do not remove or bypass this patch.</strong>
+                    Without this, a CC worker could kill the Ouvrage server itself. <strong style=${{ color: colors.red }}>Do not remove or bypass this patch.</strong>
                     It is tested and intentional.
                 </p>
             </div>
@@ -1119,9 +1119,9 @@ function TabMcpTools() {
 function TabDashboard() {
     return html`
         <div>
-            <h2 style=${S.h2}>Dashboard (Foreman SPA)</h2>
+            <h2 style=${S.h2}>Dashboard (Ouvrage SPA)</h2>
             <p style=${{ color: colors.textSecondary, marginBottom: '24px', lineHeight: 1.6 }}>
-                "Foreman" is the dashboard brand name. Single-page app with no build step.
+                "Ouvrage" is the dashboard brand name. Single-page app with no build step.
                 CDN-loaded Preact + htm. Hash-based routing. REST API at <code style=${{ fontFamily: typography.fontMono, color: colors.accent }}>/dashboard/api/*</code>.
             </p>
 

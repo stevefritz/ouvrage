@@ -10,7 +10,7 @@ Flow:
 3. Validate JWT: RS256 signature, expiry, audience=INSTANCE_SLUG
 4. Upsert user from claims (email, role)
 5. Create session, set cookie
-6. Redirect to ?redirect= param (relative only) or /foreman
+6. Redirect to ?redirect= param (relative only) or /dashboard
 """
 
 import json
@@ -150,18 +150,18 @@ async def _upsert_user(email: str, role: str) -> dict:
 # ── Redirect safety ─────────────────────────────────────────────────────────
 
 def _safe_redirect(redirect: str | None) -> str:
-    """Allow only relative paths to prevent open redirect. Returns /foreman if unsafe."""
+    """Allow only relative paths to prevent open redirect. Returns /dashboard if unsafe."""
     if not redirect:
-        return "/foreman"
+        return "/dashboard"
     try:
         parsed = urlparse(redirect)
         if parsed.scheme or parsed.netloc:
-            return "/foreman"
+            return "/dashboard"
         if not parsed.path.startswith("/"):
-            return "/foreman"
+            return "/dashboard"
         return redirect
     except Exception:
-        return "/foreman"
+        return "/dashboard"
 
 
 # ── ASGI helpers ─────────────────────────────────────────────────────────────

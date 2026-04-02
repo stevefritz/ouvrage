@@ -228,7 +228,7 @@ class TestHandleLogin:
         assert status == 200
         data = json.loads(resp_body)
         assert "redirect" in data
-        assert data["redirect"] == "/foreman/"
+        assert data["redirect"] == "/dashboard/"
 
         # Cookie should be set
         set_cookie = resp_headers.get("set-cookie", "")
@@ -339,7 +339,7 @@ class TestHandleLogin:
         assert status == 400
 
     async def test_login_open_redirect_blocked(self, db, user_with_password):
-        """next= with external URL should be ignored, fallback to /foreman/."""
+        """next= with external URL should be ignored, fallback to /dashboard/."""
         from switchboard.auth.sessions import handle_login
         body, headers = _json_body({
             "email": "alice@example.com",
@@ -349,7 +349,7 @@ class TestHandleLogin:
         status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
         assert status == 200
         data = json.loads(resp_body)
-        assert data["redirect"] == "/foreman/"
+        assert data["redirect"] == "/dashboard/"
 
 
 # ── Rate Limiting / Lockout ────────────────────────────────────────────────
@@ -528,7 +528,7 @@ class TestOAuthLoginRedirect:
 
         await handle_authorize(scope, receive, send)
         assert status == 302
-        assert location.startswith("/foreman/login?next=")
+        assert location.startswith("/dashboard/login?next=")
         assert "oauth%2Fauthorize" in location or "oauth/authorize" in location
 
     async def test_authorize_no_session_encodes_full_url(self, db):

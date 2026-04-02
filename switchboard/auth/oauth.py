@@ -497,7 +497,7 @@ async def handle_authorize(scope, receive, send):
         authorize_path = "/oauth/authorize"
         if qs:
             authorize_path = f"{authorize_path}?{qs}"
-        login_url = f"/foreman/login?next={quote(authorize_path, safe='')}"
+        login_url = f"/dashboard/login?next={quote(authorize_path, safe='')}"
         await _send_redirect(send, login_url)
         return
 

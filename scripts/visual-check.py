@@ -48,12 +48,12 @@ def find_free_port():
 
 
 class ForemanHandler(SimpleHTTPRequestHandler):
-    """HTTP handler that serves foreman.html for /foreman requests."""
+    """HTTP handler that serves foreman.html for dashboard requests."""
 
     def translate_path(self, path):
         # Strip query string and fragment for path resolution
         path = path.split("?")[0].split("#")[0]
-        if path == "/foreman" or path == "/foreman/":
+        if path in ("/dashboard", "/dashboard/", "/foreman", "/foreman/"):
             path = "/foreman.html"
         return super().translate_path(path)
 

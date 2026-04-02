@@ -4,11 +4,11 @@ Auth middleware for Switchboard.
 Two layers of protection, always active:
 
 1. Session auth (always active):
-   - /foreman* (except /foreman/login): requires valid session cookie.
-     No session → 302 redirect to /foreman/login?next={path}
+   - /dashboard* (except /dashboard/login): requires valid session cookie.
+     No session → 302 redirect to /dashboard/login?next={path}
    - /dashboard/api/*: requires valid session cookie.
      No session → 401 JSON {"error": "authentication_required"}
-   - /dashboard* static: pass through, no auth.
+   - /dashboard/static assets: pass through, no auth.
 
 2. Bearer JWT auth (always active):
    - All other paths require a valid Bearer token.
@@ -22,6 +22,7 @@ Both layers bypass localhost connections (CC workers on the same host).
 
 import json
 import logging
+import posixpath
 import time
 from typing import Any
 from urllib.parse import quote
@@ -324,7 +325,7 @@ UNPROTECTED_PATHS = {
     "/auth/login",
     "/auth/logout",
     "/auth/sso",
-    "/foreman/login",
+    "/dashboard/login",
 }
 
 
@@ -333,9 +334,8 @@ def auth_middleware(inner_app):
     ASGI middleware that enforces auth on protected paths.
 
     Session auth (always active):
-      /foreman* → session required; no session → 302 to /foreman/login?next=...
+      /dashboard* → session required; no session → 302 to /dashboard/login?next=...
       /dashboard/api/* → session required; no session → 401 JSON
-      /dashboard* static → pass through (no auth)
 
     Bearer JWT auth (only when AUTH_ISSUER_URL is set):
       All other paths → Bearer token required.
@@ -356,9 +356,18 @@ def auth_middleware(inner_app):
             await _send_json(send, 200, _protected_resource_metadata())
             return
 
-        # ── Session auth for /foreman* ──────────────────────────────────────
-        # /foreman/login is public; everything else requires a session.
-        if path.startswith("/foreman") and path != "/foreman/login":
+        # ── Session auth for /dashboard* (except /dashboard/api/*) ──────────
+        # /dashboard/login is public; static assets (paths with file extension)
+        # pass through without auth so the login page can load CSS/JS.
+        # /dashboard/api/* is handled separately below.
+        if path.startswith("/dashboard") and not path.startswith("/dashboard/api/"):
+            # Public paths: login page and static assets (have file extension)
+            if path == "/dashboard/login":
+                return await inner_app(scope, receive, send)
+            basename = posixpath.basename(path)
+            if '.' in basename:
+                return await inner_app(scope, receive, send)
+            # SPA routes — session required
             user = await get_session_user(scope)
             if user is None:
                 if AUTH_MODE == "saas":
@@ -367,7 +376,7 @@ def auth_middleware(inner_app):
                     # Build next= param: path + query string
                     qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
                     next_path = path + ("?" + qs if qs else "")
-                    location = "/foreman/login?next=" + quote(next_path, safe="")
+                    location = "/dashboard/login?next=" + quote(next_path, safe="")
                 await send({
                     "type": "http.response.start",
                     "status": 302,
@@ -396,10 +405,6 @@ def auth_middleware(inner_app):
             scope["session_user"] = user
             return await inner_app(scope, receive, send)
 
-        # ── Dashboard static assets — no auth ──────────────────────────────
-        if path.startswith("/dashboard"):
-            return await inner_app(scope, receive, send)
-
         # ── Internal API — handles its own Bearer token auth ────────────────
         if path.startswith("/internal/"):
             return await inner_app(scope, receive, send)
@@ -412,12 +417,12 @@ def auth_middleware(inner_app):
         if path in UNPROTECTED_PATHS:
             return await inner_app(scope, receive, send)
 
-        # Redirect unknown paths to /foreman — only /mcp and /mcp/worker need JWT
+        # Redirect unknown paths to /dashboard — only /mcp and /mcp/worker need JWT
         if path not in ("/mcp", "/mcp/worker"):
             await send({
                 "type": "http.response.start",
                 "status": 302,
-                "headers": [[b"location", b"/foreman"]],
+                "headers": [[b"location", b"/dashboard"]],
             })
             await send({"type": "http.response.body", "body": b""})
             return

@@ -19,9 +19,9 @@ export function LoginView() {
     const nextUrl = (() => {
         try {
             const params = new URLSearchParams(window.location.search);
-            return params.get('next') || '/foreman/';
+            return params.get('next') || '/dashboard/';
         } catch {
-            return '/foreman/';
+            return '/dashboard/';
         }
     })();
 
@@ -110,7 +110,7 @@ export function LoginView() {
                         fontWeight: typography.weight.semibold,
                         color: colors.text,
                         letterSpacing: '-0.3px',
-                    }}>Switchboard</div>
+                    }}>Ouvrage</div>
                     <div style=${{
                         fontSize: typography.size.sm,
                         color: colors.textTertiary,

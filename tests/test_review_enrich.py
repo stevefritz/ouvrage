@@ -250,7 +250,7 @@ class TestDispatchReviewPromptStructure:
 
     async def test_reviewer_identity_present(self, tmp_db):
         prompt = await self._run()
-        assert "You are a Foreman code reviewer" in prompt
+        assert "You are an Ouvrage code reviewer" in prompt
 
     async def test_lifecycle_section_present(self, tmp_db):
         prompt = await self._run()

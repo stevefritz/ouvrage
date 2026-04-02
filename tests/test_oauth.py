@@ -480,7 +480,7 @@ class TestASGIHandlers:
         # No session → redirect to login page (not 401 anymore)
         assert status == 302
         location = headers.get("location", "")
-        assert location.startswith("/foreman/login?next=")
+        assert location.startswith("/dashboard/login?next=")
         # oauth/authorize appears URL-encoded in the next= param
         assert "oauth" in location and "authorize" in location
 

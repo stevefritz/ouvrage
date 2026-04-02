@@ -122,7 +122,7 @@ class TestInstance:
     async def test_get_instance_returns_row(self, db):
         inst = await db.get_instance()
         assert inst is not None
-        assert inst["name"] == "Switchboard"
+        assert inst["name"] == "Ouvrage"
         assert inst["slug"] == "default"
 
     async def test_update_instance_name(self, db):

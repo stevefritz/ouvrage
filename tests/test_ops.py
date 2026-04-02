@@ -205,7 +205,7 @@ class TestGetGuide:
         result = await _handle_get_guide({})
         assert "guide" in result
         guide = result["guide"]
-        assert "# Switchboard Guide" in guide
+        assert "# Ouvrage Guide" in guide
         assert "Mental Model" in guide
 
     async def test_guide_includes_tool_tables(self, db, sample_project):

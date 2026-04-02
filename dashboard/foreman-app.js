@@ -20,7 +20,7 @@ const html = htm.bind(h);
 
 function ForemanApp() {
     // Login page is served at /foreman/login (full URL path, not hash route)
-    if (window.location.pathname === '/foreman/login') {
+    if (window.location.pathname === '/dashboard/login') {
         return html`<${LoginView} />`;
     }
 
