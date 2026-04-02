@@ -77,6 +77,55 @@ def _resolve_limit(task_val, project_val, global_default):
     return global_default
 
 
+async def validate_depends_on(depends_on: str, project_id: str, task_id: str) -> str:
+    """Validate and resolve a depends_on value. Returns the resolved depends_on ID.
+
+    Raises ValueError with a clear message on any validation failure.
+    """
+    # Resolve shorthand: bare slug → project_id/slug
+    if "/" not in depends_on:
+        depends_on = f"{project_id}/{depends_on}"
+
+    # Normalize for comparison (case-insensitive)
+    resolved = depends_on.lower()
+
+    # Self-reference check
+    if resolved == task_id.lower():
+        raise ValueError(f"depends_on cannot reference the task itself ('{depends_on}').")
+
+    # Same-project check
+    dep_project = resolved.split("/", 1)[0]
+    if dep_project != project_id.lower():
+        raise ValueError(
+            f"depends_on must be in the same project. "
+            f"Got '{depends_on}', expected '{project_id}/*'."
+        )
+
+    # Task must exist — case-insensitive lookup
+    parent = await db.get_task(depends_on)
+    if not parent:
+        # Try lowercase version
+        parent = await db.get_task(resolved)
+    if not parent:
+        raise ValueError(f"Task '{depends_on}' not found.")
+
+    # Use the actual stored ID from DB for consistency
+    resolved_id = parent["id"]
+
+    # No forks — check if another task already depends on this target
+    existing_dependents = await db.get_dependents(resolved_id)
+    # Exclude the task being created/updated itself
+    blocking = [d for d in existing_dependents if d["id"].lower() != task_id.lower()]
+    if blocking:
+        existing_id = blocking[0]["id"]
+        raise ValueError(
+            f"Task '{resolved_id}' already has a dependent ('{existing_id}'). "
+            f"Chains cannot fork."
+        )
+
+    return resolved_id
+
+
 # ---------------------------------------------------------------------------
 # Chain Logic
 # ---------------------------------------------------------------------------
@@ -540,16 +589,9 @@ async def dispatch_task(
     is_resume = False
 
     if task is None:
-        # Enforce linear chains: each task can have at most one dependent.
+        # Validate depends_on: resolve shorthand, check existence, same-project, no forks
         if depends_on:
-            existing_dependents = await db.get_dependents(depends_on)
-            if existing_dependents:
-                existing_id = existing_dependents[0]["id"]
-                raise ValueError(
-                    f"Task '{depends_on}' already has a dependent ('{existing_id}'). "
-                    f"Chains are linear — each task can only have one successor. "
-                    f"Remove the existing dependent first, or chain off '{existing_id}' instead."
-                )
+            depends_on = await validate_depends_on(depends_on, project_id, task_id)
 
         task = await db.create_task(
             id=task_id, project_id=project_id, goal=goal,

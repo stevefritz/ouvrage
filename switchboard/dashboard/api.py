@@ -221,6 +221,10 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/tasks" and method == "POST":
             return await _handle_create_task(receive, send)
 
+        # GET /dashboard/api/tasks/depends-on-candidates
+        if path == "/dashboard/api/tasks/depends-on-candidates" and method == "GET":
+            return await _handle_depends_on_candidates(scope, send)
+
         # Task-specific routes: /dashboard/api/tasks/{task_id}[/action]
         if path.startswith("/dashboard/api/tasks/"):
             rest = path[len("/dashboard/api/tasks/"):]
@@ -683,6 +687,36 @@ async def _handle_list_tasks(scope, send):
     await _json_response(send, working + rest)
 
 
+async def _handle_depends_on_candidates(scope, send):
+    """GET /dashboard/api/tasks/depends-on-candidates?project_id=X"""
+    params = _parse_qs(scope)
+    project_id = params.get("project_id")
+    if not project_id:
+        return await _error(send, "project_id query parameter is required")
+
+    # Get all tasks in this project
+    all_tasks = await db.list_tasks(project_id=project_id, active_only=False)
+
+    # Find task IDs that already have a dependent
+    taken = set()
+    for t in all_tasks:
+        dep = t.get("depends_on")
+        if dep:
+            taken.add(dep.lower())
+
+    # Filter: only tasks that don't already have a dependent
+    candidates = []
+    for t in all_tasks:
+        if t["id"].lower() not in taken:
+            candidates.append({
+                "id": t["id"],
+                "goal": t.get("goal", ""),
+                "status": t.get("status", ""),
+            })
+
+    await _json_response(send, candidates)
+
+
 async def _handle_get_task(send, task_id):
     task = await db.get_task(task_id)
     if not task:
@@ -742,6 +776,15 @@ async def _handle_update_task(receive, send, task_id):
     data = json.loads(body) if body else {}
     if not data:
         return await _error(send, "No fields to update")
+
+    # Validate depends_on if being updated
+    if "depends_on" in data and data["depends_on"] is not None:
+        try:
+            data["depends_on"] = await tasks.validate_depends_on(
+                data["depends_on"], task["project_id"], task_id
+            )
+        except ValueError as e:
+            return await _error(send, str(e))
 
     try:
         result = await db.update_task(task_id, **data)

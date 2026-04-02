@@ -115,7 +115,7 @@ class TestDispatchTaskLinearChain:
         error = str(exc_info.value)
         assert "test-project/child-c1" in error
         assert "test-project/parent-c" in error
-        assert "Chains are linear" in error
+        assert "Chains cannot fork" in error
 
     async def test_no_depends_on_still_works(self, db, sample_project):
         """Tasks without depends_on are not affected by the constraint."""
