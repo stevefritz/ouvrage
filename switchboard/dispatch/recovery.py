@@ -186,8 +186,8 @@ async def recover_orphaned_tasks():
                     from switchboard.dispatch.engine import _check_and_dispatch_dependents  # noqa: PLC0415
                     await _check_and_dispatch_dependents(task["id"])
                 continue
-            if gate == "push-failed":
-                log.info(f"Startup: skipping {task['id']} (push-failed, requires manual fix)")
+            if gate in ("push-failed", "needs-review"):
+                log.info(f"Startup: skipping {task['id']} ({gate}, requires user action)")
                 continue
             if gate is not None or (status == "pending-validation" and gate is None):
                 log.warning(f"Startup: recovering {task['id']} (status={status}, gate={gate})")

@@ -1039,7 +1039,8 @@ class TestSkipGateBehavior:
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("validating", "skip_gate")]
         orig = tdef.side_effects[:]
-        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        # Keep all effects except dispatch_dependents (last one) — mock that out
+        tdef.side_effects = orig[:-1] + [AsyncMock()]
         try:
             await _seed(self.db, status="pending-validation")
             await self.lifecycle.execute(TASK_ID, "skip_gate")
@@ -1055,7 +1056,8 @@ class TestSkipGateBehavior:
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("validating", "skip_gate")]
         orig = tdef.side_effects[:]
-        tdef.side_effects = [orig[0], orig[1], AsyncMock()]
+        # Keep all effects except dispatch_dependents (last one) — mock that out
+        tdef.side_effects = orig[:-1] + [AsyncMock()]
         try:
             await _seed(self.db, status="pending-validation")
             await self.lifecycle.execute(TASK_ID, "skip_gate")

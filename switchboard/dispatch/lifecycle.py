@@ -975,7 +975,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "skip_gate"): TransitionDef(
         to_state="completed",
         reason="gate_skipped",
-        side_effects=[_skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
+        side_effects=[_stop_gate_subprocess, _skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
         label="Skip Gate",
         style="secondary",
         confirm=True,
