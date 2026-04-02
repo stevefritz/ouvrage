@@ -407,7 +407,8 @@ async def _build_resume_prompt(task_id: str) -> str:
 # Logging utilities
 # ---------------------------------------------------------------------------
 
-async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
+async def _setup_log_dir(worktree_path: str, clean: bool = True,
+                         fork_session_id: str | None = None) -> Path:
     """Create .switchboard log directory in the worktree.
 
     Created as the worker user (who owns the worktree), with group-write
@@ -415,12 +416,15 @@ async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
 
     When clean=True (dispatch/retry), removes stale files from previous tasks.
     When clean=False (resume), preserves existing logs for session continuity.
+    When fork_session_id is set, preserves session.jsonl from previous attempt
+    and appends a fork marker for UI continuity.
 
     Also ensures .switchboard is gitignored and removes any stale
     git-tracked .switchboard files (which cause permission issues
     when inherited from parent branches).
     """
     log_dir = Path(worktree_path) / ".switchboard"
+    session_log = log_dir / "session.jsonl"
 
     # If .switchboard exists and is git-tracked, remove tracked files first
     # (they'll have wrong ownership from git checkout)
@@ -441,12 +445,41 @@ async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
         await _run_as_worker("sh", "-c", f"echo '.switchboard/' > {gitignore_path}")
 
     if clean:
-        # Remove stale files from a previous task (wrong ownership)
+        # On fork: copy session.jsonl before nuking so the new attempt
+        # starts with full history. The original attempt's log stays untouched.
+        copied_session = None
+        if fork_session_id and session_log.exists():
+            try:
+                copied_session = session_log.read_text()
+            except Exception:
+                pass
+
         if log_dir.exists():
             await _run_as_worker("rm", "-rf", str(log_dir))
 
-    await _run_as_worker("mkdir", "-p", str(log_dir))
-    await _run_as_worker("chmod", "775", str(log_dir))
+        await _run_as_worker("mkdir", "-p", str(log_dir))
+        await _run_as_worker("chmod", "775", str(log_dir))
+
+        # Write copied session log + fork marker into the new attempt's log
+        if copied_session:
+            try:
+                import json
+                with _open_shared(session_log) as f:
+                    f.write(copied_session)
+                    if not copied_session.endswith("\n"):
+                        f.write("\n")
+                    marker = {
+                        "timestamp": db.now_iso(),
+                        "type": "SystemMessage",
+                        "subtype": "fork",
+                        "forked_from_session": fork_session_id,
+                    }
+                    f.write(json.dumps(marker) + "\n")
+            except Exception as e:
+                log.warning(f"Failed to copy session log on fork: {e}")
+    else:
+        await _run_as_worker("mkdir", "-p", str(log_dir))
+        await _run_as_worker("chmod", "775", str(log_dir))
     return log_dir
 
 
