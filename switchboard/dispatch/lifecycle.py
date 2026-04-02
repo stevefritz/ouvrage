@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -119,6 +120,8 @@ async def _skip_gate_dispatch_dependents(task: dict, **ctx: Any) -> None:
 async def _stop_cc_session(task: dict, **ctx: Any) -> None:
     """Kill the running CC process, preserve session_id."""
     from switchboard.dispatch._state import _running_tasks, _active_clients
+    from switchboard.dispatch.sdk_session import _open_shared
+    import json
 
     task_id = task["id"]
     task_name = f"sdk-session-{task_id}"
@@ -131,6 +134,24 @@ async def _stop_cc_session(task: dict, **ctx: Any) -> None:
 
     # Remove from active clients
     _active_clients.pop(task_id, None)
+
+    # Write stop marker to session log for UI continuity
+    worktree = task.get("worktree_path")
+    if worktree:
+        log_path = Path(worktree) / ".switchboard" / "session.jsonl"
+        if log_path.exists():
+            triggered_by = ctx.get("triggered_by", "user")
+            entry = {
+                "timestamp": db.now_iso(),
+                "type": "SystemMessage",
+                "subtype": "stop",
+                "stopped_by": triggered_by,
+            }
+            try:
+                with _open_shared(log_path) as f:
+                    f.write(json.dumps(entry) + "\n")
+            except Exception:
+                pass
 
 
 async def _stop_gate_subprocess(task: dict, **ctx: Any) -> None:
