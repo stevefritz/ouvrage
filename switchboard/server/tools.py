@@ -348,8 +348,7 @@ TASK_TOOLS = [
             "Actions: resume, retry, reopen, start, stop, cancel, close, approve, skip_gate\n\n"
             "options dict (action-specific):\n"
             "  close: cleanup (bool, default true) — remove worktree; "
-            "force_delete_branch (bool, default false) — git branch -D\n"
-            "  retry: clean (bool, default false) — git checkout . before starting"
+            "force_delete_branch (bool, default false) — git branch -D"
         ),
         inputSchema={
             "type": "object",

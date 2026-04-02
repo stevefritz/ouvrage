@@ -115,6 +115,18 @@ class TestTransitionTaskHandler:
         assert captured_ctx.get("cleanup") is False
         assert captured_ctx.get("force_delete_branch") is True
 
+    async def test_unknown_action_returns_error(self, db, mock_git, mock_sdk):
+        """A completely bogus action name returns an error dict, not an exception."""
+        from switchboard.server.handlers.tasks import _handle_transition_task
+        task_id = f"{PROJECT_ID}/t-unknown-action"
+        await _seed(db, task_id, status="working")
+
+        result = await _handle_transition_task({"task_id": task_id, "action": "nonexistent"})
+
+        assert "error" in result
+        assert result["task_id"] == task_id
+        assert result["action"] == "nonexistent"
+
     async def test_options_default_empty(self, db, mock_git, mock_sdk):
         """Omitting options is equivalent to passing an empty dict."""
         from switchboard.server.handlers.tasks import _handle_transition_task
