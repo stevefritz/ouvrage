@@ -480,8 +480,16 @@ async def handle_authorize(scope, receive, send):
         })
         return
 
-    # Validate redirect_uri
-    if redirect_uri not in client["redirect_uris"]:
+    # Validate redirect_uri — allow any localhost port per RFC 8252 (native apps)
+    def _is_valid_redirect(uri, allowed):
+        if uri in allowed:
+            return True
+        # http://localhost:{any_port}/callback is always allowed for native CLI auth
+        if uri and uri.startswith("http://localhost:") and "/callback" in uri:
+            return True
+        return False
+
+    if not _is_valid_redirect(redirect_uri, client["redirect_uris"]):
         await _send_json(send, 400, {
             "error": "invalid_request",
             "error_description": "Invalid redirect_uri",
