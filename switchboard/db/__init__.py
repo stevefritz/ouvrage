@@ -95,6 +95,10 @@ from switchboard.db.tasks import (
     get_subtasks,
     get_subtask,
     get_tasks_with_open_prs,
+    create_attempt,
+    update_attempt,
+    get_attempt,
+    get_previous_attempt_session_id,
 )
 
 # Components
@@ -217,6 +221,7 @@ __all__ = [
     "add_checklist_item", "remove_checklist_item", "update_checklist_item_text",
     "add_artifact", "get_artifacts", "set_task_tags", "get_task_tags",
     "create_subtask", "update_subtask", "get_subtasks", "get_subtask",
+    "create_attempt", "update_attempt", "get_attempt", "get_previous_attempt_session_id",
     # components
     "create_component", "get_component", "update_component", "list_components",
     "link_conversation", "unlink_conversation", "get_component_conversations",

@@ -762,3 +762,69 @@ async def get_subtask(id: str) -> dict | None:
     async with get_db() as conn:
         rows = await conn.execute_fetchall("SELECT * FROM subtasks WHERE id = ?", (id,))
         return dict(rows[0]) if rows else None
+
+
+# ---------------------------------------------------------------------------
+# Task attempt records (per-attempt session_id tracking)
+# ---------------------------------------------------------------------------
+
+
+async def create_attempt(task_id: str, attempt_number: int) -> dict:
+    """Create a new attempt record. Returns the created row."""
+    ts = now_iso()
+    async with get_db() as conn:
+        await conn.execute(
+            """INSERT INTO task_attempts (task_id, attempt_number, started_at)
+               VALUES (?, ?, ?)""",
+            (task_id, attempt_number, ts),
+        )
+        await conn.commit()
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM task_attempts WHERE task_id = ? AND attempt_number = ?",
+            (task_id, attempt_number),
+        )
+        return dict(rows[0])
+
+
+async def update_attempt(task_id: str, attempt_number: int, **kwargs) -> None:
+    """Update fields on an attempt record (session_id, finished_at, outcome)."""
+    if not kwargs:
+        return
+    allowed = {"session_id", "finished_at", "outcome"}
+    filtered = {k: v for k, v in kwargs.items() if k in allowed}
+    if not filtered:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in filtered)
+    values = list(filtered.values()) + [task_id, attempt_number]
+    async with get_db() as conn:
+        await conn.execute(
+            f"UPDATE task_attempts SET {set_clause} WHERE task_id = ? AND attempt_number = ?",
+            values,
+        )
+        await conn.commit()
+
+
+async def get_attempt(task_id: str, attempt_number: int) -> dict | None:
+    """Get a specific attempt record."""
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM task_attempts WHERE task_id = ? AND attempt_number = ?",
+            (task_id, attempt_number),
+        )
+        return dict(rows[0]) if rows else None
+
+
+async def get_previous_attempt_session_id(task_id: str, current_attempt: int) -> str | None:
+    """Get the session_id from the attempt before current_attempt.
+
+    Returns None if no previous attempt exists or it has no session_id.
+    """
+    if current_attempt <= 1:
+        return None
+    async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            """SELECT session_id FROM task_attempts
+               WHERE task_id = ? AND attempt_number = ? AND session_id IS NOT NULL""",
+            (task_id, current_attempt - 1),
+        )
+        return rows[0]["session_id"] if rows else None
