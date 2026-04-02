@@ -1475,6 +1475,19 @@ class TestActionsFiltered:
         names = await self._names("f/pr1")
         assert "resume" not in names
 
+    # Confirm flags — resume/retry on stopped must have confirm=False (no-confirm path)
+    async def test_stopped_resume_retry_confirm_flags(self):
+        """Resume and Retry on stopped tasks have confirm=False so they execute immediately."""
+        await self._make("f/cf1", status="stopped", reason="paused_by_user",
+                         session_id="sess_cf")
+        actions = await self.lifecycle.get_available_actions("f/cf1")
+        by_name = {a["name"]: a for a in actions}
+        assert by_name["resume"]["confirm"] is False
+        assert by_name["retry"]["confirm"] is False
+        # Cancel and close should require confirmation
+        assert by_name["cancel"]["confirm"] is True
+        assert by_name["close"]["confirm"] is True
+
     # System actions never appear
     async def test_no_system_actions_in_working(self):
         await self._make("f/sys1", status="working")

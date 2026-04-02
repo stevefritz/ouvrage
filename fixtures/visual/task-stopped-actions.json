@@ -9,7 +9,7 @@
   },
   "actions": [
     {"name": "resume", "label": "Resume", "style": "primary", "confirm": false},
-    {"name": "retry", "label": "Retry", "style": "secondary", "confirm": true},
+    {"name": "retry", "label": "Retry", "style": "primary", "confirm": false},
     {"name": "cancel", "label": "Cancel", "style": "danger", "confirm": true}
   ]
 }

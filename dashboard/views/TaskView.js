@@ -583,41 +583,10 @@ function ActionToolbar({ task, chain, apiActions, onAction }) {
     `;
 
     // API-driven buttons (from /actions endpoint)
-    if (apiActions && apiActions.length > 0) {
+    if (apiActions) {
         for (const action of apiActions) {
             const coloring = STYLE_COLORS[action.style] || STYLE_COLORS.secondary;
             actions.push(btn(action.name, action.label, coloring.bg, coloring.fg, action.confirm));
-        }
-    } else {
-        // Fallback: legacy hardcoded logic (used while actions API is loading)
-        if (task.status === 'ready' && task.held) {
-            actions.push(btn('approve', 'Approve', colors.greenBg, colors.green, false));
-        } else if (task.status === 'ready') {
-            actions.push(btn('dispatch', 'Dispatch', colors.blueBg, colors.blue, false));
-            actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow, true));
-            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
-        }
-        if (task.status === 'working') {
-            actions.push(btn('stop', 'Stop', colors.yellowBg, colors.yellow, false));
-            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
-        }
-        if (['turns-exhausted', 'needs-review'].includes(task.status)) {
-            actions.push(btn('resume', 'Resume', colors.greenBg, colors.green, true));
-            actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow, true));
-            actions.push(btn('cancel', 'Cancel', colors.redBg, colors.red, true));
-        }
-        if (task.status === 'rate-limited') {
-            actions.push(btn('resume', 'Resume', colors.greenBg, colors.green, true));
-        }
-        if (task.status === 'completed') {
-            actions.push(btn('reopen', 'Reopen', colors.yellowBg, colors.yellow, true));
-        }
-        if (task.status === 'reopened') {
-            actions.push(btn('start', 'Start', colors.greenBg, colors.green, false));
-            actions.push(btn('cancel-reopen', 'Cancel Reopen', colors.redBg, colors.red, true));
-        }
-        if (['failed', 'cancelled'].includes(task.status)) {
-            actions.push(btn('retry', 'Retry', colors.yellowBg, colors.yellow, true));
         }
     }
 
@@ -2698,18 +2667,36 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     useEffect(() => { loadBlocker(); }, [loadBlocker]);
 
     // Action handler
+    // Shared action map — used by both immediate and confirmed execution paths
+    const actionMap = useMemo(() => ({
+        stop: () => api.stopTask(id),
+        cancel: () => api.cancelTask(id),
+        'cancel-reopen': () => api.cancelReopen(id),
+        retry: () => api.retryTask(id),
+        resume: () => api.resumeTask(id),
+        close: () => api.closeTask(id),
+        'skip-gate': () => api.skipGate(id),
+        'advance-chain': () => api.advanceChain(id),
+        'release-worktree': () => api.releaseWorktree(id),
+        approve: () => api.approveTask(id),
+        hold: () => api.holdTask(id),
+        dispatch: () => api.dispatchTask(id),
+        reopen: () => api.reopenTask(id),
+        'cancel-chain': () => api.cancelChain(id),
+    }), [id]);
+
+    // Normalize action names: lifecycle uses underscores (skip_gate), actionMap uses dashes (skip-gate)
+    const resolveAction = useCallback((action) => {
+        return actionMap[action] || actionMap[action.replace(/_/g, '-')];
+    }, [actionMap]);
+
     const handleAction = useCallback(async (action, taskId, needsConfirm = true) => {
         if (action === 'start') {
             setShowStartOverlay(true);
         } else if (!needsConfirm) {
             // Execute immediately without confirmation dialog
             try {
-                const actionMap = {
-                    stop: () => api.stopTask(id),
-                    approve: () => api.approveTask(id),
-                    dispatch: () => api.dispatchTask(id),
-                };
-                const fn = actionMap[action];
+                const fn = resolveAction(action);
                 if (fn) await fn();
                 setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
             } catch (e) {
@@ -2718,37 +2705,21 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         } else {
             setConfirmAction(action);
         }
-    }, [id, loadTask, loadAttempts, loadActions]);
+    }, [id, resolveAction, loadTask, loadAttempts, loadActions]);
 
     const executeAction = useCallback(async () => {
         if (!confirmAction || !task) return;
         const action = confirmAction;
         setConfirmAction(null);
         try {
-            const actionMap = {
-                stop: () => api.stopTask(id),
-                cancel: () => api.cancelTask(id),
-                'cancel-reopen': () => api.cancelReopen(id),
-                retry: () => api.retryTask(id),
-                resume: () => api.resumeTask(id),
-                close: () => api.closeTask(id),
-                'skip-gate': () => api.skipGate(id),
-                'advance-chain': () => api.advanceChain(id),
-                'release-worktree': () => api.releaseWorktree(id),
-                approve: () => api.approveTask(id),
-                hold: () => api.holdTask(id),
-                dispatch: () => api.dispatchTask(id),
-                reopen: () => api.reopenTask(id),
-                'cancel-chain': () => api.cancelChain(id),
-            };
-            const fn = actionMap[action];
+            const fn = resolveAction(action);
             if (fn) await fn();
             // Reload after action
             setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
         } catch (e) {
             console.error('Action error:', e);
         }
-    }, [confirmAction, id, task, loadTask, loadAttempts, loadActions]);
+    }, [confirmAction, resolveAction, task, loadTask, loadAttempts, loadActions]);
 
     const executeStart = useCallback(async (overrides) => {
         setShowStartOverlay(false);
