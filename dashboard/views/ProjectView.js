@@ -2869,7 +2869,7 @@ export function ProjectView({ id }) {
                 api.getProject(id),
                 api.getTasks({ project_id: id }),
                 api.getComponents(id),
-                api.getConversations({ project_id: id }).catch(() => []),
+                api.getConversations({ project: id }).catch(() => []),
             ]);
             setProject(proj);
             setTasks(taskList);
