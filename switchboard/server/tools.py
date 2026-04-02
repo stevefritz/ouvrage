@@ -1070,7 +1070,11 @@ TOKEN_TOOLS = [
 FILES_TOOLS = [
     Tool(
         name="list_files",
-        description="List uploaded files with their absolute paths on disk. CC uses this to discover available reference files. Optionally filter by task_id to get only files attached to a specific task.",
+        description=(
+            "List uploaded/attached files. Each file includes a `readable` flag — true for text formats "
+            "(txt, md, json, csv, yaml, xml, toml), false for binary (png, jpg, pdf, etc.). "
+            "Use get_attached_file to read content of readable files. Optionally filter by task_id."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1079,6 +1083,29 @@ FILES_TOOLS = [
                     "description": "Filter files by task ID. When set, returns only files attached to that task.",
                 },
             },
+        },
+    ),
+    Tool(
+        name="get_attached_file",
+        description=(
+            "Read the content of a text-based attached file. Only works for readable files "
+            "(txt, md, json, csv, yaml, xml, toml) — use list_files to check the `readable` flag first. "
+            "Binary files (images, PDFs) are refused. Returns the file content as text."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "The file ID from list_files response.",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Maximum bytes to return. Default: 1048576 (1MB).",
+                    "default": 1048576,
+                },
+            },
+            "required": ["file_id"],
         },
     ),
     Tool(

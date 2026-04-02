@@ -14,6 +14,10 @@ ALLOWED_EXTENSIONS = {
     'pdf',  # documents
 }
 
+READABLE_EXTENSIONS = {
+    'txt', 'md', 'json', 'csv', 'yaml', 'yml', 'toml', 'xml',
+}
+
 MIME_TYPES = {
     'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
     'gif': 'image/gif', 'webp': 'image/webp', 'svg': 'image/svg+xml',
@@ -24,6 +28,11 @@ MIME_TYPES = {
 }
 
 
+def _is_readable(filename: str) -> bool:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in READABLE_EXTENSIONS
+
+
 def _uploads_dir() -> Path:
     from switchboard.config.settings import DB_PATH
     return Path(DB_PATH).parent / "uploads"
@@ -32,7 +41,48 @@ def _uploads_dir() -> Path:
 async def _handle_list_files(arguments: dict) -> dict:
     task_id = arguments.get("task_id") or None
     files = await db.list_files(task_id=task_id)
+    for f in files:
+        f["readable"] = _is_readable(f.get("filename", ""))
     return {"files": files}
+
+
+async def _handle_get_attached_file(arguments: dict) -> dict:
+    """Read the content of a text-based attached file."""
+    file_id = arguments.get("file_id")
+    if not file_id:
+        raise ValueError("file_id is required")
+
+    record = await db.get_file(file_id)
+    if not record:
+        raise ValueError(f"File '{file_id}' not found")
+
+    filename = record.get("filename", "")
+    if not _is_readable(filename):
+        return {
+            "error": "File is not a readable text format",
+            "filename": filename,
+            "mime_type": record.get("mime_type"),
+            "readable": False,
+        }
+
+    stored_path = Path(record["stored_path"])
+    if not stored_path.exists():
+        raise ValueError(f"File not found on disk: {filename}")
+
+    max_bytes = arguments.get("max_bytes", 1048576)
+    content = stored_path.read_bytes()
+    size = len(content)
+    truncated = size > max_bytes
+
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "content": content[:max_bytes].decode("utf-8", errors="replace"),
+        "size": size,
+        "truncated": truncated,
+        "mime_type": record.get("mime_type"),
+        "task_id": record.get("task_id"),
+    }
 
 
 async def _handle_add_task_file(arguments: dict) -> dict:
