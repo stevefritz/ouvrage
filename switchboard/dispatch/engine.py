@@ -895,56 +895,17 @@ async def cancel_chain(task_id: str) -> dict:
 
 
 async def approve_task(task_id: str) -> dict:
-    """Release a held task for dispatch.
+    """Release a held task for dispatch — thin wrapper around lifecycle.execute("approve").
 
-    Validates held state BEFORE mutation. Returns a response that reflects
-    the action taken (hold released) — never re-validates held after the
-    mutation to avoid returning a false "not held" error on a successful approve.
+    The lifecycle service handles the precondition check (held=True), clears the
+    held flag, posts an audit message, and triggers dispatch if dependencies are met.
     """
-    task = await db.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task '{task_id}' not found")
-    # Validate BEFORE mutation — if not held, fail now. Never re-check after.
-    if not task.get("held"):
-        raise ValueError(f"Task '{task_id}' is not held")
-
-    await db.update_task(task_id, held=False)
-    await db.write_audit_log(
-        task_id=task_id, action="approved",
+    from switchboard.dispatch.lifecycle import lifecycle
+    return await lifecycle.execute(
+        task_id, "approve",
         triggered_by="user",
         source_detail="approve_task",
-        previous_status=task.get("status"), new_status=task.get("status"),
     )
-    log.info(f"Task {task_id} approved — releasing hold")
-
-    await db.post_task_message(
-        task_id=task_id, author="dispatcher", type="status",
-        title="Approved",
-        content="Task hold released. Dispatching.",
-    )
-
-    # Dispatch if the task is ready (dependencies met)
-    if task["status"] == "ready":
-        if task.get("depends_on"):
-            parent = await db.get_task(task["depends_on"])
-            if parent and not parent.get("gate_passed_at"):
-                return {"task_id": task_id, "status": "ready", "held": False,
-                        "waiting_on": task["depends_on"]}
-
-        # dispatch_task returns the result of the dispatch action. Return it
-        # directly — do NOT re-read task state from DB after dispatch, as the
-        # task may have already transitioned (held→working) and a re-read could
-        # produce an inconsistent or confusing response.
-        return await dispatch_task(
-            project_id=task["project_id"],
-            task_id=task_id,
-            goal=task["goal"],
-        )
-
-    # Task was held but not in 'ready' status (unusual state). Hold is now
-    # cleared. Return based on what we know — do not re-read from DB to avoid
-    # any stale-state confusion.
-    return {"task_id": task_id, "status": task["status"], "held": False, "approved": True}
 
 
 async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:

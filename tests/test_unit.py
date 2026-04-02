@@ -852,7 +852,7 @@ class TestCheckStalledTasksHeldChain:
 class TestApproveHeldChainChild:
     """approve_task on a held child whose parent already gate-passed must dispatch it."""
 
-    async def test_approve_held_child_dispatches_when_parent_passed(self, db, sample_project):
+    async def test_approve_held_child_dispatches_when_parent_passed(self, db, sample_project, mock_git, mock_sdk):
         """After parent gate-passes, approving the held child must trigger dispatch."""
         from switchboard.dispatch.engine import approve_task
 
@@ -873,16 +873,7 @@ class TestApproveHeldChainChild:
         )
         await db.update_task("test-project/approve-child", held=True)
 
-        # Approve the child
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={
-            "task_id": "test-project/approve-child", "status": "working",
-        })) as mock_dispatch:
-            result = await approve_task("test-project/approve-child")
-
-        # dispatch_task must have been called
-        mock_dispatch.assert_awaited_once()
-        call_kwargs = mock_dispatch.await_args.kwargs
-        assert call_kwargs["task_id"] == "test-project/approve-child"
+        result = await approve_task("test-project/approve-child")
 
         # held flag must be cleared in DB
         task = await db.get_task("test-project/approve-child")
@@ -890,7 +881,7 @@ class TestApproveHeldChainChild:
 
         # Result must reflect the dispatch outcome — not an error, not re-held
         assert result.get("status") == "working", (
-            "approve_task must return the dispatch result (status=working), "
+            "approve_task must dispatch and return status=working, "
             f"got: {result}"
         )
         assert result.get("held") is not True, "response must not indicate task is still held"
@@ -903,7 +894,7 @@ class TestApproveHeldChainChild:
 class TestApproveTaskResponse:
     """approve_task must return success after approving, never a re-validation error."""
 
-    async def test_approve_standalone_held_task_returns_working(self, db, sample_project):
+    async def test_approve_standalone_held_task_returns_working(self, db, sample_project, mock_git, mock_sdk):
         """Approving a standalone held task returns status=working, no error."""
         from switchboard.dispatch.engine import approve_task
 
@@ -913,13 +904,7 @@ class TestApproveTaskResponse:
         )
         await db.update_task("test-project/standalone-held", held=True)
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={
-            "task_id": "test-project/standalone-held", "status": "working",
-            "branch": "standalone-held",
-        })) as mock_dispatch:
-            result = await approve_task("test-project/standalone-held")
-
-        mock_dispatch.assert_awaited_once()
+        result = await approve_task("test-project/standalone-held")
 
         # Response must reflect the dispatch result — no "is not held" error
         assert result.get("status") == "working", (
@@ -944,7 +929,7 @@ class TestApproveTaskResponse:
         with pytest.raises(ValueError, match="is not held"):
             await approve_task("test-project/not-held")
 
-    async def test_rapid_double_approve_first_succeeds_second_clean_error(self, db, sample_project):
+    async def test_rapid_double_approve_first_succeeds_second_clean_error(self, db, sample_project, mock_git, mock_sdk):
         """First approve succeeds; second approve gets a clean ValueError, not a crash."""
         from switchboard.dispatch.engine import approve_task
 
@@ -955,15 +940,12 @@ class TestApproveTaskResponse:
         await db.update_task("test-project/double-approve", held=True)
 
         # First approve — succeeds
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={
-            "task_id": "test-project/double-approve", "status": "working",
-        })):
-            result = await approve_task("test-project/double-approve")
-
+        result = await approve_task("test-project/double-approve")
         assert result.get("status") == "working"
 
-        # Second approve — must raise clean ValueError, NOT crash with unhandled exception
-        with pytest.raises(ValueError, match="is not held"):
+        # Second approve — must raise clean ValueError (task is now working, not held)
+        # IllegalTransition extends ValueError, so this covers both cases
+        with pytest.raises(ValueError):
             await approve_task("test-project/double-approve")
 
 

@@ -901,6 +901,38 @@ async def _reject_if_awaiting_feedback_close(task: dict, **ctx: Any) -> None:
         )
 
 
+async def _require_held(task: dict, **ctx: Any) -> None:
+    """Approve requires the task to have held=True."""
+    if not task.get("held"):
+        raise ValueError(f"Task '{task['id']}' is not held")
+
+
+async def _approve_post_message(task: dict, **ctx: Any) -> None:
+    """Post 'Approved' status message."""
+    await db.post_task_message(
+        task_id=task["id"], author="dispatcher", type="status",
+        title="Approved",
+        content="Task hold released. Dispatching.",
+    )
+
+
+async def _approve_dispatch_if_ready(task: dict, **ctx: Any) -> None:
+    """Dispatch if dependencies are met. Imports dispatch_task from engine for test-patch compatibility."""
+    from switchboard.dispatch.engine import dispatch_task
+
+    task_id = task["id"]
+    if task.get("depends_on"):
+        parent = await db.get_task(task["depends_on"])
+        if parent and not parent.get("gate_passed_at"):
+            return  # Parent not yet gate-passed — don't dispatch
+
+    await dispatch_task(
+        project_id=task["project_id"],
+        task_id=task_id,
+        goal=task["goal"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -984,6 +1016,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         label="Dispatch",
         style="primary",
         side_effects=[_dispatch_launch_session],
+    ),
+    ("ready", "approve"): TransitionDef(
+        to_state="ready",  # State stays ready; _approve_dispatch_if_ready side effect may advance to working
+        preconditions=[_require_held],
+        side_effects=[_clear_held_flag, _approve_post_message, _approve_dispatch_if_ready],
+        label="Approve",
+        style="primary",
+        user_action=True,
     ),
     ("ready", "cancel"): TransitionDef(
         to_state="cancelled",
