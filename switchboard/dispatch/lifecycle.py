@@ -1064,6 +1064,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("stopped", "cancel"): TransitionDef(
         to_state="cancelled",
+        preconditions=[_reject_awaiting_feedback],
         side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect],
         label="Cancel",
         style="danger",
