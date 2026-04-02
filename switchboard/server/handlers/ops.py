@@ -2,11 +2,11 @@
 
 import switchboard.db as db
 
-GUIDE_STATIC = """# Switchboard Guide
+GUIDE_STATIC = """# Ouvrage Guide
 
-## What is Switchboard?
+## What is Ouvrage?
 
-Switchboard is an async task orchestration system for Claude Code sessions. Think of it as a **PM/tech lead layer** that dispatches work to autonomous CC agents, monitors their progress, and manages a quality gate pipeline (test → review → PR).
+Ouvrage is an async task orchestration system for Claude Code sessions. Think of it as a **PM/tech lead layer** that dispatches work to autonomous CC agents, monitors their progress, and manages a quality gate pipeline (test → review → PR).
 
 ### Mental Model
 - **You** (PM/tech lead) define specs, create tasks, and monitor progress
@@ -175,7 +175,7 @@ async def _handle_get_context(arguments):
     pinned_convs = [c for c in convs if c.get("has_pinned")]
 
     parts = [
-        f"# Switchboard Context",
+        f"# Ouvrage Context",
         f"",
         f"**Projects:** {len(projects)} | **Active tasks:** {active_count}",
         f"",

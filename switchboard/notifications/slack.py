@@ -244,7 +244,7 @@ async def task_question(task_id: str, question: str):
         {
             "type": "context",
             "elements": [
-                {"type": "mrkdwn", "text": "_Reply on Switchboard to unblock the task_"},
+                {"type": "mrkdwn", "text": "_Reply on Ouvrage to unblock the task_"},
             ],
         },
     ]

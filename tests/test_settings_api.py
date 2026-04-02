@@ -99,7 +99,7 @@ class TestGetInstanceSettings:
 
         assert resp.status == 200
         data = resp.json()
-        assert data["instance"]["name"] == "Switchboard"
+        assert data["instance"]["name"] == "Ouvrage"
         assert data["instance"]["slug"] == "default"
         assert data["github"]["connected"] is True
         assert data["github"]["username"] == "stevefritz"

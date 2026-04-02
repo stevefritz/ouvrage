@@ -139,7 +139,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     task_id = task["id"]
     project_id = project["id"]
 
-    parts.append("# You are a Foreman worker")
+    parts.append("# You are an Ouvrage worker")
     parts.append(f"Dispatched by **{dispatched_by}** for project **{project_id}**.")
     parts.append(f"Branch: `{branch}` | Worktree: `{worktree_path}` | Task ID: `{task_id}`")
     parts.append("Your checklist updates, phase changes, and messages appear on a live dashboard. Update phase and checklist as you work.")
@@ -267,7 +267,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     # ── 8. Instructions + Git workflow ───────────────────────────────────────
     parts.append("## Instructions")
     parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
-    parts.append("- Use the switchboard MCP tools to report progress:")
+    parts.append("- Use the Ouvrage MCP tools to report progress:")
     parts.append(f"  - Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
     parts.append(f"  - Update phase: `mcp__switchboard__update_task_phase(task_id='{task_id}', phase='implementing', detail='...')`")
     parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='progress', content='...')`")

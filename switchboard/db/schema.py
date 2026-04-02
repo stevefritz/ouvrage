@@ -532,7 +532,7 @@ async def init_db():
             await conn.execute(
                 """INSERT INTO instance (id, name, slug, plan_tier, owner_user_id, created_at)
                    VALUES (1, ?, ?, ?, ?, ?)""",
-                ("Switchboard", "default", "free", user_id, ts),
+                ("Ouvrage", "default", "free", user_id, ts),
             )
 
             # Backfill FK columns on existing rows

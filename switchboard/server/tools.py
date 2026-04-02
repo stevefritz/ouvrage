@@ -20,7 +20,7 @@ CONVERSATION_TOOLS = [
     ),
     Tool(
         name="create_conversation",
-        description="Start a new conversation on the switchboard.",
+        description="Start a new conversation on Ouvrage.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -132,7 +132,7 @@ PROJECT_TOOLS = [
     Tool(
         name="create_project",
         description=(
-            "Register a git repo as a Switchboard project. Each project gets its own working directory "
+            "Register a git repo as an Ouvrage project. Each project gets its own working directory "
             "where git worktrees are created for tasks. Only 'id' and 'repo' are required — everything "
             "else has sensible defaults. The repo must exist on GitHub and have at least one commit."
         ),
@@ -908,7 +908,7 @@ OPS_TOOLS = [
     ),
     Tool(
         name="get_guide",
-        description="Full tool reference and workflow guide. Call this when get_context isn't enough — e.g. first time using Switchboard, or need to understand a specific workflow pattern.",
+        description="Full tool reference and workflow guide. Call this when get_context isn't enough — e.g. first time using Ouvrage, or need to understand a specific workflow pattern.",
         inputSchema={"type": "object", "properties": {}},
     ),
 ]
@@ -958,7 +958,7 @@ RAG_TOOLS = [
     Tool(
         name="search_message_chunks",
         description=(
-            "Semantic search at the paragraph level within Switchboard messages. "
+            "Semantic search at the paragraph level within Ouvrage messages. "
             "More precise than search_conversations — finds specific sections of long design docs, "
             "prior decisions, or meeting notes rather than surfacing the whole message. "
             "Use when you need a particular passage from a conversation, not just the message that contains it."
@@ -990,7 +990,7 @@ RAG_TOOLS = [
     Tool(
         name="search_conversations",
         description=(
-            "Semantic search over Switchboard conversation and task messages using embeddings. "
+            "Semantic search over Ouvrage conversation and task messages using embeddings. "
             "Finds relevant messages even when keyword search would miss them — e.g. 'why did we choose SSE' "
             "finds messages about streaming decisions without requiring exact keyword matches. "
             "Results are ranked by cosine similarity weighted by message type (spec/review/note rank higher)."

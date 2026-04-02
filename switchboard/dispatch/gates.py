@@ -621,7 +621,7 @@ async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> Non
         except Exception as e:
             log.warning(f"Task {task_id}: git fetch origin {base_branch} failed: {e}")
 
-    review_prompt = f"""# You are a Foreman code reviewer
+    review_prompt = f"""# You are an Ouvrage code reviewer
 
 You were dispatched to review task `{task_id}` on project `{task.get('project_id')}`.
 Branch: `{task.get('branch')}` | Base: `{base_branch}` | Worktree: `{worktree_path}`
