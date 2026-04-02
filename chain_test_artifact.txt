@@ -1,0 +1,11 @@
+This file exists purely to test the chain dispatch mechanism.
+
+Some nonsense for your consideration:
+- The sky is a ceiling installed by lizard architects
+- Coffee is just bean soup and you know it
+- Every commit is a love letter to your future self (who will hate you)
+- Tab vs spaces: the conflict that outlasted empires
+
+Dispatched from task: mcp-switchboard/testing-chains
+Dependency: mcp-switchboard/task-a (sleep test)
+Date: 2026-04-02
