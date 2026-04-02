@@ -471,6 +471,7 @@ class TestLaunchSdkSessionFork:
             patch.object(_engine, "_run_sdk_session", mock_run),
             patch.object(_engine, "_setup_log_dir", mock_setup_log),
             patch.object(_engine, "_write_dispatch_log", mock_write_log),
+            patch(f"{_INTERNALS}._copy_archived_session_log", AsyncMock()),
         ):
             from switchboard.dispatch.internals import launch_sdk_session
             handle = await launch_sdk_session(

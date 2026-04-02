@@ -13,7 +13,9 @@ engine.py so that existing test patches on engine.* bindings still apply.
 """
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 
 import switchboard.db as db
 from switchboard.config.constants import DEFAULT_MODEL
@@ -126,6 +128,60 @@ async def build_dispatch_prompt(
 # 4. launch_sdk_session
 # ---------------------------------------------------------------------------
 
+async def _copy_archived_session_log(
+    task_id: str, log_dir: Path, fork_session_id: str,
+) -> None:
+    """Copy the previous attempt's session.jsonl from archive into the new log dir.
+
+    Reads from .task-history/{slug}/attempt-{prev}/, appends a fork marker,
+    and writes into the new attempt's session.jsonl. The archive is untouched.
+    """
+    import switchboard.dispatch.engine as _engine
+    from switchboard.dispatch.sdk_session import _open_shared
+
+    task = await db.get_task(task_id)
+    if not task:
+        return
+    project = await db.get_project(task["project_id"])
+    if not project:
+        return
+
+    current_attempt = task.get("current_attempt") or 1
+    prev_attempt = current_attempt - 1
+    if prev_attempt < 1:
+        return
+
+    archive_dir = _engine._find_archive_path(project, task_id, prev_attempt)
+    if not archive_dir:
+        return
+
+    archived_log = archive_dir / "session.jsonl"
+    if not archived_log.exists():
+        return
+
+    try:
+        prev_content = archived_log.read_text()
+        if not prev_content.strip():
+            return
+
+        session_log = log_dir / "session.jsonl"
+        with _open_shared(session_log) as f:
+            f.write(prev_content)
+            if not prev_content.endswith("\n"):
+                f.write("\n")
+            marker = {
+                "timestamp": db.now_iso(),
+                "type": "SystemMessage",
+                "subtype": "fork",
+                "forked_from_session": fork_session_id,
+                "forked_from_attempt": prev_attempt,
+            }
+            f.write(json.dumps(marker) + "\n")
+        log.info(f"Copied session log from attempt {prev_attempt} into attempt {current_attempt} for {task_id}")
+    except Exception as e:
+        log.warning(f"Failed to copy archived session log for {task_id}: {e}")
+
+
 async def launch_sdk_session(
     task_id: str,
     prompt: str,
@@ -147,9 +203,11 @@ async def launch_sdk_session(
     """
     import switchboard.dispatch.engine as _engine
 
-    log_dir = await _engine._setup_log_dir(
-        worktree_path, clean=not is_resume, fork_session_id=fork_session_id,
-    )
+    log_dir = await _engine._setup_log_dir(worktree_path, clean=not is_resume)
+
+    # On fork: copy previous attempt's session log from archive into new log dir
+    if fork_session_id:
+        await _copy_archived_session_log(task_id, log_dir, fork_session_id)
 
     _engine._write_dispatch_log(
         log_dir, task_id, session_id or fork_session_id or "(new)",
