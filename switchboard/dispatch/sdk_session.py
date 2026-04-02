@@ -407,11 +407,14 @@ async def _build_resume_prompt(task_id: str) -> str:
 # Logging utilities
 # ---------------------------------------------------------------------------
 
-async def _setup_log_dir(worktree_path: str) -> Path:
+async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
     """Create .switchboard log directory in the worktree.
 
     Created as the worker user (who owns the worktree), with group-write
     so the service user can also write dispatch/session logs.
+
+    When clean=True (dispatch/retry), removes stale files from previous tasks.
+    When clean=False (resume), preserves existing logs for session continuity.
 
     Also ensures .switchboard is gitignored and removes any stale
     git-tracked .switchboard files (which cause permission issues
@@ -437,9 +440,10 @@ async def _setup_log_dir(worktree_path: str) -> Path:
     else:
         await _run_as_worker("sh", "-c", f"echo '.switchboard/' > {gitignore_path}")
 
-    # Remove any stale files from a previous task (wrong ownership)
-    if log_dir.exists():
-        await _run_as_worker("rm", "-rf", str(log_dir))
+    if clean:
+        # Remove stale files from a previous task (wrong ownership)
+        if log_dir.exists():
+            await _run_as_worker("rm", "-rf", str(log_dir))
 
     await _run_as_worker("mkdir", "-p", str(log_dir))
     await _run_as_worker("chmod", "775", str(log_dir))

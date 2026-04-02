@@ -143,7 +143,7 @@ async def launch_sdk_session(
     """
     import switchboard.dispatch.engine as _engine
 
-    log_dir = await _engine._setup_log_dir(worktree_path)
+    log_dir = await _engine._setup_log_dir(worktree_path, clean=not is_resume)
 
     _engine._write_dispatch_log(
         log_dir, task_id, session_id or "(new)",
