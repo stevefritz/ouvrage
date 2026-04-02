@@ -77,6 +77,11 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
     if rc != 0:
         # Branch doesn't exist on origin — fall back to full setup
         log.info(f"Branch '{branch}' not on origin, falling back to setup_task_worktree")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="New worktree",
+            content=f"Branch `{branch}` not found on origin — creating fresh worktree.",
+        )
         return await setup_task_worktree(project, task)
 
     # Delete stale local ref if it exists (prevents worktree add conflict)
@@ -94,6 +99,11 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
     await _run_as_worker("chmod", "g+w", worktree_path)
 
     log.info(f"Checked out existing branch '{branch}' from origin into {worktree_path}")
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Worktree restored",
+        content=f"Branch `{branch}` found on origin — checked out existing work.",
+    )
 
     await _engine.setup_credential_helper(worktree_path, task["project_id"])
     await _engine.run_setup_command(project, worktree_path)
