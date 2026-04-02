@@ -864,6 +864,14 @@ async def _require_session_id(task: dict, **ctx: Any) -> None:
         raise ValueError(f"Task '{task['id']}' has no session_id. Use retry for a fresh session.")
 
 
+async def _reject_awaiting_feedback(task: dict, **ctx: Any) -> None:
+    """Resume/retry not available while awaiting feedback — use Start instead."""
+    if task.get("reason") == "awaiting_feedback":
+        raise ValueError(
+            f"Task '{task['id']}' is awaiting feedback. Post instructions, then use Start."
+        )
+
+
 async def _require_awaiting_feedback(task: dict, **ctx: Any) -> None:
     """Start/cancel_reopen requires reason == 'awaiting_feedback'."""
     if task.get("reason") != "awaiting_feedback":
@@ -1028,13 +1036,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="working",
         label="Resume",
         style="primary",
-        preconditions=[_require_session_or_gate_resumable],
+        preconditions=[_reject_awaiting_feedback, _require_session_or_gate_resumable],
         side_effects=[_resume_launch_session],
     ),
     ("stopped", "retry"): TransitionDef(
         to_state="working",
         label="Retry",
         style="primary",
+        preconditions=[_reject_awaiting_feedback],
         side_effects=[_retry_launch_session],
     ),
     ("stopped", "start"): TransitionDef(
