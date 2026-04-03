@@ -1158,6 +1158,12 @@ function TasksSection({ tasks, conversations, chainMap, statusFilter, onStatusFi
 
     const isSearchActive = !!searchQuery;
 
+    // When search is active, filter search results by status dropdown too
+    let displayTasks = isSearchActive ? (searchResults || []) : filtered;
+    if (isSearchActive && statusFilter && searchResults) {
+        displayTasks = searchResults.filter(t => t.status === statusFilter);
+    }
+
     const sectionStyle = {
         display: 'flex',
         flexDirection: 'column',
@@ -1186,10 +1192,11 @@ function TasksSection({ tasks, conversations, chainMap, statusFilter, onStatusFi
         fontSize: typography.size.sm,
     };
 
-    const headerLabel = isSearchActive
-        ? (searchLoading ? 'Searching…'
-            : searchResults ? `Search results · ${searchResults.length}` : 'Tasks')
-        : `Tasks · ${filtered.length}`;
+    const headerLabel = searchLoading
+        ? 'Tasks · …'
+        : isSearchActive && searchResults
+            ? `Tasks · ${displayTasks.length}`
+            : `Tasks · ${filtered.length}`;
 
     return html`
         <div style=${sectionStyle}>
@@ -1211,13 +1218,16 @@ function TasksSection({ tasks, conversations, chainMap, statusFilter, onStatusFi
             ${isSearchActive ? html`
                 ${searchLoading ? html`
                     <div style=${loadingStyle}>Searching…</div>
-                ` : searchResults && searchResults.length === 0 ? html`
+                ` : searchResults && displayTasks.length === 0 ? html`
                     <div style=${emptyStyle}>No results found for "${searchQuery}"</div>
-                ` : searchResults ? searchResults.map((result, i) => html`
-                    <${SearchResultRow}
-                        key=${`${result.type}-${result.task_id || result.conversation_id}-${i}`}
-                        result=${result}
-                        onTaskSelect=${onTaskSelect}
+                ` : searchResults ? displayTasks.map(task => html`
+                    <${TaskRowWithChain}
+                        key=${task.id}
+                        task=${task}
+                        chainMap=${chainMap}
+                        allTasks=${tasks}
+                        conversations=${conversations}
+                        onSelect=${onTaskSelect}
                     />
                 `) : null}
             ` : html`
@@ -1802,7 +1812,10 @@ export function ProjectView({ id }) {
 
     const [statusFilter, setStatusFilter] = useState('');
 
-    const [searchQuery, setSearchQuery] = useState('');
+    const _searchStorageKey = `foreman_search_${id}`;
+    const [searchQuery, setSearchQuery] = useState(() => {
+        try { return localStorage.getItem(_searchStorageKey) || ''; } catch (_) { return ''; }
+    });
     const [searchResults, setSearchResults] = useState(null);
     const [searchLoading, setSearchLoading] = useState(false);
 
@@ -1844,7 +1857,9 @@ export function ProjectView({ id }) {
 
     const handleSearch = useCallback(async (query) => {
         setSearchQuery(query);
+        try { localStorage.setItem(_searchStorageKey, query); } catch (_) {}
         if (!query) {
+            try { localStorage.removeItem(_searchStorageKey); } catch (_) {}
             setSearchResults(null);
             setSearchLoading(false);
             return;
@@ -1858,7 +1873,14 @@ export function ProjectView({ id }) {
         } finally {
             setSearchLoading(false);
         }
-    }, [id]);
+    }, [id, _searchStorageKey]);
+
+    // Re-run search on mount if a persisted query exists
+    useEffect(() => {
+        if (searchQuery) {
+            handleSearch(searchQuery);
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDeleteProject = async () => {
         if (!project || deleteConfirmText !== project.id) return;
