@@ -1,8 +1,59 @@
 [
   {
+    "id": "mcp-switchboard/auth-regression",
+    "project_id": "mcp-switchboard",
+    "goal": "Fix auth regression in middleware causing 401 on valid sessions",
+    "status": "failed",
+    "phase": null,
+    "branch": "auth-regression",
+    "created_at": "2026-04-03T10:00:00Z",
+    "updated_at": "2026-04-03T15:00:00Z",
+    "last_activity": "2026-04-03T15:00:00Z",
+    "depends_on": null,
+    "model": "sonnet"
+  },
+  {
+    "id": "mcp-switchboard/review-gate-fix",
+    "project_id": "mcp-switchboard",
+    "goal": "Fix review gate timeout on large diffs",
+    "status": "needs-review",
+    "phase": "review",
+    "branch": "review-gate-fix",
+    "created_at": "2026-04-03T08:00:00Z",
+    "updated_at": "2026-04-03T14:30:00Z",
+    "last_activity": "2026-04-03T14:30:00Z",
+    "depends_on": null,
+    "model": "opus"
+  },
+  {
+    "id": "mcp-switchboard/projectview-tabs",
+    "project_id": "mcp-switchboard",
+    "goal": "Add tab bar, sub-routing, needs-attention + 12h task split, settings tab with danger zone",
+    "status": "working",
+    "phase": "implementing",
+    "branch": "projectview-tabs",
+    "created_at": "2026-04-03T18:41:34Z",
+    "updated_at": "2026-04-03T19:45:00Z",
+    "last_activity": "2026-04-03T19:45:00Z",
+    "depends_on": "mcp-switchboard/projectview-decompose",
+    "model": "sonnet"
+  },
+  {
+    "id": "mcp-switchboard/projectview-decompose",
+    "project_id": "mcp-switchboard",
+    "goal": "Decompose ProjectView.js into components, strip dead sections",
+    "status": "completed",
+    "phase": null,
+    "branch": "projectview-decompose",
+    "created_at": "2026-04-03T12:00:00Z",
+    "updated_at": "2026-04-03T17:00:00Z",
+    "last_activity": "2026-04-03T17:00:00Z",
+    "depends_on": null,
+    "model": "sonnet"
+  },
+  {
     "id": "mcp-switchboard/control-buttons",
     "project_id": "mcp-switchboard",
-    "component_id": "foreman-hardening",
     "goal": "Wire pause/resume/stop buttons for projects and components",
     "status": "working",
     "phase": "implementing",
@@ -16,7 +67,6 @@
   {
     "id": "mcp-switchboard/task-create-form",
     "project_id": "mcp-switchboard",
-    "component_id": "foreman-hardening",
     "goal": "Add TaskCreateView and POST /dashboard/api/tasks endpoint",
     "status": "completed",
     "phase": null,

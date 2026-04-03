@@ -32,7 +32,7 @@ function ForemanApp() {
     } else if (view === 'project-new') {
         content = html`<${ProjectCreateView} />`;
     } else if (view === 'project') {
-        content = html`<${ProjectView} id=${params.id} />`;
+        content = html`<${ProjectView} id=${params.id} tab=${params.tab} />`;
     } else if (view === 'task-new') {
         content = html`<${TaskCreateView} project=${params.project} />`;
     } else if (view === 'task') {

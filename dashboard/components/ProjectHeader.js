@@ -1,6 +1,6 @@
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { colors, typography, layout, animation } from '../tokens.js';
+import { colors, typography, layout } from '../tokens.js';
 import { routes } from '../router.js';
 
 const html = htm.bind(h);
@@ -9,7 +9,7 @@ const html = htm.bind(h);
 // ProjectHeader — project name, repo, action buttons
 // ---------------------------------------------------------------------------
 
-export function ProjectHeader({ project, id, onEdit }) {
+export function ProjectHeader({ project, id }) {
     const repoShort = project?.repo ? project.repo.split('/').pop() : '';
 
     const headerStyle = {
@@ -39,27 +39,32 @@ export function ProjectHeader({ project, id, onEdit }) {
         flexShrink: 0,
     };
 
+    const wrenchStyle = {
+        background: 'transparent',
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        color: colors.textTertiary,
+        cursor: 'pointer',
+        fontSize: '14px',
+        padding: '2px 7px',
+        lineHeight: 1,
+        transition: 'color 120ms, border-color 120ms',
+        flexShrink: 0,
+        textDecoration: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+    };
+
     return html`
         <div style=${headerStyle}>
             <h1 style=${titleStyle}>${project?.id || id}</h1>
             ${repoShort ? html`<span style=${repoTagStyle}>${repoShort}</span>` : null}
             <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
-                <button
-                    onClick=${onEdit}
-                    title="Edit project configuration"
-                    style=${{
-                        background: 'transparent',
-                        border: `1px solid ${colors.border}`,
-                        borderRadius: layout.borderRadius.sm,
-                        color: colors.textTertiary,
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        padding: '2px 7px',
-                        lineHeight: 1,
-                        transition: 'color 120ms, border-color 120ms',
-                        flexShrink: 0,
-                    }}
-                >✎</button>
+                <a
+                    href=${routes.projectTab(id, 'settings')}
+                    title="Project settings"
+                    style=${wrenchStyle}
+                >✎</a>
                 <a
                     href=${routes.taskNew(id)}
                     style=${{
