@@ -1498,7 +1498,8 @@ async def _handle_patch_user_settings(receive, send, scope):
     # Update credentials
     cred_updates = {}
     if "anthropic_api_key" in data:
-        cred_updates["anthropic_api_key"] = data["anthropic_api_key"]
+        # Empty string means "remove the key" — store NULL so configured=False
+        cred_updates["anthropic_api_key"] = data["anthropic_api_key"] or None
     if "notification_preferences" in data:
         cred_updates["notification_preferences"] = data["notification_preferences"]
     if cred_updates:

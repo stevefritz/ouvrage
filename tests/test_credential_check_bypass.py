@@ -241,3 +241,107 @@ class TestSettingsApiBypassFlag:
         assert "anthropic" in body
         assert body["anthropic"]["skip_credential_check"] is False
 
+
+# ── Settings API: clear API key when SKIP_CREDENTIAL_CHECK is set ─────────────
+
+
+class TestClearAnthropicKeyWithBypass:
+    """PATCH /dashboard/api/settings/user with empty anthropic_api_key clears the key,
+    even when SKIP_CREDENTIAL_CHECK is set."""
+
+    async def test_clear_key_with_bypass_set(self, db, owner_user, user_with_anthropic_key):
+        """Empty anthropic_api_key in PATCH request removes a previously stored key."""
+        from switchboard.dashboard import api as api_module
+
+        # Verify key is configured before the test
+        creds = await db.get_user_credentials(owner_user["id"])
+        assert creds and creds.get("anthropic_api_key"), "Pre-condition: key must be configured"
+
+        with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
+            from switchboard.dashboard.api import handle_request
+
+            scope = _make_scope(
+                method="PATCH",
+                path="/dashboard/api/settings/user",
+                user={"id": owner_user["id"], "email": "owner@localhost", "name": "Owner", "role": "owner"},
+            )
+            send = _Capture()
+            await handle_request(scope, _make_receive({"anthropic_api_key": ""}), send)
+
+        assert send.status == 200
+        assert send.json() == {"ok": True}
+
+        # Key should now be cleared
+        creds_after = await db.get_user_credentials(owner_user["id"])
+        assert not creds_after or not creds_after.get("anthropic_api_key")
+
+    async def test_clear_key_reflected_in_settings_response(self, db, owner_user, user_with_anthropic_key):
+        """After clearing, GET settings/user shows configured=False."""
+        from switchboard.dashboard import api as api_module
+
+        with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
+            from switchboard.dashboard.api import handle_request
+
+            # Clear the key
+            patch_scope = _make_scope(
+                method="PATCH",
+                path="/dashboard/api/settings/user",
+                user={"id": owner_user["id"], "email": "owner@localhost", "name": "Owner", "role": "owner"},
+            )
+            await handle_request(patch_scope, _make_receive({"anthropic_api_key": ""}), _Capture())
+
+            # Fetch settings
+            get_scope = _make_scope(
+                method="GET",
+                path="/dashboard/api/settings/user",
+                user={"id": owner_user["id"], "email": "owner@localhost", "name": "Owner", "role": "owner"},
+            )
+            send = _Capture()
+            await handle_request(get_scope, _make_receive(), send)
+
+        assert send.status == 200
+        body = send.json()
+        assert body["anthropic"]["configured"] is False
+        assert body["anthropic"]["key_last4"] is None
+
+    async def test_set_key_with_bypass_set(self, db, owner_user, user_without_anthropic_key):
+        """Setting a new key still works when SKIP_CREDENTIAL_CHECK is active."""
+        from switchboard.dashboard import api as api_module
+
+        with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
+            from switchboard.dashboard.api import handle_request
+
+            scope = _make_scope(
+                method="PATCH",
+                path="/dashboard/api/settings/user",
+                user={"id": owner_user["id"], "email": "owner@localhost", "name": "Owner", "role": "owner"},
+            )
+            send = _Capture()
+            await handle_request(scope, _make_receive({"anthropic_api_key": "sk-ant-newkey"}), send)
+
+        assert send.status == 200
+
+        # Key should now be configured
+        creds = await db.get_user_credentials(owner_user["id"])
+        assert creds and creds.get("anthropic_api_key") == "sk-ant-newkey"
+
+    async def test_clear_key_without_bypass(self, db, owner_user, user_with_anthropic_key):
+        """Empty anthropic_api_key also clears the key when SKIP_CREDENTIAL_CHECK is False."""
+        from switchboard.dashboard import api as api_module
+
+        with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", False):
+            from switchboard.dashboard.api import handle_request
+
+            scope = _make_scope(
+                method="PATCH",
+                path="/dashboard/api/settings/user",
+                user={"id": owner_user["id"], "email": "owner@localhost", "name": "Owner", "role": "owner"},
+            )
+            send = _Capture()
+            await handle_request(scope, _make_receive({"anthropic_api_key": ""}), send)
+
+        assert send.status == 200
+
+        creds_after = await db.get_user_credentials(owner_user["id"])
+        assert not creds_after or not creds_after.get("anthropic_api_key")
+
