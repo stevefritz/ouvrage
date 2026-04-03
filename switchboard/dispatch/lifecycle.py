@@ -1351,6 +1351,34 @@ def _effective_ready_reason(task: dict) -> str | None:
     return None
 
 
+async def _determine_queued_reason(task: dict) -> tuple[str, str | None]:
+    """Return (queued_reason, blocking_task_id) for a queued task.
+
+    Priority order:
+    1. dependency — depends_on is set and parent hasn't gate-passed
+    2. project_paused — the task's project is paused
+    3. component_paused — the task's component is paused
+    4. concurrency — fallback: waiting for a dispatch slot
+    """
+    depends_on = task.get("depends_on")
+    if depends_on:
+        parent = await db.get_task(depends_on)
+        if parent and not parent.get("gate_passed_at"):
+            return "dependency", depends_on
+
+    project = await db.get_project(task["project_id"])
+    if project and project.get("paused"):
+        return "project_paused", None
+
+    component_id = task.get("component_id")
+    if component_id:
+        component = await db.get_component(component_id)
+        if component and component.get("paused"):
+            return "component_paused", None
+
+    return "concurrency", None
+
+
 # ---------------------------------------------------------------------------
 # TaskLifecycle service
 # ---------------------------------------------------------------------------
@@ -1531,12 +1559,19 @@ class TaskLifecycle:
                 "pulse": False,
             })
 
+        queued_reason = None
+        queued_blocking_task_id = None
+        if reason == "queued":
+            queued_reason, queued_blocking_task_id = await _determine_queued_reason(task)
+
         return {
             "state": effective,
             "reason": reason,
             "label": info["label"],
             "color": info["color"],
             "pulse": info["pulse"],
+            "queued_reason": queued_reason,
+            "queued_blocking_task_id": queued_blocking_task_id,
         }
 
     def _effective_state(self, task: dict) -> str:

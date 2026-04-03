@@ -126,60 +126,83 @@ function StatusLine({ task, taskState, onEdit }) {
         : (taskState ? taskState.color : (statusColors[task.status] || colors.textSecondary));
     const dotPulse = taskState ? taskState.pulse : undefined;
 
+    // Queued reason line — only shown when state reason is "queued"
+    const queuedReason = taskState?.reason === 'queued' ? taskState.queued_reason : null;
+    const blockingTaskId = taskState?.queued_blocking_task_id || null;
+
     return html`
         <div style=${{
-            display: 'flex', alignItems: 'center', gap: '10px',
-            padding: '12px 0', flexWrap: 'wrap',
+            display: 'flex', flexDirection: 'column', gap: '4px',
+            padding: '12px 0',
         }}>
-            <${StatusDot} status=${task.status} pulse=${dotPulse} size=${10} />
-            <span style=${{
-                fontFamily: typography.fontMono, fontSize: typography.size.sm,
-                fontWeight: typography.weight.semibold,
-                color: statusColor,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-            }}>${statusLabel}</span>
-
-            ${secondaryGateLabel ? html`
+            <div style=${{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <${StatusDot} status=${task.status} pulse=${dotPulse} size=${10} />
                 <span style=${{
-                    fontFamily: typography.fontMono, fontSize: typography.size.xs,
-                    padding: '2px 8px', borderRadius: '4px',
-                    background: statusBgs[task.status] || 'rgba(92, 94, 102, 0.12)',
-                    color: statusColors[task.status] || colors.textSecondary,
-                }}>${secondaryGateLabel}</span>
-            ` : null}
+                    fontFamily: typography.fontMono, fontSize: typography.size.sm,
+                    fontWeight: typography.weight.semibold,
+                    color: statusColor,
+                    textTransform: 'uppercase', letterSpacing: '0.05em',
+                }}>${statusLabel}</span>
 
-            ${task.status === 'working' || gatePrimary ? html`
-                <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
-                    ${relativeTime(task.last_activity)}
-                </span>
-            ` : null}
+                ${secondaryGateLabel ? html`
+                    <span style=${{
+                        fontFamily: typography.fontMono, fontSize: typography.size.xs,
+                        padding: '2px 8px', borderRadius: '4px',
+                        background: statusBgs[task.status] || 'rgba(92, 94, 102, 0.12)',
+                        color: statusColors[task.status] || colors.textSecondary,
+                    }}>${secondaryGateLabel}</span>
+                ` : null}
 
-            <span style=${{ flex: 1, minWidth: '16px' }} />
+                ${task.status === 'working' || gatePrimary ? html`
+                    <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
+                        ${relativeTime(task.last_activity)}
+                    </span>
+                ` : null}
 
-            <span style=${{
-                fontFamily: typography.fontBody, fontSize: typography.size.base,
-                color: colors.text, fontWeight: typography.weight.medium,
-                wordBreak: 'break-word', textAlign: 'right',
-            }}>${task.goal || shortId(task.id)}</span>
+                <span style=${{ flex: 1, minWidth: '16px' }} />
 
-            ${onEdit ? html`
-                <button
-                    onClick=${onEdit}
-                    title="Edit task metadata"
-                    class="foreman-edit-task-btn"
-                    style=${{
-                        background: 'transparent',
-                        border: `1px solid ${colors.borderSubtle}`,
-                        borderRadius: layout.borderRadius.sm,
-                        color: colors.textTertiary,
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        padding: '2px 7px',
-                        lineHeight: 1,
-                        transition: 'color 120ms, border-color 120ms',
-                        flexShrink: 0,
-                    }}
-                >✎</button>
+                <span style=${{
+                    fontFamily: typography.fontBody, fontSize: typography.size.base,
+                    color: colors.text, fontWeight: typography.weight.medium,
+                    wordBreak: 'break-word', textAlign: 'right',
+                }}>${task.goal || shortId(task.id)}</span>
+
+                ${onEdit ? html`
+                    <button
+                        onClick=${onEdit}
+                        title="Edit task metadata"
+                        class="foreman-edit-task-btn"
+                        style=${{
+                            background: 'transparent',
+                            border: `1px solid ${colors.borderSubtle}`,
+                            borderRadius: layout.borderRadius.sm,
+                            color: colors.textTertiary,
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            padding: '2px 7px',
+                            lineHeight: 1,
+                            transition: 'color 120ms, border-color 120ms',
+                            flexShrink: 0,
+                        }}
+                    >✎</button>
+                ` : null}
+            </div>
+
+            ${queuedReason ? html`
+                <div style=${{
+                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                    color: colors.textTertiary, paddingLeft: '20px',
+                }}>
+                    ${queuedReason === 'dependency' && blockingTaskId ? html`
+                        🔗 Waiting on:${' '}
+                        <a
+                            href=${routes.task(blockingTaskId)}
+                            style=${{ color: colors.textTertiary, textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                        >${shortId(blockingTaskId)}</a>
+                    ` : queuedReason === 'project_paused' ? html`⏸ Project paused`
+                    : queuedReason === 'component_paused' ? html`⏸ Component paused`
+                    : html`⏳ Waiting for concurrency slot`}
+                </div>
             ` : null}
         </div>
     `;

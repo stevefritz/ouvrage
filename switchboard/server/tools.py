@@ -102,12 +102,11 @@ CONVERSATION_TOOLS = [
     ),
     Tool(
         name="conversations",
-        description="List conversations, optionally filtered by project or search term.",
+        description="List conversations, optionally filtered by project.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Filter to one project"},
-                "search": {"type": "string", "description": "Text search across conversation goals"},
             },
         },
     ),
@@ -322,7 +321,6 @@ TASK_TOOLS = [
                 "max_review_retries": {"type": ["integer", "null"], "description": "Max review gate retry attempts (system default: 2)."},
                 "base_branch": {"type": "string", "description": "Override merge target branch (defaults to project default_branch)"},
                 "depends_on": {"type": "string", "description": "Task ID this depends on. Won't dispatch until parent gate-passes."},
-                "component_id": {"type": "string", "description": "Optional component ID. Task inherits component config."},
                 "claude_chat_url": {"type": "string", "description": "Optional URL linking to the claude.ai chat for this task"},
                 "held": {"type": "boolean", "description": "Standalone tasks default to held=true (require approval). Chain tasks (with depends_on) default to held=false. Set explicitly to override."},
             },
@@ -384,14 +382,13 @@ TASK_TOOLS = [
     ),
     Tool(
         name="list_tasks",
-        description="List tasks, optionally filtered by project, status, tag, and/or component. By default excludes cancelled tasks and stale error/conflict tasks (active_only=true).",
+        description="List tasks, optionally filtered by project, status, or tag. By default excludes cancelled tasks and stale error/conflict tasks (active_only=true).",
         inputSchema={
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "Filter to one project"},
                 "status": {"type": "string", "description": "Filter by status: ready, working, needs-review, completed, failed, cancelled"},
                 "tag": {"type": "string", "description": "Filter by tag"},
-                "component_id": {"type": "string", "description": "Filter to one component"},
                 "active_only": {"type": "boolean", "description": "Exclude cancelled tasks and stale error/conflict tasks that exhausted retries. Default true.", "default": True},
             },
         },
@@ -547,26 +544,12 @@ TASK_TOOLS = [
         },
     ),
     Tool(
-        name="search_task_messages",
-        description="Full-text search across all task message content. Returns matching messages with task_id, author, type, content snippet.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query string"},
-                "project_id": {"type": "string", "description": "Optional: filter to one project"},
-                "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
         name="update_task",
-        description="Update task metadata post-dispatch. Use to assign components, correct branching info, toggle gates, or update any task field. Validates component_id if provided.",
+        description="Update task metadata post-dispatch. Use to correct branching info, toggle gates, or update any task field.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID to update"},
-                "component_id": {"type": ["string", "null"], "description": "Assign/reassign to component. Validated to exist."},
                 "base_branch": {"type": ["string", "null"], "description": "Correct base branch"},
                 "branch_target": {"type": ["string", "null"], "description": "Branch target override"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Replace all tags"},
@@ -590,12 +573,11 @@ TASK_TOOLS = [
     ),
     Tool(
         name="bulk_update_tasks",
-        description="Apply the same field updates to multiple tasks in one call. Use case: assign all chatbot-* tasks to a component at once. Returns count of updated tasks.",
+        description="Apply the same field updates to multiple tasks in one call. Returns count of updated tasks.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_ids": {"type": "array", "items": {"type": "string"}, "description": "List of task IDs to update"},
-                "component_id": {"type": ["string", "null"], "description": "Assign/reassign to component"},
                 "base_branch": {"type": ["string", "null"], "description": "Base branch override"},
                 "branch_target": {"type": ["string", "null"], "description": "Branch target override"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Replace all tags on each task"},
@@ -611,18 +593,6 @@ TASK_TOOLS = [
                 "claude_chat_url": {"type": ["string", "null"], "description": "Claude.ai chat URL"},
             },
             "required": ["task_ids"],
-        },
-    ),
-    Tool(
-        name="move_task",
-        description="Reassign a task to a different component. Validates the target component exists and belongs to the same project. Sugar for update_task with component_id.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task to reassign"},
-                "component_id": {"type": "string", "description": "Target component ID"},
-            },
-            "required": ["task_id", "component_id"],
         },
     ),
     Tool(
@@ -675,155 +645,6 @@ TASK_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Component Tools
-# ---------------------------------------------------------------------------
-
-COMPONENT_TOOLS = [
-    Tool(
-        name="create_component",
-        description="Create a new component within a project. Components are organizational containers — id, name, description. They group tasks, hold punchlist items, and link conversations.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Project this component belongs to"},
-                "id": {"type": "string", "description": "Component slug, e.g. chatbot-discovery"},
-                "name": {"type": "string", "description": "Human-readable name"},
-                "description": {"type": "string", "description": "What this component is about"},
-            },
-            "required": ["project_id", "id", "name"],
-        },
-    ),
-    Tool(
-        name="update_component",
-        description="Update a component's fields. Components are organizational containers — id, name, description. They group tasks, hold punchlist items, and link conversations.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Component ID"},
-                "name": {"type": "string", "description": "Human-readable name"},
-                "description": {"type": ["string", "null"], "description": "Description"},
-            },
-            "required": ["id"],
-        },
-    ),
-    Tool(
-        name="get_component",
-        description="Get a component with config, linked conversations, and task summary.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Component ID"},
-            },
-            "required": ["id"],
-        },
-    ),
-    Tool(
-        name="list_components",
-        description="List components, optionally filtered by project.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Filter to one project"},
-            },
-        },
-    ),
-    Tool(
-        name="link_conversation",
-        description="Link a conversation to a component for context tracking.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID"},
-                "conversation_id": {"type": "string", "description": "Conversation ID to link"},
-            },
-            "required": ["component_id", "conversation_id"],
-        },
-    ),
-    Tool(
-        name="unlink_conversation",
-        description="Remove a conversation link from a component.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID"},
-                "conversation_id": {"type": "string", "description": "Conversation ID to unlink"},
-            },
-            "required": ["component_id", "conversation_id"],
-        },
-    ),
-    Tool(
-        name="search_component",
-        description="Search across all content linked to a component: messages from linked conversations and task messages.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID to search within"},
-                "query": {"type": "string", "description": "Search query (substring match)"},
-                "include_graphiti": {"type": "boolean", "description": "Also search Graphiti if configured on the project's connectors", "default": False},
-                "limit": {"type": "integer", "description": "Max results per source (default 20)", "default": 20},
-            },
-            "required": ["component_id", "query"],
-        },
-    ),
-]
-
-# ---------------------------------------------------------------------------
-# Punchlist Tools
-# ---------------------------------------------------------------------------
-
-PUNCHLIST_TOOLS = [
-    Tool(
-        name="add_punchlist_item",
-        description="Add a punchlist item to a component. Punchlist items are small tasks or TODOs tracked at the component level.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID"},
-                "item": {"type": "string", "description": "Description of the punchlist item"},
-                "author": {"type": "string", "description": "Who is adding this item (e.g. task_id or username)"},
-            },
-            "required": ["component_id", "item"],
-        },
-    ),
-    Tool(
-        name="list_punchlist",
-        description="List punchlist items for a component. By default excludes 'done' items.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID"},
-                "include_done": {"type": "boolean", "description": "Include completed items", "default": False},
-                "claimed_by": {"type": "string", "description": "Filter to items claimed by a specific task_id"},
-            },
-            "required": ["component_id"],
-        },
-    ),
-    Tool(
-        name="claim_punchlist_item",
-        description="Claim a punchlist item for a task. Sets status to 'claimed' and records which task is working on it.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "integer", "description": "Punchlist item ID"},
-                "task_id": {"type": "string", "description": "Task ID claiming this item"},
-            },
-            "required": ["item_id", "task_id"],
-        },
-    ),
-    Tool(
-        name="resolve_punchlist_item",
-        description="Mark a punchlist item as done. Typically called when a task that claimed the item completes successfully.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "integer", "description": "Punchlist item ID"},
-                "task_id": {"type": "string", "description": "Task ID that resolved this item"},
-            },
-            "required": ["item_id", "task_id"],
-        },
-    ),
-]
-
 # ---------------------------------------------------------------------------
 # Ops Tools
 # ---------------------------------------------------------------------------
@@ -851,21 +672,6 @@ OPS_TOOLS = [
 
 CONTROL_TOOLS = [
     Tool(
-        name="pause_component",
-        description="Pause a component — no new tasks will be dispatched. Running tasks finish naturally.",
-        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
-    ),
-    Tool(
-        name="resume_component",
-        description="Resume a paused component — tasks can be dispatched again.",
-        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
-    ),
-    Tool(
-        name="stop_component",
-        description="Stop a component — pause it AND cancel all running tasks immediately.",
-        inputSchema={"type": "object", "properties": {"component_id": {"type": "string"}}, "required": ["component_id"]},
-    ),
-    Tool(
         name="pause_project",
         description="Pause a project — no new tasks will be dispatched. Running tasks finish naturally.",
         inputSchema={"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
@@ -883,74 +689,33 @@ CONTROL_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
-# RAG Tools
+# Search Tool
 # ---------------------------------------------------------------------------
 
-RAG_TOOLS = [
+SEARCH_TOOLS = [
     Tool(
-        name="search_message_chunks",
+        name="search",
         description=(
-            "Semantic search at the paragraph level within Ouvrage messages. "
-            "More precise than search_conversations — finds specific sections of long design docs, "
-            "prior decisions, or meeting notes rather than surfacing the whole message. "
-            "Use when you need a particular passage from a conversation, not just the message that contains it."
+            "Search across all Switchboard content — tasks, conversations, messages. "
+            "Returns ranked results from task goals, conversation messages, and message chunks. "
+            "Use this for any search query: finding prior decisions, locating tasks, "
+            "discovering relevant conversations, or searching message history."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The semantic search query — describe the specific section you're looking for",
-                },
-                "conversation_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to chunks from this specific conversation",
+                    "description": "What to search for — semantic search, so natural language works well",
                 },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional: scope search to chunks from this project's conversations and tasks",
+                    "description": "Optional: scope search to one project",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum chunk results to return (default 5)",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="search_conversations",
-        description=(
-            "Semantic search over Ouvrage conversation and task messages using embeddings. "
-            "Finds relevant messages even when keyword search would miss them — e.g. 'why did we choose SSE' "
-            "finds messages about streaming decisions without requiring exact keyword matches. "
-            "Results are ranked by cosine similarity weighted by message type (spec/review/note rank higher)."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The semantic search query — describe what you're looking for",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to messages from this project's conversations and tasks",
-                },
-                "conversation_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to messages from this specific conversation",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum results to return (default 5, max 20)",
-                    "default": 5,
-                },
-                "type_filter": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional: only return messages of these types (e.g. ['spec', 'note', 'review'])",
+                    "description": "Maximum results to return (default 10, max 30)",
+                    "default": 10,
                 },
             },
             "required": ["query"],
@@ -1107,11 +872,9 @@ TOOLS = (
     CONVERSATION_TOOLS
     + PROJECT_TOOLS
     + TASK_TOOLS
-    + COMPONENT_TOOLS
-    + PUNCHLIST_TOOLS
     + OPS_TOOLS
     + CONTROL_TOOLS
-    + RAG_TOOLS
+    + SEARCH_TOOLS
     + TOKEN_TOOLS
     + FILES_TOOLS
 )

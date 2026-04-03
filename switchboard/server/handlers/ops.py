@@ -12,7 +12,6 @@ Ouvrage is an async task orchestration system for Claude Code sessions. Think of
 - **You** (PM/tech lead) define specs, create tasks, and monitor progress
 - **CC workers** execute tasks in isolated git worktrees with full autonomy
 - **Gate pipeline** automatically runs tests, dispatches reviews, and creates PRs
-- **Components** group related tasks and provide config inheritance
 
 ## Available Tools by Workflow
 
@@ -20,7 +19,6 @@ Ouvrage is an async task orchestration system for Claude Code sessions. Think of
 | Tool | Purpose |
 |---|---|
 | `create_project` | Register a repo with working dir, setup commands, test commands |
-| `create_component` | Group tasks under a feature/epic with config inheritance |
 | `create_conversation` | Start a design conversation (specs, plans, Q&A) |
 
 ### Dispatching Work
@@ -34,7 +32,7 @@ Ouvrage is an async task orchestration system for Claude Code sessions. Think of
 | Tool | Purpose |
 |---|---|
 | `get_task_status` | Full task status: checklist, messages, artifacts, liveness |
-| `list_tasks` | List tasks with filters (project, status, tag, component) |
+| `list_tasks` | List tasks with filters (project, status, tag) |
 | `get_session_log` | CC's tool calls and text output (JSONL) |
 | `get_dispatch_log` | Dispatch metadata, cost, timing |
 | `get_pipeline` | View the full dependency chain for a task |
@@ -54,39 +52,15 @@ Ouvrage is an async task orchestration system for Claude Code sessions. Think of
 | `read` | Read messages (cursor-based) |
 | `get_pinned` | Get the source-of-truth pinned message |
 
-## Common Patterns
-
-1. **Starting a feature**: `create_component` → `dispatch_task` with `component_id` and `depends_on`
-2. **Task chains**: Use `depends_on` to create sequential pipelines — next task auto-dispatches when gate passes
-3. **Review workflow**: Post feedback with `post_task_message(type='review')`, then `retry_task` — feedback is auto-injected
-4. **Resuming work**: Use `resume_task` to continue with the same session context (preserves CC's memory)
-5. **Config inheritance**: Project → Component → Task. Set `model`, `auto_test`, etc. at any level
-
-### Components & Punchlist
+### Bulk Operations
 | Tool | Purpose |
 |---|---|
-| `create_component` | Group tasks under a feature/epic with config inheritance |
-| `update_component` | Update component config, status, description |
-| `list_components` | List components, optionally filtered by project |
-| `link_conversation` | Link a design conversation to a component |
-| `add_punchlist_item` | Add a lightweight issue to a component's punchlist |
-| `list_punchlist` | View open punchlist items for a component |
-| `claim_punchlist_item` | CC claims a punchlist item during work (resolved on gate pass, reverted on failure) |
-| `search_component` | Full-text search across a component's conversations and task messages |
-
-### Bulk Operations & Migration
-| Tool | Purpose |
-|---|---|
-| `update_task` | Update any mutable task field (status, model, retry_after, component_id, etc.) |
-| `bulk_update_tasks` | Update multiple tasks at once with filters |
-| `move_task` | Move a task to a different project or component |
+| `update_task` | Update any mutable task field (model, retry_after, gates, etc.) |
+| `bulk_update_tasks` | Update multiple tasks at once |
 
 ### Control (Pause/Stop/Resume)
 | Tool | Purpose |
 |---|---|
-| `pause_component` | Pause — no new tasks dispatched, running tasks finish |
-| `stop_component` | Pause + cancel all running tasks immediately |
-| `resume_component` | Resume a paused component |
 | `pause_project` | Pause entire project |
 | `stop_project` | Pause + cancel all running tasks in project |
 | `resume_project` | Resume a paused project |
@@ -105,19 +79,16 @@ Three-layer self-healing:
 ### Rate Limiting
 When CC hits usage limits, the task is parked as `rate-limited` with a `retry_after` timestamp parsed from the error message. The health check auto-dispatches it when limits reset. You can also set `retry_after` manually on any task for custom backoff.
 
-### Punchlist Integration
-Punchlist items are claimed by CC during work (`claim_punchlist_item`). Items only resolve when the claiming task passes the full gate pipeline. If the task fails or is retried, claimed items revert to open. This prevents false completions.
-
 ## Common Patterns
 
-1. **Starting a feature**: `create_component` → `dispatch_task` with `component_id` and `depends_on`
+1. **Starting a feature**: `dispatch_task` with `depends_on` to chain tasks
 2. **Task chains**: Use `depends_on` to create sequential pipelines — next task auto-dispatches when gate passes
 3. **Review workflow**: Post feedback with `post_task_message(type='review')`, then `retry_task` — feedback is auto-injected
 4. **Resuming work**: Use `resume_task` to continue with the same session context (preserves CC's memory)
-5. **Config inheritance**: Project → Component → Task. Set `model`, `auto_test`, etc. at any level
+5. **Config inheritance**: Project → Task. Set `model`, `auto_test`, etc. at project or task level
 6. **Auto-merge chains**: Set `auto_merge=true` on all tasks in a chain — they merge sequentially as each passes
 7. **Delayed dispatch**: Set `retry_after` on a task to schedule it for a specific time
-8. **Kill switch**: `stop_component` or `stop_project` to immediately halt all work
+8. **Kill switch**: `stop_project` to immediately halt all work
 
 ## Anti-Patterns
 
@@ -144,9 +115,7 @@ async def _handle_get_context(arguments):
         total = counts.get("total_tasks", 0)
         active = counts.get("active_task_count", 0)
         cost = counts.get("total_cost", 0)
-        components = await db.list_components(project_id=p["id"])
-        comp_str = f", {len(components)} components" if components else ""
-        project_lines.append(f"  - {p['id']}: {total} tasks ({active} active), ${cost:.2f}{comp_str}")
+        project_lines.append(f"  - {p['id']}: {total} tasks ({active} active), ${cost:.2f}")
 
     # Active/blocked tasks
     active_tasks = await db.list_tasks(status="working")
@@ -216,16 +185,9 @@ async def _handle_get_guide(arguments):
     task_counts = await db.get_project_task_counts()
     active_count = await db.count_active_tasks()
 
-    # Count components
-    component_count = 0
-    for p in projects:
-        components = await db.list_components(project_id=p["id"])
-        component_count += len(components)
-
     parts.append("## Live System Summary\n")
     parts.append(f"- **Projects**: {len(projects)}")
     parts.append(f"- **Active tasks**: {active_count}")
-    parts.append(f"- **Components**: {component_count}")
     parts.append("")
 
     if projects:

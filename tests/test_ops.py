@@ -220,7 +220,6 @@ class TestGetGuide:
         guide = result["guide"]
         assert "Common Patterns" in guide
         assert "Anti-Patterns" in guide
-        assert "create_component" in guide
 
     async def test_guide_includes_live_summary(self, db, sample_project):
         result = await _handle_get_guide({})

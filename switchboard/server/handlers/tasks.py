@@ -69,7 +69,7 @@ def _truncate_message(msg: dict, max_len: int = 200) -> dict:
 _SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
 
 _UPDATE_TASK_FIELDS = {
-    "component_id", "base_branch", "branch_target", "tags",
+    "base_branch", "branch_target", "tags",
     "auto_test", "auto_review", "auto_merge", "auto_pr",
     "max_turns", "max_wall_clock",
     "max_test_retries", "max_review_retries",
@@ -140,7 +140,6 @@ async def _handle_dispatch_task(arguments):
         max_test_retries=arguments.get("max_test_retries"),
         max_review_retries=arguments.get("max_review_retries"),
         base_branch=arguments.get("base_branch"),
-        component_id=arguments.get("component_id"),
         claude_chat_url=arguments.get("claude_chat_url"),
         depends_on=(f"{project_id}/{arguments['depends_on']}"
                     if arguments.get("depends_on") and "/" not in arguments["depends_on"]
@@ -267,7 +266,6 @@ async def _handle_list_tasks(arguments):
         project_id=arguments.get("project_id"),
         status=arguments.get("status"),
         tag=arguments.get("tag"),
-        component_id=arguments.get("component_id"),
         active_only=arguments.get("active_only", True),  # MCP default: active tasks only
     )
     # Cache project lookups for state definitions
@@ -328,10 +326,6 @@ async def _handle_bulk_update_tasks(arguments):
     fields = {k: v for k, v in arguments.items() if k in _UPDATE_TASK_FIELDS}
     count = await db.bulk_update_tasks(task_ids, **fields)
     return {"updated": count, "requested": len(task_ids)}
-
-
-async def _handle_move_task(arguments):
-    return await db.move_task(arguments["task_id"], arguments["component_id"])
 
 
 async def _handle_update_task_checklist(arguments):

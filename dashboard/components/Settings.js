@@ -275,7 +275,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [feedback, setFeedback] = useState(null);
-    const [editing, setEditing] = useState(!anthropic.configured && !anthropic.skip_credential_check);
+    const [editing, setEditing] = useState(!anthropic.configured);
 
     const handleSave = useCallback(async () => {
         if (!key.trim()) return;
@@ -293,6 +293,22 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
             setSaving(false);
         }
     }, [key, onSaved]);
+
+    const handleRemove = useCallback(async () => {
+        setSaving(true);
+        setFeedback(null);
+        try {
+            await api.patchUserSettings({ anthropic_api_key: '' });
+            setKey('');
+            setEditing(false);
+            setFeedback({ type: 'success', message: 'API key removed' });
+            if (onSaved) onSaved();
+        } catch (e) {
+            setFeedback({ type: 'error', message: e.message });
+        } finally {
+            setSaving(false);
+        }
+    }, [onSaved]);
 
     const handleTest = useCallback(async () => {
         setTesting(true);
@@ -315,7 +331,7 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
         ? (anthropic.configured
             ? 'Configured'
             : anthropic.skip_credential_check
-                ? 'Bypassed via environment'
+                ? 'Not set'
                 : 'Not set — required to dispatch tasks')
         : undefined;
     const maskedValue = (!editing && anthropic.key_last4) ? `····${anthropic.key_last4}` : undefined;
@@ -345,6 +361,12 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
                     onClick=${() => { setEditing(false); setKey(''); setFeedback(null); }}>
                     Cancel
                 </button>
+                <button
+                    style=${{ ...styles.button, color: 'var(--color-danger, #dc3545)' }}
+                    onClick=${handleRemove}
+                    disabled=${saving}>
+                    Remove
+                </button>
             `}
         </div>
     `;
@@ -357,14 +379,14 @@ function AnthropicKeyCard({ anthropic, onSaved }) {
                 connected=${anthropic.configured || anthropic.skip_credential_check}
                 statusText=${statusText}
                 maskedValue=${maskedValue}
-                onUpdate=${(editing || anthropic.skip_credential_check) ? undefined : () => setEditing(true)}
-                onTest=${(!editing && !testing && anthropic.configured && !anthropic.skip_credential_check) ? handleTest : undefined}
+                onUpdate=${editing ? undefined : () => setEditing(true)}
+                onTest=${(!editing && !testing && anthropic.configured) ? handleTest : undefined}
             >
                 ${editing ? editForm : null}
             </${CredentialCard}>
-            ${anthropic.skip_credential_check && !anthropic.configured && html`
+            ${anthropic.skip_credential_check && html`
                 <div style=${{ padding: '4px 16px 0' }}>
-                    <${FeedbackBanner} message="Credential checks bypassed via environment" type="info" />
+                    <${FeedbackBanner} message="Optional — not required for Claude Code subscriptions" type="info" />
                 </div>
             `}
             ${feedback && html`

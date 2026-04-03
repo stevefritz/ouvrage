@@ -1432,7 +1432,7 @@ class TestBuildTaskPrompt:
             self._make_project(), self._make_task(), "do the thing")
         assert "update_task_checklist" in result
         assert "post_task_message" in result
-        assert "search_message_chunks" in result
+        assert "search(" in result
         assert "Context Discovery" in result
         assert "Progress Reporting" in result
 
@@ -2558,61 +2558,3 @@ class TestProjectCreateValidation:
         assert result["id"] == "valid-proj"
 
 
-# ---------------------------------------------------------------------------
-# Component handler — phase and review_ignore_patterns stripped
-# ---------------------------------------------------------------------------
-
-class TestComponentHandlerStrippedFields:
-    """_handle_create_component and _handle_update_component ignore phase/review_ignore_patterns."""
-
-    async def test_create_component_ignores_phase_argument(self, db, sample_project):
-        from switchboard.server.handlers.components import _handle_create_component
-        result = await _handle_create_component({
-            "project_id": "test-project",
-            "id": "handler-no-phase",
-            "name": "No Phase",
-            "phase": "building",  # should be ignored by handler
-        })
-        assert "error" not in result
-        # Phase not set via handler (DB default applies)
-        assert result.get("id") == "handler-no-phase"
-
-    async def test_create_component_ignores_review_ignore_patterns_argument(self, db, sample_project):
-        from switchboard.server.handlers.components import _handle_create_component
-        result = await _handle_create_component({
-            "project_id": "test-project",
-            "id": "handler-no-patterns",
-            "name": "No Patterns",
-            "review_ignore_patterns": ["*.lock"],  # should be ignored by handler
-        })
-        assert "error" not in result
-        assert result.get("id") == "handler-no-patterns"
-
-    async def test_update_component_ignores_phase_argument(self, db, sample_project):
-        from switchboard.server.handlers.components import _handle_create_component, _handle_update_component
-        await _handle_create_component({
-            "project_id": "test-project",
-            "id": "handler-update-phase",
-            "name": "Before",
-        })
-        result = await _handle_update_component({
-            "id": "handler-update-phase",
-            "name": "After",
-            "phase": "deployed",  # ignored by handler
-        })
-        assert "error" not in result
-        assert result["name"] == "After"
-
-    async def test_update_component_ignores_review_ignore_patterns_argument(self, db, sample_project):
-        from switchboard.server.handlers.components import _handle_create_component, _handle_update_component
-        await _handle_create_component({
-            "project_id": "test-project",
-            "id": "handler-update-patterns",
-            "name": "Before",
-        })
-        result = await _handle_update_component({
-            "id": "handler-update-patterns",
-            "review_ignore_patterns": ["*.lock"],  # ignored — no-op update
-        })
-        # No update fields remain after stripping, so should return error
-        assert "error" in result

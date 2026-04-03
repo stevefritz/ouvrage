@@ -464,6 +464,76 @@ async def search_message_chunks(
     return top
 
 
+async def set_task_embedding(task_id: str, blob: bytes) -> None:
+    """Store the embedding blob for a task's goal."""
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE tasks SET embedding = ? WHERE id = ?",
+            (blob, task_id),
+        )
+        await db.commit()
+
+
+async def get_tasks_needing_embedding(batch_size: int = 100) -> list[dict]:
+    """Return tasks with no embedding whose goal is non-empty."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT id, project_id, goal
+               FROM tasks
+               WHERE embedding IS NULL
+                 AND goal IS NOT NULL
+                 AND goal != ''
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def search_tasks_semantic(
+    query_vector: list[float],
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Cosine similarity search across task goals. Returns task IDs, goals, and scores."""
+    from switchboard.embeddings.service import decode_vector, cosine_similarity
+
+    async with get_db() as db:
+        conditions = ["embedding IS NOT NULL"]
+        params: list = []
+
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        rows = await db.execute_fetchall(
+            f"SELECT id, project_id, goal, status, embedding FROM tasks WHERE {where}",
+            params,
+        )
+
+    results = []
+    for row in rows:
+        blob = row["embedding"]
+        if not blob:
+            continue
+        try:
+            vec = decode_vector(blob)
+        except Exception:
+            continue
+        sim = cosine_similarity(query_vector, vec)
+        results.append({
+            "task_id": row["id"],
+            "project_id": row["project_id"],
+            "goal": row["goal"],
+            "status": row["status"],
+            "similarity": sim,
+        })
+
+    results.sort(key=lambda r: r["similarity"], reverse=True)
+    return results[:limit]
+
+
 async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:
     """Return messages >= 500 chars that haven't been chunked yet (no entry in message_chunks)."""
     async with get_db() as db:

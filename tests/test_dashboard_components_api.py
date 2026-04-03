@@ -1,7 +1,6 @@
-"""Tests for POST /dashboard/api/components endpoint."""
+"""Confirm that /dashboard/api/components and /dashboard/api/punchlist endpoints are removed."""
 
 import json
-
 import pytest
 
 
@@ -47,123 +46,96 @@ class _Capture:
         return json.loads(self.body)
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Tests: component endpoints return 404 ─────────────────────────────────────
 
-class TestPostComponents:
+class TestComponentEndpointsRemoved:
 
-    async def test_create_component_success(self, db, sample_project):
+    async def test_get_components_returns_404(self, db, sample_project):
         from switchboard.dashboard.api import handle_request
 
-        scope = _make_scope("/dashboard/api/components", method="POST")
+        scope = _make_scope("/dashboard/api/components", method="GET")
+        scope["query_string"] = f"project_id={sample_project['id']}".encode()
         resp = _Capture()
-        payload = {
-            "id": "my-feature",
-            "project_id": sample_project["id"],
-            "name": "My Feature",
-            "description": "A test component",
-        }
-        await handle_request(scope, _make_receive(payload), resp)
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
 
-        assert resp.status == 201
-        data = resp.json()
-        assert data["id"] == "my-feature"
-        assert data["name"] == "My Feature"
-        assert data["description"] == "A test component"
-        assert data["project_id"] == sample_project["id"]
-
-    async def test_create_component_no_description(self, db, sample_project):
+    async def test_post_components_returns_404(self, db, sample_project):
         from switchboard.dashboard.api import handle_request
 
-        scope = _make_scope("/dashboard/api/components", method="POST")
-        resp = _Capture()
-        payload = {
-            "id": "no-desc",
-            "project_id": sample_project["id"],
-            "name": "No Description",
-        }
-        await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 201
-        data = resp.json()
-        assert data["id"] == "no-desc"
-        assert data["name"] == "No Description"
-
-    async def test_create_component_persisted_in_db(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
-        import switchboard.db as sw_db
-
-        scope = _make_scope("/dashboard/api/components", method="POST")
-        resp = _Capture()
-        payload = {
-            "id": "persisted-comp",
-            "project_id": sample_project["id"],
-            "name": "Persisted",
-        }
-        await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 201
-        comp = await sw_db.get_component("persisted-comp")
-        assert comp is not None
-        assert comp["name"] == "Persisted"
-
-    async def test_create_component_missing_id(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/components", method="POST")
-        resp = _Capture()
-        payload = {"project_id": sample_project["id"], "name": "No ID"}
-        await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 400
-        assert "id is required" in resp.json()["error"]
-
-    async def test_create_component_missing_project_id(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/components", method="POST")
-        resp = _Capture()
-        payload = {"id": "comp-id", "name": "No Project"}
-        await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 400
-        assert "project_id is required" in resp.json()["error"]
-
-    async def test_create_component_missing_name(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/components", method="POST")
-        resp = _Capture()
-        payload = {"id": "comp-id", "project_id": sample_project["id"]}
-        await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 400
-        assert "name is required" in resp.json()["error"]
-
-    async def test_create_component_appears_in_list(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
-
-        project_id = sample_project["id"]
-
-        # Create
         scope = _make_scope("/dashboard/api/components", method="POST")
         resp = _Capture()
         await handle_request(scope, _make_receive({
-            "id": "listed-comp",
-            "project_id": project_id,
-            "name": "Listed",
+            "id": "my-feature",
+            "project_id": sample_project["id"],
+            "name": "My Feature",
         }), resp)
-        assert resp.status == 201
+        assert resp.status == 404
 
-        # List
-        list_scope = _make_scope(
-            "/dashboard/api/components",
-            method="GET",
-        )
-        list_scope["query_string"] = f"project_id={project_id}".encode()
-        list_resp = _Capture()
-        await handle_request(list_scope, _make_receive(), list_resp)
+    async def test_get_component_detail_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
 
-        assert list_resp.status == 200
-        components = list_resp.json()
-        ids = [c["id"] for c in components]
-        assert "listed-comp" in ids
+        scope = _make_scope("/dashboard/api/components/some-comp", method="GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_patch_component_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/components/some-comp", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"name": "New Name"}), resp)
+        assert resp.status == 404
+
+    async def test_component_pause_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/components/some-comp/pause", method="POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_component_stop_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/components/some-comp/stop", method="POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+
+# ── Tests: punchlist endpoints return 404 ─────────────────────────────────────
+
+class TestPunchlistEndpointsRemoved:
+
+    async def test_get_punchlist_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/punchlist/some-comp", method="GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_post_punchlist_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/punchlist/some-comp", method="POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"item": "Fix the button"}), resp)
+        assert resp.status == 404
+
+    async def test_patch_punchlist_item_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/punchlist/some-comp/42", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"status": "done"}), resp)
+        assert resp.status == 404
+
+    async def test_dispatch_punchlist_item_returns_404(self, db, sample_project):
+        from switchboard.dashboard.api import handle_request
+
+        scope = _make_scope("/dashboard/api/punchlist/some-comp/42/dispatch", method="POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
