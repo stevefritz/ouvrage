@@ -8,7 +8,11 @@ from switchboard.embeddings.service import compute_relevance_score
 
 
 async def _handle_search(arguments: dict) -> dict:
-    """Search across all Switchboard content: task goals, messages, and message chunks."""
+    """Search across all Switchboard content: task goals, messages, and message chunks.
+
+    Groups all matches by task and returns task objects in relevance order.
+    A task appears once even if it matched on goal, spec, and messages.
+    """
     query = arguments["query"]
     project_id = arguments.get("project_id")
     limit = min(int(arguments.get("limit", 10)), 30)
@@ -49,60 +53,51 @@ async def _handle_search(arguments: dict) -> dict:
     # (chunk is more specific than the parent message)
     chunk_message_ids = {hit["message_id"] for hit in chunk_hits}
 
-    results = []
+    # Group by task_id, keeping the best relevance score per task
+    best_score: dict[str, float] = {}
 
-    # --- Task results ---
+    # --- Task hits ---
     for hit in task_hits:
-        goal = hit.get("goal") or ""
-        results.append({
-            "type": "task",
-            "task_id": hit["task_id"],
-            "conversation_id": None,
-            "title": goal,
-            "snippet": goal[:200],
-            "relevance_score": round(hit["similarity"], 4),
-            "created_at": None,
-        })
+        task_id = hit.get("task_id")
+        if not task_id:
+            continue
+        score = round(hit["similarity"], 4)
+        if score > best_score.get(task_id, -1):
+            best_score[task_id] = score
 
-    # --- Message results (skip if a chunk from the same message is present) ---
+    # --- Message hits (skip if a chunk from the same message is present) ---
     for hit in message_hits:
         if hit["message_id"] in chunk_message_ids:
             continue
-        content = hit.get("content") or ""
-        relevance = compute_relevance_score(
+        task_id = hit.get("task_id")
+        if not task_id:
+            continue
+        score = round(compute_relevance_score(
             hit["similarity"], hit.get("type"), hit.get("pinned", False)
-        )
-        if hit.get("task_id"):
-            result_type = "task_message"
-        else:
-            result_type = "conversation_message"
-        results.append({
-            "type": result_type,
-            "task_id": hit.get("task_id"),
-            "conversation_id": hit.get("conversation_id"),
-            "title": hit.get("title") or "",
-            "snippet": content[:200],
-            "relevance_score": round(relevance, 4),
-            "created_at": hit.get("created_at"),
-        })
+        ), 4)
+        if score > best_score.get(task_id, -1):
+            best_score[task_id] = score
 
-    # --- Chunk results ---
+    # --- Chunk hits ---
     for hit in chunk_hits:
-        chunk_content = hit.get("chunk_content") or ""
-        relevance = compute_relevance_score(
+        task_id = hit.get("task_id")
+        if not task_id:
+            continue
+        score = round(compute_relevance_score(
             hit["similarity"], hit.get("type"), hit.get("pinned", False)
-        )
-        title = hit.get("chunk_heading") or hit.get("title") or ""
-        results.append({
-            "type": "chunk",
-            "task_id": hit.get("task_id"),
-            "conversation_id": hit.get("conversation_id"),
-            "title": title,
-            "snippet": chunk_content[:200],
-            "relevance_score": round(relevance, 4),
-            "created_at": hit.get("created_at"),
-        })
+        ), 4)
+        if score > best_score.get(task_id, -1):
+            best_score[task_id] = score
 
-    # Sort by relevance descending, return top limit
-    results.sort(key=lambda r: r["relevance_score"], reverse=True)
-    return {"results": results[:limit], "total_candidates": len(results)}
+    # Sort task_ids by best score descending, take top limit
+    ranked_task_ids = sorted(best_score, key=lambda tid: best_score[tid], reverse=True)[:limit]
+
+    # Fetch full task objects in parallel
+    task_objects = await asyncio.gather(
+        *(db.get_task(tid) for tid in ranked_task_ids)
+    )
+
+    # Filter out any tasks that no longer exist (deleted between search and fetch)
+    results = [t for t in task_objects if t is not None]
+
+    return {"results": results, "total_candidates": len(best_score)}
