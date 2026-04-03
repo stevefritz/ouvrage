@@ -296,6 +296,14 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
 
     project = await db.get_project(task["project_id"])
 
+    # Post resume message
+    triggered_by = ctx.get("triggered_by", "user")
+    await db.post_task_message(
+        task_id=task_id, author="dispatcher", type="status",
+        title="Resumed",
+        content=f"Session resumed by {triggered_by}.",
+    )
+
     # Worktree check — checkout from origin if missing
     worktree_path = task.get("worktree_path")
     if not worktree_path or not os.path.exists(worktree_path):
