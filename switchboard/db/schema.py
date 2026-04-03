@@ -501,7 +501,7 @@ async def init_db():
         if "user_id" not in push_col_names:
             await conn.execute("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER REFERENCES users(id)")
 
-        # Migrate files: add task_id FK
+        # Migrate files: add task_id and project_id FKs
         files_table = await conn.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
         )
@@ -510,6 +510,8 @@ async def init_db():
             files_col_names = [c["name"] for c in files_columns]
             if "task_id" not in files_col_names:
                 await conn.execute("ALTER TABLE files ADD COLUMN task_id TEXT REFERENCES tasks(id)")
+            if "project_id" not in files_col_names:
+                await conn.execute("ALTER TABLE files ADD COLUMN project_id TEXT REFERENCES projects(id)")
 
         # Migrate api_tokens: add token_prefix for display in the UI
         token_columns = await conn.execute_fetchall("PRAGMA table_info(api_tokens)")

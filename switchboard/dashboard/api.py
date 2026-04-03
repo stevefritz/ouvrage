@@ -320,6 +320,11 @@ async def handle_request(scope, receive, send):
             if file_id.endswith("/download") and method == "GET":
                 actual_id = file_id[:-len("/download")]
                 return await _handle_download_file(send, actual_id, scope)
+            if file_id.endswith("/promote") and method == "POST":
+                actual_id = file_id[:-len("/promote")]
+                return await _handle_promote_file(receive, send, actual_id, scope)
+            if method == "GET":
+                return await _handle_get_file(send, file_id, scope)
             if method == "PATCH":
                 return await _handle_rename_file(receive, send, file_id, scope)
             if method == "DELETE":
@@ -1738,7 +1743,8 @@ def _parse_multipart(body: bytes, boundary: bytes) -> tuple[str | None, bytes | 
 async def _handle_list_files(scope, send):
     params = _parse_qs(scope)
     task_id = params.get("task_id") or None
-    files = await db.list_files(task_id=task_id)
+    project_id = params.get("project_id") or None
+    files = await db.list_files(task_id=task_id, project_id=project_id)
     await _json_response(send, files)
 
 
@@ -1931,6 +1937,46 @@ async def _handle_download_file(send, file_id: str, scope):
         ],
     })
     await send({"type": "http.response.body", "body": data})
+
+
+async def _handle_get_file(send, file_id: str, scope):
+    """GET /dashboard/api/files/{id} — unified get file, works for any scope."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    record = await db.get_file(file_id)
+    if not record:
+        return await _error(send, f"File '{file_id}' not found", 404)
+
+    from switchboard.server.handlers.files_handler import _is_readable, READABLE_EXTENSIONS
+    filename = record.get("filename", "")
+    readable = _is_readable(filename)
+    record["readable"] = readable
+    await _json_response(send, record)
+
+
+async def _handle_promote_file(receive, send, file_id: str, scope):
+    """POST /dashboard/api/files/{id}/promote — set project_id on an existing task file."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+    project_id = data.get("project_id", "").strip()
+    if not project_id:
+        return await _error(send, "project_id is required")
+
+    project = await db.get_project(project_id)
+    if not project:
+        return await _error(send, f"Project '{project_id}' not found", 404)
+
+    record = await db.promote_task_file(file_id, project_id)
+    if not record:
+        return await _error(send, f"File '{file_id}' not found or has no task_id — only task files can be promoted", 400)
+
+    await _json_response(send, record)
 
 
 async def _handle_search_api(scope, send):

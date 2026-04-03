@@ -60,6 +60,9 @@ from switchboard.server.handlers.files_handler import (
     _handle_list_files,
     _handle_add_task_file,
     _handle_get_attached_file,
+    _handle_add_project_file,
+    _handle_get_file,
+    _handle_promote_task_file,
 )
 
 TOOL_HANDLERS = {
@@ -117,6 +120,9 @@ TOOL_HANDLERS = {
     "list_files": _handle_list_files,
     "get_attached_file": _handle_get_attached_file,
     "add_task_file": _handle_add_task_file,
+    "add_project_file": _handle_add_project_file,
+    "get_file": _handle_get_file,
+    "promote_task_file": _handle_promote_task_file,
     # Worker-only tools
     "escalate": _handle_escalate,
 }

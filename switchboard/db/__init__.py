@@ -164,6 +164,7 @@ from switchboard.db.files import (
     list_files,
     update_file,
     delete_file,
+    promote_task_file,
 )
 
 # Instance config (control-plane overrides)
