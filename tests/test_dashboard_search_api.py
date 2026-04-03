@@ -102,13 +102,10 @@ class TestSearchApiSuccess:
 
         mock_results = [
             {
-                "type": "task",
-                "task_id": "my-proj/task-1",
-                "conversation_id": None,
-                "title": "Implement auth module",
-                "snippet": "Implement auth module",
-                "relevance_score": 0.95,
-                "created_at": None,
+                "id": "my-proj/task-1",
+                "goal": "Implement auth module",
+                "status": "working",
+                "last_activity": "2026-01-01T00:00:00Z",
             }
         ]
         with patch(
@@ -123,7 +120,7 @@ class TestSearchApiSuccess:
         data = resp.json()
         assert "results" in data
         assert len(data["results"]) == 1
-        assert data["results"][0]["type"] == "task"
+        assert data["results"][0]["id"] == "my-proj/task-1"
 
     async def test_project_id_passed_through(self, db):
         from switchboard.dashboard.api import handle_request
@@ -193,17 +190,17 @@ class TestSearchApiSuccess:
 
         assert captured["project_id"] is None
 
-    async def test_returns_multiple_result_types(self, db):
+    async def test_returns_task_objects(self, db):
+        """Search API passes through task objects returned by the handler."""
         from switchboard.dashboard.api import handle_request
 
         mock_results = [
-            {"type": "task", "task_id": "proj/t1", "conversation_id": None, "title": "Task goal", "snippet": "Task goal", "relevance_score": 0.95, "created_at": None},
-            {"type": "task_message", "task_id": "proj/t1", "conversation_id": None, "title": "", "snippet": "Some message content", "relevance_score": 0.82, "created_at": "2026-01-01T00:00:00Z"},
-            {"type": "chunk", "task_id": None, "conversation_id": "conv-1", "title": "Heading", "snippet": "Chunk text", "relevance_score": 0.76, "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "proj/t1", "goal": "Task goal", "status": "working", "last_activity": "2026-01-01T00:00:00Z"},
+            {"id": "proj/t2", "goal": "Another task", "status": "completed", "last_activity": "2026-01-02T00:00:00Z"},
         ]
         with patch(
             "switchboard.server.handlers.search._handle_search",
-            new=AsyncMock(return_value={"results": mock_results, "total_candidates": 3}),
+            new=AsyncMock(return_value={"results": mock_results, "total_candidates": 2}),
         ):
             scope = _make_scope("/dashboard/api/search", query={"q": "test"})
             resp = _Capture()
@@ -211,10 +208,9 @@ class TestSearchApiSuccess:
 
         assert resp.status == 200
         data = resp.json()
-        types = [r["type"] for r in data["results"]]
-        assert "task" in types
-        assert "task_message" in types
-        assert "chunk" in types
+        assert len(data["results"]) == 2
+        assert data["results"][0]["id"] == "proj/t1"
+        assert data["results"][0]["goal"] == "Task goal"
 
     async def test_invalid_limit_defaults_to_10(self, db):
         from switchboard.dashboard.api import handle_request
