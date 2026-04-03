@@ -307,7 +307,8 @@ class TestExecuteValidTransitions:
             "t/18", "exhaust_turns",
             project={"test_command": "pytest"},
         )
-        assert result["status"] == "validating"
+        assert result["status"] == "stopped"
+        assert result["reason"] == "turns_exhausted"
 
     async def test_working_exhaust_turns_without_gates(self):
         await self._make_task("t/19", status="working")

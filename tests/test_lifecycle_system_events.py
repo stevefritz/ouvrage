@@ -179,7 +179,7 @@ class TestCompleteEvent:
 
 
 class TestExhaustTurnsEvent:
-    """(working, exhaust_turns) → validating or stopped"""
+    """(working, exhaust_turns) → always stopped/turns_exhausted"""
 
     @pytest.fixture(autouse=True)
     async def _setup(self, db):
@@ -187,7 +187,7 @@ class TestExhaustTurnsEvent:
         self.lifecycle = TaskLifecycle()
 
     async def test_exhaust_turns_with_gates(self):
-        """With test_command configured, task goes to validating."""
+        """Even with test_command configured, turns exhausted always stops — work is incomplete."""
         task_id = await _seed(self.db_mod, "exhaust-gates",
                               auto_test=True)
         result_msg = _mock_result_msg(stop_reason="max_turns")
@@ -204,7 +204,8 @@ class TestExhaustTurnsEvent:
             for p in patches:
                 p.stop()
 
-        assert task["status"] == "validating"
+        assert task["status"] == "stopped"
+        assert task["reason"] == "turns_exhausted"
 
     async def test_exhaust_turns_without_gates(self):
         """Without test_command, task goes to stopped(turns_exhausted)."""

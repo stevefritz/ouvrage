@@ -625,9 +625,8 @@ async def _on_sdk_complete(task: dict, **ctx: Any) -> None:
 
 
 async def _on_exhaust_turns(task: dict, **ctx: Any) -> None:
-    """Turns exhausted — post message, push branch, try gates if configured."""
+    """Turns exhausted — post message, push branch to preserve work."""
     from switchboard.dispatch.engine import _update_usage
-    from switchboard.dispatch.gates import _run_test_gate, _dispatch_review
     from switchboard.git.operations import _ensure_branch_pushed
     from switchboard.notifications import slack as notify
 
@@ -652,30 +651,14 @@ async def _on_exhaust_turns(task: dict, **ctx: Any) -> None:
     # Re-read task after status change
     task = await db.get_task(task_id)
 
-    # Push branch and try gates
-    push_ok = await _ensure_branch_pushed(task_id, task)
-    if not push_ok:
-        await db.update_task(task_id, gate_status="push-failed")
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Gate pipeline blocked — push failed",
-            content="Push failed. Gates will not run until code is pushed. "
-                    "Fix the PAT or push manually, then resume.",
-        )
-    elif not task.get("gate_passed_at"):
-        project = await db.get_project(task["project_id"])
-        if task.get("auto_test") and project and project.get("test_command"):
-            await _run_test_gate(task_id, project, task)
-        elif task.get("auto_review"):
-            await _dispatch_review(task_id, project, task)
+    # Push branch to preserve work
+    await _ensure_branch_pushed(task_id, task)
 
-    # Only notify for manual review if gate didn't auto-handle it
-    task = await db.get_task(task_id)
-    if not task.get("gate_passed_at") and task.get("gate_status") not in ("testing", "reviewing", "test-passed"):
-        await notify.task_needs_review(
-            task_id=task_id,
-            reason=ctx.get("review_reason", "Turns exhausted. Resume to continue."),
-        )
+    # Notify — task is stopped, needs user to resume
+    await notify.task_needs_review(
+        task_id=task_id,
+        reason="Turns exhausted. Resume to continue.",
+    )
 
 
 async def _on_timeout(task: dict, **ctx: Any) -> None:
@@ -998,18 +981,12 @@ class TransitionDef:
 
 
 def _exhaust_turns_state(task: dict, **ctx: Any) -> str:
-    """Dynamic target for exhaust_turns: validating if gates configured, else stopped."""
-    project = ctx.get("project")
-    if project and project.get("test_command"):
-        return "validating"
+    """Turns exhausted always goes to stopped — work is incomplete, needs user review."""
     return "stopped"
 
 
 def _exhaust_turns_reason(task: dict, **ctx: Any) -> str | None:
-    """Dynamic reason for exhaust_turns."""
-    project = ctx.get("project")
-    if project and project.get("test_command"):
-        return None  # validating has no reason yet — gate sub-machine sets it
+    """Turns exhausted reason."""
     return "turns_exhausted"
 
 
