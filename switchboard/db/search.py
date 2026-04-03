@@ -464,6 +464,43 @@ async def search_message_chunks(
     return top
 
 
+async def search_conversation_messages(
+    conversation_id: str,
+    query: str,
+    limit: int = 20,
+) -> list[dict]:
+    """LIKE search on messages in a specific conversation.
+
+    Returns message objects with id, author, type, title, snippet (~200 chars),
+    score (1.0 for LIKE matches), and created_at.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT id, author, type, title, content, created_at
+               FROM messages
+               WHERE conversation_id = ? AND content LIKE ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (conversation_id, f"%{query}%", limit),
+        )
+        results = []
+        for r in rows:
+            row = dict(r)
+            content = row.pop("content", "") or ""
+            lower_content = content.lower()
+            idx = lower_content.find(query.lower())
+            if idx >= 0:
+                start = max(0, idx - 90)
+                end = min(len(content), idx + len(query) + 90)
+                snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+            else:
+                snippet = content[:200] + ("..." if len(content) > 200 else "")
+            row["snippet"] = snippet
+            row["score"] = 1.0
+            results.append(row)
+        return results
+
+
 async def set_task_embedding(task_id: str, blob: bytes) -> None:
     """Store the embedding blob for a task's goal."""
     async with get_db() as db:

@@ -135,12 +135,15 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/conversations" and method == "GET":
             return await _handle_list_conversations(scope, send)
 
-        # GET/POST /dashboard/api/conversations/{id}[/messages]
+        # GET/POST /dashboard/api/conversations/{id}[/messages|/search]
         if path.startswith("/dashboard/api/conversations/"):
             rest = path[len("/dashboard/api/conversations/"):]
             if method == "POST" and rest.endswith("/messages"):
                 conv_id = unquote(rest[:-len("/messages")])
                 return await _handle_post_conversation_message(receive, send, conv_id)
+            if method == "GET" and rest.endswith("/search"):
+                conv_id = unquote(rest[:-len("/search")])
+                return await _handle_search_conversation(scope, send, conv_id)
             if method == "GET":
                 conv_id = unquote(rest)
                 return await _handle_get_conversation(scope, send, conv_id)
@@ -1234,6 +1237,58 @@ async def _handle_list_conversations(scope, send):
         search=params.get("search"),
     )
     await _json_response(send, conversations)
+
+
+async def _handle_search_conversation(scope, send, conv_id: str):
+    """GET /dashboard/api/conversations/{id}/search?q=...
+
+    Runs LIKE search on message content within the conversation.
+    If OPENAI_API_KEY is set, also runs semantic search and merges results.
+    Returns message objects (id, author, type, title, snippet, score, created_at).
+    """
+    params = _parse_qs(scope)
+    q = params.get("q", "").strip()
+    if not q:
+        return await _error(send, "Missing required query parameter: q", 400)
+
+    # LIKE search — always runs
+    results = await db.search_conversation_messages(conv_id, q)
+    seen_ids = {r["id"] for r in results}
+
+    # Semantic search — runs only when OPENAI_API_KEY is available
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            from switchboard.embeddings import service as emb
+            from switchboard.embeddings.service import compute_relevance_score
+            service = emb.get_embedding_service()
+            query_vector = await service.embed_safe(q)
+            if query_vector:
+                semantic_hits = await db.search_messages_semantic(
+                    query_vector=query_vector,
+                    conversation_id=conv_id,
+                    limit=20,
+                )
+                for hit in semantic_hits:
+                    msg_id = hit["message_id"]
+                    if msg_id not in seen_ids:
+                        content = hit.get("content") or ""
+                        snippet = content[:200] + ("..." if len(content) > 200 else "")
+                        results.append({
+                            "id": msg_id,
+                            "author": hit.get("author"),
+                            "type": hit.get("type"),
+                            "title": hit.get("title"),
+                            "snippet": snippet,
+                            "score": round(compute_relevance_score(
+                                hit["similarity"], hit.get("type"), hit.get("pinned", False)
+                            ), 4),
+                            "created_at": hit.get("created_at"),
+                        })
+                        seen_ids.add(msg_id)
+        except Exception:
+            pass  # Semantic search is best-effort; LIKE results still returned
+
+    await _json_response(send, {"results": results, "total": len(results)})
 
 
 async def _handle_post_conversation_message(receive, send, conv_id):

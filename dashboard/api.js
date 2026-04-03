@@ -53,6 +53,10 @@ export const api = {
         const qs = new URLSearchParams(params).toString();
         return request(`/conversations/${eid(id)}` + (qs ? '?' + qs : ''));
     },
+    searchConversation: (id, q) => {
+        const qs = new URLSearchParams({ q }).toString();
+        return request(`/conversations/${eid(id)}/search?${qs}`);
+    },
     getActivity: (params = {}) => {
         const qs = new URLSearchParams(params).toString();
         return request('/activity' + (qs ? '?' + qs : ''));
