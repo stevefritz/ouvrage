@@ -850,12 +850,6 @@ export function ProjectView({ id, tab }) {
         }
     }, [id, _searchStorageKey]);
 
-    useEffect(() => {
-        if (searchQuery) {
-            handleSearch(searchQuery);
-        }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
     const pageStyle = {
         display: 'flex',
         flexDirection: 'column',
