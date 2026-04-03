@@ -205,32 +205,41 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
 
     project = await db.get_project(task["project_id"])
 
-    # Setup worktree
-    worktree_path = await setup_task_worktree(project, task)
-    dispatch_count = (task.get("dispatch_count") or 0) + 1
-    await db.update_task(task_id,
-        worktree_path=worktree_path,
-        dispatch_count=dispatch_count,
-        last_activity=db.now_iso(),
-    )
+    try:
+        # Setup worktree
+        worktree_path = await setup_task_worktree(project, task)
+        dispatch_count = (task.get("dispatch_count") or 0) + 1
+        await db.update_task(task_id,
+            worktree_path=worktree_path,
+            dispatch_count=dispatch_count,
+            last_activity=db.now_iso(),
+        )
 
-    # Build prompt
-    prompt = await build_dispatch_prompt(
-        project, task,
-        escalation_criteria=ctx.get("escalation_criteria"),
-        review_feedback=ctx.get("review_feedback"),
-    )
+        # Build prompt
+        prompt = await build_dispatch_prompt(
+            project, task,
+            escalation_criteria=ctx.get("escalation_criteria"),
+            review_feedback=ctx.get("review_feedback"),
+        )
 
-    # Create attempt record for attempt 1
-    current_attempt = task.get("current_attempt") or 1
-    await db.create_attempt(task_id, current_attempt)
+        # Create attempt record for attempt 1
+        current_attempt = task.get("current_attempt") or 1
+        await db.create_attempt(task_id, current_attempt)
 
-    # Resolve config + launch
-    config = resolve_session_config(task, project)
-    await launch_sdk_session(
-        task_id=task_id, prompt=prompt,
-        worktree_path=worktree_path, **config,
-    )
+        # Resolve config + launch
+        config = resolve_session_config(task, project)
+        await launch_sdk_session(
+            task_id=task_id, prompt=prompt,
+            worktree_path=worktree_path, **config,
+        )
+    except Exception as exc:
+        logger.error("Dispatch failed for %s: %s", task_id, exc)
+        await db.update_task(task_id, status="stopped", reason="dispatch_failed")
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Dispatch failed",
+            content=f"Failed to launch session: {exc}",
+        )
 
     # Notify Slack
     checklist_items = await db.get_checklist(task_id)
