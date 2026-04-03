@@ -16,6 +16,162 @@ const html = htm.bind(h);
 const POLL_INTERVAL_MS = 15_000;
 const TOC_MSG_LIMIT = 8;
 
+// ── Inject CSS once (CSS-first responsive + animations) ───────
+
+let _cssInjected = false;
+function injectConvStyles() {
+    if (_cssInjected || typeof document === 'undefined') return;
+    _cssInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+/* TOC responsive: sidebar on desktop, accordion on mobile */
+.foreman-toc-sidebar { display: flex; }
+.foreman-toc-mobile  { display: none; }
+
+@media (max-width: 767px) {
+    .foreman-toc-sidebar { display: none !important; }
+    .foreman-toc-mobile  { display: block !important; }
+}
+
+/* Permalink button — visible on message hover */
+.foreman-conv-message { position: relative; }
+.foreman-permalink {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    opacity: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: ${colors.textTertiary};
+    font-size: 13px;
+    transition: opacity 120ms, color 120ms, background 120ms;
+    line-height: 1;
+}
+.foreman-conv-message:hover .foreman-permalink {
+    opacity: 1;
+}
+.foreman-permalink:hover {
+    color: ${colors.accent};
+    background: ${colors.surfaceActive};
+}
+
+/* Permalink flash animation for hash-targeted messages */
+@keyframes foreman-permalink-flash {
+    0%   { background: rgba(217, 119, 6, 0.25); }
+    60%  { background: rgba(217, 119, 6, 0.12); }
+    100% { background: transparent; }
+}
+.foreman-permalink-flash {
+    animation: foreman-permalink-flash 1.2s ease-out forwards;
+}
+
+/* Accordion TOC styling */
+.foreman-toc-accordion {
+    border-bottom: 1px solid ${colors.border};
+    background: ${colors.surface};
+}
+.foreman-toc-accordion summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 9px 16px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: ${typography.size.sm};
+    color: ${colors.textSecondary};
+    font-family: ${typography.fontBody};
+    user-select: none;
+}
+.foreman-toc-accordion summary::-webkit-details-marker { display: none; }
+.foreman-toc-accordion summary .toc-chevron {
+    margin-left: auto;
+    font-size: 10px;
+    color: ${colors.textTertiary};
+    transition: transform 120ms;
+}
+.foreman-toc-accordion[open] summary .toc-chevron {
+    transform: rotate(180deg);
+}
+.foreman-toc-accordion-body {
+    padding: 4px 0 8px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+.foreman-toc-accordion-label {
+    padding: 4px 16px 2px;
+    font-size: ${typography.size.xs};
+    font-weight: ${typography.weight.semibold};
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${colors.textTertiary};
+}
+.foreman-toc-accordion-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 5px 16px;
+    font-size: ${typography.size.xs};
+    color: ${colors.textSecondary};
+    font-family: ${typography.fontBody};
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+.foreman-toc-accordion-item:hover {
+    color: ${colors.text};
+    background: ${colors.surfaceHover};
+}
+
+/* Scroll spy active item */
+.foreman-toc-item.toc-active {
+    color: ${colors.accent} !important;
+    font-weight: ${typography.weight.medium};
+}
+
+/* Heading anchor links in pinned messages */
+.foreman-conv-message h2,
+.foreman-conv-message h3 {
+    position: relative;
+}
+.foreman-heading-anchor {
+    position: absolute;
+    left: -18px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    color: ${colors.textTertiary};
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: normal;
+    transition: opacity 120ms;
+    padding: 0 4px;
+}
+.foreman-conv-message h2:hover .foreman-heading-anchor,
+.foreman-conv-message h3:hover .foreman-heading-anchor {
+    opacity: 1;
+}
+`;
+    document.head.appendChild(style);
+}
+
+// ── Slug helper ───────────────────────────────────────────────
+
+function slugify(text) {
+    return text
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .trim()
+        .replace(/[\s_]+/g, '-')
+        .replace(/-+/g, '-');
+}
+
 // ── Message type metadata ─────────────────────────────────────
 
 const MSG_META = {
@@ -59,7 +215,7 @@ function renderMarkdown(content) {
     }
 }
 
-// Extract ## and ### headings from markdown text
+// Extract ## and ### headings from markdown text (returns {level, text, slug})
 function extractHeadings(markdown) {
     if (!markdown) return [];
     const headings = [];
@@ -67,7 +223,8 @@ function extractHeadings(markdown) {
     for (const line of lines) {
         const m = line.match(/^(#{2,3})\s+(.+)$/);
         if (m) {
-            headings.push({ level: m[1].length, text: m[2].trim() });
+            const text = m[2].trim();
+            headings.push({ level: m[1].length, text, slug: slugify(text) });
         }
     }
     return headings;
@@ -75,12 +232,12 @@ function extractHeadings(markdown) {
 
 // ── TypeBadge ────────────────────────────────────────────────
 
-function TypeBadge({ type }) {
+function TypeBadge({ type, mini }) {
     const meta = getMsgMeta(type);
     return html`
         <span style=${{
             display: 'inline-block',
-            padding: '2px 7px',
+            padding: mini ? '1px 5px' : '2px 7px',
             borderRadius: layout.borderRadius.pill,
             background: meta.bg,
             color: meta.color,
@@ -97,6 +254,22 @@ function TypeBadge({ type }) {
 
 function ConversationMessage({ msg, isPinned, highlighted }) {
     const renderedContent = useMemo(() => renderMarkdown(msg.content), [msg.content]);
+
+    const handleCopyLink = useCallback(() => {
+        const url = window.location.origin
+            + window.location.pathname
+            + window.location.search
+            + '#msg-' + msg.id;
+        navigator.clipboard.writeText(url).catch(() => {
+            // fallback: prompt copy
+            const ta = document.createElement('textarea');
+            ta.value = url;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        });
+    }, [msg.id]);
 
     const containerStyle = {
         padding: '14px 16px',
@@ -150,9 +323,16 @@ function ConversationMessage({ msg, isPinned, highlighted }) {
     return html`
         <div
             id=${'msg-' + msg.id}
+            data-msg-id=${String(msg.id)}
             style=${containerStyle}
             class="foreman-conv-message"
         >
+            <button
+                class="foreman-permalink"
+                onClick=${handleCopyLink}
+                title="Copy link to this message"
+                aria-label="Copy link"
+            >⧉</button>
             <div style=${headerStyle}>
                 <span style=${authorStyle}>${msg.author || 'unknown'}</span>
                 <${TypeBadge} type=${msg.type || 'note'} />
@@ -176,9 +356,9 @@ function ConversationMessage({ msg, isPinned, highlighted }) {
     `;
 }
 
-// ── TOC Sidebar ───────────────────────────────────────────────
+// ── TOC Sidebar (desktop) ─────────────────────────────────────
 
-function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg, collapsed, onToggle }) {
+function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onScrollToMsg }) {
     const [showAll, setShowAll] = useState(false);
     const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
     const hiddenCount = messages.length - TOC_MSG_LIMIT;
@@ -187,7 +367,6 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
         width: layout.sidebarWidth,
         flexShrink: 0,
         borderRight: `1px solid ${colors.border}`,
-        display: 'flex',
         flexDirection: 'column',
         overflowY: 'auto',
         maxHeight: 'calc(100vh - 52px)',
@@ -207,8 +386,10 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
         marginTop: '8px',
     };
 
-    const tocItemStyle = (isHeading) => ({
-        display: 'block',
+    const tocItemStyle = (isHeading, isActive) => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
         width: '100%',
         textAlign: 'left',
         background: 'none',
@@ -216,14 +397,22 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
         cursor: 'pointer',
         padding: isHeading ? '3px 14px 3px 20px' : '4px 14px',
         fontSize: typography.size.xs,
-        color: colors.textSecondary,
+        color: isActive ? colors.accent : colors.textSecondary,
+        fontWeight: isActive ? typography.weight.medium : typography.weight.normal,
         lineHeight: '1.4',
+        overflow: 'hidden',
+        transition: `color ${animation.durationFast}`,
+        fontFamily: typography.fontBody,
+        minWidth: 0,
+    });
+
+    const labelSpanStyle = {
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
-        transition: `color ${animation.durationFast}`,
-        fontFamily: typography.fontBody,
-    });
+        flex: 1,
+        minWidth: 0,
+    };
 
     return html`
         <nav style=${sidebarStyle} class="foreman-toc-sidebar" aria-label="Table of contents">
@@ -232,9 +421,9 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
                 ${pinnedHeadings.map((h, i) => html`
                     <button
                         key=${i}
-                        style=${tocItemStyle(true)}
+                        style=${tocItemStyle(true, false)}
                         class="foreman-toc-item"
-                        onClick=${() => onScrollToHeading(h.text)}
+                        onClick=${() => onScrollToHeading(h)}
                         title=${h.text}
                     >${h.level === 3 ? '  · ' : ''}${h.text}</button>
                 `)}
@@ -242,18 +431,26 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
 
             ${messages.length > 0 ? html`
                 <div style=${sectionLabelStyle}>Messages</div>
-                ${visibleMsgs.map(msg => html`
-                    <button
-                        key=${msg.id}
-                        style=${tocItemStyle(false)}
-                        class="foreman-toc-item"
-                        onClick=${() => onScrollToMsg(msg.id)}
-                        title=${msg.title || msg.content?.split('\n')[0]?.replace(/^#+\s*/,'') || msg.id}
-                    >${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}</button>
-                `)}
+                ${visibleMsgs.map(msg => {
+                    // eslint-disable-next-line eqeqeq -- activeId is string from DOM, msg.id may be number
+                    const isActive = activeId != null && activeId == msg.id;
+                    const label = msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id;
+                    return html`
+                        <button
+                            key=${msg.id}
+                            style=${tocItemStyle(false, isActive)}
+                            class=${'foreman-toc-item' + (isActive ? ' toc-active' : '')}
+                            onClick=${() => onScrollToMsg(msg.id)}
+                            title=${label}
+                        >
+                            <${TypeBadge} type=${msg.type || 'note'} mini=${true} />
+                            <span style=${labelSpanStyle}>${label}</span>
+                        </button>
+                    `;
+                })}
                 ${!showAll && hiddenCount > 0 ? html`
                     <button
-                        style=${{ ...tocItemStyle(false), color: colors.accent, fontWeight: typography.weight.medium }}
+                        style=${{ ...tocItemStyle(false, false), color: colors.accent, fontWeight: typography.weight.medium }}
                         onClick=${() => setShowAll(true)}
                     >+${hiddenCount} more</button>
                 ` : null}
@@ -262,101 +459,58 @@ function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg
     `;
 }
 
-// ── Mobile TOC Dropdown ───────────────────────────────────────
+// ── Mobile TOC Accordion ──────────────────────────────────────
 
-function MobileTocDropdown({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg }) {
-    const [open, setOpen] = useState(false);
+function MobileTocAccordion({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg }) {
+    const detailsRef = useRef(null);
     const [showAll, setShowAll] = useState(false);
     const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
     const hiddenCount = messages.length - TOC_MSG_LIMIT;
 
-    const btnStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '7px 12px',
-        background: colors.surfaceActive,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.md,
-        color: colors.text,
-        fontSize: typography.size.sm,
-        cursor: 'pointer',
-        fontFamily: typography.fontBody,
-    };
+    const totalSections = pinnedHeadings.length + messages.length;
+    if (totalSections === 0) return null;
 
-    const dropdownStyle = {
-        position: 'absolute',
-        top: '100%',
-        left: 0,
-        right: 0,
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.md,
-        marginTop: '4px',
-        zIndex: 100,
-        maxHeight: '300px',
-        overflowY: 'auto',
-        padding: '8px 0',
-    };
-
-    const itemStyle = {
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        background: 'none',
-        border: 'none',
-        cursor: 'pointer',
-        padding: '6px 14px',
-        fontSize: typography.size.xs,
-        color: colors.textSecondary,
-        fontFamily: typography.fontBody,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-    };
-
-    const labelStyle = {
-        padding: '4px 14px 2px',
-        fontSize: typography.size.xs,
-        fontWeight: typography.weight.semibold,
-        letterSpacing: '0.08em',
-        textTransform: 'uppercase',
-        color: colors.textTertiary,
-    };
-
-    if (pinnedHeadings.length === 0 && messages.length === 0) return null;
+    const handleItemClick = useCallback((fn) => {
+        fn();
+        if (detailsRef.current) detailsRef.current.open = false;
+    }, []);
 
     return html`
-        <div style={{ position: 'relative', marginBottom: '8px' }} class="foreman-toc-mobile">
-            <button style=${btnStyle} onClick=${() => setOpen(o => !o)} aria-expanded=${open}>
-                ☰ Contents ${open ? '▴' : '▾'}
-            </button>
-            ${open ? html`
-                <div style=${dropdownStyle}>
-                    ${pinnedHeadings.length > 0 ? html`
-                        <div style=${labelStyle}>Pinned</div>
-                        ${pinnedHeadings.map((h, i) => html`
-                            <button key=${i} style=${itemStyle} onClick=${() => { onScrollToHeading(h.text); setOpen(false); }}>
-                                ${h.level === 3 ? '  · ' : ''}${h.text}
-                            </button>
-                        `)}
+        <details class="foreman-toc-accordion foreman-toc-mobile" ref=${detailsRef}>
+            <summary>
+                ☰ Contents (${totalSections} section${totalSections !== 1 ? 's' : ''})
+                <span class="toc-chevron">▼</span>
+            </summary>
+            <div class="foreman-toc-accordion-body">
+                ${pinnedHeadings.length > 0 ? html`
+                    <div class="foreman-toc-accordion-label">Pinned</div>
+                    ${pinnedHeadings.map((h, i) => html`
+                        <button
+                            key=${i}
+                            class="foreman-toc-accordion-item"
+                            onClick=${() => handleItemClick(() => onScrollToHeading(h))}
+                        >${h.level === 3 ? '  · ' : ''}${h.text}</button>
+                    `)}
+                ` : null}
+                ${messages.length > 0 ? html`
+                    <div class="foreman-toc-accordion-label">Messages</div>
+                    ${visibleMsgs.map(msg => html`
+                        <button
+                            key=${msg.id}
+                            class="foreman-toc-accordion-item"
+                            onClick=${() => handleItemClick(() => onScrollToMsg(msg.id))}
+                        >${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}</button>
+                    `)}
+                    ${!showAll && hiddenCount > 0 ? html`
+                        <button
+                            class="foreman-toc-accordion-item"
+                            style=${{ color: colors.accent }}
+                            onClick=${() => setShowAll(true)}
+                        >+${hiddenCount} more</button>
                     ` : null}
-                    ${messages.length > 0 ? html`
-                        <div style=${labelStyle}>Messages</div>
-                        ${visibleMsgs.map(msg => html`
-                            <button key=${msg.id} style=${itemStyle} onClick=${() => { onScrollToMsg(msg.id); setOpen(false); }}>
-                                ${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}
-                            </button>
-                        `)}
-                        ${!showAll && hiddenCount > 0 ? html`
-                            <button style=${{ ...itemStyle, color: colors.accent }} onClick=${() => setShowAll(true)}>
-                                +${hiddenCount} more
-                            </button>
-                        ` : null}
-                    ` : null}
-                </div>
-            ` : null}
-        </div>
+                ` : null}
+            </div>
+        </details>
     `;
 }
 
@@ -475,6 +629,9 @@ export function ConversationView({ id, projectId }) {
     const [cursor, setCursor] = useState(null);
     const mountedRef = useRef(true);
 
+    // Scroll spy active message ID
+    const [activeId, setActiveId] = useState(null);
+
     // Search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
@@ -482,17 +639,12 @@ export function ConversationView({ id, projectId }) {
     const [highlightedIds, setHighlightedIds] = useState(new Set());
     const searchTimer = useRef(null);
 
-    // Mobile detection
-    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+    // Inject CSS on first render
+    useEffect(() => { injectConvStyles(); }, []);
 
     useEffect(() => {
         mountedRef.current = true;
-        const onResize = () => setIsMobile(window.innerWidth < 768);
-        window.addEventListener('resize', onResize);
-        return () => {
-            mountedRef.current = false;
-            window.removeEventListener('resize', onResize);
-        };
+        return () => { mountedRef.current = false; };
     }, []);
 
     const loadFull = useCallback(async () => {
@@ -542,6 +694,84 @@ export function ConversationView({ id, projectId }) {
         return () => clearInterval(timer);
     }, [id, cursor]);
 
+    // Hash scroll on load — when thread loads, scroll to #msg-{id} and flash
+    useEffect(() => {
+        if (!thread) return;
+        const hash = window.location.hash;
+        if (!hash) return;
+        const targetId = hash.slice(1); // e.g. "msg-42" or "heading-foo"
+        // Delay to let DOM render
+        const timer = setTimeout(() => {
+            const el = document.getElementById(targetId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Flash highlight if it's a message
+                if (targetId.startsWith('msg-')) {
+                    el.classList.add('foreman-permalink-flash');
+                    setTimeout(() => el.classList.remove('foreman-permalink-flash'), 1400);
+                }
+            }
+        }, 150);
+        return () => clearTimeout(timer);
+    }, [thread]);
+
+    // Scroll spy — IntersectionObserver on message elements
+    useEffect(() => {
+        if (!thread) return;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                // Find the topmost intersecting entry
+                const visible = entries.filter(e => e.isIntersecting);
+                if (visible.length > 0) {
+                    // Take the one with the highest Y position (closest to top of viewport)
+                    const topmost = visible.reduce((a, b) =>
+                        a.boundingClientRect.top < b.boundingClientRect.top ? a : b
+                    );
+                    const msgId = topmost.target.getAttribute('data-msg-id');
+                    if (msgId) setActiveId(msgId);
+                }
+            },
+            {
+                rootMargin: '-10% 0px -75% 0px',
+                threshold: 0,
+            }
+        );
+
+        // Observe all message elements
+        const elements = document.querySelectorAll('.foreman-conv-message[data-msg-id]');
+        elements.forEach(el => observer.observe(el));
+
+        return () => observer.disconnect();
+    }, [thread]);
+
+    // Add heading anchors to pinned message content after render
+    useEffect(() => {
+        if (!thread || !pinnedMsg) return;
+        const pinnedEl = document.getElementById('pinned-msg');
+        if (!pinnedEl) return;
+        const container = pinnedEl;
+        const headings = container.querySelectorAll('h2, h3');
+        headings.forEach(h => {
+            const text = h.textContent.trim();
+            const slug = slugify(text);
+            if (!h.id) {
+                h.id = 'heading-' + slug;
+                h.style.position = 'relative';
+                h.style.paddingLeft = '4px';
+                // Add anchor link if not already present
+                if (!h.querySelector('.foreman-heading-anchor')) {
+                    const a = document.createElement('a');
+                    a.className = 'foreman-heading-anchor';
+                    a.href = '#heading-' + slug;
+                    a.textContent = '¶';
+                    a.title = 'Link to this section';
+                    a.setAttribute('aria-hidden', 'true');
+                    h.appendChild(a);
+                }
+            }
+        });
+    }, [thread]);
+
     // Scoped search — debounced 300ms, filter by conversation_id === id
     const handleSearch = useCallback((q) => {
         setSearchQuery(q);
@@ -585,19 +815,23 @@ export function ConversationView({ id, projectId }) {
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, []);
 
-    const scrollToHeading = useCallback((headingText) => {
-        // Find the pinned message container, then look for matching heading inside it
+    const scrollToHeading = useCallback((heading) => {
+        // heading is {text, slug, level}
+        const el = document.getElementById('heading-' + heading.slug);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+        // Fallback: find by text content
         const pinnedEl = document.getElementById('pinned-msg');
         if (!pinnedEl) return;
-        // Search h2/h3 elements inside pinned message for matching text
         const headings = pinnedEl.querySelectorAll('h2, h3');
         for (const h of headings) {
-            if (h.textContent.trim() === headingText) {
+            if (h.textContent.trim() === heading.text || h.textContent.trim().startsWith(heading.text)) {
                 h.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 return;
             }
         }
-        // Fallback: scroll to pinned message
         pinnedEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, []);
 
@@ -778,29 +1012,24 @@ export function ConversationView({ id, projectId }) {
                 </div>
             ` : null}
 
-            <!-- Mobile TOC -->
-            ${isMobile ? html`
-                <div style=${{ padding: '10px 16px', borderBottom: `1px solid ${colors.border}` }}>
-                    <${MobileTocDropdown}
-                        pinnedHeadings=${pinnedHeadings}
-                        messages=${tocMessages}
-                        onScrollToHeading=${scrollToHeading}
-                        onScrollToMsg=${scrollToMsg}
-                    />
-                </div>
-            ` : null}
+            <!-- Mobile TOC accordion (hidden on desktop via CSS) -->
+            <${MobileTocAccordion}
+                pinnedHeadings=${pinnedHeadings}
+                messages=${tocMessages}
+                onScrollToHeading=${scrollToHeading}
+                onScrollToMsg=${scrollToMsg}
+            />
 
             <!-- Body: sidebar + content -->
             <div style=${bodyStyle}>
-                <!-- Desktop TOC sidebar -->
-                ${!isMobile ? html`
-                    <${TocSidebar}
-                        pinnedHeadings=${pinnedHeadings}
-                        messages=${tocMessages}
-                        onScrollToHeading=${scrollToHeading}
-                        onScrollToMsg=${scrollToMsg}
-                    />
-                ` : null}
+                <!-- Desktop TOC sidebar (hidden on mobile via CSS) -->
+                <${TocSidebar}
+                    pinnedHeadings=${pinnedHeadings}
+                    messages=${tocMessages}
+                    activeId=${activeId}
+                    onScrollToHeading=${scrollToHeading}
+                    onScrollToMsg=${scrollToMsg}
+                />
 
                 <!-- Content area -->
                 <div style=${contentStyle}>
