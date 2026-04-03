@@ -354,6 +354,10 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/runtime-info" and method == "GET":
             return await _handle_runtime_info(send)
 
+        # ── Search endpoint ────────────────────────────────────────────────
+        if path == "/dashboard/api/search" and method == "GET":
+            return await _handle_search_api(scope, send)
+
         # ── Files endpoints ────────────────────────────────────────────────
         if path == "/dashboard/api/files" and method == "GET":
             return await _handle_list_files(scope, send)
@@ -2084,3 +2088,30 @@ async def _handle_download_file(send, file_id: str, scope):
         ],
     })
     await send({"type": "http.response.body", "body": data})
+
+
+async def _handle_search_api(scope, send):
+    """GET /dashboard/api/search — unified semantic search for the dashboard."""
+    from switchboard.server.handlers.search import _handle_search
+
+    params = _parse_qs(scope)
+    q = params.get("q", "").strip()
+    if not q:
+        return await _error(send, "Missing required query parameter: q", 400)
+
+    project_id = params.get("project_id") or None
+    try:
+        limit = int(params.get("limit", 10))
+    except ValueError:
+        limit = 10
+
+    result = await _handle_search({
+        "query": q,
+        "project_id": project_id,
+        "limit": limit,
+    })
+
+    if "error" in result:
+        return await _error(send, result["error"], 503)
+
+    await _json_response(send, result)
