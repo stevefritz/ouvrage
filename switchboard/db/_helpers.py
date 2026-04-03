@@ -178,8 +178,13 @@ async def _list_with_aggregates(
             ),
             pinned_msg AS (
                 SELECT conversation_id, title
-                FROM messages
-                WHERE pinned = TRUE
+                FROM (
+                    SELECT conversation_id, title,
+                           ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) as rn
+                    FROM messages
+                    WHERE pinned = TRUE
+                )
+                WHERE rn = 1
             )
             SELECT
                 c.id, c.project, c.goal, c.archived, c.created_at, c.updated_at,

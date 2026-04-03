@@ -247,6 +247,81 @@ class TestMessageCRUD:
 
 
 # ===========================================================================
+# Conversation listing aggregates (has_pinned, pinned_title, message_count)
+# ===========================================================================
+
+class TestConversationListAggregates:
+    """Tests for _list_with_aggregates via list_conversations().
+
+    Covers has_pinned / pinned_title fields and correct message_count
+    when pinned messages exist (guards against JOIN inflation).
+    """
+
+    async def test_has_pinned_false_when_no_pinned_message(self, db):
+        await db.create_conversation(id="agg-conv-1", project="agg-proj", goal="No pin")
+        await db.post_message(conversation_id="agg-conv-1", author="u", content="hello")
+        convs = await db.list_conversations(project="agg-proj")
+        assert len(convs) == 1
+        assert convs[0]["has_pinned"] == 0  # SQLite returns 0/1 for bool expressions
+
+    async def test_has_pinned_true_when_pinned_message_exists(self, db):
+        await db.create_conversation(id="agg-conv-2", project="agg-proj2", goal="Has pin")
+        await db.post_message(
+            conversation_id="agg-conv-2", author="u", content="spec",
+            title="Spec title", pinned=True,
+        )
+        convs = await db.list_conversations(project="agg-proj2")
+        assert len(convs) == 1
+        assert convs[0]["has_pinned"]
+
+    async def test_pinned_title_returned_correctly(self, db):
+        await db.create_conversation(id="agg-conv-3", project="agg-proj3", goal="Pin title test")
+        await db.post_message(
+            conversation_id="agg-conv-3", author="u", content="body",
+            title="My pinned title", pinned=True,
+        )
+        convs = await db.list_conversations(project="agg-proj3")
+        assert convs[0]["pinned_title"] == "My pinned title"
+
+    async def test_pinned_title_null_when_no_pinned(self, db):
+        await db.create_conversation(id="agg-conv-4", project="agg-proj4", goal="No pin title")
+        await db.post_message(conversation_id="agg-conv-4", author="u", content="hello")
+        convs = await db.list_conversations(project="agg-proj4")
+        assert convs[0]["pinned_title"] is None
+
+    async def test_message_count_correct_with_pinned_message(self, db):
+        """Pinned JOIN must not inflate message_count."""
+        await db.create_conversation(id="agg-conv-5", project="agg-proj5", goal="Count test")
+        await db.post_message(conversation_id="agg-conv-5", author="u", content="msg1")
+        await db.post_message(conversation_id="agg-conv-5", author="u", content="msg2",
+                              title="Pinned one", pinned=True)
+        await db.post_message(conversation_id="agg-conv-5", author="u", content="msg3")
+        convs = await db.list_conversations(project="agg-proj5")
+        assert convs[0]["message_count"] == 3
+
+    async def test_message_count_with_multiple_pinned_messages(self, db):
+        """Multiple pinned messages must not multiply message_count."""
+        await db.create_conversation(id="agg-conv-6", project="agg-proj6", goal="Multi-pin test")
+        await db.post_message(conversation_id="agg-conv-6", author="u", content="msg1",
+                              title="Pin A", pinned=True)
+        await db.post_message(conversation_id="agg-conv-6", author="u", content="msg2",
+                              title="Pin B", pinned=True)
+        await db.post_message(conversation_id="agg-conv-6", author="u", content="msg3")
+        convs = await db.list_conversations(project="agg-proj6")
+        assert convs[0]["message_count"] == 3
+
+    async def test_pinned_title_returns_most_recent_when_multiple_pinned(self, db):
+        """When multiple pinned messages exist, pinned_title is deterministic (most recent)."""
+        await db.create_conversation(id="agg-conv-7", project="agg-proj7", goal="Multi-pin title")
+        await db.post_message(conversation_id="agg-conv-7", author="u", content="old",
+                              title="Older pin", pinned=True)
+        await db.post_message(conversation_id="agg-conv-7", author="u", content="new",
+                              title="Newer pin", pinned=True)
+        convs = await db.list_conversations(project="agg-proj7")
+        assert convs[0]["pinned_title"] == "Newer pin"
+
+
+# ===========================================================================
 # Checklist operations
 # ===========================================================================
 

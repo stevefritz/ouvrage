@@ -37,19 +37,10 @@ function ConversationCard({ conv, projectId }) {
         fontSize: typography.size.sm,
         fontWeight: typography.weight.medium,
         color: colors.text,
-        marginBottom: conv.goal ? '2px' : '0',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-    };
-
-    const goalStyle = {
-        fontSize: typography.size.xs,
-        color: colors.textSecondary,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
         marginBottom: conv.has_pinned && conv.pinned_title ? '4px' : '0',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
     };
 
     const pinnedPreviewStyle = {
