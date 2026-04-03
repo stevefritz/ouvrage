@@ -770,7 +770,7 @@ FILES_TOOLS = [
         description=(
             "List uploaded/attached files. Each file includes a `readable` flag — true for text formats "
             "(txt, md, json, csv, yaml, xml, toml), false for binary (png, jpg, pdf, etc.). "
-            "Use get_attached_file to read content of readable files. Optionally filter by task_id."
+            "Use get_file to read content. Optionally filter by task_id or project_id."
         ),
         inputSchema={
             "type": "object",
@@ -778,6 +778,10 @@ FILES_TOOLS = [
                 "task_id": {
                     "type": "string",
                     "description": "Filter files by task ID. When set, returns only files attached to that task.",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Filter files by project ID. When set, returns only files attached to that project.",
                 },
             },
         },
@@ -806,6 +810,56 @@ FILES_TOOLS = [
         },
     ),
     Tool(
+        name="add_project_file",
+        description=(
+            "Persist a file and attach it to a project. Pass the absolute path to a file. "
+            "The file is copied to permanent storage and linked to the project — it will appear in the project's "
+            "Files section as a persistent reference doc. Worker endpoint only."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "The project ID to attach the file to.",
+                },
+                "source_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to persist.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Display name for the file. Defaults to the source file's basename.",
+                },
+            },
+            "required": ["project_id", "source_path"],
+        },
+    ),
+    Tool(
+        name="get_file",
+        description=(
+            "Read any file by ID, regardless of scope (task file, project file, or unscoped). "
+            "Returns file content for readable text formats (txt, md, json, csv, yaml, xml, toml). "
+            "Returns metadata only for binary files (images, PDFs). "
+            "Use list_files first to find the file ID and check the `readable` flag."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The file UUID from list_files response.",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Maximum bytes to return for text files. Default: 1048576 (1MB).",
+                    "default": 1048576,
+                },
+            },
+            "required": ["id"],
+        },
+    ),
+    Tool(
         name="add_task_file",
         description=(
             "Persist a file produced during this task. Pass the absolute path to a file in your worktree. "
@@ -830,6 +884,28 @@ FILES_TOOLS = [
                 },
             },
             "required": ["task_id", "source_path"],
+        },
+    ),
+    Tool(
+        name="promote_task_file",
+        description=(
+            "Promote a task file to project scope. Sets project_id on an existing file that already has a task_id. "
+            "After promotion the file appears in both the task's files and the project's files. "
+            "Use this to surface important task artifacts as persistent project reference docs."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "The file UUID to promote.",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project ID to associate the file with.",
+                },
+            },
+            "required": ["file_id", "project_id"],
         },
     ),
 ]
@@ -889,5 +965,9 @@ WORKER_TOOL_ALLOWLIST = {
     "post_task_message",
     "read_task_messages",
     "add_task_file",
+    "add_project_file",
+    "get_file",
+    "promote_task_file",
+    "list_files",
     "escalate",
 }

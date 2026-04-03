@@ -1118,3 +1118,576 @@ class TestAddTaskFile:
 
         record = await db.get_file(result["id"])
         assert record["uploaded_by"] is None
+
+
+# ── Schema: project_id column ──────────────────────────────────────────────
+
+
+class TestSchemaProjectId:
+    """Verify the project_id column is added to the files table via migration."""
+
+    async def test_project_id_column_exists(self, db):
+        import switchboard.db.connection as _conn
+        async with _conn.get_db() as conn:
+            cols = await conn.execute_fetchall("PRAGMA table_info(files)")
+        col_names = [c["name"] for c in cols]
+        assert "project_id" in col_names
+
+    async def test_create_file_with_project_id(self, db, sample_project):
+        fid = str(uuid.uuid4())
+        record = await db.create_file(
+            id=fid,
+            filename="spec.md",
+            stored_path="/data/uploads/spec.md",
+            mime_type="text/markdown",
+            size_bytes=100,
+            uploaded_by=None,
+            project_id=sample_project["id"],
+        )
+        assert record["project_id"] == sample_project["id"]
+        assert record["task_id"] is None
+
+    async def test_create_file_with_both_ids(self, db, sample_project, sample_task):
+        """A promoted file can have both task_id and project_id."""
+        fid = str(uuid.uuid4())
+        record = await db.create_file(
+            id=fid,
+            filename="artifact.txt",
+            stored_path="/data/uploads/artifact.txt",
+            mime_type="text/plain",
+            size_bytes=50,
+            uploaded_by=None,
+            task_id=sample_task["id"],
+            project_id=sample_project["id"],
+        )
+        assert record["task_id"] == sample_task["id"]
+        assert record["project_id"] == sample_project["id"]
+
+    async def test_get_file_returns_project_id(self, db, sample_project):
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid,
+            filename="doc.txt",
+            stored_path="/data/uploads/doc.txt",
+            mime_type="text/plain",
+            size_bytes=10,
+            uploaded_by=None,
+            project_id=sample_project["id"],
+        )
+        record = await db.get_file(fid)
+        assert record is not None
+        assert record["project_id"] == sample_project["id"]
+
+
+# ── list_files with project_id filter ─────────────────────────────────────
+
+
+class TestListFilesProjectId:
+
+    async def test_list_files_filter_by_project_id(self, db, sample_project, sample_task):
+        """list_files(project_id=X) returns only files with that project_id."""
+        project_id = sample_project["id"]
+        fid_proj = str(uuid.uuid4())
+        fid_task = str(uuid.uuid4())
+        await db.create_file(
+            id=fid_proj, filename="project_file.md", stored_path="/tmp/pf.md",
+            mime_type="text/markdown", size_bytes=100, uploaded_by=None, project_id=project_id,
+        )
+        await db.create_file(
+            id=fid_task, filename="task_file.txt", stored_path="/tmp/tf.txt",
+            mime_type="text/plain", size_bytes=50, uploaded_by=None, task_id=sample_task["id"],
+        )
+        files = await db.list_files(project_id=project_id)
+        assert len(files) == 1
+        assert files[0]["id"] == fid_proj
+
+    async def test_promoted_file_visible_under_project(self, db, sample_project, sample_task):
+        """A promoted file (both task_id and project_id set) appears under project listing."""
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="promoted.txt", stored_path="/tmp/promo.txt",
+            mime_type="text/plain", size_bytes=100, uploaded_by=None,
+            task_id=sample_task["id"], project_id=sample_project["id"],
+        )
+        proj_files = await db.list_files(project_id=sample_project["id"])
+        task_files = await db.list_files(task_id=sample_task["id"])
+        proj_ids = [f["id"] for f in proj_files]
+        task_ids = [f["id"] for f in task_files]
+        assert fid in proj_ids
+        assert fid in task_ids
+
+    async def test_mcp_list_files_filter_by_project_id(self, db, sample_project):
+        """MCP list_files handler filters by project_id when provided."""
+        from switchboard.server.handlers.files_handler import _handle_list_files
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="ref.md", stored_path="/tmp/ref.md",
+            mime_type="text/markdown", size_bytes=200, uploaded_by=None,
+            project_id=sample_project["id"],
+        )
+        result = await _handle_list_files({"project_id": sample_project["id"]})
+        assert len(result["files"]) == 1
+        assert result["files"][0]["id"] == fid
+        assert result["files"][0]["readable"] is True
+
+    async def test_dashboard_list_files_filter_by_project_id(self, db, sample_project):
+        """Dashboard GET /dashboard/api/files?project_id=X returns project files."""
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="arch.md", stored_path="/tmp/arch.md",
+            mime_type="text/markdown", size_bytes=300, uploaded_by=None,
+            project_id=sample_project["id"],
+        )
+        scope = _make_scope("/dashboard/api/files", "GET")
+        scope["query_string"] = f"project_id={sample_project['id']}".encode()
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        files = resp.json()
+        assert len(files) == 1
+        assert files[0]["id"] == fid
+
+
+# ── GET /dashboard/api/files/{id} ─────────────────────────────────────────
+
+
+class TestGetFileEndpoint:
+
+    async def _insert_text_file(self, tmp_uploads, content: bytes = b"text content") -> tuple[str, Path]:
+        fid = str(uuid.uuid4())
+        uuid_dir = tmp_uploads / fid
+        uuid_dir.mkdir()
+        dest = uuid_dir / "notes.txt"
+        dest.write_bytes(content)
+        await db.create_file(
+            id=fid,
+            filename="notes.txt",
+            stored_path=str(dest),
+            mime_type="text/plain",
+            size_bytes=len(content),
+            uploaded_by=1,
+        )
+        return fid, dest
+
+    async def _insert_binary_file(self, tmp_uploads) -> str:
+        fid = str(uuid.uuid4())
+        uuid_dir = tmp_uploads / fid
+        uuid_dir.mkdir()
+        dest = uuid_dir / "image.png"
+        dest.write_bytes(b"\x89PNG" + b"\x00" * 100)
+        await db.create_file(
+            id=fid,
+            filename="image.png",
+            stored_path=str(dest),
+            mime_type="image/png",
+            size_bytes=104,
+            uploaded_by=1,
+        )
+        return fid
+
+    async def test_get_text_file_returns_metadata(self, db, tmp_uploads):
+        fid, _ = await self._insert_text_file(tmp_uploads)
+        scope = _make_scope(f"/dashboard/api/files/{fid}", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["id"] == fid
+        assert data["filename"] == "notes.txt"
+        assert data["mime_type"] == "text/plain"
+        assert data["readable"] is True
+
+    async def test_get_binary_file_returns_metadata(self, db, tmp_uploads):
+        fid = await self._insert_binary_file(tmp_uploads)
+        scope = _make_scope(f"/dashboard/api/files/{fid}", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["id"] == fid
+        assert data["readable"] is False
+
+    async def test_get_file_not_found(self, db, tmp_uploads):
+        scope = _make_scope("/dashboard/api/files/nonexistent-uuid", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 404
+
+    async def test_get_file_requires_auth(self, db, tmp_uploads):
+        fid, _ = await self._insert_text_file(tmp_uploads)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": f"/dashboard/api/files/{fid}",
+            "query_string": b"",
+            "headers": [],
+        }
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 401
+
+    async def test_get_file_with_project_id(self, db, sample_project, tmp_uploads):
+        fid = str(uuid.uuid4())
+        uuid_dir = tmp_uploads / fid
+        uuid_dir.mkdir()
+        dest = uuid_dir / "plan.md"
+        dest.write_bytes(b"## Plan")
+        await db.create_file(
+            id=fid, filename="plan.md", stored_path=str(dest),
+            mime_type="text/markdown", size_bytes=7, uploaded_by=1,
+            project_id=sample_project["id"],
+        )
+        scope = _make_scope(f"/dashboard/api/files/{fid}", "GET")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["project_id"] == sample_project["id"]
+
+
+# ── get_file MCP tool ──────────────────────────────────────────────────────
+
+
+class TestGetFileTool:
+
+    async def test_get_readable_file_returns_content(self, db, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "data.txt"
+        dest.write_bytes(b"hello world")
+        await db.create_file(
+            id=fid, filename="data.txt", stored_path=str(dest),
+            mime_type="text/plain", size_bytes=11, uploaded_by=None,
+        )
+        result = await _handle_get_file({"id": fid})
+        assert result["id"] == fid
+        assert result["content"] == "hello world"
+        assert result["readable"] is True
+        assert result["truncated"] is False
+
+    async def test_get_binary_file_returns_metadata_only(self, db, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "photo.png"
+        dest.write_bytes(b"\x89PNG" + b"\x00" * 50)
+        await db.create_file(
+            id=fid, filename="photo.png", stored_path=str(dest),
+            mime_type="image/png", size_bytes=54, uploaded_by=None,
+        )
+        result = await _handle_get_file({"id": fid})
+        assert result["id"] == fid
+        assert result["readable"] is False
+        assert "content" not in result
+
+    async def test_get_file_not_found_raises(self, db):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        with pytest.raises(ValueError, match="not found"):
+            await _handle_get_file({"id": "nonexistent-uuid"})
+
+    async def test_get_file_truncates_large_content(self, db, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "big.txt"
+        dest.write_bytes(b"x" * 2000)
+        await db.create_file(
+            id=fid, filename="big.txt", stored_path=str(dest),
+            mime_type="text/plain", size_bytes=2000, uploaded_by=None,
+        )
+        result = await _handle_get_file({"id": fid, "max_bytes": 100})
+        assert result["truncated"] is True
+        assert len(result["content"]) == 100
+
+    async def test_get_file_returns_project_id(self, db, sample_project, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "ref.txt"
+        dest.write_bytes(b"reference content")
+        await db.create_file(
+            id=fid, filename="ref.txt", stored_path=str(dest),
+            mime_type="text/plain", size_bytes=17, uploaded_by=None,
+            project_id=sample_project["id"],
+        )
+        result = await _handle_get_file({"id": fid})
+        assert result["project_id"] == sample_project["id"]
+        assert result["task_id"] is None
+
+    async def test_get_file_missing_id_raises(self, db):
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        with pytest.raises(ValueError, match="id is required"):
+            await _handle_get_file({})
+
+
+# ── add_project_file MCP tool ──────────────────────────────────────────────
+
+
+class TestAddProjectFile:
+    """Tests for the add_project_file worker MCP tool."""
+
+    @pytest.fixture(autouse=True)
+    def patch_uploads_dir(self, tmp_path, monkeypatch):
+        uploads = tmp_path / "uploads"
+        uploads.mkdir(exist_ok=True)
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler._uploads_dir",
+            lambda: uploads,
+        )
+        self._uploads = uploads
+
+    @pytest.fixture(autouse=True)
+    def patch_worker_context(self, monkeypatch):
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            lambda: True,
+        )
+
+    async def test_successful_add_project_file(self, db, sample_project, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        src = tmp_path / "readme.md"
+        src.write_bytes(b"# Project README")
+
+        result = await _handle_add_project_file({
+            "project_id": sample_project["id"],
+            "source_path": str(src),
+        })
+
+        assert result["filename"] == "readme.md"
+        assert result["project_id"] == sample_project["id"]
+        assert Path(result["stored_path"]).exists()
+
+        record = await db.get_file(result["id"])
+        assert record is not None
+        assert record["project_id"] == sample_project["id"]
+        assert record["task_id"] is None
+        assert record["uploaded_by"] is None
+
+    async def test_custom_filename(self, db, sample_project, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        src = tmp_path / "output.json"
+        src.write_bytes(b"{}")
+
+        result = await _handle_add_project_file({
+            "project_id": sample_project["id"],
+            "source_path": str(src),
+            "filename": "project-data.json",
+        })
+
+        assert result["filename"] == "project-data.json"
+        assert Path(result["stored_path"]).name == "project-data.json"
+
+    async def test_project_not_found_raises(self, db, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        src = tmp_path / "test.txt"
+        src.write_bytes(b"data")
+
+        with pytest.raises(ValueError, match="not found"):
+            await _handle_add_project_file({
+                "project_id": "nonexistent-project",
+                "source_path": str(src),
+            })
+
+    async def test_bad_extension_rejected(self, db, sample_project, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        src = tmp_path / "script.sh"
+        src.write_bytes(b"#!/bin/bash")
+
+        with pytest.raises(ValueError, match="not allowed"):
+            await _handle_add_project_file({
+                "project_id": sample_project["id"],
+                "source_path": str(src),
+            })
+
+    async def test_worker_only_enforced(self, db, sample_project, tmp_path, monkeypatch):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            lambda: False,
+        )
+        src = tmp_path / "doc.txt"
+        src.write_bytes(b"content")
+
+        with pytest.raises(ValueError, match="worker endpoint"):
+            await _handle_add_project_file({
+                "project_id": sample_project["id"],
+                "source_path": str(src),
+            })
+
+    async def test_missing_project_id_raises(self, db, tmp_path):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        src = tmp_path / "x.txt"
+        src.write_bytes(b"x")
+
+        with pytest.raises(ValueError, match="project_id is required"):
+            await _handle_add_project_file({"source_path": str(src)})
+
+    async def test_missing_source_path_raises(self, db, sample_project):
+        from switchboard.server.handlers.files_handler import _handle_add_project_file
+
+        with pytest.raises(ValueError, match="source_path is required"):
+            await _handle_add_project_file({"project_id": sample_project["id"]})
+
+
+# ── promote_task_file ──────────────────────────────────────────────────────
+
+
+class TestPromoteTaskFile:
+    """Tests for promote_task_file — MCP tool and dashboard endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def patch_uploads_dir(self, tmp_path, monkeypatch):
+        uploads = tmp_path / "uploads"
+        uploads.mkdir(exist_ok=True)
+        monkeypatch.setattr(
+            "switchboard.server.handlers.files_handler._uploads_dir",
+            lambda: uploads,
+        )
+
+    async def _insert_task_file(self, db, sample_task) -> str:
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="result.txt", stored_path=f"/tmp/{fid}/result.txt",
+            mime_type="text/plain", size_bytes=100, uploaded_by=None,
+            task_id=sample_task["id"],
+        )
+        return fid
+
+    async def test_db_promote_task_file(self, db, sample_project, sample_task):
+        """db.promote_task_file sets project_id on a task file."""
+        fid = await self._insert_task_file(db, sample_task)
+        record = await db.promote_task_file(fid, sample_project["id"])
+        assert record is not None
+        assert record["project_id"] == sample_project["id"]
+        assert record["task_id"] == sample_task["id"]
+
+    async def test_db_promote_returns_none_for_no_task_id(self, db, sample_project):
+        """db.promote_task_file returns None if file has no task_id."""
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="global.txt", stored_path="/tmp/global.txt",
+            mime_type="text/plain", size_bytes=50, uploaded_by=None,
+        )
+        result = await db.promote_task_file(fid, sample_project["id"])
+        assert result is None
+
+    async def test_db_promote_nonexistent_file(self, db, sample_project):
+        """db.promote_task_file returns None for a nonexistent file ID."""
+        result = await db.promote_task_file("nonexistent-uuid", sample_project["id"])
+        assert result is None
+
+    async def test_mcp_promote_task_file(self, db, sample_project, sample_task):
+        """MCP promote_task_file handler promotes a file successfully."""
+        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        fid = await self._insert_task_file(db, sample_task)
+
+        result = await _handle_promote_task_file({
+            "file_id": fid,
+            "project_id": sample_project["id"],
+        })
+
+        assert result["project_id"] == sample_project["id"]
+        assert result["task_id"] == sample_task["id"]
+
+    async def test_mcp_promote_invalid_project(self, db, sample_task):
+        """MCP promote_task_file raises if project does not exist."""
+        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        fid = await self._insert_task_file(db, sample_task)
+
+        with pytest.raises(ValueError, match="not found"):
+            await _handle_promote_task_file({
+                "file_id": fid,
+                "project_id": "nonexistent-project",
+            })
+
+    async def test_mcp_promote_non_task_file_raises(self, db, sample_project):
+        """MCP promote_task_file raises if file has no task_id."""
+        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="global.txt", stored_path="/tmp/global.txt",
+            mime_type="text/plain", size_bytes=50, uploaded_by=None,
+        )
+
+        with pytest.raises(ValueError, match="only task files can be promoted"):
+            await _handle_promote_task_file({
+                "file_id": fid,
+                "project_id": sample_project["id"],
+            })
+
+    async def test_mcp_promote_missing_args(self, db, sample_project, sample_task):
+        """Missing required args raise ValueError."""
+        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        fid = await self._insert_task_file(db, sample_task)
+
+        with pytest.raises(ValueError, match="file_id is required"):
+            await _handle_promote_task_file({"project_id": sample_project["id"]})
+
+        with pytest.raises(ValueError, match="project_id is required"):
+            await _handle_promote_task_file({"file_id": fid})
+
+    async def test_dashboard_promote_endpoint(self, db, sample_project, sample_task):
+        """POST /dashboard/api/files/{id}/promote sets project_id."""
+        fid = await self._insert_task_file(db, sample_task)
+        body = json.dumps({"project_id": sample_project["id"]}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}/promote", "POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 200
+        data = resp.json()
+        assert data["project_id"] == sample_project["id"]
+        assert data["task_id"] == sample_task["id"]
+
+    async def test_dashboard_promote_requires_auth(self, db, sample_project, sample_task):
+        """Dashboard promote endpoint rejects unauthenticated requests."""
+        fid = await self._insert_task_file(db, sample_task)
+        body = json.dumps({"project_id": sample_project["id"]}).encode()
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": f"/dashboard/api/files/{fid}/promote",
+            "query_string": b"",
+            "headers": [],
+        }
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 401
+
+    async def test_dashboard_promote_invalid_project(self, db, sample_task):
+        """Dashboard promote returns 404 for nonexistent project."""
+        fid = await self._insert_task_file(db, sample_task)
+        body = json.dumps({"project_id": "no-such-project"}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}/promote", "POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 404
+
+    async def test_dashboard_promote_non_task_file(self, db, sample_project):
+        """Dashboard promote returns 400 for a file with no task_id."""
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid, filename="global.txt", stored_path="/tmp/global.txt",
+            mime_type="text/plain", size_bytes=50, uploaded_by=None,
+        )
+        body = json.dumps({"project_id": sample_project["id"]}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}/promote", "POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 400
+
+    async def test_dashboard_promote_file_appears_in_project_listing(
+        self, db, sample_project, sample_task
+    ):
+        """After promotion, file appears in project file listing."""
+        fid = await self._insert_task_file(db, sample_task)
+        body = json.dumps({"project_id": sample_project["id"]}).encode()
+        scope = _make_scope(f"/dashboard/api/files/{fid}/promote", "POST")
+        resp = _Capture()
+        await handle_request(scope, _make_receive(body), resp)
+        assert resp.status == 200
+
+        # Verify file appears in project listing
+        list_scope = _make_scope("/dashboard/api/files", "GET")
+        list_scope["query_string"] = f"project_id={sample_project['id']}".encode()
+        list_resp = _Capture()
+        await handle_request(list_scope, _make_receive(), list_resp)
+        assert list_resp.status == 200
+        project_files = list_resp.json()
+        assert any(f["id"] == fid for f in project_files)

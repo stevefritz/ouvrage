@@ -32,10 +32,22 @@ export function parseRoute() {
         return { view: 'project-new', params: {} };
     }
 
-    // /project/:id
+    // /project/:id/TAB — must come before /project/:id catch-all
+    const projectTabMatch = hash.match(/^\/project\/(.+?)\/(tasks|conversations|files|settings)$/);
+    if (projectTabMatch) {
+        return { view: 'project', params: { id: decodeURIComponent(projectTabMatch[1]), tab: projectTabMatch[2] } };
+    }
+
+    // /project/:id/conversation/:convId — must come before /project/:id catch-all
+    const projectConvMatch = hash.match(/^\/project\/(.+?)\/conversation\/(.+)$/);
+    if (projectConvMatch) {
+        return { view: 'project-conversation', params: { id: decodeURIComponent(projectConvMatch[1]), convId: decodeURIComponent(projectConvMatch[2]) } };
+    }
+
+    // /project/:id (no tab — defaults to tasks)
     const projectMatch = hash.match(/^\/project\/(.+)$/);
     if (projectMatch) {
-        return { view: 'project', params: { id: decodeURIComponent(projectMatch[1]) } };
+        return { view: 'project', params: { id: decodeURIComponent(projectMatch[1]), tab: 'tasks' } };
     }
 
     // /task/new — must come before /task/:id
@@ -120,12 +132,14 @@ export function useRouter() {
  * Avoids string concatenation at call sites.
  */
 export const routes = {
-    landing:      () => '#/',
-    projectNew:   () => '#/project/new',
-    project:      (id) => `#/project/${encodeURIComponent(id)}`,
-    task:         (id) => `#/task/${encodeURIComponent(id)}`,
-    taskNew:      (projectId) => projectId ? `#/task/new?project=${encodeURIComponent(projectId)}` : '#/task/new',
-    conversation: (id) => `#/conversation/${encodeURIComponent(id)}`,
-    files:        () => '#/files',
-    settings:     () => '#/settings',
+    landing:             () => '#/',
+    projectNew:          () => '#/project/new',
+    project:             (id) => `#/project/${encodeURIComponent(id)}`,
+    projectTab:          (id, tab) => `#/project/${encodeURIComponent(id)}/${tab}`,
+    projectConversation: (projectId, convId) => `#/project/${encodeURIComponent(projectId)}/conversation/${encodeURIComponent(convId)}`,
+    task:                (id) => `#/task/${encodeURIComponent(id)}`,
+    taskNew:             (projectId) => projectId ? `#/task/new?project=${encodeURIComponent(projectId)}` : '#/task/new',
+    conversation:        (id) => `#/conversation/${encodeURIComponent(id)}`,
+    files:               () => '#/files',
+    settings:            () => '#/settings',
 };

@@ -175,6 +175,16 @@ async def _list_with_aggregates(
                        ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) as rn
                 FROM messages
                 WHERE conversation_id IS NOT NULL
+            ),
+            pinned_msg AS (
+                SELECT conversation_id, title
+                FROM (
+                    SELECT conversation_id, title,
+                           ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) as rn
+                    FROM messages
+                    WHERE pinned = TRUE
+                )
+                WHERE rn = 1
             )
             SELECT
                 c.id, c.project, c.goal, c.archived, c.created_at, c.updated_at,
@@ -182,10 +192,12 @@ async def _list_with_aggregates(
                 lm.author as last_message_author,
                 lm.title as last_message_title,
                 lm.created_at as last_message_at,
-                EXISTS(SELECT 1 FROM messages WHERE conversation_id = c.id AND pinned = TRUE) as has_pinned
+                EXISTS(SELECT 1 FROM messages WHERE conversation_id = c.id AND pinned = TRUE) as has_pinned,
+                pm.title as pinned_title
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
             LEFT JOIN latest_msg lm ON lm.conversation_id = c.id AND lm.rn = 1
+            LEFT JOIN pinned_msg pm ON pm.conversation_id = c.id
             {where_clause}
             GROUP BY c.id
             ORDER BY c.updated_at DESC

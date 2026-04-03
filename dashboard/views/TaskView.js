@@ -1455,7 +1455,7 @@ function taskFileIcon(mime) {
     return '📎';
 }
 
-function FilesDrawer({ taskId, pollTick }) {
+function FilesDrawer({ taskId, projectId, pollTick }) {
     const [isOpen, setIsOpen] = useState(false);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -1464,6 +1464,8 @@ function FilesDrawer({ taskId, pollTick }) {
     const [error, setError] = useState(null);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [copiedId, setCopiedId] = useState(null);
+    const [promotingId, setPromotingId] = useState(null);
+    const [promotedIds, setPromotedIds] = useState({});
     const [lightboxFile, setLightboxFile] = useState(null);
     const [mdLightboxFile, setMdLightboxFile] = useState(null);
     const inputRef = useRef(null);
@@ -1477,6 +1479,12 @@ function FilesDrawer({ taskId, pollTick }) {
             setFiles(prev => {
                 if (JSON.stringify(prev) === JSON.stringify(list)) return prev;
                 return list;
+            });
+            // Seed promoted state from existing project_id on file records
+            setPromotedIds(prev => {
+                const next = { ...prev };
+                list.forEach(f => { if (f.project_id) next[f.id] = true; });
+                return next;
             });
         } catch (e) {
             // Only show errors on initial load, not on polls
@@ -1522,6 +1530,19 @@ function FilesDrawer({ taskId, pollTick }) {
             setTimeout(() => setCopiedId(null), 1500);
         } catch (_) { /* ignore */ }
     }, []);
+
+    const handlePromote = useCallback(async (fileId) => {
+        if (!projectId) return;
+        setPromotingId(fileId);
+        try {
+            await api.promoteFile(fileId, projectId);
+            setPromotedIds(prev => ({ ...prev, [fileId]: true }));
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setPromotingId(null);
+        }
+    }, [projectId]);
 
     const onDrop = useCallback((e) => {
         e.preventDefault();
@@ -1679,6 +1700,15 @@ function FilesDrawer({ taskId, pollTick }) {
                                         target="_blank" rel="noopener"
                                         style=${smallBtn}
                                     >↓ Download</a>
+                                    ${projectId ? (
+                                        promotedIds[f.id]
+                                            ? html`<span style=${{ fontSize: '11px', color: colors.green, flexShrink: 0, fontStyle: 'italic' }}>✓ Promoted</span>`
+                                            : html`<button
+                                                style=${{ ...smallBtn, color: colors.accent, borderColor: colors.accent }}
+                                                disabled=${promotingId === f.id}
+                                                onClick=${() => handlePromote(f.id)}
+                                            >${promotingId === f.id ? '…' : 'Promote'}</button>`
+                                    ) : null}
                                     ${deleteConfirm === f.id ? html`
                                         <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
                                             <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
@@ -2058,7 +2088,6 @@ function EditFieldLabel({ label, tooltip }) {
 }
 
 const FIELD_TOOLTIPS = {
-    component_id:       'Component this task belongs to within the project.',
     base_branch:        'Git branch this task was branched from. Usually main or the previous task\'s branch.',
     branch_target:      'Branch this task\'s PR will merge into.',
     tags:               'Free-form labels for filtering and grouping tasks.',
@@ -2089,10 +2118,6 @@ function diffTaskFields(original, form) {
             const orig = (original.tags || []).slice().sort().join(',');
             const next = (value || []).slice().sort().join(',');
             if (orig !== next) changed.tags = value;
-        } else if (key === 'component_id') {
-            const orig = original.component_id || null;
-            const next = value || null;
-            if (orig !== next) changed.component_id = next;
         } else if (['auto_test','auto_review','auto_pr','auto_merge'].includes(key)) {
             if (Boolean(original[key]) !== Boolean(value)) changed[key] = Boolean(value);
         } else if (['max_turns','max_wall_clock','max_test_retries','max_review_retries'].includes(key)) {
@@ -2111,14 +2136,12 @@ function diffTaskFields(original, form) {
 // ── EditTaskPanel ────────────────────────────────────────────
 
 function EditTaskPanel({ task, onClose, onSaved }) {
-    const [components, setComponents] = useState([]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
     const [tagInput, setTagInput] = useState('');
 
     // Form state — all mutable fields
     const [form, setForm] = useState(() => ({
-        component_id:       task.component_id || '',
         base_branch:        task.base_branch || '',
         branch_target:      task.branch_target || '',
         tags:               task.tags ? [...task.tags] : [],
@@ -2136,17 +2159,6 @@ function EditTaskPanel({ task, onClose, onSaved }) {
         conversation_id:    task.conversation_id || '',
         claude_chat_url:    task.claude_chat_url || '',
     }));
-
-    // Load components for dropdown
-    useEffect(() => {
-        if (!task.project_id) return;
-        api.getComponents(task.project_id)
-            .then(data => {
-                const list = Array.isArray(data) ? data : (data.components || []);
-                setComponents(list);
-            })
-            .catch(() => setComponents([]));
-    }, [task.project_id]);
 
     const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -2289,21 +2301,6 @@ function EditTaskPanel({ task, onClose, onSaved }) {
 
                 <!-- Form body -->
                 <div style=${{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                    <!-- Component -->
-                    <div>
-                        <${EditFieldLabel} label="Component" tooltip=${FIELD_TOOLTIPS.component_id} />
-                        <select
-                            value=${form.component_id}
-                            onChange=${e => set('component_id', e.target.value)}
-                            style=${{ ...inputStyle }}
-                        >
-                            <option value="">No component</option>
-                            ${components.map(c => html`
-                                <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
-                            `)}
-                        </select>
-                    </div>
 
                     <!-- Branch fields -->
                     <div style=${sectionStyle}>
@@ -3081,7 +3078,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GateActivityPanel} task=${task} />
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />
-            <${FilesDrawer} taskId=${id} pollTick=${pollTick} />
+            <${FilesDrawer} taskId=${id} projectId=${task.project_id} pollTick=${pollTick} />
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />

@@ -32,13 +32,15 @@ function ForemanApp() {
     } else if (view === 'project-new') {
         content = html`<${ProjectCreateView} />`;
     } else if (view === 'project') {
-        content = html`<${ProjectView} id=${params.id} />`;
+        content = html`<${ProjectView} id=${params.id} tab=${params.tab} />`;
     } else if (view === 'task-new') {
         content = html`<${TaskCreateView} project=${params.project} />`;
     } else if (view === 'task') {
         content = html`<${TaskView} id=${params.id} />`;
     } else if (view === 'conversation') {
         content = html`<${ConversationView} id=${params.id} />`;
+    } else if (view === 'project-conversation') {
+        content = html`<${ConversationView} id=${params.convId} projectId=${params.id} />`;
     } else if (view === 'files') {
         content = html`<${Files} />`;
     } else if (view === 'settings') {
