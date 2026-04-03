@@ -1432,7 +1432,7 @@ class TestBuildTaskPrompt:
             self._make_project(), self._make_task(), "do the thing")
         assert "update_task_checklist" in result
         assert "post_task_message" in result
-        assert "search_message_chunks" in result
+        assert "search(" in result
         assert "Context Discovery" in result
         assert "Progress Reporting" in result
 

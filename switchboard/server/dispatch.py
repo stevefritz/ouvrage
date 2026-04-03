@@ -9,8 +9,6 @@ from switchboard.server.handlers.conversations import (
     _handle_pin,
     _handle_conversations,
     _handle_archive,
-    _handle_search_conversations,
-    _handle_search_message_chunks,
 )
 from switchboard.server.handlers.projects import (
     _handle_create_project,
@@ -42,7 +40,6 @@ from switchboard.server.handlers.tasks import (
     _handle_remove_checklist_item,
     _handle_update_checklist_item_text,
     _handle_get_pipeline,
-    _handle_search_task_messages,
     _handle_escalate,
 )
 from switchboard.server.handlers.components import (
@@ -52,11 +49,11 @@ from switchboard.server.handlers.components import (
     _handle_list_components,
     _handle_link_conversation,
     _handle_unlink_conversation,
-    _handle_search_component,
     _handle_pause_component,
     _handle_resume_component,
     _handle_stop_component,
 )
+from switchboard.server.handlers.search import _handle_search
 from switchboard.server.handlers.punchlist import (
     _handle_add_punchlist_item,
     _handle_list_punchlist,
@@ -92,8 +89,6 @@ TOOL_HANDLERS = {
     "pin": _handle_pin,
     "conversations": _handle_conversations,
     "archive": _handle_archive,
-    "search_conversations": _handle_search_conversations,
-    "search_message_chunks": _handle_search_message_chunks,
     # Project tools
     "create_project": _handle_create_project,
     "get_project": _handle_get_project,
@@ -122,7 +117,6 @@ TOOL_HANDLERS = {
     "remove_checklist_item": _handle_remove_checklist_item,
     "update_checklist_item": _handle_update_checklist_item_text,
     "get_pipeline": _handle_get_pipeline,
-    "search_task_messages": _handle_search_task_messages,
     # Component tools
     "create_component": _handle_create_component,
     "update_component": _handle_update_component,
@@ -145,7 +139,8 @@ TOOL_HANDLERS = {
     # Ops tools
     "get_context": _handle_get_context,
     "get_guide": _handle_get_guide,
-    "search_component": _handle_search_component,
+    # Search
+    "search": _handle_search,
     # Token management
     "create_api_token": _handle_create_api_token,
     "list_api_tokens": _handle_list_api_tokens,

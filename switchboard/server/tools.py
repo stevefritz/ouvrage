@@ -102,12 +102,11 @@ CONVERSATION_TOOLS = [
     ),
     Tool(
         name="conversations",
-        description="List conversations, optionally filtered by project or search term.",
+        description="List conversations, optionally filtered by project.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Filter to one project"},
-                "search": {"type": "string", "description": "Text search across conversation goals"},
             },
         },
     ),
@@ -547,19 +546,6 @@ TASK_TOOLS = [
         },
     ),
     Tool(
-        name="search_task_messages",
-        description="Full-text search across all task message content. Returns matching messages with task_id, author, type, content snippet.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query string"},
-                "project_id": {"type": "string", "description": "Optional: filter to one project"},
-                "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
         name="update_task",
         description="Update task metadata post-dispatch. Use to assign components, correct branching info, toggle gates, or update any task field. Validates component_id if provided.",
         inputSchema={
@@ -751,20 +737,6 @@ COMPONENT_TOOLS = [
             "required": ["component_id", "conversation_id"],
         },
     ),
-    Tool(
-        name="search_component",
-        description="Search across all content linked to a component: messages from linked conversations and task messages.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "component_id": {"type": "string", "description": "Component ID to search within"},
-                "query": {"type": "string", "description": "Search query (substring match)"},
-                "include_graphiti": {"type": "boolean", "description": "Also search Graphiti if configured on the project's connectors", "default": False},
-                "limit": {"type": "integer", "description": "Max results per source (default 20)", "default": 20},
-            },
-            "required": ["component_id", "query"],
-        },
-    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -883,74 +855,33 @@ CONTROL_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
-# RAG Tools
+# Search Tool
 # ---------------------------------------------------------------------------
 
-RAG_TOOLS = [
+SEARCH_TOOLS = [
     Tool(
-        name="search_message_chunks",
+        name="search",
         description=(
-            "Semantic search at the paragraph level within Ouvrage messages. "
-            "More precise than search_conversations — finds specific sections of long design docs, "
-            "prior decisions, or meeting notes rather than surfacing the whole message. "
-            "Use when you need a particular passage from a conversation, not just the message that contains it."
+            "Search across all Switchboard content — tasks, conversations, messages. "
+            "Returns ranked results from task goals, conversation messages, and message chunks. "
+            "Use this for any search query: finding prior decisions, locating tasks, "
+            "discovering relevant conversations, or searching message history."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The semantic search query — describe the specific section you're looking for",
-                },
-                "conversation_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to chunks from this specific conversation",
+                    "description": "What to search for — semantic search, so natural language works well",
                 },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional: scope search to chunks from this project's conversations and tasks",
+                    "description": "Optional: scope search to one project",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum chunk results to return (default 5)",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="search_conversations",
-        description=(
-            "Semantic search over Ouvrage conversation and task messages using embeddings. "
-            "Finds relevant messages even when keyword search would miss them — e.g. 'why did we choose SSE' "
-            "finds messages about streaming decisions without requiring exact keyword matches. "
-            "Results are ranked by cosine similarity weighted by message type (spec/review/note rank higher)."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The semantic search query — describe what you're looking for",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to messages from this project's conversations and tasks",
-                },
-                "conversation_id": {
-                    "type": "string",
-                    "description": "Optional: scope search to messages from this specific conversation",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum results to return (default 5, max 20)",
-                    "default": 5,
-                },
-                "type_filter": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional: only return messages of these types (e.g. ['spec', 'note', 'review'])",
+                    "description": "Maximum results to return (default 10, max 30)",
+                    "default": 10,
                 },
             },
             "required": ["query"],
@@ -1111,7 +1042,7 @@ TOOLS = (
     + PUNCHLIST_TOOLS
     + OPS_TOOLS
     + CONTROL_TOOLS
-    + RAG_TOOLS
+    + SEARCH_TOOLS
     + TOKEN_TOOLS
     + FILES_TOOLS
 )
