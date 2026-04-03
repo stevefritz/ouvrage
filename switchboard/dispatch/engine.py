@@ -58,6 +58,21 @@ from switchboard.dispatch.queue import _drain_queue
 log = logging.getLogger(__name__)
 
 
+async def _embed_task_goal_async(task_id: str, goal: str) -> None:
+    """Fire-and-forget: embed a task goal and store the vector. Never raises."""
+    if not goal:
+        return
+    try:
+        from switchboard.embeddings.service import get_embedding_service, encode_vector
+        service = get_embedding_service()
+        vector = await service.embed_safe(goal)
+        if vector:
+            blob = encode_vector(vector)
+            await db.set_task_embedding(task_id, blob)
+    except Exception:
+        pass  # Never block — embedding is best-effort
+
+
 def _handle_task_exception(task: asyncio.Task) -> None:
     """Log unhandled exceptions from background tasks and clean up tracking."""
     _running_tasks.discard(task)
@@ -607,6 +622,8 @@ async def dispatch_task(
             base_branch=base_branch,
             created_by=created_by, dispatched_by=dispatched_by,
         )
+        # Embed the goal asynchronously — fire-and-forget, never blocks dispatch
+        asyncio.create_task(_embed_task_goal_async(task_id, goal))
         if spec:
             await db.post_task_message(
                 task_id=task_id, author="dispatcher", content=spec,

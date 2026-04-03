@@ -395,6 +395,9 @@ async def init_db():
             await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_status TEXT")
         if "reopen_saved_gate_passed_at" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN reopen_saved_gate_passed_at TEXT")
+        # embed-task-goals: vector embedding of task goal for semantic search
+        if "embedding" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN embedding BLOB")
 
         # Migrate users table: add rate-limiting fields if missing
         user_columns = await conn.execute_fetchall("PRAGMA table_info(users)")

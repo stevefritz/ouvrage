@@ -211,6 +211,37 @@ async def _serve_foreman(scope, send):
 # ASGI app + main entry point
 # ---------------------------------------------------------------------------
 
+async def _backfill_task_goals() -> None:
+    """Background task: embed task goals that have no embedding yet."""
+    total = 0
+    tried_ids: set = set()  # track attempted IDs to avoid infinite loop on embed failures
+    try:
+        from switchboard.embeddings.service import get_embedding_service, encode_vector
+        service = get_embedding_service()
+        while True:
+            batch = await db.get_tasks_needing_embedding(batch_size=100)
+            # Exclude tasks already attempted this run (embed_safe returned None)
+            batch = [t for t in batch if t["id"] not in tried_ids]
+            if not batch:
+                break
+            for task in batch:
+                tried_ids.add(task["id"])
+                try:
+                    vector = await service.embed_safe(task["goal"])
+                    if vector:
+                        blob = encode_vector(vector)
+                        await db.set_task_embedding(task["id"], blob)
+                        total += 1
+                        if total % 100 == 0:
+                            log.info("Task goal backfill progress: %d tasks processed", total)
+                except Exception as e:
+                    log.warning("Task goal backfill failed for task %s: %s", task["id"], e)
+        if total > 0:
+            log.info("Task goal backfill complete: %d tasks processed", total)
+    except Exception as e:
+        log.error("Task goal backfill aborted: %s", e)
+
+
 async def _backfill_message_chunks() -> None:
     """Background task: chunk and embed existing long messages that haven't been chunked yet."""
     total = 0
@@ -279,6 +310,8 @@ async def main():
                 asyncio.create_task(tasks.check_stalled_tasks())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
+                # Backfill task goal embeddings for existing tasks
+                asyncio.create_task(_backfill_task_goals())
                 # Poll GitHub for PR status changes every 60s
                 asyncio.create_task(tasks._pr_status_sweep())
                 message = await receive()
