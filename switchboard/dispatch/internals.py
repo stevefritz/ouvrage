@@ -351,7 +351,7 @@ async def collect_review_feedback(task_id: str) -> list[dict] | None:
     if last_result_idx is not None:
         feedback = [
             m for m in messages[last_result_idx + 1:]
-            if m.get("author") != "dispatcher"
+            if m.get("author") != "dispatcher" or m.get("type") in ("test-result", "review")
         ]
         if feedback:
             return feedback
