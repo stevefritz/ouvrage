@@ -973,11 +973,10 @@ function FilterBar({ statusFilter, onStatusFilter, searchQuery, onSearch }) {
 
     const searchWrapStyle = {
         position: 'relative',
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
-        flex: '1 1 auto',
+        flex: 1,
         minWidth: '160px',
-        maxWidth: '320px',
     };
 
     const searchIconStyle = {
