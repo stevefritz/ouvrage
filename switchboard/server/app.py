@@ -89,10 +89,8 @@ TYPICAL WORKFLOW:
 
 KEY CONCEPTS:
 - Projects = git repos registered for task dispatch
-- Components = feature groupings within a project (optional)
 - Tasks = units of work dispatched to CC workers in isolated worktrees
 - Conversations = persistent threads for specs, plans, Q&A — your long-term memory
-- Punchlist = tracked items within a component that tasks can claim and resolve
 
 When the user discusses a project or feature, proactively check conversations \
 for existing context before starting fresh. Post summaries and decisions back \

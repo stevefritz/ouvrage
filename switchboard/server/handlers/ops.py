@@ -185,16 +185,9 @@ async def _handle_get_guide(arguments):
     task_counts = await db.get_project_task_counts()
     active_count = await db.count_active_tasks()
 
-    # Count components
-    component_count = 0
-    for p in projects:
-        components = await db.list_components(project_id=p["id"])
-        component_count += len(components)
-
     parts.append("## Live System Summary\n")
     parts.append(f"- **Projects**: {len(projects)}")
     parts.append(f"- **Active tasks**: {active_count}")
-    parts.append(f"- **Components**: {component_count}")
     parts.append("")
 
     if projects:
