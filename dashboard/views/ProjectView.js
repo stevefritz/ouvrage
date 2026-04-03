@@ -793,10 +793,7 @@ export function ProjectView({ id, tab }) {
 
     const [statusFilter, setStatusFilter] = useState('');
 
-    const _searchStorageKey = `foreman_search_${id}`;
-    const [searchQuery, setSearchQuery] = useState(() => {
-        try { return localStorage.getItem(_searchStorageKey) || ''; } catch (_) { return ''; }
-    });
+    const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
     const [searchLoading, setSearchLoading] = useState(false);
 
@@ -832,9 +829,7 @@ export function ProjectView({ id, tab }) {
 
     const handleSearch = useCallback(async (query) => {
         setSearchQuery(query);
-        try { localStorage.setItem(_searchStorageKey, query); } catch (_) {}
         if (!query) {
-            try { localStorage.removeItem(_searchStorageKey); } catch (_) {}
             setSearchResults(null);
             setSearchLoading(false);
             return;
@@ -848,7 +843,7 @@ export function ProjectView({ id, tab }) {
         } finally {
             setSearchLoading(false);
         }
-    }, [id, _searchStorageKey]);
+    }, [id]);
 
     const pageStyle = {
         display: 'flex',
