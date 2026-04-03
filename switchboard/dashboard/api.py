@@ -1815,6 +1815,13 @@ async def _handle_upload_file(scope, receive, send):
         if not task:
             return await _error(send, f"Task '{task_id}' not found", 404)
 
+    # Optional project_id from form fields
+    project_id = form_fields.get("project_id") or None
+    if project_id:
+        project = await db.get_project(project_id)
+        if not project:
+            return await _error(send, f"Project '{project_id}' not found", 404)
+
     # Save to disk
     file_id = str(uuid.uuid4())
     uploads_dir = _uploads_dir() / file_id
@@ -1831,6 +1838,7 @@ async def _handle_upload_file(scope, receive, send):
         size_bytes=len(file_data),
         uploaded_by=user_id,
         task_id=task_id,
+        project_id=project_id,
     )
 
     # Reactive injection: notify CC if task is currently working

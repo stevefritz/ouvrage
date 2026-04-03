@@ -327,6 +327,32 @@
         "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json"
       },
       "wait_ms": 2000
+    },
+    "project-files": {
+      "url": "/dashboard#/project/mcp-switchboard/files",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json",
+        "/dashboard/api/files*": "fixtures/visual/project-files.json"
+      },
+      "wait_ms": 2000
+    },
+    "project-files-mobile": {
+      "url": "/dashboard#/project/mcp-switchboard/files",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/tasks*": "fixtures/visual/project-tasks.json",
+        "/dashboard/api/components*": "fixtures/visual/project-components.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json",
+        "/dashboard/api/activity*": "fixtures/visual/project-activity.json",
+        "/dashboard/api/files*": "fixtures/visual/project-files.json"
+      },
+      "wait_ms": 2000
     }
   }
 }

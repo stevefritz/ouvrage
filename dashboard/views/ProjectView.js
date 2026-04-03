@@ -11,6 +11,7 @@ import { api } from '../api.js';
 import { relativeTime } from '../components/utils.js';
 import { TaskView } from './TaskView.js';
 import { ConversationIndex } from './ConversationIndex.js';
+import { FilesTab } from './FilesTab.js';
 import { styles as fkStyles, FormField, FormRow, Toggle } from '../components/FormKit.js';
 import { ProjectHeader } from '../components/ProjectHeader.js';
 import { TaskList } from '../components/TaskList.js';
@@ -947,14 +948,7 @@ export function ProjectView({ id, tab }) {
     } else if (activeTab === 'conversations') {
         tabContent = html`<${ConversationIndex} projectId=${id} />`;
     } else if (activeTab === 'files') {
-        tabContent = html`
-            <div style=${{
-                padding: '60px 0',
-                textAlign: 'center',
-                color: colors.textTertiary,
-                fontSize: typography.size.sm,
-            }}>Files — coming soon</div>
-        `;
+        tabContent = html`<${FilesTab} projectId=${id} />`;
     } else if (activeTab === 'settings') {
         tabContent = html`
             <${SettingsTab}

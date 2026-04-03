@@ -199,6 +199,22 @@ export const api = {
         }
         return resp.json();
     },
+    getProjectFiles: (projectId) => request(`/files?project_id=${encodeURIComponent(projectId)}`),
+    uploadProjectFile: async (projectId, file) => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('project_id', projectId);
+        const resp = await fetch(BASE + '/files', { method: 'POST', body: form });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: resp.statusText }));
+            throw new Error(err.error || resp.statusText);
+        }
+        return resp.json();
+    },
+    promoteFile: (fileId, projectId) => request(`/files/${fileId}/promote`, {
+        method: 'POST',
+        body: JSON.stringify({ project_id: projectId }),
+    }),
 
     // User settings
     getUserSettings: () => request('/settings/user'),

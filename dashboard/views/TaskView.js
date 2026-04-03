@@ -1455,7 +1455,7 @@ function taskFileIcon(mime) {
     return '📎';
 }
 
-function FilesDrawer({ taskId, pollTick }) {
+function FilesDrawer({ taskId, projectId, pollTick }) {
     const [isOpen, setIsOpen] = useState(false);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -1464,6 +1464,8 @@ function FilesDrawer({ taskId, pollTick }) {
     const [error, setError] = useState(null);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [copiedId, setCopiedId] = useState(null);
+    const [promotingId, setPromotingId] = useState(null);
+    const [promotedIds, setPromotedIds] = useState({});
     const [lightboxFile, setLightboxFile] = useState(null);
     const [mdLightboxFile, setMdLightboxFile] = useState(null);
     const inputRef = useRef(null);
@@ -1477,6 +1479,12 @@ function FilesDrawer({ taskId, pollTick }) {
             setFiles(prev => {
                 if (JSON.stringify(prev) === JSON.stringify(list)) return prev;
                 return list;
+            });
+            // Seed promoted state from existing project_id on file records
+            setPromotedIds(prev => {
+                const next = { ...prev };
+                list.forEach(f => { if (f.project_id) next[f.id] = true; });
+                return next;
             });
         } catch (e) {
             // Only show errors on initial load, not on polls
@@ -1522,6 +1530,19 @@ function FilesDrawer({ taskId, pollTick }) {
             setTimeout(() => setCopiedId(null), 1500);
         } catch (_) { /* ignore */ }
     }, []);
+
+    const handlePromote = useCallback(async (fileId) => {
+        if (!projectId) return;
+        setPromotingId(fileId);
+        try {
+            await api.promoteFile(fileId, projectId);
+            setPromotedIds(prev => ({ ...prev, [fileId]: true }));
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setPromotingId(null);
+        }
+    }, [projectId]);
 
     const onDrop = useCallback((e) => {
         e.preventDefault();
@@ -1679,6 +1700,15 @@ function FilesDrawer({ taskId, pollTick }) {
                                         target="_blank" rel="noopener"
                                         style=${smallBtn}
                                     >↓ Download</a>
+                                    ${projectId ? (
+                                        promotedIds[f.id]
+                                            ? html`<span style=${{ fontSize: '11px', color: colors.green, flexShrink: 0, fontStyle: 'italic' }}>✓ Promoted</span>`
+                                            : html`<button
+                                                style=${{ ...smallBtn, color: colors.accent, borderColor: colors.accent }}
+                                                disabled=${promotingId === f.id}
+                                                onClick=${() => handlePromote(f.id)}
+                                            >${promotingId === f.id ? '…' : 'Promote'}</button>`
+                                    ) : null}
                                     ${deleteConfirm === f.id ? html`
                                         <span style=${{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
                                             <span style=${{ fontSize: '11px', color: colors.textTertiary }}>Delete?</span>
@@ -3048,7 +3078,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GateActivityPanel} task=${task} />
             <${GateDotsSection} task=${task} />
             <${ChecklistDrawer} task=${task} />
-            <${FilesDrawer} taskId=${id} pollTick=${pollTick} />
+            <${FilesDrawer} taskId=${id} projectId=${task.project_id} pollTick=${pollTick} />
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
