@@ -471,7 +471,11 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="test-result",
             title=f"Tests failed (attempt {retries}/{max_retries})",
-            content=f"```\n{_tail_lines(test_output, 3000)}\n```",
+            content=(
+                f"```\n{_tail_lines(test_output, 3000)}\n```\n\n"
+                f"Full output available at `.switchboard/test-output.log` in your worktree, "
+                f"or via `get_task_status(task_id='{task_id}', include_detail=true)`."
+            ),
         )
         log.warning(f"Task {task_id}: test gate failed (attempt {retries}/{max_retries})")
 
