@@ -39,6 +39,8 @@ function ForemanApp() {
         content = html`<${TaskView} id=${params.id} />`;
     } else if (view === 'conversation') {
         content = html`<${ConversationView} id=${params.id} />`;
+    } else if (view === 'project-conversation') {
+        content = html`<${ConversationView} id=${params.convId} projectId=${params.id} />`;
     } else if (view === 'files') {
         content = html`<${Files} />`;
     } else if (view === 'settings') {

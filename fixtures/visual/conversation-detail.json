@@ -1,0 +1,112 @@
+{
+  "id": "foreman-design",
+  "goal": "Foreman dashboard design system and UI spec",
+  "project": "mcp-switchboard",
+  "archived": false,
+  "created_at": "2026-03-15T10:00:00Z",
+  "updated_at": "2026-04-03T18:30:00Z",
+  "cursor": "msg-010",
+  "messages": [
+    {
+      "id": "msg-001",
+      "conversation_id": "foreman-design",
+      "author": "user",
+      "type": "spec",
+      "title": "Design tokens: Copper Forge amber palette",
+      "content": "# Foreman Design System\n\nThis conversation tracks the UI spec for the Foreman dashboard.\n\n## Color Palette\n\nCopper Forge uses warm amber on dark brown backgrounds:\n\n- `bg: #0f0d0b` — deepest background\n- `surface: #1e1a14` — card surface\n- `accent: #d97706` — amber highlight\n- `text: #ede8e3` — warm white\n\n## Typography\n\nDM Sans for body, JetBrains Mono for code:\n\n```css\nfont-family: 'DM Sans', -apple-system, sans-serif;\nfont-family: 'JetBrains Mono', monospace;\n```\n\n## Component Patterns\n\n### Badges\n\nStatus badges use colored pill shapes with transparent backgrounds.\n\n### Cards\n\nCards use `surface` background with `border` outline and `borderRadius.md` corners.",
+      "pinned": true,
+      "_pinned_marker": true,
+      "created_at": "2026-03-15T10:00:00Z"
+    },
+    {
+      "id": "msg-002",
+      "conversation_id": "foreman-design",
+      "author": "cc-worker",
+      "type": "progress",
+      "title": null,
+      "content": "Implemented initial token definitions in `dashboard/tokens.js`. All colors, typography, spacing, and layout constants are exported.",
+      "pinned": false,
+      "created_at": "2026-03-15T11:30:00Z"
+    },
+    {
+      "id": "msg-003",
+      "conversation_id": "foreman-design",
+      "author": "user",
+      "type": "note",
+      "title": "Tab bar spec",
+      "content": "The tab bar should have four tabs: Tasks, Conversations, Files, Settings. Active tab gets amber underline. Inactive tabs are textTertiary.",
+      "pinned": false,
+      "created_at": "2026-03-16T09:00:00Z"
+    },
+    {
+      "id": "msg-004",
+      "conversation_id": "foreman-design",
+      "author": "cc-worker",
+      "type": "result",
+      "title": "Tab bar implementation complete",
+      "content": "## Tab Bar Done\n\nImplemented `TabBar` component with:\n\n- Amber underline on active tab (`3px solid #d97706`)\n- Hash routing integration — each tab maps to `#/project/:id/:tab`\n- Badge counts on Tasks and Conversations tabs\n- Responsive: on mobile tabs scroll horizontally\n\nAll gate tests pass.",
+      "pinned": false,
+      "created_at": "2026-03-16T14:00:00Z"
+    },
+    {
+      "id": "msg-005",
+      "conversation_id": "foreman-design",
+      "author": "user",
+      "type": "question",
+      "title": null,
+      "content": "Should the conversation index group by pinned status or by project? I'm thinking pinned-first within a project.",
+      "pinned": false,
+      "created_at": "2026-03-18T10:30:00Z"
+    },
+    {
+      "id": "msg-006",
+      "conversation_id": "foreman-design",
+      "author": "cc-worker",
+      "type": "answer",
+      "title": null,
+      "content": "Pinned-first within project makes sense. The `has_pinned` flag from the DB aggregates drives the grouping. Conversations with any pinned message go in the top section with an amber left border.",
+      "pinned": false,
+      "created_at": "2026-03-18T10:45:00Z"
+    },
+    {
+      "id": "msg-007",
+      "conversation_id": "foreman-design",
+      "author": "cc-worker",
+      "type": "plan",
+      "title": "Conversation index implementation plan",
+      "content": "## Plan\n\nImplement `ConversationIndex` view:\n\n1. `api.getConversations({ project })` on mount\n2. Group into pinned / unpinned sections\n3. Debounced search via `api.search({ q, project_id })`\n4. Cards with amber border for pinned-containing conversations\n\n**Files to change:**\n- `dashboard/views/ConversationIndex.js` (new)\n- `dashboard/views/ProjectView.js` (wire up tab)\n- `switchboard/db/_helpers.py` (add `pinned_title`)",
+      "pinned": false,
+      "created_at": "2026-03-19T08:00:00Z"
+    },
+    {
+      "id": "msg-008",
+      "conversation_id": "foreman-design",
+      "author": "user",
+      "type": "review",
+      "title": "Review: conversation index",
+      "content": "Looks good overall. Two issues:\n\n1. `message_count` was wrong when a conversation had multiple pinned messages — the CTE join was creating a cross-product\n2. The `goalStyle` object was defined but never used\n\nPlease fix both before merging.",
+      "pinned": false,
+      "created_at": "2026-03-20T15:00:00Z"
+    },
+    {
+      "id": "msg-009",
+      "conversation_id": "foreman-design",
+      "author": "cc-worker",
+      "type": "handoff",
+      "title": "Handoff: conversation index → detail",
+      "content": "## Handoff Notes\n\nConversation index is merged. For the detail view next:\n\n- Router already handles `#/project/:id/conversation/:convId` — just needs `routes.projectConversation` added\n- `ConversationIndex` cards should link to project-scoped URLs once detail view exists\n- Reference implementation: `ConversationView.js` handles `#/conversation/:id`",
+      "pinned": false,
+      "created_at": "2026-04-01T16:00:00Z"
+    },
+    {
+      "id": "msg-010",
+      "conversation_id": "foreman-design",
+      "author": "user",
+      "type": "status",
+      "title": "Tab bar spec finalized",
+      "content": "All specs for the dashboard redesign are locked. Next: conversation detail redesign with TOC sidebar.",
+      "pinned": false,
+      "created_at": "2026-04-03T18:30:00Z"
+    }
+  ]
+}

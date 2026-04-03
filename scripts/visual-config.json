@@ -307,6 +307,26 @@
         "/dashboard/api/activity*": "fixtures/visual/project-activity.json"
       },
       "wait_ms": 2000
+    },
+    "conversation-detail": {
+      "url": "/dashboard#/project/mcp-switchboard/conversation/foreman-design",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/conversations/foreman-design": "fixtures/visual/conversation-detail.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json"
+      },
+      "wait_ms": 2000
+    },
+    "conversation-detail-mobile": {
+      "url": "/dashboard#/project/mcp-switchboard/conversation/foreman-design",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/projects/mcp-switchboard": "fixtures/visual/project-detail.json",
+        "/dashboard/api/conversations/foreman-design": "fixtures/visual/conversation-detail.json",
+        "/dashboard/api/conversations*": "fixtures/visual/project-conversations.json"
+      },
+      "wait_ms": 2000
     }
   }
 }

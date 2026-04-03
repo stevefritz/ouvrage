@@ -19,7 +19,9 @@ const html = htm.bind(h);
 // ---------------------------------------------------------------------------
 
 function ConversationCard({ conv, projectId }) {
-    const href = routes.conversation(conv.id);
+    const href = projectId
+        ? routes.projectConversation(projectId, conv.id)
+        : routes.conversation(conv.id);
 
     const cardStyle = {
         display: 'block',

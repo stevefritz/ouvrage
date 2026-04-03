@@ -1,6 +1,7 @@
-// Foreman Conversation View — Clean thread reader
-// Chronological posts, pinned message at top, type icons, post input
-// Spec: foreman-design conversation, message 2787
+// Foreman Conversation View — TOC sidebar, scoped search, newest-first, markdown
+// Routes:
+//   #/conversation/:id            (standalone, back → #/)
+//   #/project/:pid/conversation/:id  (project-scoped, back → #/project/:pid/conversations)
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
@@ -13,28 +14,29 @@ import { routes } from '../router.js';
 const html = htm.bind(h);
 
 const POLL_INTERVAL_MS = 15_000;
+const TOC_MSG_LIMIT = 8;
 
-// ── Message type metadata ────────────────────────────────────
+// ── Message type metadata ─────────────────────────────────────
 
 const MSG_META = {
-    spec:          { icon: '📌', label: 'Spec' },
-    plan:          { icon: '📋', label: 'Plan' },
-    progress:      { icon: '⚡', label: 'Progress' },
-    result:        { icon: '✅', label: 'Result' },
-    review:        { icon: '🔍', label: 'Review' },
-    question:      { icon: '❓', label: 'Question' },
-    answer:        { icon: '💬', label: 'Answer' },
-    handoff:       { icon: '🤝', label: 'Handoff' },
-    'test-result': { icon: '🧪', label: 'Tests' },
-    note:          { icon: '📝', label: 'Note' },
-    status:        { icon: '📊', label: 'Status' },
+    spec:          { label: 'Spec',     bg: 'rgba(217,119,6,0.18)',    color: '#d97706' },
+    plan:          { label: 'Plan',     bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    progress:      { label: 'Progress', bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    result:        { label: 'Result',   bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+    review:        { label: 'Review',   bg: 'rgba(236,72,153,0.15)',   color: '#ec4899' },
+    question:      { label: 'Question', bg: 'rgba(245,166,35,0.15)',   color: '#f5a623' },
+    answer:        { label: 'Answer',   bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    handoff:       { label: 'Handoff',  bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    'test-result': { label: 'Tests',    bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+    note:          { label: 'Note',     bg: 'rgba(136,126,114,0.15)',  color: '#b0a89e' },
+    status:        { label: 'Status',   bg: 'rgba(136,126,114,0.12)',  color: '#887e72' },
 };
 
 function getMsgMeta(type) {
     return MSG_META[type] || MSG_META.note;
 }
 
-// ── Markdown rendering ───────────────────────────────────────
+// ── Markdown rendering ────────────────────────────────────────
 
 let _domPurifyWarned = false;
 function sanitize(dirty) {
@@ -57,60 +59,71 @@ function renderMarkdown(content) {
     }
 }
 
-// ── Message component ────────────────────────────────────────
+// Extract ## and ### headings from markdown text
+function extractHeadings(markdown) {
+    if (!markdown) return [];
+    const headings = [];
+    const lines = markdown.split('\n');
+    for (const line of lines) {
+        const m = line.match(/^(#{2,3})\s+(.+)$/);
+        if (m) {
+            headings.push({ level: m[1].length, text: m[2].trim() });
+        }
+    }
+    return headings;
+}
 
-function ConversationMessage({ msg, isPinned }) {
-    const [expanded, setExpanded] = useState(isPinned);
-    const meta = getMsgMeta(msg.type);
-    const ts = msg.created_at;
+// ── TypeBadge ────────────────────────────────────────────────
+
+function TypeBadge({ type }) {
+    const meta = getMsgMeta(type);
+    return html`
+        <span style=${{
+            display: 'inline-block',
+            padding: '2px 7px',
+            borderRadius: layout.borderRadius.pill,
+            background: meta.bg,
+            color: meta.color,
+            fontSize: typography.size.xs,
+            fontWeight: typography.weight.medium,
+            fontFamily: typography.fontMono,
+            lineHeight: '1.4',
+            flexShrink: 0,
+        }}>${meta.label}</span>
+    `;
+}
+
+// ── Message component ─────────────────────────────────────────
+
+function ConversationMessage({ msg, isPinned, highlighted }) {
     const renderedContent = useMemo(() => renderMarkdown(msg.content), [msg.content]);
 
     const containerStyle = {
-        display: 'flex',
-        gap: '12px',
-        padding: '12px 16px',
+        padding: '14px 16px',
         borderBottom: `1px solid ${colors.border}22`,
         ...(isPinned ? {
-            background: colors.surfaceActive,
-            borderLeft: `3px solid ${colors.accent}`,
-            borderRadius: `0 ${layout.borderRadius.md} ${layout.borderRadius.md} 0`,
-            marginBottom: '8px',
+            background: `${colors.accentBg || 'rgba(217,119,6,0.07)'}`,
+            borderLeft: `3px solid #d97706`,
+            marginBottom: '2px',
         } : {}),
-    };
-
-    const iconStyle = {
-        fontSize: '14px',
-        flexShrink: 0,
-        width: '20px',
-        textAlign: 'center',
-        marginTop: '2px',
-    };
-
-    const bodyStyle = {
-        flex: 1,
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '4px',
+        ...(highlighted ? {
+            background: `rgba(77,163,255,0.08)`,
+            borderLeft: `3px solid ${colors.blue}`,
+        } : {}),
     };
 
     const headerStyle = {
         display: 'flex',
-        alignItems: 'baseline',
+        alignItems: 'center',
         gap: '8px',
         flexWrap: 'wrap',
+        marginBottom: msg.title ? '6px' : '8px',
     };
 
     const authorStyle = {
         fontSize: typography.size.sm,
         fontWeight: typography.weight.medium,
         color: colors.text,
-    };
-
-    const typeStyle = {
-        fontSize: typography.size.xs,
-        color: colors.textTertiary,
-        fontFamily: typography.fontMono,
     };
 
     const timeStyle = {
@@ -121,71 +134,233 @@ function ConversationMessage({ msg, isPinned }) {
     };
 
     const titleStyle = {
-        fontSize: typography.size.sm,
+        fontSize: '15px',
         fontWeight: typography.weight.medium,
         color: colors.text,
-        cursor: 'pointer',
+        marginBottom: '6px',
+        lineHeight: typography.lineHeight.tight,
     };
 
-    // Collapsed: show title or first line
-    const previewText = msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/, '').slice(0, 120);
-    const hasMore = (msg.content || '').length > 120 || (msg.content || '').includes('\n');
+    const contentStyle = {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        lineHeight: typography.lineHeight.relaxed,
+    };
 
     return html`
-        <div style=${containerStyle} class="foreman-conv-message">
-            <span style=${iconStyle}>${meta.icon}</span>
-            <div style=${bodyStyle}>
-                <div style=${headerStyle}>
-                    <span style=${authorStyle}>${msg.author || 'unknown'}</span>
-                    <span style=${typeStyle}>${meta.label}</span>
-                    ${isPinned ? html`
-                        <span style=${{
-                            fontSize: typography.size.xs,
-                            color: colors.accent,
-                            fontWeight: typography.weight.medium,
-                        }}>📌 Pinned</span>
-                    ` : null}
-                    <span style=${timeStyle}>${relativeTime(ts)}</span>
-                </div>
-
-                ${expanded ? html`
-                    ${msg.title ? html`<div style=${titleStyle}>${msg.title}</div>` : null}
-                    <div style=${{
-                        fontSize: typography.size.sm,
-                        color: colors.textSecondary,
-                        lineHeight: typography.lineHeight.relaxed,
-                    }}
-                        dangerouslySetInnerHTML=${{ __html: renderedContent }}
-                    />
-                    ${hasMore && !isPinned ? html`
-                        <button onClick=${() => setExpanded(false)} style=${{
-                            background: 'none',
-                            border: 'none',
-                            color: colors.textTertiary,
-                            fontSize: typography.size.xs,
-                            cursor: 'pointer',
-                            padding: '2px 0',
-                            textAlign: 'left',
-                        }}>▴ Collapse</button>
-                    ` : null}
-                ` : html`
-                    <div style=${{
-                        fontSize: typography.size.sm,
-                        color: colors.textSecondary,
-                        cursor: hasMore ? 'pointer' : 'default',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                    }} onClick=${hasMore ? () => setExpanded(true) : null}>
-                        ${previewText}${hasMore ? '…' : ''}
-                    </div>
-                `}
+        <div
+            id=${'msg-' + msg.id}
+            style=${containerStyle}
+            class="foreman-conv-message"
+        >
+            <div style=${headerStyle}>
+                <span style=${authorStyle}>${msg.author || 'unknown'}</span>
+                <${TypeBadge} type=${msg.type || 'note'} />
+                ${isPinned ? html`
+                    <span style=${{
+                        fontSize: typography.size.xs,
+                        color: '#d97706',
+                        fontWeight: typography.weight.medium,
+                    }}>📌 Pinned</span>
+                ` : null}
+                <span style=${timeStyle}>${relativeTime(msg.created_at)}</span>
             </div>
+
+            ${msg.title ? html`<div style=${titleStyle}>${msg.title}</div>` : null}
+
+            <div
+                style=${contentStyle}
+                dangerouslySetInnerHTML=${{ __html: renderedContent }}
+            />
         </div>
     `;
 }
 
-// ── Post input ───────────────────────────────────────────────
+// ── TOC Sidebar ───────────────────────────────────────────────
+
+function TocSidebar({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg, collapsed, onToggle }) {
+    const [showAll, setShowAll] = useState(false);
+    const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
+    const hiddenCount = messages.length - TOC_MSG_LIMIT;
+
+    const sidebarStyle = {
+        width: layout.sidebarWidth,
+        flexShrink: 0,
+        borderRight: `1px solid ${colors.border}`,
+        display: 'flex',
+        flexDirection: 'column',
+        overflowY: 'auto',
+        maxHeight: 'calc(100vh - 52px)',
+        position: 'sticky',
+        top: '0',
+        alignSelf: 'flex-start',
+        padding: '12px 0',
+    };
+
+    const sectionLabelStyle = {
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.semibold,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: colors.textTertiary,
+        padding: '4px 14px 6px',
+        marginTop: '8px',
+    };
+
+    const tocItemStyle = (isHeading) => ({
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        padding: isHeading ? '3px 14px 3px 20px' : '4px 14px',
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        lineHeight: '1.4',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        transition: `color ${animation.durationFast}`,
+        fontFamily: typography.fontBody,
+    });
+
+    return html`
+        <nav style=${sidebarStyle} class="foreman-toc-sidebar" aria-label="Table of contents">
+            ${pinnedHeadings.length > 0 ? html`
+                <div style=${sectionLabelStyle}>Pinned</div>
+                ${pinnedHeadings.map((h, i) => html`
+                    <button
+                        key=${i}
+                        style=${tocItemStyle(true)}
+                        class="foreman-toc-item"
+                        onClick=${() => onScrollToHeading(h.text)}
+                        title=${h.text}
+                    >${h.level === 3 ? '  · ' : ''}${h.text}</button>
+                `)}
+            ` : null}
+
+            ${messages.length > 0 ? html`
+                <div style=${sectionLabelStyle}>Messages</div>
+                ${visibleMsgs.map(msg => html`
+                    <button
+                        key=${msg.id}
+                        style=${tocItemStyle(false)}
+                        class="foreman-toc-item"
+                        onClick=${() => onScrollToMsg(msg.id)}
+                        title=${msg.title || msg.content?.split('\n')[0]?.replace(/^#+\s*/,'') || msg.id}
+                    >${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}</button>
+                `)}
+                ${!showAll && hiddenCount > 0 ? html`
+                    <button
+                        style=${{ ...tocItemStyle(false), color: colors.accent, fontWeight: typography.weight.medium }}
+                        onClick=${() => setShowAll(true)}
+                    >+${hiddenCount} more</button>
+                ` : null}
+            ` : null}
+        </nav>
+    `;
+}
+
+// ── Mobile TOC Dropdown ───────────────────────────────────────
+
+function MobileTocDropdown({ pinnedHeadings, messages, onScrollToHeading, onScrollToMsg }) {
+    const [open, setOpen] = useState(false);
+    const [showAll, setShowAll] = useState(false);
+    const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
+    const hiddenCount = messages.length - TOC_MSG_LIMIT;
+
+    const btnStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '7px 12px',
+        background: colors.surfaceActive,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        color: colors.text,
+        fontSize: typography.size.sm,
+        cursor: 'pointer',
+        fontFamily: typography.fontBody,
+    };
+
+    const dropdownStyle = {
+        position: 'absolute',
+        top: '100%',
+        left: 0,
+        right: 0,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        marginTop: '4px',
+        zIndex: 100,
+        maxHeight: '300px',
+        overflowY: 'auto',
+        padding: '8px 0',
+    };
+
+    const itemStyle = {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        padding: '6px 14px',
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        fontFamily: typography.fontBody,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    };
+
+    const labelStyle = {
+        padding: '4px 14px 2px',
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.semibold,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: colors.textTertiary,
+    };
+
+    if (pinnedHeadings.length === 0 && messages.length === 0) return null;
+
+    return html`
+        <div style={{ position: 'relative', marginBottom: '8px' }} class="foreman-toc-mobile">
+            <button style=${btnStyle} onClick=${() => setOpen(o => !o)} aria-expanded=${open}>
+                ☰ Contents ${open ? '▴' : '▾'}
+            </button>
+            ${open ? html`
+                <div style=${dropdownStyle}>
+                    ${pinnedHeadings.length > 0 ? html`
+                        <div style=${labelStyle}>Pinned</div>
+                        ${pinnedHeadings.map((h, i) => html`
+                            <button key=${i} style=${itemStyle} onClick=${() => { onScrollToHeading(h.text); setOpen(false); }}>
+                                ${h.level === 3 ? '  · ' : ''}${h.text}
+                            </button>
+                        `)}
+                    ` : null}
+                    ${messages.length > 0 ? html`
+                        <div style=${labelStyle}>Messages</div>
+                        ${visibleMsgs.map(msg => html`
+                            <button key=${msg.id} style=${itemStyle} onClick=${() => { onScrollToMsg(msg.id); setOpen(false); }}>
+                                ${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}
+                            </button>
+                        `)}
+                        ${!showAll && hiddenCount > 0 ? html`
+                            <button style=${{ ...itemStyle, color: colors.accent }} onClick=${() => setShowAll(true)}>
+                                +${hiddenCount} more
+                            </button>
+                        ` : null}
+                    ` : null}
+                </div>
+            ` : null}
+        </div>
+    `;
+}
+
+// ── Post input ────────────────────────────────────────────────
 
 const POST_TYPES = ['note', 'spec', 'plan', 'question', 'answer', 'review'];
 
@@ -194,12 +369,10 @@ function PostInput({ conversationId, onPosted }) {
     const [type, setType] = useState('note');
     const [sending, setSending] = useState(false);
     const [error, setError] = useState(null);
-    const textRef = useRef(null);
 
     const handleSubmit = useCallback(async () => {
         const text = content.trim();
         if (!text || sending) return;
-
         setSending(true);
         setError(null);
         try {
@@ -221,18 +394,12 @@ function PostInput({ conversationId, onPosted }) {
     }, [handleSubmit]);
 
     const containerStyle = {
-        padding: '16px',
+        padding: '14px 16px',
         borderTop: `1px solid ${colors.border}`,
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
         background: colors.surface,
-    };
-
-    const topRowStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
     };
 
     const selectStyle = {
@@ -276,18 +443,15 @@ function PostInput({ conversationId, onPosted }) {
 
     return html`
         <div style=${containerStyle}>
-            <div style=${topRowStyle}>
+            <div style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <select style=${selectStyle} value=${type} onChange=${e => setType(e.target.value)}>
                     ${POST_TYPES.map(t => html`
-                        <option key=${t} value=${t}>${getMsgMeta(t).icon} ${getMsgMeta(t).label}</option>
+                        <option key=${t} value=${t}>${getMsgMeta(t).label}</option>
                     `)}
                 </select>
-                <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
-                    ⌘+Enter to send
-                </span>
+                <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>⌘+Enter to send</span>
             </div>
             <textarea
-                ref=${textRef}
                 style=${textareaStyle}
                 placeholder="Write a message..."
                 value=${content}
@@ -295,9 +459,7 @@ function PostInput({ conversationId, onPosted }) {
                 onKeyDown=${handleKeyDown}
                 disabled=${sending}
             />
-            ${error ? html`
-                <div style=${{ fontSize: typography.size.xs, color: colors.red }}>${error}</div>
-            ` : null}
+            ${error ? html`<div style=${{ fontSize: typography.size.xs, color: colors.red }}>${error}</div>` : null}
             <button style=${btnStyle} onClick=${handleSubmit} disabled=${sending || !content.trim()}>
                 ${sending ? 'Sending…' : 'Send'}
             </button>
@@ -305,18 +467,32 @@ function PostInput({ conversationId, onPosted }) {
     `;
 }
 
-// ── Main view ────────────────────────────────────────────────
+// ── Main view ─────────────────────────────────────────────────
 
-export function ConversationView({ id }) {
+export function ConversationView({ id, projectId }) {
     const [thread, setThread] = useState(null);
     const [error, setError] = useState(null);
     const [cursor, setCursor] = useState(null);
     const mountedRef = useRef(true);
-    const messagesEndRef = useRef(null);
+
+    // Search state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState(null);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [highlightedIds, setHighlightedIds] = useState(new Set());
+    const searchTimer = useRef(null);
+
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
 
     useEffect(() => {
         mountedRef.current = true;
-        return () => { mountedRef.current = false; };
+        const onResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', onResize);
+        return () => {
+            mountedRef.current = false;
+            window.removeEventListener('resize', onResize);
+        };
     }, []);
 
     const loadFull = useCallback(async () => {
@@ -331,20 +507,21 @@ export function ConversationView({ id }) {
         }
     }, [id]);
 
-    // Scroll to top on mount / navigation
     useEffect(() => {
         window.scrollTo(0, 0);
     }, [id]);
 
-    // Initial load
     useEffect(() => {
         setThread(null);
         setError(null);
         setCursor(null);
+        setSearchQuery('');
+        setSearchResults(null);
+        setHighlightedIds(new Set());
         loadFull();
     }, [loadFull]);
 
-    // Polling for new messages
+    // Polling
     useEffect(() => {
         if (!cursor) return;
         const poll = async () => {
@@ -365,64 +542,169 @@ export function ConversationView({ id }) {
         return () => clearInterval(timer);
     }, [id, cursor]);
 
+    // Scoped search — debounced 300ms, filter by conversation_id === id
+    const handleSearch = useCallback((q) => {
+        setSearchQuery(q);
+        clearTimeout(searchTimer.current);
+        if (!q.trim()) {
+            setSearchResults(null);
+            setHighlightedIds(new Set());
+            setSearchLoading(false);
+            return;
+        }
+        setSearchLoading(true);
+        searchTimer.current = setTimeout(async () => {
+            try {
+                const params = { q };
+                if (projectId) params.project_id = projectId;
+                const data = await api.search(params);
+                // Scope to this conversation
+                const results = (data.results || []).filter(r => r.conversation_id === id);
+                setSearchResults(results);
+                // Highlight matched messages
+                const ids = new Set(results.map(r => r.message_id).filter(Boolean));
+                setHighlightedIds(ids);
+                // Scroll to first match
+                if (ids.size > 0) {
+                    const firstId = [...ids][0];
+                    const el = document.getElementById('msg-' + firstId);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            } catch {
+                setSearchResults([]);
+                setHighlightedIds(new Set());
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 300);
+    }, [id, projectId]);
+
+    // Scroll helpers
+    const scrollToMsg = useCallback((msgId) => {
+        const el = document.getElementById('msg-' + msgId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, []);
+
+    const scrollToHeading = useCallback((headingText) => {
+        // Find the pinned message container, then look for matching heading inside it
+        const pinnedEl = document.getElementById('pinned-msg');
+        if (!pinnedEl) return;
+        // Search h2/h3 elements inside pinned message for matching text
+        const headings = pinnedEl.querySelectorAll('h2, h3');
+        for (const h of headings) {
+            if (h.textContent.trim() === headingText) {
+                h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+        }
+        // Fallback: scroll to pinned message
+        pinnedEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, []);
+
     const handlePosted = useCallback(() => {
-        // Reload full thread after posting
         loadFull();
     }, [loadFull]);
 
-    // ── Render ──
+    // ── Derived data ──
 
     const messages = thread?.messages || [];
     const pinned = messages.filter(m => m._pinned_marker || m.pinned);
-    const regular = messages.filter(m => !m._pinned_marker && !m.pinned);
+    const pinnedMsg = pinned[0] || null;
+    const pinnedHeadings = useMemo(() => extractHeadings(pinnedMsg?.content), [pinnedMsg?.content]);
 
-    // Derive conversation metadata from the first pinned message or thread
-    const convGoal = pinned[0]?.title || pinned[0]?.content?.split('\n')[0]?.replace(/^#+\s*/, '').slice(0, 100) || id;
+    // Sort regular messages newest-first
+    const regular = useMemo(() => {
+        return messages
+            .filter(m => !m._pinned_marker && !m.pinned)
+            .slice()
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }, [messages]);
+
+    // TOC message list (newest-first, pinned excluded)
+    const tocMessages = regular;
+
+    const convGoal = thread?.goal || pinnedMsg?.title || id;
+
+    // ── Back link ──
+    const backHref = projectId
+        ? routes.projectTab(projectId, 'conversations')
+        : '#/';
+    const backLabel = projectId ? '← Conversations' : '← Back';
+
+    // ── Styles ──
 
     const pageStyle = {
         display: 'flex',
         flexDirection: 'column',
-        gap: '0',
         minHeight: 'calc(100vh - 52px)',
     };
 
+    const headerStyle = {
+        padding: '16px 20px 12px',
+        borderBottom: `1px solid ${colors.border}`,
+        background: colors.surface,
+        position: 'sticky',
+        top: 0,
+        zIndex: 10,
+    };
+
     const backLinkStyle = {
-        fontSize: typography.size.sm,
+        fontSize: typography.size.xs,
         color: colors.textTertiary,
         textDecoration: 'none',
         display: 'inline-flex',
         alignItems: 'center',
         gap: '4px',
-        marginBottom: '16px',
+        marginBottom: '8px',
         transition: `color ${animation.durationFast}`,
     };
 
-    const headerStyle = {
-        padding: '0 0 16px',
-        borderBottom: `1px solid ${colors.border}`,
-        marginBottom: '0',
-    };
-
     const titleStyle = {
-        fontFamily: typography.fontBody,
         fontSize: typography.size.xl,
         fontWeight: typography.weight.semibold,
         color: colors.text,
         letterSpacing: '-0.02em',
-        margin: '0 0 4px',
+        margin: '0 0 6px',
         wordBreak: 'break-word',
     };
 
-    const metaStyle = {
+    const metaRowStyle = {
         display: 'flex',
         alignItems: 'center',
         gap: '12px',
         fontSize: typography.size.xs,
         color: colors.textTertiary,
+        marginBottom: '10px',
+    };
+
+    const searchInputStyle = {
+        width: '100%',
+        padding: '8px 12px',
+        background: colors.input,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.md,
+        color: colors.text,
+        fontSize: typography.size.sm,
+        fontFamily: typography.fontBody,
+        outline: 'none',
+        boxSizing: 'border-box',
+    };
+
+    const bodyStyle = {
+        display: 'flex',
+        flex: 1,
+        minHeight: 0,
+    };
+
+    const contentStyle = {
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
     };
 
     const errorStyle = {
-        padding: '24px',
+        padding: '20px',
         borderRadius: layout.borderRadius.md,
         background: colors.redBg,
         border: `1px solid ${colors.red}44`,
@@ -432,94 +714,145 @@ export function ConversationView({ id }) {
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: '16px',
-        margin: '24px 0',
+        margin: '20px',
     };
 
-    const retryBtnStyle = {
-        padding: '4px 12px',
-        borderRadius: layout.borderRadius.sm,
-        background: `${colors.red}22`,
-        border: `1px solid ${colors.red}44`,
-        color: colors.red,
-        fontSize: typography.size.sm,
-        cursor: 'pointer',
-        flexShrink: 0,
+    const searchStatusStyle = {
+        padding: '10px 16px',
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        borderBottom: `1px solid ${colors.border}22`,
     };
 
     // Loading skeleton
     if (!thread && !error) {
         return html`
             <div style=${pageStyle}>
-                <a href="#/" style=${backLinkStyle} class="foreman-back-link">← Back</a>
                 <div style=${headerStyle}>
-                    <div style=${{ height: '22px', width: '60%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
-                    <div style=${{ height: '12px', width: '30%', background: colors.surfaceActive, borderRadius: '4px', marginTop: '8px' }} class="foreman-skeleton" />
+                    <a href=${backHref} style=${backLinkStyle}>${backLabel}</a>
+                    <div style=${{ height: '22px', width: '55%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '6px' }} class="foreman-skeleton" />
+                    <div style=${{ height: '12px', width: '30%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
                 </div>
-                ${[1,2,3].map(i => html`
-                    <div key=${i} style=${{ padding: '12px 16px', display: 'flex', gap: '12px' }}>
-                        <div style=${{ width: '20px', height: '20px', borderRadius: '50%', background: colors.surfaceActive }} class="foreman-skeleton" />
-                        <div style=${{ flex: 1 }}>
-                            <div style=${{ height: '12px', width: '40%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '8px' }} class="foreman-skeleton" />
-                            <div style=${{ height: '12px', width: '80%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
-                        </div>
+                <div style=${bodyStyle}>
+                    <div style=${{ flex: 1 }}>
+                        ${[1,2,3].map(i => html`
+                            <div key=${i} style=${{ padding: '14px 16px', borderBottom: `1px solid ${colors.border}22` }}>
+                                <div style=${{ height: '12px', width: '40%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '8px' }} class="foreman-skeleton" />
+                                <div style=${{ height: '12px', width: '70%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
+                            </div>
+                        `)}
                     </div>
-                `)}
+                </div>
             </div>
         `;
     }
 
     return html`
         <div style=${pageStyle}>
-            <a href="#/" style=${backLinkStyle} class="foreman-back-link">← Back</a>
+            <!-- Sticky header -->
+            <div style=${headerStyle}>
+                <a href=${backHref} style=${backLinkStyle} class="foreman-back-link">${backLabel}</a>
+                <h1 style=${titleStyle}>${convGoal}</h1>
+                <div style=${metaRowStyle}>
+                    <span>${messages.length} message${messages.length !== 1 ? 's' : ''}</span>
+                    ${pinned.length > 0 ? html`<span>📌 ${pinned.length} pinned</span>` : null}
+                </div>
+                <!-- Scoped search -->
+                <input
+                    type="search"
+                    placeholder="Search this conversation…"
+                    value=${searchQuery}
+                    onInput=${e => handleSearch(e.target.value)}
+                    style=${searchInputStyle}
+                    class="foreman-conv-scoped-search"
+                />
+            </div>
 
             ${error ? html`
                 <div style=${errorStyle}>
                     <span>Failed to load: ${error}</span>
-                    <button style=${retryBtnStyle} onClick=${loadFull}>Retry</button>
+                    <button
+                        style=${{ padding: '4px 12px', borderRadius: layout.borderRadius.sm, background: `${colors.red}22`, border: `1px solid ${colors.red}44`, color: colors.red, fontSize: typography.size.sm, cursor: 'pointer' }}
+                        onClick=${loadFull}
+                    >Retry</button>
                 </div>
             ` : null}
 
-            <div style=${headerStyle}>
-                <h1 style=${titleStyle}>${id}</h1>
-                <div style=${metaStyle}>
-                    <span>${messages.length} message${messages.length !== 1 ? 's' : ''}</span>
-                    ${pinned.length > 0 ? html`<span>📌 ${pinned.length} pinned</span>` : null}
+            <!-- Mobile TOC -->
+            ${isMobile ? html`
+                <div style=${{ padding: '10px 16px', borderBottom: `1px solid ${colors.border}` }}>
+                    <${MobileTocDropdown}
+                        pinnedHeadings=${pinnedHeadings}
+                        messages=${tocMessages}
+                        onScrollToHeading=${scrollToHeading}
+                        onScrollToMsg=${scrollToMsg}
+                    />
+                </div>
+            ` : null}
+
+            <!-- Body: sidebar + content -->
+            <div style=${bodyStyle}>
+                <!-- Desktop TOC sidebar -->
+                ${!isMobile ? html`
+                    <${TocSidebar}
+                        pinnedHeadings=${pinnedHeadings}
+                        messages=${tocMessages}
+                        onScrollToHeading=${scrollToHeading}
+                        onScrollToMsg=${scrollToMsg}
+                    />
+                ` : null}
+
+                <!-- Content area -->
+                <div style=${contentStyle}>
+                    <!-- Search status -->
+                    ${searchQuery.trim() ? html`
+                        <div style=${searchStatusStyle}>
+                            ${searchLoading ? 'Searching…' : searchResults
+                                ? `${searchResults.length} result${searchResults.length !== 1 ? 's' : ''} for "${searchQuery}"`
+                                : ''}
+                        </div>
+                    ` : null}
+
+                    <!-- Pinned message always at top -->
+                    ${pinnedMsg ? html`
+                        <div id="pinned-msg">
+                            <${ConversationMessage}
+                                msg=${pinnedMsg}
+                                isPinned=${true}
+                                highlighted=${false}
+                            />
+                        </div>
+                    ` : null}
+
+                    <!-- Regular messages, newest-first -->
+                    ${regular.length === 0 && !pinnedMsg ? html`
+                        <div style=${{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '60px 24px',
+                            gap: '8px',
+                            textAlign: 'center',
+                        }}>
+                            <div style=${{ fontSize: '24px', marginBottom: '4px' }}>💬</div>
+                            <div style=${{ fontSize: typography.size.sm, color: colors.textSecondary }}>
+                                No messages yet
+                            </div>
+                        </div>
+                    ` : regular.map(msg => html`
+                        <${ConversationMessage}
+                            key=${msg.id}
+                            msg=${msg}
+                            isPinned=${false}
+                            highlighted=${highlightedIds.has(msg.id)}
+                        />
+                    `)}
+
+                    <!-- Post input -->
+                    <${PostInput} conversationId=${id} onPosted=${handlePosted} />
                 </div>
             </div>
-
-            <!-- Pinned messages -->
-            ${pinned.map(msg => html`
-                <${ConversationMessage} key=${msg.id} msg=${msg} isPinned=${true} />
-            `)}
-
-            <!-- Regular messages (chronological) -->
-            <div style=${{ flex: 1 }}>
-                ${regular.length === 0 && pinned.length === 0 ? html`
-                    <div style=${{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '60px 24px',
-                        gap: '8px',
-                        textAlign: 'center',
-                    }}>
-                        <div style=${{ fontSize: '24px', marginBottom: '4px' }}>💬</div>
-                        <div style=${{ fontSize: typography.size.sm, color: colors.textSecondary }}>
-                            No messages yet
-                        </div>
-                        <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>
-                            Start the conversation below
-                        </div>
-                    </div>
-                ` : regular.map(msg => html`
-                    <${ConversationMessage} key=${msg.id} msg=${msg} isPinned=${false} />
-                `)}
-                <div ref=${messagesEndRef} />
-            </div>
-
-            <!-- Post input -->
-            <${PostInput} conversationId=${id} onPosted=${handlePosted} />
         </div>
     `;
 }
