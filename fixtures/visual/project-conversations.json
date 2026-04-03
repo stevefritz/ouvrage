@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "id": "foreman-design",
+    "project": "mcp-switchboard",
+    "goal": "Foreman dashboard design system and UI spec",
+    "archived": false,
+    "created_at": "2026-03-15T10:00:00Z",
+    "updated_at": "2026-04-03T18:30:00Z",
+    "message_count": 47,
+    "last_message_author": "user",
+    "last_message_title": "Tab bar spec finalized",
+    "last_message_at": "2026-04-03T18:30:00Z",
+    "has_pinned": true,
+    "pinned_title": "Design tokens: Copper Forge amber palette"
+  },
+  {
+    "id": "auth-refactor-plan",
+    "project": "mcp-switchboard",
+    "goal": "Plan the OAuth 2.0 migration and session handling rewrite",
+    "archived": false,
+    "created_at": "2026-03-20T14:00:00Z",
+    "updated_at": "2026-04-02T09:15:00Z",
+    "message_count": 23,
+    "last_message_author": "cc-worker",
+    "last_message_title": "PKCE implementation complete",
+    "last_message_at": "2026-04-02T09:15:00Z",
+    "has_pinned": true,
+    "pinned_title": "Auth architecture decision: RS256 JWTs with jti revocation"
+  },
+  {
+    "id": "gate-pipeline-design",
+    "project": "mcp-switchboard",
+    "goal": "Test gate and review gate pipeline design",
+    "archived": false,
+    "created_at": "2026-03-25T08:00:00Z",
+    "updated_at": "2026-04-01T16:45:00Z",
+    "message_count": 15,
+    "last_message_author": "user",
+    "last_message_title": null,
+    "last_message_at": "2026-04-01T16:45:00Z",
+    "has_pinned": false,
+    "pinned_title": null
+  },
+  {
+    "id": "embedding-search",
+    "project": "mcp-switchboard",
+    "goal": "Semantic search with OpenAI embeddings — design and implementation notes",
+    "archived": false,
+    "created_at": "2026-03-28T11:00:00Z",
+    "updated_at": "2026-03-31T14:20:00Z",
+    "message_count": 9,
+    "last_message_author": "cc-worker",
+    "last_message_title": null,
+    "last_message_at": "2026-03-31T14:20:00Z",
+    "has_pinned": false,
+    "pinned_title": null
+  },
+  {
+    "id": "crash-recovery",
+    "project": "mcp-switchboard",
+    "goal": "Crash recovery and orphan detection strategy",
+    "archived": false,
+    "created_at": "2026-03-10T09:30:00Z",
+    "updated_at": "2026-03-29T12:00:00Z",
+    "message_count": 6,
+    "last_message_author": "user",
+    "last_message_title": null,
+    "last_message_at": "2026-03-29T12:00:00Z",
+    "has_pinned": false,
+    "pinned_title": null
+  }
+]

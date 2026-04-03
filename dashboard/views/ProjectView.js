@@ -10,6 +10,7 @@ import { routes, navigate } from '../router.js';
 import { api } from '../api.js';
 import { relativeTime } from '../components/utils.js';
 import { TaskView } from './TaskView.js';
+import { ConversationIndex } from './ConversationIndex.js';
 import { styles as fkStyles, FormField, FormRow, Toggle } from '../components/FormKit.js';
 import { ProjectHeader } from '../components/ProjectHeader.js';
 import { TaskList } from '../components/TaskList.js';
@@ -944,7 +945,7 @@ export function ProjectView({ id, tab }) {
             />
         `;
     } else if (activeTab === 'conversations') {
-        tabContent = html`<${ConversationsSection} conversations=${conversations} />`;
+        tabContent = html`<${ConversationIndex} projectId=${id} />`;
     } else if (activeTab === 'files') {
         tabContent = html`
             <div style=${{
