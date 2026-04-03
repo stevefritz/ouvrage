@@ -2058,7 +2058,6 @@ function EditFieldLabel({ label, tooltip }) {
 }
 
 const FIELD_TOOLTIPS = {
-    component_id:       'Component this task belongs to within the project.',
     base_branch:        'Git branch this task was branched from. Usually main or the previous task\'s branch.',
     branch_target:      'Branch this task\'s PR will merge into.',
     tags:               'Free-form labels for filtering and grouping tasks.',
@@ -2089,10 +2088,6 @@ function diffTaskFields(original, form) {
             const orig = (original.tags || []).slice().sort().join(',');
             const next = (value || []).slice().sort().join(',');
             if (orig !== next) changed.tags = value;
-        } else if (key === 'component_id') {
-            const orig = original.component_id || null;
-            const next = value || null;
-            if (orig !== next) changed.component_id = next;
         } else if (['auto_test','auto_review','auto_pr','auto_merge'].includes(key)) {
             if (Boolean(original[key]) !== Boolean(value)) changed[key] = Boolean(value);
         } else if (['max_turns','max_wall_clock','max_test_retries','max_review_retries'].includes(key)) {
@@ -2111,14 +2106,12 @@ function diffTaskFields(original, form) {
 // ── EditTaskPanel ────────────────────────────────────────────
 
 function EditTaskPanel({ task, onClose, onSaved }) {
-    const [components, setComponents] = useState([]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
     const [tagInput, setTagInput] = useState('');
 
     // Form state — all mutable fields
     const [form, setForm] = useState(() => ({
-        component_id:       task.component_id || '',
         base_branch:        task.base_branch || '',
         branch_target:      task.branch_target || '',
         tags:               task.tags ? [...task.tags] : [],
@@ -2136,17 +2129,6 @@ function EditTaskPanel({ task, onClose, onSaved }) {
         conversation_id:    task.conversation_id || '',
         claude_chat_url:    task.claude_chat_url || '',
     }));
-
-    // Load components for dropdown
-    useEffect(() => {
-        if (!task.project_id) return;
-        api.getComponents(task.project_id)
-            .then(data => {
-                const list = Array.isArray(data) ? data : (data.components || []);
-                setComponents(list);
-            })
-            .catch(() => setComponents([]));
-    }, [task.project_id]);
 
     const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -2289,21 +2271,6 @@ function EditTaskPanel({ task, onClose, onSaved }) {
 
                 <!-- Form body -->
                 <div style=${{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                    <!-- Component -->
-                    <div>
-                        <${EditFieldLabel} label="Component" tooltip=${FIELD_TOOLTIPS.component_id} />
-                        <select
-                            value=${form.component_id}
-                            onChange=${e => set('component_id', e.target.value)}
-                            style=${{ ...inputStyle }}
-                        >
-                            <option value="">No component</option>
-                            ${components.map(c => html`
-                                <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
-                            `)}
-                        </select>
-                    </div>
 
                     <!-- Branch fields -->
                     <div style=${sectionStyle}>
