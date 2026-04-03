@@ -2153,6 +2153,65 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
     `;
 }
 
+// RepoUrlField — read-only repo URL display with copy button
+// ---------------------------------------------------------------------------
+
+function RepoUrlField({ repo }) {
+    const [copied, setCopied] = useState(false);
+
+    if (!repo) return null;
+
+    const handleCopy = async () => {
+        try {
+            await navigator.clipboard.writeText(repo);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } catch (_) {}
+    };
+
+    return html`
+        <${FormField} label="Repository">
+            <div style=${{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+            }}>
+                <span style=${{
+                    flex: 1,
+                    fontFamily: typography.fontMono,
+                    fontSize: typography.size.sm,
+                    color: colors.textSecondary,
+                    background: colors.bg,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: layout.borderRadius.sm,
+                    padding: '6px 10px',
+                    wordBreak: 'break-all',
+                    lineHeight: '1.4',
+                    display: 'block',
+                }}>${repo}</span>
+                <button
+                    type="button"
+                    onClick=${handleCopy}
+                    title="Copy repository URL"
+                    style=${{
+                        flexShrink: 0,
+                        padding: '6px 10px',
+                        borderRadius: layout.borderRadius.sm,
+                        background: copied ? colors.greenBg : colors.surfaceHover,
+                        border: `1px solid ${copied ? colors.green + '44' : colors.border}`,
+                        color: copied ? colors.green : colors.textTertiary,
+                        cursor: 'pointer',
+                        fontSize: typography.size.xs,
+                        fontFamily: typography.fontBody,
+                        transition: 'color 0.15s, background 0.15s, border-color 0.15s',
+                        whiteSpace: 'nowrap',
+                    }}
+                >${copied ? 'Copied!' : 'Copy'}</button>
+            </div>
+        </${FormField}>
+    `;
+}
+
 // EditProjectPanel — slide-out panel for editing project configuration
 // ---------------------------------------------------------------------------
 
@@ -2381,6 +2440,7 @@ function EditProjectPanel({ project, onClose, onSaved }) {
                     <!-- Git section -->
                     <div>
                         <div style=${sectionLabelStyle}>Git</div>
+                        <${RepoUrlField} repo=${project.repo} />
                         <${FormField} label="Default Branch">
                             <input
                                 type="text"
