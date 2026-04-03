@@ -595,9 +595,6 @@ function ActionToolbar({ task, chain, apiActions, onAction }) {
     if (task.status === 'ready' && !task.held && !task.queued_at) {
         actions.push(btn('hold', 'Hold', colors.yellowBg, colors.yellow, true));
     }
-    if (task.status === 'completed' && task.gate_status === 'passed') {
-        actions.push(btn('advance-chain', 'Advance', colors.accentBg, colors.accent, true));
-    }
     if (task.worktree_path) {
         actions.push(btn('release-worktree', 'Release WT', 'rgba(249, 115, 22, 0.12)', '#fb923c', true));
     }
