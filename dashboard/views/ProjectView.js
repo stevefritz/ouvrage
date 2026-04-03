@@ -1,5 +1,5 @@
 // Foreman Project View
-// Layout: Recent Activity → Components (knowledge drawers) → Conversations → Tasks
+// Layout: Recent Activity → Conversations → Tasks
 // Spec: foreman-design conversation, messages [6-9]
 
 import { h } from 'https://esm.sh/preact@10.25.4';
@@ -336,1081 +336,11 @@ function RecentActivity({ projectId }) {
 }
 
 // ---------------------------------------------------------------------------
-// Component drawer — knowledge card for a component
-// ---------------------------------------------------------------------------
-
-function PunchlistSection({ componentId, componentName }) {
-    const [items, setItems] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [newText, setNewText] = useState('');
-    const [adding, setAdding] = useState(false);
-    const [selectedIds, setSelectedIds] = useState(new Set());
-    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-    const [busyIds, setBusyIds] = useState(new Set());
-    const [error, setError] = useState(null);
-
-    const loadItems = useCallback(() => {
-        api.getPunchlist(componentId)
-            .then(data => { setItems(data); setLoading(false); })
-            .catch(() => { setItems([]); setLoading(false); });
-    }, [componentId]);
-
-    useEffect(() => { loadItems(); }, [loadItems]);
-
-    const nextStatus = (s) => {
-        if (s === 'open') return 'claimed';
-        if (s === 'claimed') return 'done';
-        return 'open';
-    };
-
-    const statusColor = (s) => {
-        if (s === 'done') return colors.green;
-        if (s === 'claimed') return colors.yellow;
-        return colors.textTertiary;
-    };
-
-    const statusIcon = (s) => {
-        if (s === 'done') return '✓';
-        if (s === 'claimed') return '◉';
-        return '○';
-    };
-
-    const handleToggleStatus = useCallback(async (item) => {
-        if (busyIds.has(item.id)) return;
-        const next = nextStatus(item.status);
-        setBusyIds(prev => new Set([...prev, item.id]));
-        try {
-            await api.updatePunchlistStatus(componentId, item.id, next);
-            setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: next } : i));
-            if (next !== 'open') {
-                setSelectedIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
-            }
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setBusyIds(prev => { const s = new Set(prev); s.delete(item.id); return s; });
-        }
-    }, [componentId, busyIds]);
-
-    const handleAdd = useCallback(async () => {
-        const text = newText.trim();
-        if (!text || adding) return;
-        setAdding(true);
-        setError(null);
-        try {
-            const item = await api.addPunchlistItem(componentId, text);
-            setItems(prev => [...(prev || []), item]);
-            setNewText('');
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setAdding(false);
-        }
-    }, [componentId, newText, adding]);
-
-    const handleDelete = useCallback(async (itemId) => {
-        setBusyIds(prev => new Set([...prev, itemId]));
-        setError(null);
-        try {
-            await api.deletePunchlistItem(componentId, itemId);
-            setItems(prev => prev.filter(i => i.id !== itemId));
-            setSelectedIds(prev => { const s = new Set(prev); s.delete(itemId); return s; });
-            setConfirmDeleteId(null);
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setBusyIds(prev => { const s = new Set(prev); s.delete(itemId); return s; });
-        }
-    }, [componentId]);
-
-    const handleToggleSelect = useCallback((itemId) => {
-        setSelectedIds(prev => {
-            const s = new Set(prev);
-            if (s.has(itemId)) s.delete(itemId); else s.add(itemId);
-            return s;
-        });
-    }, []);
-
-    const handleCreateTask = useCallback(() => {
-        const selectedItems = (items || []).filter(i => selectedIds.has(i.id));
-        const scaffold = {
-            componentId,
-            componentName: componentName || componentId,
-            items: selectedItems.map(i => ({ id: i.id, text: i.item || i.text || '' })),
-        };
-        sessionStorage.setItem('foreman-punchlist-scaffold', JSON.stringify(scaffold));
-        window.location.hash = '#/task/new';
-    }, [items, selectedIds, componentId, componentName]);
-
-    const handleKeyDown = useCallback((e) => {
-        if (e.key === 'Enter') handleAdd();
-    }, [handleAdd]);
-
-    if (loading) {
-        return html`<div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, padding: '4px 0' }}>Loading punchlist…</div>`;
-    }
-
-    const displayItems = items || [];
-    const openCount = displayItems.filter(i => i.status === 'open').length;
-    const selectedCount = selectedIds.size;
-
-    const btnBase = {
-        background: 'transparent',
-        border: `1px solid ${colors.border}`,
-        borderRadius: '4px',
-        color: colors.textTertiary,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        fontSize: typography.size.xs,
-        padding: '2px 8px',
-        lineHeight: '18px',
-    };
-
-    const btnPrimary = {
-        ...btnBase,
-        background: colors.accent,
-        border: `1px solid ${colors.accent}`,
-        color: '#fff',
-    };
-
-    const btnDanger = {
-        ...btnBase,
-        color: colors.red,
-        borderColor: colors.red,
-    };
-
-    return html`
-        <div>
-            <!-- Header row with count + multi-select button -->
-            <div style=${{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '8px',
-            }}>
-                <div style=${{
-                    fontSize: typography.size.sm,
-                    fontWeight: typography.weight.semibold,
-                    color: colors.textSecondary,
-                }}>Punchlist · ${openCount} open</div>
-                ${selectedCount > 0 ? html`
-                    <button
-                        style=${btnPrimary}
-                        onClick=${handleCreateTask}
-                        title="Opens the Task Create form with selected items pre-filled as spec + checklist. Component auto-assigned."
-                    >Create task from ${selectedCount} selected</button>
-                ` : null}
-            </div>
-
-            ${error ? html`<div style=${{
-                fontSize: typography.size.xs,
-                color: colors.red,
-                marginBottom: '6px',
-            }}>${error}</div>` : null}
-
-            <!-- Item list -->
-            ${displayItems.length === 0 ? html`
-                <div style=${{ color: colors.textTertiary, fontSize: typography.size.xs, fontStyle: 'italic', marginBottom: '8px' }}>No punchlist items</div>
-            ` : html`
-                <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
-                    ${displayItems.map(item => html`
-                        <div key=${item.id} style=${{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            fontSize: typography.size.sm,
-                        }}>
-                            <!-- Checkbox (open items only) -->
-                            ${item.status === 'open' ? html`
-                                <input
-                                    type="checkbox"
-                                    checked=${selectedIds.has(item.id)}
-                                    onChange=${() => handleToggleSelect(item.id)}
-                                    style=${{ accentColor: colors.accent, flexShrink: 0, cursor: 'pointer', margin: 0 }}
-                                />
-                            ` : html`<span style=${{ width: '13px', flexShrink: 0 }}></span>`}
-
-                            <!-- Status icon (clickable) -->
-                            <span
-                                onClick=${() => handleToggleStatus(item)}
-                                title="Click to cycle status"
-                                style=${{
-                                    color: busyIds.has(item.id) ? colors.textTertiary : statusColor(item.status),
-                                    fontSize: typography.size.xs,
-                                    flexShrink: 0,
-                                    width: '14px',
-                                    textAlign: 'center',
-                                    cursor: 'pointer',
-                                    userSelect: 'none',
-                                    opacity: busyIds.has(item.id) ? 0.5 : 1,
-                                }}
-                            >${statusIcon(item.status)}</span>
-
-                            <!-- Item text -->
-                            <span style=${{
-                                color: item.status === 'done' ? colors.textTertiary : colors.textSecondary,
-                                textDecoration: item.status === 'done' ? 'line-through' : 'none',
-                                flex: 1,
-                                lineHeight: 1.4,
-                                minWidth: 0,
-                            }}>${item.item || item.text || item.description}</span>
-
-                            <!-- Task link -->
-                            ${item.task_id ? html`
-                                <a href=${routes.task(item.task_id)} style=${{
-                                    fontFamily: typography.fontMono,
-                                    fontSize: typography.size.xs,
-                                    color: colors.accent,
-                                    textDecoration: 'none',
-                                    flexShrink: 0,
-                                }}>↗</a>
-                            ` : null}
-
-                            <!-- Delete button / confirm -->
-                            ${confirmDeleteId === item.id ? html`
-                                <span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                    <span style=${{ fontSize: typography.size.xs, color: colors.textTertiary }}>Delete?</span>
-                                    <button
-                                        style=${btnDanger}
-                                        onClick=${() => handleDelete(item.id)}
-                                        disabled=${busyIds.has(item.id)}
-                                    >Yes</button>
-                                    <button
-                                        style=${btnBase}
-                                        onClick=${() => setConfirmDeleteId(null)}
-                                    >Cancel</button>
-                                </span>
-                            ` : html`
-                                <button
-                                    style=${{
-                                        ...btnBase,
-                                        padding: '1px 5px',
-                                        fontSize: '10px',
-                                        opacity: 0.4,
-                                        flexShrink: 0,
-                                    }}
-                                    onClick=${() => setConfirmDeleteId(item.id)}
-                                    title="Delete item"
-                                >×</button>
-                            `}
-                        </div>
-                    `)}
-                </div>
-            `}
-
-            <!-- Add item input -->
-            <div style=${{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <input
-                    type="text"
-                    value=${newText}
-                    onInput=${(e) => setNewText(e.target.value)}
-                    onKeyDown=${handleKeyDown}
-                    placeholder="Add punchlist item…"
-                    style=${{
-                        flex: 1,
-                        background: 'transparent',
-                        border: `1px solid ${colors.border}`,
-                        borderRadius: '4px',
-                        color: colors.text,
-                        fontFamily: 'inherit',
-                        fontSize: typography.size.xs,
-                        padding: '3px 8px',
-                        outline: 'none',
-                        minWidth: 0,
-                    }}
-                />
-                <button
-                    style=${{
-                        ...btnBase,
-                        opacity: newText.trim() ? 1 : 0.4,
-                        cursor: newText.trim() ? 'pointer' : 'default',
-                    }}
-                    onClick=${handleAdd}
-                    disabled=${!newText.trim() || adding}
-                    title="Add punchlist item"
-                >${adding ? '…' : 'Add'}</button>
-            </div>
-        </div>
-    `;
-}
-
-function ComponentCard({ component, allTasks, onClick }) {
-    const componentTasks = allTasks.filter(t => t.component_id === component.id);
-    const runningCount = componentTasks.filter(t => t.status === 'working').length;
-
-    const phaseColor = {
-        planning: colors.yellow,
-        building: colors.green,
-        polish: colors.blue,
-        deployed: colors.textSecondary,
-    }[component.phase] || colors.textTertiary;
-
-    const cardStyle = {
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.lg,
-        overflow: 'hidden',
-        transition: `border-color ${animation.durationNormal}`,
-        cursor: 'pointer',
-    };
-
-    const headerStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '12px 16px',
-        userSelect: 'none',
-    };
-
-    const nameStyle = {
-        fontFamily: typography.fontBody,
-        fontSize: typography.size.md,
-        fontWeight: typography.weight.medium,
-        color: colors.text,
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-    };
-
-    const metaStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        flexShrink: 0,
-    };
-
-    return html`
-        <div style=${cardStyle} class="foreman-component-card" onClick=${() => onClick(component)}>
-            <div style=${headerStyle} class="foreman-component-header">
-                <span style=${nameStyle}>${component.name || component.id}</span>
-                <div style=${metaStyle}>
-                    ${component.phase ? html`
-                        <span style=${{
-                            fontSize: typography.size.xs,
-                            color: phaseColor,
-                            fontWeight: typography.weight.medium,
-                        }}>${component.phase}</span>
-                    ` : null}
-                    ${runningCount > 0 ? html`
-                        <span style=${{
-                            fontSize: typography.size.xs,
-                            color: colors.green,
-                            fontFamily: typography.fontMono,
-                        }}>${runningCount} running</span>
-                    ` : null}
-                    <span style=${{
-                        fontFamily: typography.fontMono,
-                        fontSize: typography.size.xs,
-                        color: colors.textTertiary,
-                    }}>${componentTasks.length} task${componentTasks.length !== 1 ? 's' : ''}</span>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function ComponentPanel({ component, conversations, allTasks, onClose, onFilterByComponent, onComponentUpdated }) {
-    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
-    const [localComponent, setLocalComponent] = useState(null);
-    const [editingField, setEditingField] = useState(null); // 'name' | 'description'
-    const [editingValue, setEditingValue] = useState('');
-    const [editSaving, setEditSaving] = useState(false);
-    const [editError, setEditError] = useState(null);
-    const nameInputRef = useRef(null);
-    const descTextareaRef = useRef(null);
-    const justCancelled = useRef(false);
-
-    useEffect(() => { setLocalComponent(component); }, [component]);
-
-    useEffect(() => {
-        if (editingField === 'name' && nameInputRef.current) {
-            nameInputRef.current.focus();
-            nameInputRef.current.select();
-        }
-        if (editingField === 'description' && descTextareaRef.current) {
-            descTextareaRef.current.focus();
-        }
-    }, [editingField]);
-
-    const refreshComponent = useCallback(async () => {
-        if (!component) return;
-        try {
-            const updated = await api.getComponent(component.id);
-            setLocalComponent(updated);
-            if (onComponentUpdated) onComponentUpdated(updated);
-        } catch (_) { /* ignore */ }
-    }, [component, onComponentUpdated]);
-
-    useEffect(() => {
-        const check = () => setIsMobile(window.innerWidth < 640);
-        window.addEventListener('resize', check);
-        return () => window.removeEventListener('resize', check);
-    }, []);
-
-    useEffect(() => {
-        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
-    const startEdit = (field) => {
-        setEditingField(field);
-        const cur = localComponent || component;
-        setEditingValue(field === 'name' ? (cur.name || '') : (cur.description || ''));
-        setEditError(null);
-    };
-
-    const cancelEdit = () => {
-        justCancelled.current = true;
-        setEditingField(null);
-        setEditingValue('');
-        setEditError(null);
-    };
-
-    const saveEdit = async (field, value) => {
-        if (justCancelled.current) { justCancelled.current = false; return; }
-        if (!field) return;
-        if (field === 'name' && !value.trim()) { cancelEdit(); return; }
-        setEditSaving(true);
-        try {
-            const compId = (localComponent || component).id;
-            await api.updateComponent(compId, { [field]: value });
-            const updated = await api.getComponent(compId);
-            setLocalComponent(updated);
-            if (onComponentUpdated) onComponentUpdated(updated);
-            setEditingField(null);
-            setEditingValue('');
-        } catch (err) {
-            setEditError(err.message || 'Save failed');
-        } finally {
-            setEditSaving(false);
-        }
-    };
-
-    const handleEditKeyDown = (e, field, value) => {
-        if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); return; }
-        if (e.key === 'Enter' && field === 'name') { e.preventDefault(); saveEdit(field, value); }
-    };
-
-    if (!component) return null;
-
-    // eff: use locally-updated state after a save, fall back to prop before first save
-    const eff = localComponent || component;
-
-    const linkedConvs = conversations.filter(c => c.component_id === eff.id).slice(0, 5);
-    const componentTasks = allTasks
-        .filter(t => t.component_id === eff.id)
-        .sort((a, b) => {
-            const ta = a.last_activity || a.updated_at || '';
-            const tb = b.last_activity || b.updated_at || '';
-            return tb < ta ? -1 : tb > ta ? 1 : 0;
-        });
-    const chainMap = buildChainMap(allTasks);
-    const runningCount = componentTasks.filter(t => t.status === 'working').length;
-    const blockedCount = componentTasks.filter(t => t.status === 'failed' || t.status === 'needs-review').length;
-    const doneCount = componentTasks.filter(t => t.status === 'completed' || t.status === 'merged').length;
-
-    const summaryParts = [];
-    if (runningCount) summaryParts.push(`${runningCount} running`);
-    if (blockedCount) summaryParts.push(`${blockedCount} blocked`);
-    if (doneCount) summaryParts.push(`${doneCount} done`);
-    const summaryText = summaryParts.join(' · ') || 'No tasks';
-
-    const phaseColor = {
-        planning: colors.yellow,
-        building: colors.green,
-        polish: colors.blue,
-        deployed: colors.textSecondary,
-    }[eff.phase] || colors.textTertiary;
-
-    const panelStyle = isMobile ? {
-        position: 'fixed', left: 0, right: 0, bottom: 0,
-        height: '65vh', background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: `${layout.borderRadius.lg} ${layout.borderRadius.lg} 0 0`,
-        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)', zIndex: 500,
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        maxWidth: '100vw', boxSizing: 'border-box',
-        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
-    } : {
-        position: 'fixed', top: 0, right: 0, bottom: 0,
-        width: 'clamp(380px, 30vw, 520px)', background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        boxShadow: '-8px 0 40px rgba(0,0,0,0.4)', zIndex: 500,
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
-    };
-
-    const closeBtnStyle = {
-        background: 'none', border: 'none', color: colors.textTertiary,
-        cursor: 'pointer', fontSize: '20px', lineHeight: 1,
-        padding: '2px 6px', borderRadius: layout.borderRadius.sm,
-    };
-
-    const subheadStyle = {
-        fontSize: typography.size.xs, fontWeight: typography.weight.semibold,
-        color: colors.textTertiary, letterSpacing: '0.06em',
-        textTransform: 'uppercase', marginBottom: '6px',
-    };
-
-    const filterBtnStyle = {
-        display: 'inline-flex', alignItems: 'center', gap: '6px',
-        fontSize: typography.size.sm, fontWeight: typography.weight.medium,
-        color: colors.accent, background: colors.accentBg,
-        border: `1px solid rgba(124, 90, 246, 0.25)`,
-        borderRadius: layout.borderRadius.md,
-        padding: '8px 16px', cursor: 'pointer', width: '100%',
-        justifyContent: 'center',
-    };
-
-    const handleFilter = () => {
-        onFilterByComponent(component.id);
-        onClose();
-    };
-
-    // Config overrides — check for non-default values
-    const config = eff.config || {};
-    const hasOverrides = config.model || config.auto_test === false || config.auto_review === false
-        || config.max_turns || config.max_wall_clock || config.test_command || config.setup_command;
-
-    return html`
-        <div>
-            <style>${`
-                @keyframes foreman-slide-right {
-                    from { transform: translateX(100%); opacity: 0; }
-                    to   { transform: translateX(0);    opacity: 1; }
-                }
-                @keyframes foreman-slide-up {
-                    from { transform: translateY(100%); opacity: 0; }
-                    to   { transform: translateY(0);    opacity: 1; }
-                }
-                .comp-edit-wrap { display: flex; align-items: center; gap: 6px; }
-                .comp-edit-pencil { background: none; border: none; color: #888; cursor: pointer; padding: 0 2px; font-size: 13px; opacity: 0; transition: opacity 0.15s; line-height: 1; flex-shrink: 0; }
-                .comp-edit-wrap:hover .comp-edit-pencil { opacity: 0.7; }
-                .comp-edit-pencil:hover { opacity: 1 !important; }
-                .comp-edit-name-wrap { flex: 1; overflow: hidden; }
-                .comp-edit-desc-wrap { min-height: 20px; }
-            `}</style>
-            <div style=${{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 499 }}
-                 onClick=${onClose} />
-            <div style=${panelStyle}>
-                <!-- Header -->
-                <div style=${{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 16px', borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
-                }}>
-                    <div class="comp-edit-wrap comp-edit-name-wrap" style=${{ flex: 1, overflow: 'hidden' }}>
-                        ${editingField === 'name' ? html`
-                            <input
-                                ref=${nameInputRef}
-                                value=${editingValue}
-                                onInput=${e => setEditingValue(e.target.value)}
-                                onKeyDown=${e => handleEditKeyDown(e, 'name', editingValue)}
-                                onBlur=${() => saveEdit('name', editingValue)}
-                                disabled=${editSaving}
-                                style=${{
-                                    fontFamily: typography.fontBody, fontSize: typography.size.lg,
-                                    fontWeight: typography.weight.semibold, color: colors.text,
-                                    background: colors.bg, border: `1px solid ${colors.border}`,
-                                    borderRadius: layout.borderRadius.sm, padding: '2px 6px',
-                                    width: '100%', outline: 'none', boxSizing: 'border-box',
-                                }}
-                            />
-                        ` : html`
-                            <span style=${{
-                                fontFamily: typography.fontBody, fontSize: typography.size.lg,
-                                fontWeight: typography.weight.semibold, color: colors.text,
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                display: 'block',
-                            }}>${eff.name || eff.id}</span>
-                            <button class="comp-edit-pencil" onClick=${() => startEdit('name')} title="Edit name">✎</button>
-                        `}
-                    </div>
-                    ${eff.phase ? html`
-                        <span style=${{
-                            fontSize: typography.size.xs, color: phaseColor,
-                            fontWeight: typography.weight.medium,
-                            padding: '2px 8px', borderRadius: layout.borderRadius.pill,
-                            background: phaseColor + '18',
-                        }}>${eff.phase}</span>
-                    ` : null}
-                    <${ControlButtons}
-                        paused=${component.paused}
-                        onPause=${async () => { await api.pauseComponent(component.id); await refreshComponent(); }}
-                        onResume=${async () => { await api.resumeComponent(component.id); await refreshComponent(); }}
-                        onStop=${async () => { await api.stopComponent(component.id); await refreshComponent(); }}
-                        entityType="component"
-                    />
-                    <button style=${closeBtnStyle} onClick=${onClose} title="Close (Esc)">×</button>
-                </div>
-
-                <!-- Body -->
-                <div style=${{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    <!-- Description inline edit -->
-                    <div class="comp-edit-wrap comp-edit-desc-wrap">
-                        ${editingField === 'description' ? html`
-                            <textarea
-                                ref=${descTextareaRef}
-                                value=${editingValue}
-                                onInput=${e => setEditingValue(e.target.value)}
-                                onKeyDown=${e => handleEditKeyDown(e, 'description', editingValue)}
-                                onBlur=${() => saveEdit('description', editingValue)}
-                                disabled=${editSaving}
-                                rows="3"
-                                style=${{
-                                    width: '100%', fontFamily: typography.fontBody,
-                                    fontSize: typography.size.sm, color: colors.text,
-                                    background: colors.bg, border: `1px solid ${colors.border}`,
-                                    borderRadius: layout.borderRadius.sm, padding: '5px 8px',
-                                    outline: 'none', resize: 'vertical', boxSizing: 'border-box',
-                                    lineHeight: typography.lineHeight.relaxed,
-                                }}
-                            />
-                        ` : html`
-                            <span style=${{
-                                fontSize: typography.size.sm, flex: 1,
-                                color: eff.description ? colors.textSecondary : colors.textTertiary,
-                                fontStyle: eff.description ? 'normal' : 'italic',
-                                cursor: eff.description ? 'default' : 'pointer',
-                            }} onClick=${eff.description ? undefined : () => startEdit('description')}>${eff.description || 'Add description…'}</span>
-                            <button class="comp-edit-pencil" onClick=${() => startEdit('description')} title="Edit description">✎</button>
-                        `}
-                    </div>
-                    ${editError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${editError}</div>` : null}
-
-                    <!-- Summary -->
-                    <div style=${{
-                        fontSize: typography.size.sm, color: colors.textSecondary,
-                    }}>${summaryText}</div>
-
-                    <!-- Filter tasks button -->
-                    <button style=${filterBtnStyle} onClick=${handleFilter}>
-                        ⚡ Filter tasks to ${eff.name || eff.id}
-                    </button>
-
-                    <!-- Linked conversations -->
-                    ${linkedConvs.length > 0 ? html`
-                        <div>
-                            <div style=${subheadStyle}>Conversations</div>
-                            <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                ${linkedConvs.map(conv => html`
-                                    <a key=${conv.id}
-                                       href=${routes.conversation(conv.id)}
-                                       style=${{
-                                           display: 'flex', alignItems: 'baseline',
-                                           justifyContent: 'space-between', gap: '8px',
-                                           padding: '6px 8px', borderRadius: layout.borderRadius.sm,
-                                           background: colors.surfaceActive, textDecoration: 'none',
-                                           color: colors.text, fontSize: typography.size.sm,
-                                       }}
-                                       class="foreman-conv-row"
-                                    >
-                                        <span style=${{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            ${conv.goal || conv.id}
-                                        </span>
-                                        <span style=${{
-                                            fontFamily: typography.fontMono, fontSize: typography.size.xs,
-                                            color: colors.textTertiary, flexShrink: 0,
-                                        }}>${relativeTime(conv.last_activity || conv.updated_at)}</span>
-                                    </a>
-                                `)}
-                            </div>
-                        </div>
-                    ` : null}
-
-                    <!-- Punchlist -->
-                    <${PunchlistSection} componentId=${eff.id} componentName=${eff.name} />
-
-                    <!-- Tasks -->
-                    <div>
-                        <div style=${subheadStyle}>Tasks · ${componentTasks.length}</div>
-                        ${componentTasks.length === 0 ? html`
-                            <div style=${{
-                                fontSize: typography.size.sm,
-                                color: colors.textTertiary,
-                                fontStyle: 'italic',
-                            }}>No tasks yet</div>
-                        ` : html`
-                            <div style=${{ display: 'flex', flexDirection: 'column' }}>
-                                ${componentTasks.map(task => {
-                                    const chain = chainMap.get(task.id);
-                                    const goal = task.goal || task.id;
-                                    const displayGoal = goal.length > 52 ? goal.slice(0, 51) + '…' : goal;
-                                    const taskShortId = task.id.includes('/') ? task.id.split('/').slice(1).join('/') : task.id;
-                                    const displayId = taskShortId.length > 22 ? taskShortId.slice(0, 21) + '…' : taskShortId;
-                                    return html`
-                                        <a key=${task.id}
-                                           href=${routes.task(task.id)}
-                                           style=${{
-                                               display: 'flex',
-                                               alignItems: 'center',
-                                               gap: '8px',
-                                               padding: '7px 0',
-                                               borderBottom: `1px solid ${colors.border}22`,
-                                               minWidth: 0,
-                                               textDecoration: 'none',
-                                               color: 'inherit',
-                                           }}
-                                           class="foreman-task-row"
-                                        >
-                                            <${StatusDot} status=${task.status} />
-                                            <span style=${{
-                                                flex: 1,
-                                                fontSize: typography.size.sm,
-                                                color: colors.text,
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                minWidth: 0,
-                                            }}>${displayGoal}</span>
-                                            <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-                                                <span style=${{
-                                                    fontFamily: typography.fontMono,
-                                                    fontSize: typography.size.xs,
-                                                    color: colors.textTertiary,
-                                                    whiteSpace: 'nowrap',
-                                                }} title=${task.id}>${displayId}</span>
-                                                ${chain ? html`
-                                                    <${ChainBadge}
-                                                        position=${chain.position}
-                                                        total=${chain.total}
-                                                    />
-                                                ` : null}
-                                                <span style=${{
-                                                    fontFamily: typography.fontMono,
-                                                    fontSize: typography.size.xs,
-                                                    color: colors.textTertiary,
-                                                    whiteSpace: 'nowrap',
-                                                }}>${relativeTime(task.last_activity || task.updated_at)}</span>
-                                            </div>
-                                        </a>
-                                    `;
-                                })}
-                            </div>
-                        `}
-                    </div>
-
-                    <!-- Config overrides -->
-                    ${hasOverrides ? html`
-                        <div>
-                            <div style=${subheadStyle}>Config Overrides</div>
-                            <div style=${{
-                                fontSize: typography.size.xs, color: colors.textSecondary,
-                                fontFamily: typography.fontMono, lineHeight: 1.6,
-                            }}>
-                                ${config.model ? html`model: ${config.model}<br />` : null}
-                                ${config.auto_test === false ? html`auto_test: off<br />` : null}
-                                ${config.auto_review === false ? html`auto_review: off<br />` : null}
-                                ${config.max_turns ? html`max_turns: ${config.max_turns}<br />` : null}
-                                ${config.test_command ? html`test: ${config.test_command}<br />` : null}
-                            </div>
-                        </div>
-                    ` : null}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function slugifyComponent(text) {
-    return text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 60);
-}
-
-function ComponentsSection({ components, conversations, tasks, componentFilter, onComponentFilter, projectId, onComponentCreated, onComponentUpdated }) {
-    const [selectedComponent, setSelectedComponent] = useState(null);
-
-    const handleComponentUpdated = (comp) => {
-        setSelectedComponent(comp);
-        if (onComponentUpdated) onComponentUpdated(comp);
-    };
-    const [showForm, setShowForm] = useState(false);
-    const [formName, setFormName] = useState('');
-    const [formDesc, setFormDesc] = useState('');
-    const [submitting, setSubmitting] = useState(false);
-    const [formError, setFormError] = useState(null);
-    const [showNameTip, setShowNameTip] = useState(false);
-
-    const derivedId = slugifyComponent(formName);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (!formName.trim()) return;
-        setSubmitting(true);
-        setFormError(null);
-        try {
-            const result = await api.createComponent({
-                id: derivedId,
-                project_id: projectId,
-                name: formName.trim(),
-                description: formDesc.trim() || undefined,
-            });
-            onComponentCreated(result);
-            setFormName('');
-            setFormDesc('');
-            setShowForm(false);
-        } catch (err) {
-            setFormError(err.message || 'Failed to create component');
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    const handleCancel = () => {
-        setShowForm(false);
-        setFormName('');
-        setFormDesc('');
-        setFormError(null);
-    };
-
-    const sectionStyle = {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-    };
-
-    const headerRowStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: '4px',
-    };
-
-    const headerStyle = {
-        fontSize: typography.size.sm,
-        fontWeight: typography.weight.semibold,
-        color: colors.textSecondary,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-    };
-
-    const newBtnStyle = {
-        fontSize: typography.size.xs,
-        fontFamily: typography.fontBody,
-        fontWeight: typography.weight.medium,
-        color: colors.accent,
-        background: 'transparent',
-        border: `1px solid ${colors.accent}`,
-        borderRadius: layout.borderRadius.sm,
-        padding: '3px 10px',
-        cursor: 'pointer',
-        lineHeight: '1.4',
-    };
-
-    const gridStyle = {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: '8px',
-    };
-
-    const formBoxStyle = {
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.md,
-        padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        marginTop: '4px',
-    };
-
-    const inputStyle = {
-        width: '100%',
-        background: colors.bg,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.sm,
-        color: colors.text,
-        fontFamily: typography.fontBody,
-        fontSize: typography.size.sm,
-        padding: '7px 10px',
-        boxSizing: 'border-box',
-        outline: 'none',
-    };
-
-    const textareaStyle = {
-        ...inputStyle,
-        resize: 'vertical',
-        minHeight: '72px',
-    };
-
-    const labelStyle = {
-        fontSize: typography.size.xs,
-        fontWeight: typography.weight.medium,
-        color: colors.textSecondary,
-        marginBottom: '5px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '5px',
-    };
-
-    const hintStyle = {
-        fontSize: typography.size.xs,
-        color: colors.textTertiary,
-        marginTop: '3px',
-    };
-
-    const formActionsStyle = {
-        display: 'flex',
-        gap: '8px',
-        alignItems: 'center',
-    };
-
-    const submitBtnStyle = {
-        fontFamily: typography.fontBody,
-        fontSize: typography.size.sm,
-        fontWeight: typography.weight.medium,
-        background: colors.accent,
-        color: '#fff',
-        border: 'none',
-        borderRadius: layout.borderRadius.sm,
-        padding: '7px 16px',
-        cursor: submitting ? 'not-allowed' : 'pointer',
-        opacity: submitting ? 0.7 : 1,
-    };
-
-    const cancelBtnStyle = {
-        fontFamily: typography.fontBody,
-        fontSize: typography.size.sm,
-        fontWeight: typography.weight.medium,
-        background: 'transparent',
-        color: colors.textSecondary,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.sm,
-        padding: '7px 14px',
-        cursor: 'pointer',
-    };
-
-    const tipStyle = {
-        position: 'absolute',
-        bottom: '120%',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.md,
-        padding: '8px 10px',
-        fontSize: typography.size.xs,
-        color: colors.textSecondary,
-        whiteSpace: 'normal',
-        width: '220px',
-        zIndex: 100,
-        pointerEvents: 'none',
-        lineHeight: typography.lineHeight.relaxed,
-    };
-
-    const questionIconStyle = {
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '15px',
-        height: '15px',
-        borderRadius: '50%',
-        border: `1px solid ${colors.border}`,
-        fontSize: '9px',
-        color: colors.textTertiary,
-        cursor: 'pointer',
-        position: 'relative',
-        flexShrink: 0,
-    };
-
-    if (components.length === 0 && !showForm) {
-        return html`
-            <div style=${sectionStyle}>
-                <div style=${headerRowStyle}>
-                    <div style=${headerStyle}>Components</div>
-                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
-                </div>
-            </div>
-        `;
-    }
-
-    return html`
-        <div style=${sectionStyle}>
-            <div style=${headerRowStyle}>
-                <div style=${headerStyle}>Components</div>
-                ${!showForm ? html`
-                    <button style=${newBtnStyle} onClick=${() => setShowForm(true)}>+ New Component</button>
-                ` : null}
-            </div>
-            ${components.length > 0 ? html`
-                <div style=${gridStyle}>
-                    ${components.map(comp => html`
-                        <${ComponentCard}
-                            key=${comp.id}
-                            component=${comp}
-                            allTasks=${tasks}
-                            onClick=${setSelectedComponent}
-                        />
-                    `)}
-                </div>
-            ` : null}
-
-            ${showForm ? html`
-                <form style=${formBoxStyle} onSubmit=${handleSubmit}>
-                    <div>
-                        <div style=${labelStyle}>
-                            <span>Name</span>
-                            <span
-                                style=${questionIconStyle}
-                                onMouseEnter=${() => setShowNameTip(true)}
-                                onMouseLeave=${() => setShowNameTip(false)}
-                            >?
-                                ${showNameTip ? html`<div style=${tipStyle}>The display name for this component. Used to group tasks under a shared feature or epic. Keep it short and descriptive (e.g. "Auth Revamp", "Billing Flow").</div>` : null}
-                            </span>
-                        </div>
-                        <input
-                            style=${inputStyle}
-                            type="text"
-                            placeholder="e.g. Auth Revamp"
-                            value=${formName}
-                            onInput=${e => setFormName(e.target.value)}
-                            required
-                            autoFocus
-                        />
-                        ${derivedId ? html`<div style=${hintStyle}>ID: ${derivedId}</div>` : null}
-                    </div>
-                    <div>
-                        <div style=${labelStyle}>Description <span style=${{ fontWeight: 400, color: colors.textTertiary }}>(optional)</span></div>
-                        <textarea
-                            style=${textareaStyle}
-                            placeholder="What is this component about?"
-                            value=${formDesc}
-                            onInput=${e => setFormDesc(e.target.value)}
-                        />
-                    </div>
-                    ${formError ? html`<div style=${{ fontSize: typography.size.xs, color: '#f87171' }}>${formError}</div>` : null}
-                    <div style=${formActionsStyle}>
-                        <button type="submit" style=${submitBtnStyle} disabled=${submitting || !formName.trim()}>
-                            ${submitting ? 'Creating…' : 'Create'}
-                        </button>
-                        <button type="button" style=${cancelBtnStyle} onClick=${handleCancel}>Cancel</button>
-                    </div>
-                </form>
-            ` : null}
-        </div>
-
-        <${ComponentPanel}
-            component=${selectedComponent}
-            conversations=${conversations}
-            allTasks=${tasks}
-            onClose=${() => setSelectedComponent(null)}
-            onFilterByComponent=${onComponentFilter}
-            onComponentUpdated=${handleComponentUpdated}
-        />
-    `;
-}
-
-// ---------------------------------------------------------------------------
-// Conversations section — project-level only (component_id === null)
+// Conversations section
 // ---------------------------------------------------------------------------
 
 function ConversationsSection({ conversations }) {
-    // Only show project-level conversations (not linked to a component)
-    const projectConvs = conversations.filter(c => !c.component_id);
+    const projectConvs = conversations;
     if (projectConvs.length === 0) return null;
 
     const [expanded, setExpanded] = useState(false);
@@ -1546,10 +476,6 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
     // Build ordered chain from already-loaded tasks — no API call needed
     const chain = chainIds.map(id => allTasks.find(t => t.id === id)).filter(Boolean);
 
-    // Detect multi-component chain (show component tag per node when spans >1 component)
-    const componentIds = new Set(chain.filter(t => t.component_id).map(t => t.component_id));
-    const multiComponent = componentIds.size > 1;
-
     // Node color by status — per spec: green=completed/merged, blue=working, yellow=needs-review/failed, grey=ready/cancelled
     const nodeColor = (s) => {
         if (s === 'completed' || s === 'merged') return colors.green;
@@ -1632,10 +558,6 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
                             const isCurrent = task.id === anchorTaskId;
                             const goal = task.goal || task.id;
                             const displayGoal = goal.length > 52 ? goal.slice(0, 51) + '…' : goal;
-                            const compLabel = multiComponent && task.component_id
-                                ? task.component_id.split('/').pop()
-                                : null;
-
                             return html`
                                 <div key=${task.id} style=${{ display: 'flex', alignItems: 'stretch' }}>
 
@@ -1705,19 +627,6 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
                                                 flex: 1,
                                             }}>${displayGoal}</span>
 
-                                            ${compLabel ? html`
-                                                <span style=${{
-                                                    fontSize: typography.size.xs,
-                                                    color: colors.accent,
-                                                    background: colors.accentBg,
-                                                    border: `1px solid rgba(124, 90, 246, 0.25)`,
-                                                    borderRadius: '4px',
-                                                    padding: '1px 6px',
-                                                    whiteSpace: 'nowrap',
-                                                    flexShrink: 0,
-                                                    lineHeight: '16px',
-                                                }}>${compLabel}</span>
-                                            ` : null}
                                         </div>
 
                                         <span style=${{
@@ -1891,15 +800,10 @@ function PRTag({ task }) {
     `;
 }
 
-function TaskRowWithChain({ task, chainMap, allTasks, conversations, components, onSelect }) {
+function TaskRowWithChain({ task, chainMap, allTasks, conversations, onSelect }) {
     const [showChain, setShowChain] = useState(false);
     const handleCloseChain = useCallback(() => setShowChain(false), []);
     const chain = chainMap.get(task.id);
-
-    // Component name for badge
-    const compName = task.component_id
-        ? (components.find(c => c.id === task.component_id)?.name || task.component_id.split('/').pop())
-        : null;
 
     const rowStyle = {
         display: 'flex',
@@ -1953,19 +857,6 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
                     whiteSpace: 'nowrap',
                 }} title=${task.id}>${displayId}</span>
 
-                ${compName ? html`
-                    <span style=${{
-                        fontSize: typography.size.xs,
-                        color: colors.textTertiary,
-                        background: colors.surfaceActive,
-                        border: '1px solid ' + colors.borderSubtle,
-                        borderRadius: layout.borderRadius.pill,
-                        padding: '1px 7px',
-                        whiteSpace: 'nowrap',
-                        lineHeight: '16px',
-                    }}>${compName}</span>
-                ` : null}
-
                 ${task.conversation_id ? html`
                     <a href=${routes.conversation(task.conversation_id)}
                        onClick=${e => e.stopPropagation()}
@@ -2013,8 +904,7 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
 const ALL_STATUSES = ['working', 'completed', 'failed', 'needs-review', 'ready', 'cancelled',
     'rate-limited', 'turns-exhausted'];
 
-function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, onComponentFilter,
-    searchQuery, onSearch }) {
+function FilterBar({ statusFilter, onStatusFilter, searchQuery, onSearch }) {
     const [rawSearch, setRawSearch] = useState(searchQuery || '');
     const debounceRef = useRef(null);
 
@@ -2150,23 +1040,6 @@ function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, 
                         </select>
                         <span style=${arrowStyle}>▾</span>
                     </div>
-
-                    ${components.length > 0 ? html`
-                        <div style=${wrapStyle}>
-                            <select
-                                style=${selectStyle}
-                                value=${componentFilter}
-                                onChange=${e => onComponentFilter(e.target.value)}
-                            >
-                                <option value="">All components</option>
-                                ${components.map(c => html`
-                                    <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
-                                `)}
-                                <option value="__none__">No component</option>
-                            </select>
-                            <span style=${arrowStyle}>▾</span>
-                        </div>
-                    ` : null}
                 </div>
             </div>
         </div>
@@ -2269,18 +1142,12 @@ function SearchResultRow({ result, onTaskSelect }) {
     `;
 }
 
-function TasksSection({ tasks, components, conversations, chainMap, statusFilter, componentFilter,
-    onStatusFilter, onComponentFilter, onTaskSelect,
+function TasksSection({ tasks, conversations, chainMap, statusFilter, onStatusFilter, onTaskSelect,
     searchQuery, searchResults, searchLoading, onSearch, projectId }) {
 
     // Filter normal task list (used when no search active)
     let filtered = tasks;
     if (statusFilter) filtered = filtered.filter(t => t.status === statusFilter);
-    if (componentFilter === '__none__') {
-        filtered = filtered.filter(t => !t.component_id);
-    } else if (componentFilter) {
-        filtered = filtered.filter(t => t.component_id === componentFilter);
-    }
 
     // Sort by last_activity descending — flat list, no grouping
     const ts = (t) => {
@@ -2336,10 +1203,7 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
 
             <${FilterBar}
                 statusFilter=${statusFilter}
-                componentFilter=${componentFilter}
-                components=${components}
                 onStatusFilter=${onStatusFilter}
-                onComponentFilter=${onComponentFilter}
                 searchQuery=${searchQuery}
                 onSearch=${onSearch}
             />
@@ -2366,7 +1230,6 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
                         chainMap=${chainMap}
                         allTasks=${tasks}
                         conversations=${conversations}
-                        components=${components}
                         onSelect=${onTaskSelect}
                     />
                 `)}
@@ -2930,7 +1793,6 @@ function EditProjectPanel({ project, onClose, onSaved }) {
 export function ProjectView({ id }) {
     const [project, setProject] = useState(null);
     const [tasks, setTasks] = useState([]);
-    const [components, setComponents] = useState([]);
     const [conversations, setConversations] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -2939,7 +1801,6 @@ export function ProjectView({ id }) {
     const [saveToast, setSaveToast] = useState(false);
 
     const [statusFilter, setStatusFilter] = useState('');
-    const [componentFilter, setComponentFilter] = useState('');
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
@@ -2955,15 +1816,13 @@ export function ProjectView({ id }) {
 
     const load = useCallback(async () => {
         try {
-            const [proj, taskList, compList, convList] = await Promise.all([
+            const [proj, taskList, convList] = await Promise.all([
                 api.getProject(id),
                 api.getTasks({ project_id: id }),
-                api.getComponents(id),
                 api.getConversations({ project: id }).catch(() => []),
             ]);
             setProject(proj);
             setTasks(taskList);
-            setComponents(compList);
             setConversations(convList);
             setError(null);
             setLoading(false);
@@ -3170,31 +2029,16 @@ export function ProjectView({ id }) {
             <${RecentActivity} projectId=${id} />
 
 
-            <!-- Components (knowledge drawers) -->
-            <${ComponentsSection}
-                components=${components}
-                conversations=${conversations}
-                tasks=${tasks}
-                componentFilter=${componentFilter}
-                onComponentFilter=${setComponentFilter}
-                projectId=${id}
-                onComponentCreated=${(comp) => setComponents(prev => [...prev, comp])}
-                onComponentUpdated=${(comp) => setComponents(prev => prev.map(c => c.id === comp.id ? comp : c))}
-            />
-
-            <!-- Project-level conversations (unlinked only) -->
+            <!-- Project-level conversations -->
             <${ConversationsSection} conversations=${conversations} />
 
             <!-- Tasks -->
             <${TasksSection}
                 tasks=${tasks}
-                components=${components}
                 conversations=${conversations}
                 chainMap=${chainMap}
                 statusFilter=${statusFilter}
-                componentFilter=${componentFilter}
                 onStatusFilter=${setStatusFilter}
-                onComponentFilter=${setComponentFilter}
                 onTaskSelect=${setSelectedTaskId}
                 searchQuery=${searchQuery}
                 searchResults=${searchResults}

@@ -189,9 +189,8 @@ const fieldStyle = {
 // ---------------------------------------------------------------------------
 
 export function TaskCreateView({ project: initialProject }) {
-    // ---- Projects / components data ----
+    // ---- Projects data ----
     const [projects, setProjects] = useState([]);
-    const [components, setComponents] = useState([]);
     const [projectData, setProjectData] = useState(null);
 
     // ---- Core fields ----
@@ -213,7 +212,6 @@ export function TaskCreateView({ project: initialProject }) {
     const [maxWallClock, setMaxWallClock] = useState('');
     const [maxTestRetries, setMaxTestRetries] = useState('');
     const [maxReviewRetries, setMaxReviewRetries] = useState('');
-    const [componentId, setComponentId] = useState('');
     const [dependsOn, setDependsOn] = useState('');
     const [dependsOnCandidates, setDependsOnCandidates] = useState([]);
     const [dependsOnSearch, setDependsOnSearch] = useState('');
@@ -236,40 +234,12 @@ export function TaskCreateView({ project: initialProject }) {
         }).catch(() => {});
     }, []);
 
-    // ---- Read punchlist scaffold from sessionStorage on mount ----
-    useEffect(() => {
-        try {
-            const raw = sessionStorage.getItem('foreman-punchlist-scaffold');
-            if (raw) {
-                sessionStorage.removeItem('foreman-punchlist-scaffold');
-                const scaffold = JSON.parse(raw);
-                if (scaffold.componentId) setComponentId(scaffold.componentId);
-                if (scaffold.items && scaffold.items.length > 0) {
-                    setGoal(scaffold.items[0].text);
-                    const specLines = '## Punchlist Items\n\n' +
-                        scaffold.items.map(i => `- (id:${i.id}) ${i.text}`).join('\n');
-                    setSpec(specLines);
-                    setChecklist(scaffold.items.map(i => i.text));
-                }
-                // Open config section so component dropdown is visible
-                if (scaffold.componentId) setConfigOpen(true);
-            }
-        } catch (e) {
-            // ignore
-        }
-    }, []);
-
-    // ---- When project changes, fetch components + project data ----
+    // ---- When project changes, fetch project data ----
     useEffect(() => {
         if (!selectedProject) {
-            setComponents([]);
             setProjectData(null);
             return;
         }
-        api.getComponents(selectedProject).then(data => {
-            setComponents(data || []);
-        }).catch(() => setComponents([]));
-
         api.getProject(selectedProject).then(data => {
             setProjectData(data);
         }).catch(() => setProjectData(null));
@@ -383,7 +353,6 @@ export function TaskCreateView({ project: initialProject }) {
             max_wall_clock: maxWallClock ? parseInt(maxWallClock, 10) : undefined,
             max_test_retries: maxTestRetries ? parseInt(maxTestRetries, 10) : undefined,
             max_review_retries: maxReviewRetries ? parseInt(maxReviewRetries, 10) : undefined,
-            component_id: componentId || undefined,
             depends_on: dependsOn.trim() || undefined,
             base_branch: baseBranch.trim() || undefined,
             tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
@@ -635,21 +604,6 @@ export function TaskCreateView({ project: initialProject }) {
                             padding: '0 24px 24px',
                             borderTop: `1px solid ${colors.border}`,
                         }}>
-                            <!-- Component -->
-                            <div style=${{ ...fieldStyle, marginTop: '20px' }}>
-                                <${FieldLabel} label="Component" tooltip="Group this task under a component (feature area). Components have their own punchlist and config inheritance." />
-                                <select
-                                    value=${componentId}
-                                    onChange=${e => setComponentId(e.target.value)}
-                                    style=${inputStyle}
-                                >
-                                    <option value="">No component</option>
-                                    ${components.map(c => html`
-                                        <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
-                                    `)}
-                                </select>
-                            </div>
-
                             <!-- Model -->
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Model" tooltip="Which Claude model the worker uses. 'inherit' uses the project default." />
