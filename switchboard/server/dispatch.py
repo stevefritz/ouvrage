@@ -28,7 +28,6 @@ from switchboard.server.handlers.tasks import (
     _handle_list_tasks,
     _handle_update_task,
     _handle_bulk_update_tasks,
-    _handle_move_task,
     _handle_update_task_checklist,
     _handle_update_task_phase,
     _handle_post_task_message,
@@ -41,25 +40,9 @@ from switchboard.server.handlers.tasks import (
     _handle_update_checklist_item_text,
     _handle_get_pipeline,
     _handle_escalate,
-)
-from switchboard.server.handlers.components import (
-    _handle_create_component,
-    _handle_update_component,
-    _handle_get_component,
-    _handle_list_components,
-    _handle_link_conversation,
-    _handle_unlink_conversation,
-    _handle_pause_component,
-    _handle_resume_component,
-    _handle_stop_component,
+    _handle_search_task_messages,
 )
 from switchboard.server.handlers.search import _handle_search
-from switchboard.server.handlers.punchlist import (
-    _handle_add_punchlist_item,
-    _handle_list_punchlist,
-    _handle_claim_punchlist_item,
-    _handle_resolve_punchlist_item,
-)
 from switchboard.server.handlers.ops import (
     _handle_get_context,
     _handle_get_guide,
@@ -103,7 +86,6 @@ TOOL_HANDLERS = {
     "list_tasks": _handle_list_tasks,
     "update_task": _handle_update_task,
     "bulk_update_tasks": _handle_bulk_update_tasks,
-    "move_task": _handle_move_task,
     "list_task_files": _handle_list_task_files,
     "get_task_file": _handle_get_task_file,
     "update_task_checklist": _handle_update_task_checklist,
@@ -117,22 +99,8 @@ TOOL_HANDLERS = {
     "remove_checklist_item": _handle_remove_checklist_item,
     "update_checklist_item": _handle_update_checklist_item_text,
     "get_pipeline": _handle_get_pipeline,
-    # Component tools
-    "create_component": _handle_create_component,
-    "update_component": _handle_update_component,
-    "get_component": _handle_get_component,
-    "list_components": _handle_list_components,
-    "link_conversation": _handle_link_conversation,
-    "unlink_conversation": _handle_unlink_conversation,
-    # Punchlist tools
-    "add_punchlist_item": _handle_add_punchlist_item,
-    "list_punchlist": _handle_list_punchlist,
-    "claim_punchlist_item": _handle_claim_punchlist_item,
-    "resolve_punchlist_item": _handle_resolve_punchlist_item,
+    "search_task_messages": _handle_search_task_messages,
     # Pause/Stop/Resume
-    "pause_component": _handle_pause_component,
-    "resume_component": _handle_resume_component,
-    "stop_component": _handle_stop_component,
     "pause_project": _handle_pause_project,
     "resume_project": _handle_resume_project,
     "stop_project": _handle_stop_project,
