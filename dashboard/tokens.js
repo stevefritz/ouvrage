@@ -1,25 +1,26 @@
 // Foreman Design System — Design Tokens
-// Linear-inspired dark theme. Import these constants into any view.
+// Copper Forge palette: warm amber on dark brown. Import these constants into any view.
 
 export const colors = {
-    // Backgrounds
-    bg:           '#101114',
-    surface:      '#18191d',
-    surfaceHover: '#1e2025',
-    surfaceActive:'#22242a',
+    // Backgrounds — warm brown-black layers with clear separation
+    bg:           '#0f0d0b',
+    surface:      '#1e1a14',
+    surfaceHover: '#252019',
+    surfaceActive:'#2c261e',
+    input:        '#2c2620',  // form input fields
 
-    // Borders
-    border:       '#2a2c32',
-    borderSubtle: 'rgba(42, 44, 50, 0.6)',
-    borderHover:  '#30363d',
+    // Borders — warm brown
+    border:       '#3e3326',
+    borderSubtle: 'rgba(58, 48, 35, 0.5)',
+    borderHover:  '#4e4030',
 
-    // Text
-    text:          '#e8e9ea',
-    textSecondary: '#b0b1ba',
-    textTertiary:  '#8a93a2',
+    // Text — warm whites and tans
+    text:          '#ede8e3',
+    textSecondary: '#b0a89e',
+    textTertiary:  '#887e72',
 
-    // Accent
-    accent:  '#7c5af6',  // purple
+    // Accent — amber
+    accent:  '#d97706',
 
     // Status colors
     green:  '#3dd68c',
@@ -32,7 +33,7 @@ export const colors = {
     yellowBg: 'rgba(245, 166, 35, 0.12)',
     redBg:    'rgba(242, 92, 92, 0.12)',
     blueBg:   'rgba(77, 163, 255, 0.12)',
-    accentBg: 'rgba(124, 90, 246, 0.15)',
+    accentBg: 'rgba(217, 119, 6, 0.15)',
 };
 
 export const typography = {
