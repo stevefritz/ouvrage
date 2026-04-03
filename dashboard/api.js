@@ -220,6 +220,12 @@ export const api = {
     }),
     revokeToken: (id) => request(`/settings/tokens/${id}`, { method: 'DELETE' }),
 
+    // Search
+    search: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return request('/search' + (qs ? '?' + qs : ''));
+    },
+
     // Runtime environment info
     getRuntimeInfo: () => request('/runtime-info'),
 };

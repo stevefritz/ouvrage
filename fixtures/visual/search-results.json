@@ -1,0 +1,50 @@
+{
+  "results": [
+    {
+      "type": "task",
+      "task_id": "mcp-switchboard/add-oauth-flow",
+      "conversation_id": null,
+      "title": "Add OAuth 2.0 authorization flow with PKCE support",
+      "snippet": "Add OAuth 2.0 authorization flow with PKCE support",
+      "relevance_score": 0.9421,
+      "created_at": null
+    },
+    {
+      "type": "task_message",
+      "task_id": "mcp-switchboard/auth-middleware",
+      "conversation_id": null,
+      "title": "",
+      "snippet": "The authentication middleware now supports both session cookies and Bearer JWT tokens. Session cookies have a 7-day TTL with 24h inactivity timeout.",
+      "relevance_score": 0.8734,
+      "created_at": "2026-03-20T14:32:00Z"
+    },
+    {
+      "type": "chunk",
+      "task_id": null,
+      "conversation_id": "auth-design-spec",
+      "title": "Auth Architecture",
+      "snippet": "Two-layer auth: session cookies for the dashboard, Bearer JWT for the MCP endpoint. Localhost bypass for worker access. PKCE S256 support for OAuth clients.",
+      "relevance_score": 0.8512,
+      "created_at": "2026-03-15T09:00:00Z"
+    },
+    {
+      "type": "task",
+      "task_id": "mcp-switchboard/fix-token-refresh",
+      "conversation_id": null,
+      "title": "Fix refresh token rotation bug causing double-invalidation",
+      "snippet": "Fix refresh token rotation bug causing double-invalidation",
+      "relevance_score": 0.8103,
+      "created_at": null
+    },
+    {
+      "type": "conversation_message",
+      "task_id": null,
+      "conversation_id": "auth-design-spec",
+      "title": "Auth spec",
+      "snippet": "OAuth clients use RS256 JWTs with 1-hour access token lifetime. Refresh tokens rotate on use with 30-day TTL.",
+      "relevance_score": 0.7899,
+      "created_at": "2026-03-12T11:20:00Z"
+    }
+  ],
+  "total_candidates": 5
+}

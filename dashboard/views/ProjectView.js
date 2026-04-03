@@ -2013,7 +2013,31 @@ function TaskRowWithChain({ task, chainMap, allTasks, conversations, components,
 const ALL_STATUSES = ['working', 'completed', 'failed', 'needs-review', 'ready', 'cancelled',
     'rate-limited', 'turns-exhausted'];
 
-function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, onComponentFilter }) {
+function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, onComponentFilter,
+    searchQuery, onSearch }) {
+    const [rawSearch, setRawSearch] = useState(searchQuery || '');
+    const debounceRef = useRef(null);
+
+    // Keep rawSearch in sync if parent clears searchQuery externally
+    useEffect(() => {
+        if (!searchQuery) setRawSearch('');
+    }, [searchQuery]);
+
+    const handleSearchChange = (e) => {
+        const val = e.target.value;
+        setRawSearch(val);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            onSearch(val.trim());
+        }, 300);
+    };
+
+    const handleClear = () => {
+        setRawSearch('');
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        onSearch('');
+    };
+
     const selectStyle = {
         fontFamily: typography.fontBody,
         fontSize: typography.size.sm,
@@ -2044,44 +2068,212 @@ function FilterBar({ statusFilter, componentFilter, components, onStatusFilter, 
         pointerEvents: 'none',
     };
 
-    return html`
-        <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <div style=${wrapStyle}>
-                <select
-                    style=${selectStyle}
-                    value=${statusFilter}
-                    onChange=${e => onStatusFilter(e.target.value)}
-                >
-                    <option value="">All statuses</option>
-                    ${ALL_STATUSES.map(s => html`<option key=${s} value=${s}>${s}</option>`)}
-                </select>
-                <span style=${arrowStyle}>▾</span>
-            </div>
+    const searchInputStyle = {
+        fontFamily: typography.fontBody,
+        fontSize: typography.size.sm,
+        color: colors.text,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '4px 28px 4px 28px',
+        outline: 'none',
+        width: '200px',
+        transition: `border-color ${animation.durationFast}`,
+    };
 
-            ${components.length > 0 ? html`
-                <div style=${wrapStyle}>
-                    <select
-                        style=${selectStyle}
-                        value=${componentFilter}
-                        onChange=${e => onComponentFilter(e.target.value)}
-                    >
-                        <option value="">All components</option>
-                        ${components.map(c => html`
-                            <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
-                        `)}
-                        <option value="__none__">No component</option>
-                    </select>
-                    <span style=${arrowStyle}>▾</span>
+    const searchWrapStyle = {
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        flex: '1 1 auto',
+        minWidth: '160px',
+        maxWidth: '320px',
+    };
+
+    const searchIconStyle = {
+        position: 'absolute',
+        left: '8px',
+        fontSize: '11px',
+        color: colors.textTertiary,
+        pointerEvents: 'none',
+        lineHeight: 1,
+    };
+
+    const clearBtnStyle = {
+        position: 'absolute',
+        right: '6px',
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        color: colors.textTertiary,
+        fontSize: '13px',
+        lineHeight: 1,
+        padding: '2px',
+        display: rawSearch ? 'block' : 'none',
+    };
+
+    return html`
+        <div style=${{ marginBottom: '12px' }}>
+            <style>${`
+                @media (max-width: 640px) {
+                    .foreman-filterbar { flex-direction: column; align-items: stretch !important; }
+                    .foreman-filterbar-search { max-width: none !important; width: 100% !important; }
+                    .foreman-filterbar-search input { width: 100% !important; box-sizing: border-box; }
+                    .foreman-filterbar-dropdowns { flex-wrap: wrap; }
+                }
+                .foreman-filterbar-search input:focus { border-color: ${colors.accent}; }
+            `}</style>
+            <div class="foreman-filterbar" style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <!-- Search input -->
+                <div class="foreman-filterbar-search" style=${searchWrapStyle}>
+                    <span style=${searchIconStyle}>⌕</span>
+                    <input
+                        type="text"
+                        placeholder="Search tasks..."
+                        value=${rawSearch}
+                        onInput=${handleSearchChange}
+                        style=${{ ...searchInputStyle, width: '100%' }}
+                    />
+                    <button style=${clearBtnStyle} onClick=${handleClear} title="Clear search">✕</button>
                 </div>
-            ` : null}
+
+                <!-- Dropdowns -->
+                <div class="foreman-filterbar-dropdowns" style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style=${wrapStyle}>
+                        <select
+                            style=${selectStyle}
+                            value=${statusFilter}
+                            onChange=${e => onStatusFilter(e.target.value)}
+                        >
+                            <option value="">All statuses</option>
+                            ${ALL_STATUSES.map(s => html`<option key=${s} value=${s}>${s}</option>`)}
+                        </select>
+                        <span style=${arrowStyle}>▾</span>
+                    </div>
+
+                    ${components.length > 0 ? html`
+                        <div style=${wrapStyle}>
+                            <select
+                                style=${selectStyle}
+                                value=${componentFilter}
+                                onChange=${e => onComponentFilter(e.target.value)}
+                            >
+                                <option value="">All components</option>
+                                ${components.map(c => html`
+                                    <option key=${c.id} value=${c.id}>${c.name || c.id}</option>
+                                `)}
+                                <option value="__none__">No component</option>
+                            </select>
+                            <span style=${arrowStyle}>▾</span>
+                        </div>
+                    ` : null}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function SearchResultRow({ result, onTaskSelect }) {
+    const handleClick = () => {
+        if (result.task_id) {
+            navigate(`/task/${result.task_id}`);
+        } else if (result.conversation_id) {
+            navigate(`/conversations/${result.conversation_id}`);
+        }
+    };
+
+    const rowStyle = {
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '10px 12px',
+        borderRadius: layout.borderRadius.md,
+        border: `1px solid ${colors.border}`,
+        marginBottom: '6px',
+        background: colors.surface,
+        cursor: 'pointer',
+        transition: `background ${animation.durationFast}`,
+    };
+
+    const typeColors = {
+        task: colors.accent,
+        task_message: colors.blue,
+        conversation_message: colors.green,
+        chunk: colors.yellow,
+    };
+    const typeColor = typeColors[result.type] || colors.textTertiary;
+
+    const typeBadgeStyle = {
+        display: 'inline-block',
+        fontSize: '10px',
+        fontWeight: typography.weight.semibold,
+        color: typeColor,
+        background: `${typeColor}20`,
+        borderRadius: layout.borderRadius.sm,
+        padding: '1px 6px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        marginRight: '8px',
+    };
+
+    const titleStyle = {
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        color: colors.text,
+        marginBottom: '3px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    };
+
+    const snippetStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+    };
+
+    const metaStyle = {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        marginBottom: '4px',
+    };
+
+    const contextStyle = {
+        fontSize: '11px',
+        color: colors.textTertiary,
+    };
+
+    const typeLabel = result.type === 'task' ? 'task'
+        : result.type === 'task_message' ? 'message'
+        : result.type === 'conversation_message' ? 'conv message'
+        : 'excerpt';
+
+    return html`
+        <div
+            style=${rowStyle}
+            onClick=${handleClick}
+            onMouseEnter=${e => e.currentTarget.style.background = colors.surfaceHover}
+            onMouseLeave=${e => e.currentTarget.style.background = colors.surface}
+        >
+            <div style=${metaStyle}>
+                <span style=${typeBadgeStyle}>${typeLabel}</span>
+                ${result.task_id ? html`<span style=${contextStyle}>${result.task_id}</span>` : null}
+            </div>
+            ${result.title ? html`<div style=${titleStyle}>${result.title}</div>` : null}
+            ${result.snippet ? html`<div style=${snippetStyle}>${result.snippet}</div>` : null}
         </div>
     `;
 }
 
 function TasksSection({ tasks, components, conversations, chainMap, statusFilter, componentFilter,
-    onStatusFilter, onComponentFilter, onTaskSelect }) {
+    onStatusFilter, onComponentFilter, onTaskSelect,
+    searchQuery, searchResults, searchLoading, onSearch, projectId }) {
 
-    // Filter
+    // Filter normal task list (used when no search active)
     let filtered = tasks;
     if (statusFilter) filtered = filtered.filter(t => t.status === statusFilter);
     if (componentFilter === '__none__') {
@@ -2096,6 +2288,8 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
         return new Date(raw.endsWith('Z') ? raw : raw + 'Z').getTime();
     };
     filtered = [...filtered].sort((a, b) => ts(b) - ts(a));
+
+    const isSearchActive = !!searchQuery;
 
     const sectionStyle = {
         display: 'flex',
@@ -2118,6 +2312,18 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
         fontSize: typography.size.sm,
     };
 
+    const loadingStyle = {
+        padding: '20px 0',
+        textAlign: 'center',
+        color: colors.textTertiary,
+        fontSize: typography.size.sm,
+    };
+
+    const headerLabel = isSearchActive
+        ? (searchLoading ? 'Searching…'
+            : searchResults ? `Search results · ${searchResults.length}` : 'Tasks')
+        : `Tasks · ${filtered.length}`;
+
     return html`
         <div style=${sectionStyle}>
             <style>${`
@@ -2126,7 +2332,7 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
                     .foreman-task-row-tags { width: 100%; flex-wrap: wrap; margin-top: 2px; }
                 }
             `}</style>
-            <div style=${sectionHeaderStyle}>Tasks · ${filtered.length}</div>
+            <div style=${sectionHeaderStyle}>${headerLabel}</div>
 
             <${FilterBar}
                 statusFilter=${statusFilter}
@@ -2134,21 +2340,37 @@ function TasksSection({ tasks, components, conversations, chainMap, statusFilter
                 components=${components}
                 onStatusFilter=${onStatusFilter}
                 onComponentFilter=${onComponentFilter}
+                searchQuery=${searchQuery}
+                onSearch=${onSearch}
             />
 
-            ${filtered.length === 0 ? html`
-                <div style=${emptyStyle}>No tasks match the current filters</div>
-            ` : filtered.map(task => html`
-                <${TaskRowWithChain}
-                    key=${task.id}
-                    task=${task}
-                    chainMap=${chainMap}
-                    allTasks=${tasks}
-                    conversations=${conversations}
-                    components=${components}
-                    onSelect=${onTaskSelect}
-                />
-            `)}
+            ${isSearchActive ? html`
+                ${searchLoading ? html`
+                    <div style=${loadingStyle}>Searching…</div>
+                ` : searchResults && searchResults.length === 0 ? html`
+                    <div style=${emptyStyle}>No results found for "${searchQuery}"</div>
+                ` : searchResults ? searchResults.map((result, i) => html`
+                    <${SearchResultRow}
+                        key=${`${result.type}-${result.task_id || result.conversation_id}-${i}`}
+                        result=${result}
+                        onTaskSelect=${onTaskSelect}
+                    />
+                `) : null}
+            ` : html`
+                ${filtered.length === 0 ? html`
+                    <div style=${emptyStyle}>No tasks match the current filters</div>
+                ` : filtered.map(task => html`
+                    <${TaskRowWithChain}
+                        key=${task.id}
+                        task=${task}
+                        chainMap=${chainMap}
+                        allTasks=${tasks}
+                        conversations=${conversations}
+                        components=${components}
+                        onSelect=${onTaskSelect}
+                    />
+                `)}
+            `}
         </div>
     `;
 }
@@ -2659,6 +2881,10 @@ export function ProjectView({ id }) {
     const [statusFilter, setStatusFilter] = useState('');
     const [componentFilter, setComponentFilter] = useState('');
 
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState(null);
+    const [searchLoading, setSearchLoading] = useState(false);
+
     // Delete project state
     const [showDeleteOverlay, setShowDeleteOverlay] = useState(false);
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -2696,6 +2922,24 @@ export function ProjectView({ id }) {
         const timer = setInterval(load, POLL_INTERVAL_MS);
         return () => clearInterval(timer);
     }, [load]);
+
+    const handleSearch = useCallback(async (query) => {
+        setSearchQuery(query);
+        if (!query) {
+            setSearchResults(null);
+            setSearchLoading(false);
+            return;
+        }
+        setSearchLoading(true);
+        try {
+            const result = await api.search({ q: query, project_id: id, limit: 20 });
+            setSearchResults(result.results || []);
+        } catch (e) {
+            setSearchResults([]);
+        } finally {
+            setSearchLoading(false);
+        }
+    }, [id]);
 
     const handleDeleteProject = async () => {
         if (!project || deleteConfirmText !== project.id) return;
@@ -2892,6 +3136,11 @@ export function ProjectView({ id }) {
                 onStatusFilter=${setStatusFilter}
                 onComponentFilter=${setComponentFilter}
                 onTaskSelect=${setSelectedTaskId}
+                searchQuery=${searchQuery}
+                searchResults=${searchResults}
+                searchLoading=${searchLoading}
+                onSearch=${handleSearch}
+                projectId=${id}
             />
 
             <!-- Danger Zone -->
