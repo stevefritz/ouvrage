@@ -128,5 +128,4 @@ export const routes = {
     conversation: (id) => `#/conversation/${encodeURIComponent(id)}`,
     files:        () => '#/files',
     settings:     () => '#/settings',
-    docs:         () => '#/docs',
 };
