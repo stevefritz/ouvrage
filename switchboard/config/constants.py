@@ -65,7 +65,7 @@ COMPONENT_CONFIG_FIELDS = {
 }
 
 COMPONENT_MUTABLE_FIELDS = COMPONENT_CONFIG_FIELDS | {
-    "name", "description", "phase",
+    "name", "description", "phase", "paused",
 }
 
 SYSTEM_DEFAULTS = {

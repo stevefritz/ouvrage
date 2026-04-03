@@ -1018,6 +1018,8 @@ async def _handle_get_actions(send, task_id):
             "label": state_info["label"],
             "color": state_info["color"],
             "pulse": state_info["pulse"],
+            "queued_reason": state_info.get("queued_reason"),
+            "queued_blocking_task_id": state_info.get("queued_blocking_task_id"),
         },
         "actions": actions,
     }
