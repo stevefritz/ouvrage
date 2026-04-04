@@ -1,14 +1,8 @@
-import os
 import threading
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """Force exit if non-daemon threads would otherwise block process termination.
-
-    ThreadPoolExecutor threads (e.g. web-push) are non-daemon and can keep the
-    process alive for up to ~60s after tests complete, causing the gate's
-    `timeout 220` to kill the process with exit_code=124 even when all tests pass.
-    """
+def pytest_unconfigure(config):
+    """Shut down web-push executor and warn about leaked threads."""
     try:
         from switchboard.notifications.web_push import _executor
         _executor.shutdown(wait=False, cancel_futures=True)
@@ -21,8 +15,3 @@ def pytest_sessionfinish(session, exitstatus):
         print(f"\n⚠️  {len(alive)} non-daemon threads blocking exit:")
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
-        os._exit(int(exitstatus))
-
-
-def pytest_unconfigure(config):
-    pass
