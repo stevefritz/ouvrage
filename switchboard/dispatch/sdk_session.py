@@ -171,7 +171,45 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
             parts.append(f"- {status} (item_id={item['id']}) {item['item']}")
         parts.append("")
 
-    # ── 5. Reference files ───────────────────────────────────────────────────
+    # ── 5. Grounding phase (skip for revision retries) ──────────────────────
+    if not review_feedback:
+        parts.append("## Grounding Phase — MANDATORY")
+        parts.append("")
+        parts.append("Do this BEFORE writing any code:")
+        parts.append("")
+        parts.append("1. Read the relevant source files for this task. Understand WHY this is being requested, not just WHAT.")
+        parts.append("2. Validate the checklist against the actual code. Adjust items: fix inaccuracies, add missing ones, remove irrelevant ones. If the approach fundamentally won't work or scope is significantly larger than expected, set phase to `needs-review` and explain.")
+        parts.append(f"3. Post your **Implementation Plan** as a `plan` message. Title it exactly 'Implementation Plan'.")
+        parts.append("")
+        parts.append("The plan must be detailed enough for a lead to review your approach and correct you if needed. Include:")
+        parts.append("- Which files you will modify and what changes you'll make in each")
+        parts.append("- Any new files you'll create")
+        parts.append("- Your testing approach")
+        parts.append("- Any assumptions or risks")
+        parts.append("")
+        parts.append("**Example plan:**")
+        parts.append("")
+        parts.append("```")
+        parts.append("## Implementation Plan")
+        parts.append("")
+        parts.append("Files to modify:")
+        parts.append("1. `switchboard/server/handlers/tasks.py` — Add `files` array to the task status response.")
+        parts.append("   Query `db.list_files(task_id)` in `_handle_get_task_status` and include compact file metadata.")
+        parts.append("2. `switchboard/server/tools.py` — Register `get_file` tool on user endpoint alongside existing `get_attached_file`.")
+        parts.append("   Point both to the same handler in `files_handler.py`.")
+        parts.append("3. `tests/test_files.py` — Add 2 tests:")
+        parts.append("   - `test_get_task_status_includes_files`: create task with attached file, verify files array in response")
+        parts.append("   - `test_get_file_returns_same_as_get_attached_file`: verify both tools return identical content")
+        parts.append("")
+        parts.append("Assumptions:")
+        parts.append("- `list_files` already supports filtering by task_id (verified in db/files.py)")
+        parts.append("- No schema migration needed — files table already has all required columns")
+        parts.append("```")
+        parts.append("")
+        parts.append("**Do not begin coding until the plan is posted.**")
+        parts.append("")
+
+    # ── 6. Reference files ───────────────────────────────────────────────────
     task_files = await db.list_files(task_id=task["id"])
     if task_files:
         parts.append("## Reference Files")
@@ -184,6 +222,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("Read these files when relevant to your task.")
         parts.append("")
 
+    # ── 7. Producing Files ───────────────────────────────────────────────────
     parts.append("## Producing Files")
     parts.append(
         "If your task produces files the user should see (reports, screenshots, analyses, exports), "
@@ -195,7 +234,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("The file will be saved permanently and appear in the task's Files section for download.")
     parts.append("")
 
-    # ── 6. How to work ─────────────────────────────────────────────────────────
+    # ── 8. How to work ─────────────────────────────────────────────────────────
     parts.append("## How to Work")
     parts.append("")
     parts.append("- Post a `progress` message every time you complete a major step — the user watches the dashboard, not your terminal.")
@@ -212,7 +251,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append(f"- Post progress: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='progress', content='...')`")
     parts.append("")
 
-    # ── 7. Search & context ──────────────────────────────────────────────────
+    # ── 9. Search & context ──────────────────────────────────────────────────
     parts.append("## Finding Context")
     parts.append("")
     parts.append(f"You have access to project memory via `search(query, project_id='{project_id}')`. "
@@ -224,7 +263,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
                  "use `read_task_messages(task_id)` for chain context from parent tasks.")
     parts.append("")
 
-    # ── 8. Safety ────────────────────────────────────────────────────────────
+    # ── 10. Safety ────────────────────────────────────────────────────────────
     parts.append("## Safety")
     parts.append("")
     parts.append("**System integrity:**")
@@ -251,7 +290,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- If you find a bug outside your scope, report it in a `progress` note but don't fix it.")
     parts.append("")
 
-    # ── 9. Completion ────────────────────────────────────────────────────────
+    # ── 11. Completion ────────────────────────────────────────────────────────
     parts.append("## Completion")
     parts.append("")
     parts.append("Always push your branch before finishing — unpushed code has no value.")
@@ -266,7 +305,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append(f"5. Post a `result` message (under 5 lines: what you did, files modified, caveats)")
     parts.append("")
 
-    # ── 10. Pipeline & lifecycle ──────────────────────────────────────────────
+    # ── 12. Pipeline & lifecycle ──────────────────────────────────────────────
     parts.append("## After You Finish: The Gate Pipeline")
     parts.append("")
     if task.get("auto_test") and project.get("test_command"):
@@ -280,7 +319,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
                  "If review has feedback, you're retried with that feedback. Write clean code the first time.")
     parts.append("")
 
-    # ── 11. Testing ───────────────────────────────────────────────────────────
+    # ── 13. Testing ───────────────────────────────────────────────────────────
     parts.append("## Testing")
     if task.get("auto_test") and project.get("test_command"):
         parts.append(f"Tests run automatically after you finish via `{project['test_command']}`. Do NOT run the full suite — the gate handles it.")
@@ -291,7 +330,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("No test command configured. If the project has tests, discover and run them.")
     parts.append("")
 
-    # ── 12. Escalation ───────────────────────────────────────────────────────
+    # ── 14. Escalation ───────────────────────────────────────────────────────
     parts.append("## Escalation Protocol")
     parts.append(f"- **Stuck** → post a `question` message. Pauses your session until a human responds.")
     parts.append("- **Ambiguous spec** → post a question. Don't guess.")
@@ -301,15 +340,6 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("")
         parts.append(escalation_criteria)
     parts.append("")
-
-    # ── 13. Grounding phase (skip for revision retries) ──────────────────────
-    if not review_feedback:
-        parts.append("## Grounding Phase")
-        parts.append("Do this BEFORE coding:")
-        parts.append("1. Read the relevant source files. Understand WHY, not just WHAT.")
-        parts.append("2. Validate the checklist against the code. Adjust items as needed — fix inaccuracies, add missing ones, remove irrelevant ones. If the approach fundamentally won't work, set phase to `needs-review` and explain.")
-        parts.append(f"3. Post your implementation plan as a `plan` message with file-level detail. Then begin coding.")
-        parts.append("")
 
     return "\n".join(parts)
 
