@@ -7,20 +7,19 @@ chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
 
 # --- Master key resolution ---
-# Priority: env var > Docker secret file > generate + warn
-if [ -z "${SWITCHBOARD_MASTER_KEY:-}" ]; then
-    SECRET_FILE="/run/secrets/master_key"
-    if [ -f "$SECRET_FILE" ]; then
-        export SWITCHBOARD_MASTER_KEY
-        SWITCHBOARD_MASTER_KEY=$(cat "$SECRET_FILE")
-        echo "[entrypoint] Master key loaded from Docker secret"
-    else
-        export SWITCHBOARD_MASTER_KEY
-        SWITCHBOARD_MASTER_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-        echo "[entrypoint] WARNING: No SWITCHBOARD_MASTER_KEY env var or /run/secrets/master_key found"
-        echo "[entrypoint] Generated ephemeral key — credentials will be unrecoverable if container restarts"
-        echo "[entrypoint] Set SWITCHBOARD_MASTER_KEY or use Docker secrets for production"
-    fi
+# Priority: Docker secret file (secure) > env var (bare metal) > generate + warn
+SECRET_FILE="/run/secrets/master_key"
+if [ -f "$SECRET_FILE" ]; then
+    # Python reads directly from file via crypto.get_master_key()
+    # migrate-auth runs as root (before gosu) so it can still read the file
+    # After this block, entrypoint chowns to service user so worker can't read it
+    echo "[entrypoint] Master key found at Docker secret"
+elif [ -z "${SWITCHBOARD_MASTER_KEY:-}" ]; then
+    export SWITCHBOARD_MASTER_KEY
+    SWITCHBOARD_MASTER_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    echo "[entrypoint] WARNING: No /run/secrets/master_key or SWITCHBOARD_MASTER_KEY env var found"
+    echo "[entrypoint] Generated ephemeral key — credentials will be unrecoverable if container restarts"
+    echo "[entrypoint] Set SWITCHBOARD_MASTER_KEY or use Docker secrets for production"
 fi
 
 # --- OAuth RSA key ---
@@ -54,14 +53,19 @@ if [ -n "${SWITCHBOARD_OWNER_EMAIL:-}" ] && [ -n "${SWITCHBOARD_OWNER_PASSWORD_H
     || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
 fi
 
-# --- OpenAI key ---
-# Read from Docker secret file if present. Chown to service user only —
-# worker user must NOT be able to read this (prevents tenant code exfiltration).
+# --- Lock down secrets — service user only, worker must NOT read ---
+# Done after migrate-auth (which runs as root and can still read them)
+SECRET_FILE="/run/secrets/master_key"
+if [ -f "$SECRET_FILE" ]; then
+    chown switchboard-svc "$SECRET_FILE" 2>/dev/null || true
+    chmod 400 "$SECRET_FILE"
+    echo "[entrypoint] Master key secret locked to service user"
+fi
 OPENAI_SECRET="/run/secrets/openai_key"
 if [ -f "$OPENAI_SECRET" ]; then
     chown switchboard-svc "$OPENAI_SECRET" 2>/dev/null || true
     chmod 400 "$OPENAI_SECRET"
-    echo "[entrypoint] OpenAI key loaded from Docker secret (service-user only)"
+    echo "[entrypoint] OpenAI key secret locked to service user"
 fi
 
 # --- Fix /data ownership after any file creation above ---
