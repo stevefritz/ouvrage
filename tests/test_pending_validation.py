@@ -403,7 +403,8 @@ class TestWorkerToolAllowlist:
         })
 
         assert len(result) == 1
-        data = json.loads(result[0].text)
+        json_part = result[0].text.split("\n\n---\n")[0]
+        data = json.loads(json_part)
         assert "error" not in str(data).lower() or "Error" not in result[0].text[:10]
 
     async def test_worker_call_tool_allows_escalate(self, db, sample_task):
@@ -417,7 +418,8 @@ class TestWorkerToolAllowlist:
         })
 
         assert len(result) == 1
-        data = json.loads(result[0].text)
+        json_part = result[0].text.split("\n\n---\n")[0]
+        data = json.loads(json_part)
         assert data.get("escalated") is True
 
 
