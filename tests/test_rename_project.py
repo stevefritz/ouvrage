@@ -222,6 +222,34 @@ class TestRenameProjectDB:
         assert sub["task_id"] == "new-sub/sub-task"
         assert sub["id"] == "new-sub/sub-task/review-1"
 
+    async def test_files_project_id_updated(self, db):
+        """files.project_id (separate from task_id) must be updated on rename."""
+        await _create_project("proj-files")
+        await _create_task("proj-files/file-task", "proj-files")
+
+        # Create a file with project_id set directly (as promote_task_file does)
+        from switchboard.db.files import create_file
+        await create_file(
+            id="file-001",
+            filename="report.txt",
+            stored_path="/tmp/report.txt",
+            mime_type="text/plain",
+            size_bytes=42,
+            uploaded_by=None,
+            task_id="proj-files/file-task",
+            project_id="proj-files",
+        )
+
+        await db.rename_project("proj-files", "renamed-files")
+
+        from switchboard.db.files import get_file
+        f = await get_file("file-001")
+        assert f is not None
+        assert f["project_id"] == "renamed-files", (
+            f"files.project_id not updated: got {f['project_id']!r}"
+        )
+        assert f["task_id"] == "renamed-files/file-task"
+
 
 # ---------------------------------------------------------------------------
 # Reject active tasks — various statuses

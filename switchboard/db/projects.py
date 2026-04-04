@@ -214,6 +214,12 @@ async def rename_project(old_id: str, new_id: str) -> dict:
                     (new_id, n, old_id),
                 )
 
+            # 3b. files: also update project_id column (separate from task_id prefix)
+            await db.execute(
+                "UPDATE files SET project_id = ? WHERE project_id = ?",
+                (new_id, old_id),
+            )
+
             # 4. subtasks: task_id and id (both carry the task_id prefix)
             await db.execute(
                 "UPDATE subtasks SET task_id = ? || substr(task_id, ? + 1)"
@@ -247,18 +253,19 @@ async def rename_project(old_id: str, new_id: str) -> dict:
                 "UPDATE conversations SET project = ? WHERE project = ?", (new_id, old_id)
             )
 
+            # Verify FK integrity before committing — violations can still be rolled back here
+            violations = await db.execute_fetchall("PRAGMA foreign_key_check")
+            if violations:
+                raise ValueError(f"FK integrity violation during rename: {violations}")
+
             await db.commit()
         except Exception:
+            await db.rollback()
             await db.execute("PRAGMA foreign_keys = ON")
             raise
 
         # Re-enable FK enforcement
         await db.execute("PRAGMA foreign_keys = ON")
-
-        # Verify no FK violations were introduced
-        violations = await db.execute_fetchall("PRAGMA foreign_key_check")
-        if violations:
-            raise ValueError(f"FK integrity violation after rename: {violations}")
 
         rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (new_id,))
         return _decode_project(dict(rows[0]))
