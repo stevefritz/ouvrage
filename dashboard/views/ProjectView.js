@@ -853,7 +853,7 @@ export function ProjectView({ id, tab }) {
                     const task = taskMap.get(tid) || {
                         id: tid, goal: hit.title || tid, status: hit.status || 'unknown',
                     };
-                    enriched.push({ ...task, _searchHit: hit });
+                    enriched.push({ ...task });
                 }
                 setSearchResults(enriched);
             } catch (_) {
