@@ -1,8 +1,4 @@
-"""Ops tool handlers — get_context and get_guide."""
-
-import switchboard.db as db
-
-GUIDE_STATIC = """# Ouvrage — Behavioral Playbook
+# Ouvrage — Behavioral Playbook
 
 You are connected to Ouvrage, a task orchestration system that dispatches autonomous Claude Code workers to git repos. This guide teaches you how to behave — not how the engine works internally. Tool schemas are already in your context via MCP registration.
 
@@ -106,7 +102,7 @@ After CC completes a task, an automatic quality pipeline runs:
 1. **Auto-test** — runs the project's `test_command`. If tests fail, CC is retried with the failure output injected (up to `max_test_retries`, default 3). If tests pass, moves to review.
 2. **Auto-review** — dispatches a review subtask (Opus reads the diff + original spec). Reviewer either approves or posts feedback. On feedback, CC is retried with the review injected (up to `max_review_retries`, default 2).
 3. **Auto-PR** — creates a GitHub PR when all gates pass (if `auto_pr=true`).
-4. **Auto-merge** — merges the final branch into main without a PR (if `auto_merge=true`). Use on chain tails that should merge directly without human review. Mid-chain tasks don't need this flag — the chain mechanism handles branch merging between tasks automatically.
+4. **Auto-merge** — merges the branch directly (if `auto_merge=true`). Use with caution — usually only mid-chain tasks.
 
 ### Key actions via `transition_task`
 
@@ -141,19 +137,6 @@ Call `get_task_status(task_id)` first to see `available_actions` for the current
 Don't use Opus for CSS fixes or routine bug patches. Don't use Sonnet for architectural analysis.
 
 ---
-
-## Cost Awareness
-
-Typical task costs:
-- Sonnet implementation: $1-5 per task (varies with test retries and code complexity)
-- Opus analysis/review: $1-3 per task (read-heavy, fewer turns)
-- 10 parallel doc tasks: ~$10 total
-- A 7-task implementation chain: ~$15-25
-
-Don't dispatch 30 Opus tasks casually. Propose the plan, mention expected cost, get approval.
-
----
-
 
 ## 6. How Search Works
 
@@ -202,9 +185,8 @@ Task A (depends_on: none) → Task B (depends_on: A) → Task C (depends_on: B)
 When tasks are independent — different files, different concerns. Dispatch all at once.
 
 ### Chain tail configuration
-- Mid-chain tasks: no flags needed — the chain mechanism merges branches between tasks automatically
-- Last task (chain tail), merge to main: `auto_merge=true` — merges directly to main without a PR
-- Last task (chain tail), PR for review: `auto_pr=true` — creates a PR for human review
+- Mid-chain tasks: `auto_merge=true` — merge into the next task's branch automatically
+- Last task in chain: `auto_pr=true` — create a PR for human review
 - **Never set both `auto_merge` and `auto_pr` on the same task** — they're mutually exclusive
 
 ### Opus review at chain end
@@ -322,104 +304,3 @@ dispatch_task(id="review-feature", depends_on="last-impl-task",
 2. `search("settings page layout", project_id="my-app")` — find related code/conversations
 3. Draft a fix task spec referencing the specific component
 4. Dispatch with Sonnet — this is an implementation fix, not architecture
-"""
-
-
-async def _handle_get_context(arguments):
-    """Lightweight orientation snapshot — call first in every conversation."""
-    projects = await db.list_projects()
-    task_counts = await db.get_project_task_counts()
-    active_count = await db.count_active_tasks()
-
-    # Project summaries
-    project_lines = []
-    for p in projects:
-        counts = task_counts.get(p["id"], {})
-        total = counts.get("total_tasks", 0)
-        active = counts.get("active_task_count", 0)
-        cost = counts.get("total_cost", 0)
-        project_lines.append(f"  - {p['id']}: {total} tasks ({active} active), ${cost:.2f}")
-
-    # Active/blocked tasks
-    active_tasks = await db.list_tasks(status="working")
-    blocked_tasks = await db.list_tasks(status="needs-review")
-    rate_limited = await db.list_tasks(status="rate-limited")
-
-    task_lines = []
-    for t in (active_tasks or [])[:5]:
-        phase = f" [{t.get('phase', '')}]" if t.get("phase") else ""
-        task_lines.append(f"  - {t['id']}{phase} — {(t.get('goal') or '')[:60]}")
-    for t in (blocked_tasks or [])[:3]:
-        task_lines.append(f"  - {t['id']} [needs-review] — {(t.get('goal') or '')[:60]}")
-    for t in (rate_limited or [])[:3]:
-        task_lines.append(f"  - {t['id']} [rate-limited] — {(t.get('goal') or '')[:60]}")
-
-    # Recent significant events
-    events = await db.get_recent_activity(limit=5)
-    event_lines = []
-    for ev in events:
-        task_short = ev.get("task_id", "").split("/")[-1] if ev.get("task_id") else ""
-        title = ev.get("title") or ev.get("event_type", "")
-        event_lines.append(f"  - [{ev.get('created_at', '')[:16]}] {task_short}: {title}")
-
-    # Pinned conversations
-    convs = await db.list_conversations()
-    pinned_convs = [c for c in convs if c.get("has_pinned")]
-
-    parts = [
-        f"# Ouvrage Context",
-        f"",
-        f"**Projects:** {len(projects)} | **Active tasks:** {active_count}",
-        f"",
-    ]
-
-    if project_lines:
-        parts.append("## Projects")
-        parts.extend(project_lines)
-        parts.append("")
-
-    if task_lines:
-        parts.append("## Active / Attention Needed")
-        parts.extend(task_lines)
-        parts.append("")
-
-    if event_lines:
-        parts.append("## Recent Events")
-        parts.extend(event_lines)
-        parts.append("")
-
-    if pinned_convs:
-        parts.append("## Conversations with Pinned Context")
-        for c in pinned_convs[:10]:
-            parts.append(f"  - `{c['id']}`: {c.get('goal', '')[:80]}")
-        parts.append("")
-
-    parts.append("_Call `get_guide` for the full tool reference. Use `conversations(search=...)` to find prior context._")
-
-    return {"context": "\n".join(parts)}
-
-
-async def _handle_get_guide(arguments):
-    """Return the Switchboard guide with live system summary appended."""
-    parts = [GUIDE_STATIC]
-
-    # Live system summary
-    projects = await db.list_projects()
-    task_counts = await db.get_project_task_counts()
-    active_count = await db.count_active_tasks()
-
-    parts.append("## Live System Summary\n")
-    parts.append(f"- **Projects**: {len(projects)}")
-    parts.append(f"- **Active tasks**: {active_count}")
-    parts.append("")
-
-    if projects:
-        parts.append("### Projects")
-        for p in projects:
-            counts = task_counts.get(p["id"], {})
-            total = counts.get("total_tasks", 0)
-            active = counts.get("active_task_count", 0)
-            cost = counts.get("total_cost", 0)
-            parts.append(f"- **{p['id']}**: {total} tasks ({active} active), ${cost:.2f} total cost")
-
-    return {"guide": "\n".join(parts)}
