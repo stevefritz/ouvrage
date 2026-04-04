@@ -190,6 +190,7 @@ from switchboard.db.search import (
     get_component_activity,
     search_task_messages,
     search_component,
+    search_conversation_messages,
     index_message_chunks,
     search_message_chunks,
     get_messages_needing_chunking,
@@ -250,7 +251,7 @@ __all__ = [
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",
-    "search_task_messages", "search_component",
+    "search_task_messages", "search_component", "search_conversation_messages",
     "index_message_chunks", "search_message_chunks", "get_messages_needing_chunking",
     "set_task_embedding", "get_tasks_needing_embedding", "search_tasks_semantic",
     # constants

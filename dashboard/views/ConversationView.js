@@ -215,6 +215,16 @@ function renderMarkdown(content) {
     }
 }
 
+// Wrap text matches in <mark> tags, skipping content inside HTML tags
+function highlightQuery(html, query) {
+    if (!query || !html) return html;
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return html.replace(
+        new RegExp(`(<[^>]*>)|(${escaped})`, 'gi'),
+        (match, tag) => tag ? match : `<mark style="background:rgba(255,220,50,0.35);color:inherit;border-radius:2px;padding:0 1px">${match}</mark>`,
+    );
+}
+
 // Extract ## and ### headings from markdown text (returns {level, text, slug})
 function extractHeadings(markdown) {
     if (!markdown) return [];
@@ -252,8 +262,11 @@ function TypeBadge({ type, mini }) {
 
 // ── Message component ─────────────────────────────────────────
 
-function ConversationMessage({ msg, isPinned, highlighted }) {
-    const renderedContent = useMemo(() => renderMarkdown(msg.content), [msg.content]);
+function ConversationMessage({ msg, isPinned, highlighted, searchQuery }) {
+    const renderedContent = useMemo(() => {
+        const html = renderMarkdown(msg.content);
+        return searchQuery ? highlightQuery(html, searchQuery) : html;
+    }, [msg.content, searchQuery]);
 
     const handleCopyLink = useCallback(() => {
         const url = window.location.origin
@@ -358,10 +371,11 @@ function ConversationMessage({ msg, isPinned, highlighted }) {
 
 // ── TOC Sidebar (desktop) ─────────────────────────────────────
 
-function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onScrollToMsg }) {
+function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onScrollToMsg, matchIds }) {
     const [showAll, setShowAll] = useState(false);
     const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
     const hiddenCount = messages.length - TOC_MSG_LIMIT;
+    const hasFilter = matchIds && matchIds.size > 0;
 
     const sidebarStyle = {
         width: layout.sidebarWidth,
@@ -386,25 +400,29 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
         marginTop: '8px',
     };
 
-    const tocItemStyle = (isHeading, isActive) => ({
-        display: 'flex',
-        alignItems: 'center',
-        gap: '5px',
-        width: '100%',
-        textAlign: 'left',
-        background: 'none',
-        border: 'none',
-        cursor: 'pointer',
-        padding: isHeading ? '3px 14px 3px 20px' : '4px 14px',
-        fontSize: typography.size.xs,
-        color: isActive ? colors.accent : colors.textSecondary,
-        fontWeight: isActive ? typography.weight.medium : typography.weight.normal,
-        lineHeight: '1.4',
-        overflow: 'hidden',
-        transition: `color ${animation.durationFast}`,
-        fontFamily: typography.fontBody,
-        minWidth: 0,
-    });
+    const tocItemStyle = (isHeading, isActive, msgId) => {
+        const isMatch = msgId && hasFilter && matchIds.has(msgId);
+        const isDimmed = hasFilter && msgId && !matchIds.has(msgId);
+        return {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            width: '100%',
+            textAlign: 'left',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: isHeading ? '3px 14px 3px 20px' : '4px 14px',
+            fontSize: typography.size.xs,
+            color: isMatch ? colors.accent : isActive ? colors.accent : isDimmed ? `${colors.textSecondary}55` : colors.textSecondary,
+            fontWeight: (isMatch || isActive) ? typography.weight.medium : typography.weight.normal,
+            lineHeight: '1.4',
+            overflow: 'hidden',
+            transition: `color ${animation.durationFast}`,
+            fontFamily: typography.fontBody,
+            minWidth: 0,
+        };
+    };
 
     const labelSpanStyle = {
         overflow: 'hidden',
@@ -421,7 +439,7 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
                 ${pinnedHeadings.map((h, i) => html`
                     <button
                         key=${i}
-                        style=${tocItemStyle(true, false)}
+                        style=${tocItemStyle(true, false, null)}
                         class="foreman-toc-item"
                         onClick=${() => onScrollToHeading(h)}
                         title=${h.text}
@@ -438,7 +456,7 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
                     return html`
                         <button
                             key=${msg.id}
-                            style=${tocItemStyle(false, isActive)}
+                            style=${tocItemStyle(false, isActive, msg.id)}
                             class=${'foreman-toc-item' + (isActive ? ' toc-active' : '')}
                             onClick=${() => onScrollToMsg(msg.id)}
                             title=${label}
@@ -450,7 +468,7 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
                 })}
                 ${!showAll && hiddenCount > 0 ? html`
                     <button
-                        style=${{ ...tocItemStyle(false, false), color: colors.accent, fontWeight: typography.weight.medium }}
+                        style=${{ ...tocItemStyle(false, false, null), color: colors.accent, fontWeight: typography.weight.medium }}
                         onClick=${() => setShowAll(true)}
                     >+${hiddenCount} more</button>
                 ` : null}
@@ -785,14 +803,11 @@ export function ConversationView({ id, projectId }) {
         setSearchLoading(true);
         searchTimer.current = setTimeout(async () => {
             try {
-                const params = { q };
-                if (projectId) params.project_id = projectId;
-                const data = await api.search(params);
-                // Scope to this conversation
-                const results = (data.results || []).filter(r => r.conversation_id === id);
+                const data = await api.searchConversation(id, q);
+                const results = data.results || [];
                 setSearchResults(results);
-                // Highlight matched messages
-                const ids = new Set(results.map(r => r.message_id).filter(Boolean));
+                // Highlight matched messages — dedicated endpoint returns r.id directly
+                const ids = new Set(results.map(r => r.id).filter(Boolean));
                 setHighlightedIds(ids);
                 // Scroll to first match
                 if (ids.size > 0) {
@@ -807,7 +822,7 @@ export function ConversationView({ id, projectId }) {
                 setSearchLoading(false);
             }
         }, 300);
-    }, [id, projectId]);
+    }, [id]);
 
     // Scroll helpers
     const scrollToMsg = useCallback((msgId) => {
@@ -1029,6 +1044,7 @@ export function ConversationView({ id, projectId }) {
                     activeId=${activeId}
                     onScrollToHeading=${scrollToHeading}
                     onScrollToMsg=${scrollToMsg}
+                    matchIds=${highlightedIds}
                 />
 
                 <!-- Content area -->
@@ -1037,7 +1053,7 @@ export function ConversationView({ id, projectId }) {
                     ${searchQuery.trim() ? html`
                         <div style=${searchStatusStyle}>
                             ${searchLoading ? 'Searching…' : searchResults
-                                ? `${searchResults.length} result${searchResults.length !== 1 ? 's' : ''} for "${searchQuery}"`
+                                ? `${searchResults.length} match${searchResults.length !== 1 ? 'es' : ''} for "${searchQuery}"`
                                 : ''}
                         </div>
                     ` : null}
@@ -1049,6 +1065,7 @@ export function ConversationView({ id, projectId }) {
                                 msg=${pinnedMsg}
                                 isPinned=${true}
                                 highlighted=${false}
+                                searchQuery=${highlightedIds.has(pinnedMsg.id) ? searchQuery : null}
                             />
                         </div>
                     ` : null}
@@ -1075,6 +1092,7 @@ export function ConversationView({ id, projectId }) {
                             msg=${msg}
                             isPinned=${false}
                             highlighted=${highlightedIds.has(msg.id)}
+                            searchQuery=${highlightedIds.has(msg.id) ? searchQuery : null}
                         />
                     `)}
 
