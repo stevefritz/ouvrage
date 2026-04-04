@@ -226,14 +226,16 @@ export function TaskList({ tasks, conversations, chainMap, statusFilter, onStatu
                 }
             `}</style>
 
+            <!-- Search/filter bar always at top -->
+            <${FilterBar}
+                statusFilter=${statusFilter}
+                onStatusFilter=${onStatusFilter}
+                searchQuery=${searchQuery}
+                onSearch=${onSearch}
+            />
+
             ${isSearchActive ? html`
                 <!-- Search results mode -->
-                <${FilterBar}
-                    statusFilter=${statusFilter}
-                    onStatusFilter=${onStatusFilter}
-                    searchQuery=${searchQuery}
-                    onSearch=${onSearch}
-                />
                 ${searchLoading ? html`
                     <div style=${loadingStyle}>Searching…</div>
                 ` : searchResults && displaySearchResults.length === 0 ? html`
@@ -316,14 +318,6 @@ export function TaskList({ tasks, conversations, chainMap, statusFilter, onStatu
                 ${needsAttention.length === 0 && recentTasks.length === 0 && olderTasks.length === 0 ? html`
                     <div style=${emptyStyle}>No tasks yet</div>
                 ` : null}
-
-                <!-- Search bar below sections -->
-                <${FilterBar}
-                    statusFilter=${statusFilter}
-                    onStatusFilter=${onStatusFilter}
-                    searchQuery=${searchQuery}
-                    onSearch=${onSearch}
-                />
             `}
         </div>
     `;
