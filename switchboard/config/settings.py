@@ -3,6 +3,15 @@
 import os
 
 # ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# LOG_DIR — directory for rotating log files.
+# Set to "" or unset to use the default: /opt/switchboard/logs
+# File: {LOG_DIR}/switchboard.log (10 MB × 5 backups, DEBUG level)
+LOG_DIR = os.environ.get("LOG_DIR", "/opt/switchboard/logs")
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 

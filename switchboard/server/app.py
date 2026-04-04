@@ -284,6 +284,9 @@ async def _backfill_message_chunks() -> None:
 
 
 async def main():
+    from switchboard.logging_config import configure_logging
+    configure_logging()
+
     await db.init_db()
 
     # Auto-migration: if owner env vars are set and no real owner exists, seed one.

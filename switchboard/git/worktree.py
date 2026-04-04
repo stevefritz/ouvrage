@@ -72,7 +72,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     worktree_path = os.path.join(base, dir_name)
 
     if os.path.exists(worktree_path):
-        log.info(f"Worktree already exists: {worktree_path}, pulling latest")
+        log.debug(f"Worktree already exists: {worktree_path}, pulling latest")
         # Fetch + pull so resumed tasks pick up upstream changes
         _, fetch_err, fetch_rc = await _run_as_worker(
             "git", "-C", worktree_path, "fetch", "origin",
@@ -90,7 +90,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
                     raise RuntimeError(
                         f"git fetch failed with origin and authenticated URL: {fallback_err.decode().strip()}"
                     )
-                log.info(f"Fallback fetch via authenticated URL succeeded for {worktree_path}")
+                log.debug(f"Fallback fetch via authenticated URL succeeded for {worktree_path}")
             except ValueError as e:
                 raise RuntimeError(f"git fetch failed and no PAT available for fallback: {e}")
         stdout, stderr, rc = await _run_as_worker(
@@ -99,7 +99,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         )
         if rc != 0:
             # Non-fatal — branch may not exist on remote yet, or diverged
-            log.info(f"Auto-pull skipped (ff-only failed): {stderr.decode().strip()}")
+            log.debug(f"Auto-pull skipped (ff-only failed): {stderr.decode().strip()}")
         return worktree_path
 
     # Ensure base directory exists (created as worker user so ownership is correct)
@@ -156,7 +156,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     stdout, _, _ = await _run_as_worker("git", "-C", bare_path, "symbolic-ref", "HEAD")
     detected = stdout.decode().strip().removeprefix("refs/heads/")
     if detected and detected != default_branch:
-        log.info(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
+        log.debug(f"Auto-detected default branch '{detected}' (project config said '{default_branch}')")
         default_branch = detected
 
     # Priority: depends_on (chain from parent) > base_branch (explicit) > origin/{default}
@@ -165,10 +165,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         parent_task = await db.get_task(depends_on)
         if parent_task and parent_task.get("branch"):
             base_ref = f"origin/{parent_task['branch']}"
-            log.info(f"Branch chaining: branching from parent branch '{base_ref}' (depends_on={depends_on})")
+            log.debug(f"Branch chaining: branching from parent branch '{base_ref}' (depends_on={depends_on})")
     elif base_branch:
         base_ref = base_branch if base_branch.startswith("origin/") else f"origin/{base_branch}"
-        log.info(f"Explicit base_branch: branching from '{base_ref}'")
+        log.debug(f"Explicit base_branch: branching from '{base_ref}'")
 
     # If the branch already exists on origin (e.g. reopened task), use it as base
     # so the new worktree starts with all previous commits instead of fresh from main.
@@ -177,7 +177,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         "git", "-C", bare_path, "rev-parse", "--verify", remote_ref,
     )
     if rev_rc == 0 and not depends_on:
-        log.info(f"Branch '{branch}' exists on origin — using {remote_ref} as base (reopened task)")
+        log.debug(f"Branch '{branch}' exists on origin — using {remote_ref} as base (reopened task)")
         base_ref = remote_ref
 
     stdout, stderr, rc = await _run_as_worker(
@@ -188,7 +188,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         error_msg = stderr.decode()
         # Stale local branch ref — delete it and retry with -b (fresh branch from base)
         if "already exists" in error_msg:
-            log.info(f"Deleting stale branch ref '{branch}' and retrying")
+            log.debug(f"Deleting stale branch ref '{branch}' and retrying")
             await _run_as_worker("git", "-C", bare_path, "branch", "-D", branch)
             stdout, stderr, rc = await _run_as_worker(
                 "git", "-C", bare_path, "worktree", "add",
@@ -246,7 +246,7 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
     if not cmd:
         return
 
-    log.info(f"Running setup: {cmd} in {worktree_path}")
+    log.debug(f"Running setup: {cmd} in {worktree_path}")
     stdout, stderr, rc = await _run_as_worker("sh", "-c", f"cd {shlex.quote(worktree_path)} && {cmd}")
     if rc != 0:
         log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
@@ -266,7 +266,7 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         await _run_as_worker(
             "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
         )
-        log.info(f"Appended env overrides to {env_path}")
+        log.debug(f"Appended env overrides to {env_path}")
 
 
 async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:
@@ -285,7 +285,7 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
     try:
         pat = await get_github_pat(project_id)
     except ValueError:
-        log.info(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
+        log.debug(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
         return None
 
     # Write credential helper script — group-executable so the worker user
@@ -319,7 +319,7 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
             "git", "-C", worktree_path, "config", "--worktree", "remote.origin.url", https_url,
         )
 
-    log.info(f"Configured credential helper for worktree {worktree_path}")
+    log.debug(f"Configured credential helper for worktree {worktree_path}")
     return helper_path
 
 
@@ -331,7 +331,7 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
     # Run teardown command
     teardown = project.get("teardown_command")
     if teardown and worktree_path and os.path.exists(worktree_path):
-        log.info(f"Running teardown: {teardown}")
+        log.debug(f"Running teardown: {teardown}")
         proc = await asyncio.create_subprocess_shell(
             teardown, cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -360,6 +360,6 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode == 0:
-            log.info(f"Deleted branch: {branch}")
+            log.debug(f"Deleted branch: {branch}")
         else:
-            log.info(f"Branch delete skipped (not merged or not found): {branch}")
+            log.debug(f"Branch delete skipped (not merged or not found): {branch}")

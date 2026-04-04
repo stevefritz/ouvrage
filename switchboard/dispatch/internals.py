@@ -57,7 +57,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
 
     # If worktree already exists, just fetch and pull
     if os.path.exists(worktree_path):
-        log.info(f"Worktree already exists: {worktree_path}, fetching latest")
+        log.debug(f"Worktree already exists: {worktree_path}, fetching latest")
         await _run_as_worker("git", "-C", worktree_path, "fetch", "origin")
         await _run_as_worker(
             "git", "-C", worktree_path, "merge", "--ff-only",
@@ -76,7 +76,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
 
     if rc != 0:
         # Branch doesn't exist on origin — fall back to full setup
-        log.info(f"Branch '{branch}' not on origin, falling back to setup_task_worktree")
+        log.debug(f"Branch '{branch}' not on origin, falling back to setup_task_worktree")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="New worktree",
@@ -98,7 +98,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
     # Make worktree group-writable for service user
     await _run_as_worker("chmod", "g+w", worktree_path)
 
-    log.info(f"Checked out existing branch '{branch}' from origin into {worktree_path}")
+    log.debug(f"Checked out existing branch '{branch}' from origin into {worktree_path}")
     await db.post_task_message(
         task_id=task_id, author="dispatcher", type="status",
         title="Worktree restored",
@@ -251,7 +251,7 @@ async def _copy_archived_session_log(
                 "forked_from_attempt": prev_attempt,
             }
             f.write(json.dumps(marker) + "\n")
-        log.info(f"Copied session log from attempt {prev_attempt} into attempt {current_attempt} for {task_id}")
+        log.debug(f"Copied session log from attempt {prev_attempt} into attempt {current_attempt} for {task_id}")
     except Exception as e:
         log.warning(f"Failed to copy archived session log for {task_id}: {e}")
 

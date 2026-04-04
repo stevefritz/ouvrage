@@ -436,7 +436,7 @@ async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
         "git", "-C", worktree_path, "ls-files", ".switchboard",
     )
     if rc == 0 and stdout.strip():
-        log.info(f"Removing git-tracked .switchboard files from {worktree_path}")
+        log.debug(f"Removing git-tracked .switchboard files from {worktree_path}")
         await _run_as_worker("git", "-C", worktree_path, "rm", "-rf", "--cached", ".switchboard")
 
     # Ensure .switchboard is gitignored so CC never commits it
@@ -682,7 +682,7 @@ async def _run_sdk_session(
                         f"The above message was just posted to your task thread. "
                         f"Read it carefully and adjust your work accordingly."
                     )
-                    log.info(f"Injecting message {msg_id} into task {task_id}")
+                    log.debug(f"Injecting message {msg_id} into task {task_id}")
                     await client.query(injection)
                     await notify.task_heartbeat(
                         task_id=task_id, turns=0,
