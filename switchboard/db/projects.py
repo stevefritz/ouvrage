@@ -113,6 +113,157 @@ async def count_projects() -> int:
         return rows[0]["cnt"] if rows else 0
 
 
+async def rename_project(old_id: str, new_id: str) -> dict:
+    """Rename a project, cascading the ID change through all tables atomically.
+
+    Raises ValueError if:
+    - old project not found
+    - new_id already exists
+    - any tasks are in active states (working/dispatching/testing/reviewing)
+
+    Returns the updated project dict.
+    """
+    import re
+    if not re.match(r'^[a-z0-9][a-z0-9-]*$', new_id):
+        raise ValueError(
+            f"new_id '{new_id}' is invalid — must match ^[a-z0-9][a-z0-9-]*$ "
+            "(lowercase letters, digits, hyphens; must start with letter or digit)"
+        )
+
+    async with get_db() as db:
+        # Verify old project exists
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (old_id,))
+        if not rows:
+            raise ValueError(f"Project '{old_id}' not found")
+        old_project = dict(rows[0])
+
+        # Verify new_id doesn't already exist
+        existing = await db.execute_fetchall("SELECT id FROM projects WHERE id = ?", (new_id,))
+        if existing:
+            raise ValueError(f"Project '{new_id}' already exists")
+
+        # Reject if any tasks are active
+        active_rows = await db.execute_fetchall(
+            """SELECT id FROM tasks
+               WHERE project_id = ? AND status IN ('working', 'dispatching', 'testing', 'reviewing')""",
+            (old_id,),
+        )
+        if active_rows:
+            ids = [r["id"] for r in active_rows]
+            raise ValueError(
+                f"Cannot rename project '{old_id}' — {len(ids)} task(s) are active: "
+                f"{', '.join(ids)}. Cancel or wait for them to finish first."
+            )
+
+        # Compute new working_dir (same parent, folder renamed to new_id)
+        import os as _os
+        old_working_dir = old_project.get("working_dir") or ""
+        if old_working_dir:
+            new_working_dir = _os.path.join(_os.path.dirname(old_working_dir), new_id)
+        else:
+            new_working_dir = old_working_dir
+
+        n = len(old_id)
+
+        # Disable FK checks for the multi-table cascade UPDATE
+        await db.execute("PRAGMA foreign_keys = OFF")
+        try:
+            # 1. projects: id + working_dir
+            if new_working_dir:
+                await db.execute(
+                    "UPDATE projects SET id = ?, working_dir = ? WHERE id = ?",
+                    (new_id, new_working_dir, old_id),
+                )
+            else:
+                await db.execute("UPDATE projects SET id = ? WHERE id = ?", (new_id, old_id))
+
+            # 2. tasks: project_id, id (prefix), depends_on (prefix), parent_task_id (prefix),
+            #           worktree_path (path prefix)
+            await db.execute(
+                "UPDATE tasks SET project_id = ? WHERE project_id = ?", (new_id, old_id)
+            )
+            await db.execute(
+                "UPDATE tasks SET id = ? || substr(id, ? + 1) WHERE id LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+            await db.execute(
+                "UPDATE tasks SET depends_on = ? || substr(depends_on, ? + 1)"
+                " WHERE depends_on LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+            await db.execute(
+                "UPDATE tasks SET parent_task_id = ? || substr(parent_task_id, ? + 1)"
+                " WHERE parent_task_id LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+            if old_working_dir and new_working_dir:
+                wn = len(old_working_dir)
+                await db.execute(
+                    "UPDATE tasks SET worktree_path = ? || substr(worktree_path, ? + 1)"
+                    " WHERE project_id = ? AND worktree_path IS NOT NULL"
+                    " AND worktree_path LIKE ? || '/%'",
+                    (new_working_dir, wn, new_id, old_working_dir),
+                )
+
+            # 3. Child tables keyed by task_id (prefix replace)
+            for table in ("task_checklist", "task_artifacts", "task_tags",
+                          "messages", "files", "task_audit_log", "task_attempts"):
+                await db.execute(
+                    f"UPDATE {table} SET task_id = ? || substr(task_id, ? + 1)"
+                    f" WHERE task_id LIKE ? || '/%'",
+                    (new_id, n, old_id),
+                )
+
+            # 4. subtasks: task_id and id (both carry the task_id prefix)
+            await db.execute(
+                "UPDATE subtasks SET task_id = ? || substr(task_id, ? + 1)"
+                " WHERE task_id LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+            await db.execute(
+                "UPDATE subtasks SET id = ? || substr(id, ? + 1) WHERE id LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+
+            # 5. punchlist: claimed_by and resolved_by store task IDs
+            await db.execute(
+                "UPDATE punchlist SET claimed_by = ? || substr(claimed_by, ? + 1)"
+                " WHERE claimed_by LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+            await db.execute(
+                "UPDATE punchlist SET resolved_by = ? || substr(resolved_by, ? + 1)"
+                " WHERE resolved_by LIKE ? || '/%'",
+                (new_id, n, old_id),
+            )
+
+            # 6. components: project_id
+            await db.execute(
+                "UPDATE components SET project_id = ? WHERE project_id = ?", (new_id, old_id)
+            )
+
+            # 7. conversations: project column (TEXT, no FK but semantically tied)
+            await db.execute(
+                "UPDATE conversations SET project = ? WHERE project = ?", (new_id, old_id)
+            )
+
+            await db.commit()
+        except Exception:
+            await db.execute("PRAGMA foreign_keys = ON")
+            raise
+
+        # Re-enable FK enforcement
+        await db.execute("PRAGMA foreign_keys = ON")
+
+        # Verify no FK violations were introduced
+        violations = await db.execute_fetchall("PRAGMA foreign_key_check")
+        if violations:
+            raise ValueError(f"FK integrity violation after rename: {violations}")
+
+        rows = await db.execute_fetchall("SELECT * FROM projects WHERE id = ?", (new_id,))
+        return _decode_project(dict(rows[0]))
+
+
 async def delete_project(project_id: str) -> None:
     """Delete a project and all its child records from the database.
 

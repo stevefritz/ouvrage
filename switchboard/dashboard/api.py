@@ -130,6 +130,9 @@ async def handle_request(scope, receive, send):
                 pid = rest[:-len("/stop")]
                 result = await tasks.stop_project(pid)
                 return await _json_response(send, result)
+            if method == "POST" and rest.endswith("/rename"):
+                pid = rest[:-len("/rename")]
+                return await _handle_rename_project(receive, send, pid, scope)
 
         # GET /dashboard/api/conversations
         if path == "/dashboard/api/conversations" and method == "GET":
@@ -612,6 +615,59 @@ async def _handle_delete_project(send, project_id, scope):
             })
 
     await _json_response(send, {"deleted": True, "project_id": project_id})
+
+
+async def _handle_rename_project(receive, send, project_id, scope):
+    """POST /dashboard/api/projects/{id}/rename — rename project and cascade ID change."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    raw = await _read_body(receive)
+    try:
+        body = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, ValueError):
+        return await _error(send, "Invalid JSON", 400)
+
+    new_id = body.get("new_id", "").strip() if body else ""
+    if not new_id:
+        return await _error(send, "new_id is required", 400)
+
+    try:
+        project = await db.rename_project(project_id, new_id)
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg:
+            return await _error(send, msg, 404)
+        return await _error(send, msg, 409)
+
+    # Rename working directory on disk (best-effort)
+    new_working_dir = project.get("working_dir")
+    if new_working_dir:
+        import os as _os
+        parent = _os.path.dirname(new_working_dir)
+        old_working_dir = _os.path.join(parent, project_id)
+        if _os.path.isdir(old_working_dir):
+            try:
+                _os.rename(old_working_dir, new_working_dir)
+                logger.info(
+                    "Renamed working directory for project '%s' → '%s': %s → %s",
+                    project_id, new_id, old_working_dir, new_working_dir,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to rename working directory '%s' → '%s': %s",
+                    old_working_dir, new_working_dir, e,
+                )
+                return await _json_response(send, {
+                    **project,
+                    "warning": (
+                        f"Project renamed in DB but failed to rename working directory "
+                        f"'{old_working_dir}' → '{new_working_dir}': {e}"
+                    ),
+                })
+
+    return await _json_response(send, {**project, "renamed": True, "old_id": project_id})
 
 
 async def _handle_activity(scope, send):

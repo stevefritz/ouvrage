@@ -286,6 +286,29 @@ PROJECT_TOOLS = [
             "required": ["project_id"],
         },
     ),
+    Tool(
+        name="rename_project",
+        description=(
+            "Rename a project ID and cascade the change through all database tables. "
+            "Also renames the working directory on disk to match the new ID. "
+            "Rejects if the project has tasks in active states (working, dispatching, testing, reviewing). "
+            "The new_id must be lowercase alphanumeric with hyphens."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Current project ID to rename",
+                },
+                "new_id": {
+                    "type": "string",
+                    "description": "New project ID. Must match ^[a-z0-9][a-z0-9-]*$ (lowercase letters, digits, hyphens).",
+                },
+            },
+            "required": ["project_id", "new_id"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------

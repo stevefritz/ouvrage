@@ -183,6 +183,47 @@ async def _handle_list_projects(arguments):
     return await db.list_projects()
 
 
+async def _handle_rename_project(arguments):
+    """Rename a project: cascade ID change through all DB tables and rename working dir."""
+    project_id = arguments["project_id"]
+    new_id = arguments["new_id"]
+
+    try:
+        project = await db.rename_project(project_id, new_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    # Rename working directory on disk (best-effort; DB is already committed)
+    old_working_dir = None
+    # Reconstruct old working dir: same parent, old folder name
+    new_working_dir = project.get("working_dir")
+    if new_working_dir:
+        parent = os.path.dirname(new_working_dir)
+        old_working_dir = os.path.join(parent, project_id)
+
+    if old_working_dir and os.path.isdir(old_working_dir):
+        try:
+            os.rename(old_working_dir, new_working_dir)
+            log.info(
+                "Renamed working directory for project '%s' → '%s': %s → %s",
+                project_id, new_id, old_working_dir, new_working_dir,
+            )
+        except Exception as e:
+            log.warning(
+                "Failed to rename working directory '%s' → '%s' for project rename '%s' → '%s': %s",
+                old_working_dir, new_working_dir, project_id, new_id, e,
+            )
+            return {
+                **project,
+                "warning": (
+                    f"Project renamed in DB but failed to rename working directory "
+                    f"'{old_working_dir}' → '{new_working_dir}': {e}"
+                ),
+            }
+
+    return {**project, "renamed": True, "old_id": project_id}
+
+
 async def _handle_delete_project(arguments):
     """Delete a project and remove its working directory from disk.
 
