@@ -14,7 +14,7 @@ import { routes } from '../router.js';
 const html = htm.bind(h);
 
 const POLL_INTERVAL_MS = 15_000;
-const TOC_MSG_LIMIT = 8;
+const TOC_MSG_LIMIT = 30;
 
 // Message types that render as compact single-line rows by default
 const COMPACT_TYPES = new Set(['progress', 'status', 'handoff', 'test-result']);
@@ -602,7 +602,7 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
         borderRight: `1px solid ${colors.border}`,
         flexDirection: 'column',
         overflowY: 'auto',
-        maxHeight: 'calc(100vh - 32px)',
+        maxHeight: 'calc(100vh - 140px)',
         position: 'sticky',
         top: '16px',
         alignSelf: 'flex-start',
@@ -642,8 +642,8 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
             transition: `color ${animation.durationFast}`,
             fontFamily: typography.fontBody,
             minWidth: 0,
-            // Accent bar for active search match
-            borderLeft: isCurrent ? `2px solid ${colors.accent}` : '2px solid transparent',
+            // Accent bar for active scroll-spy item and active search match
+            borderLeft: (isCurrent || isActive) ? `2px solid ${colors.accent}` : '2px solid transparent',
             opacity: isDimmed ? 0.35 : 1,
         };
     };
@@ -740,8 +740,12 @@ function MobileTocAccordion({ pinnedHeadings, messages, onScrollToHeading, onScr
                         <button
                             key=${msg.id}
                             class="foreman-toc-accordion-item"
+                            style=${{ display: 'flex', alignItems: 'center', gap: '5px' }}
                             onClick=${() => handleItemClick(() => onScrollToMsg(msg.id))}
-                        >${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}</button>
+                        >
+                            <${TypeBadge} type=${msg.type || 'note'} mini=${true} />
+                            <span style=${{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>${msg.title || (msg.content || '').split('\n')[0].replace(/^#+\s*/,'').slice(0,40) || msg.id}</span>
+                        </button>
                     `)}
                     ${!showAll && hiddenCount > 0 ? html`
                         <button
