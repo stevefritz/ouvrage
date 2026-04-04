@@ -65,7 +65,8 @@ CONVERSATION_TOOLS = [
             "type": "object",
             "properties": {
                 "conversation_id": {"type": "string", "description": "Which conversation to read. Optional when around is set (resolved automatically)."},
-                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns 3 messages centered on it (1 before + target + 1 after). Resolves conversation automatically. When set, all other params are ignored."},
+                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns messages centered on it (use window to control count, default 3). Resolves conversation automatically. When set, all other params are ignored."},
+                "window": {"type": "integer", "description": "Number of messages to return centered on the around target (default 3: 1 before + target + 1 after). Pass 5 to get 2 before + target + 2 after. Only used when around is set.", "default": 3},
                 "message_id": {"type": "integer", "description": "Fetch a single message by ID with full content. When set, all other params except conversation_id are ignored."},
                 "after": {"type": "integer", "description": "Cursor: return only messages with id > this value. Use the cursor from a previous read response."},
                 "last_n": {"type": "integer", "description": "Return only the N most recent messages (pinned shown at top). When set, offset/limit are ignored."},
@@ -447,7 +448,8 @@ TASK_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID. Optional when around is set (resolved automatically)."},
-                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns 3 messages centered on it (1 before + target + 1 after). Resolves task automatically. When set, all other params are ignored."},
+                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns messages centered on it (use window to control count, default 3). Resolves task automatically. When set, all other params are ignored."},
+                "window": {"type": "integer", "description": "Number of messages to return centered on the around target (default 3: 1 before + target + 1 after). Pass 5 to get 2 before + target + 2 after. Only used when around is set.", "default": 3},
                 "message_id": {"type": "integer", "description": "Fetch a single message by ID with full untruncated content. When provided, all other params except task_id are ignored."},
                 "after": {"type": "integer", "description": "Cursor for polling"},
                 "last_n": {"type": "integer", "description": "Return only N most recent (pinned at top). When set, offset/limit are ignored."},

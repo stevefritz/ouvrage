@@ -134,7 +134,7 @@ async def _handle_read(arguments):
     # Around mode — center on a specific message, resolve conversation internally
     around = arguments.get("around")
     if around is not None:
-        return await db.read_messages_around(message_id=around, window=3)
+        return await db.read_messages_around(message_id=around, window=arguments.get("window", 3))
 
     conversation_id = arguments.get("conversation_id")
     if not conversation_id:

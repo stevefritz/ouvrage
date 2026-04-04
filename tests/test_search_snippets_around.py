@@ -446,3 +446,70 @@ class TestReadTaskMessagesAround:
         resp = await _handle_read_task_messages({})
         assert "error" in resp
         assert "task_id" in resp["error"]
+
+
+# ---------------------------------------------------------------------------
+# window parameter — caller controls context size
+# ---------------------------------------------------------------------------
+
+class TestWindowParameter:
+    async def test_window_5_returns_5_messages(self, db):
+        """Caller can pass window=5 to get 2 before + target + 2 after."""
+        from switchboard.server.handlers.conversations import _handle_read
+
+        await db.create_conversation(id="window-test-conv", project="test-project", goal="Window test")
+        msgs = []
+        for i in range(7):
+            m = await db.post_message(
+                conversation_id="window-test-conv",
+                author="human",
+                content=f"Window message {i}",
+            )
+            msgs.append(m)
+
+        # Target the middle message (index 3), with window=5 should get msgs[1..5]
+        target = msgs[3]
+        resp = await _handle_read({"around": target["id"], "window": 5})
+        assert "messages" in resp
+        assert len(resp["messages"]) == 5
+        ids = [m["id"] for m in resp["messages"]]
+        assert msgs[2]["id"] in ids  # 2 before
+        assert msgs[3]["id"] in ids  # target
+        assert msgs[4]["id"] in ids  # 2 after
+
+    async def test_window_default_is_3(self, db):
+        """Without window param, defaults to 3."""
+        from switchboard.server.handlers.conversations import _handle_read
+
+        await db.create_conversation(id="window-default-conv", project="test-project", goal="Window default test")
+        msgs = []
+        for i in range(5):
+            m = await db.post_message(
+                conversation_id="window-default-conv",
+                author="human",
+                content=f"Default window message {i}",
+            )
+            msgs.append(m)
+
+        target = msgs[2]
+        resp = await _handle_read({"around": target["id"]})
+        assert len(resp["messages"]) == 3
+
+    async def test_window_passed_through_read_task_messages(self, db, sample_task):
+        """window param works for read_task_messages too."""
+        from switchboard.server.handlers.tasks import _handle_read_task_messages
+
+        msgs = []
+        for i in range(7):
+            m = await db.post_task_message(
+                task_id=sample_task["id"],
+                author="cc-worker",
+                content=f"Window task message {i}",
+                type="progress",
+            )
+            msgs.append(m)
+
+        target = msgs[3]
+        resp = await _handle_read_task_messages({"around": target["id"], "window": 5})
+        assert "messages" in resp
+        assert len(resp["messages"]) == 5
