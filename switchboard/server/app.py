@@ -250,6 +250,7 @@ async def _backfill_task_goals() -> None:
                     if vector:
                         blob = encode_vector(vector)
                         await db.set_task_embedding(task["id"], blob)
+                        # set_task_embedding also updates tasks_vec automatically
                         total += 1
                         if total % 100 == 0:
                             log.info("Task goal backfill progress: %d tasks processed", total)
@@ -272,6 +273,80 @@ async def _backfill_fts_indexes() -> None:
         log.info("FTS5 index rebuild complete")
     except Exception as e:
         log.error("FTS5 index rebuild failed: %s", e)
+
+
+async def _backfill_vec_tables() -> None:
+    """Populate vec0 tables from existing BLOB embeddings (idempotent, runs at startup)."""
+    try:
+        from switchboard.db.connection import get_db
+        from switchboard.embeddings.service import decode_vector, encode_vector
+
+        async with get_db() as conn:
+            _expected_blob_len = 1536 * 4  # float32 × 1536 dims
+
+            # Messages
+            msg_rows = await conn.execute_fetchall(
+                "SELECT id, embedding FROM messages WHERE embedding IS NOT NULL"
+            )
+            msg_count = 0
+            for row in msg_rows:
+                if len(row["embedding"]) != _expected_blob_len:
+                    continue
+                try:
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
+                        (row["id"], row["embedding"]),
+                    )
+                    msg_count += 1
+                except Exception:
+                    pass
+            if msg_count:
+                await conn.commit()
+
+            # Tasks (id is TEXT, use rowid)
+            task_rows = await conn.execute_fetchall(
+                "SELECT rowid, embedding FROM tasks WHERE embedding IS NOT NULL"
+            )
+            task_count = 0
+            for row in task_rows:
+                if len(row["embedding"]) != _expected_blob_len:
+                    continue
+                try:
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
+                        (row["rowid"], row["embedding"]),
+                    )
+                    task_count += 1
+                except Exception:
+                    pass
+            if task_count:
+                await conn.commit()
+
+            # Message chunks
+            chunk_rows = await conn.execute_fetchall(
+                "SELECT id, embedding FROM message_chunks WHERE embedding IS NOT NULL AND chunk_index >= 0"
+            )
+            chunk_count = 0
+            for row in chunk_rows:
+                if len(row["embedding"]) != _expected_blob_len:
+                    continue
+                try:
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (?, ?)",
+                        (row["id"], row["embedding"]),
+                    )
+                    chunk_count += 1
+                except Exception:
+                    pass
+            if chunk_count:
+                await conn.commit()
+
+        log.info(
+            "vec0 backfill complete: %d messages, %d tasks, %d chunks",
+            msg_count, task_count, chunk_count,
+        )
+    except Exception as e:
+        log.error("vec0 backfill failed: %s", e)
 
 
 async def _backfill_message_chunks() -> None:
@@ -345,6 +420,8 @@ async def main():
                 asyncio.create_task(tasks.check_stalled_tasks())
                 # Rebuild FTS5 full-text search indexes
                 asyncio.create_task(_backfill_fts_indexes())
+                # Populate vec0 tables from existing BLOB embeddings
+                asyncio.create_task(_backfill_vec_tables())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
                 # Backfill task goal embeddings for existing tasks

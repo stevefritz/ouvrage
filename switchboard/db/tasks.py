@@ -423,12 +423,21 @@ async def get_message_by_id(message_id: int) -> dict | None:
 
 
 async def set_message_embedding(message_id: int, embedding_blob: bytes) -> None:
-    """Store a packed float32 embedding blob on a message row."""
+    """Store a packed float32 embedding blob on a message row and update messages_vec."""
     async with get_db() as db:
         await db.execute(
             "UPDATE messages SET embedding = ? WHERE id = ?",
             (embedding_blob, message_id),
         )
+        # Keep messages_vec in sync — only for standard 1536-dim embeddings (6144 bytes)
+        if len(embedding_blob) == 1536 * 4:
+            try:
+                await db.execute(
+                    "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
+                    (message_id, embedding_blob),
+                )
+            except Exception:
+                pass  # vec0 update is best-effort
         await db.commit()
 
 

@@ -562,6 +562,36 @@ async def init_db():
                 (user_id,),
             )
 
+        # vec0 virtual tables for vector similarity search (sqlite-vec)
+        vec_tables = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+        )
+        vec_table_names = {r["name"] for r in vec_tables}
+
+        if "messages_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass  # sqlite-vec not available
+
+        if "tasks_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS tasks_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
+        if "chunks_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
         # FTS5 virtual tables for full-text search
         fts_tables = await conn.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_fts', 'tasks_fts')"

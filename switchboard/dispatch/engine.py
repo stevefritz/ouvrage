@@ -69,6 +69,7 @@ async def _embed_task_goal_async(task_id: str, goal: str) -> None:
         if vector:
             blob = encode_vector(vector)
             await db.set_task_embedding(task_id, blob)
+            # set_task_embedding also updates tasks_vec automatically
     except Exception:
         pass  # Never block — embedding is best-effort
 

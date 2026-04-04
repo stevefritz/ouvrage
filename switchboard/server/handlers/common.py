@@ -22,6 +22,7 @@ async def _embed_message_async(message_id: int, content: str, msg_type: str | No
         if vector:
             blob = emb.encode_vector(vector)
             await db.set_message_embedding(message_id, blob)
+            # set_message_embedding also updates messages_vec automatically
     except Exception:
         pass  # Never block — embedding is best-effort
 
