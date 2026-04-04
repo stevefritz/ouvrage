@@ -90,7 +90,7 @@ async def get_task(id: str) -> dict | None:
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
         if not rows:
             return None
-        return dict(rows[0])
+        return _strip_embedding(dict(rows[0]))
 
 
 async def update_task(id: str, **fields) -> dict:
@@ -129,7 +129,7 @@ async def update_task(id: str, **fields) -> dict:
         await db.commit()
 
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (id,))
-        result = dict(rows[0])
+        result = _strip_embedding(dict(rows[0]))
         tag_rows = await db.execute_fetchall(
             "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (id,)
         )
@@ -263,7 +263,7 @@ async def list_tasks(
         rows = await db.execute_fetchall(sql, params)
         tasks = []
         for r in rows:
-            task = dict(r)
+            task = _strip_embedding(dict(r))
             # Fetch tags for each task
             tag_rows = await db.execute_fetchall(
                 "SELECT tag FROM task_tags WHERE task_id = ? ORDER BY tag", (task["id"],),
@@ -331,7 +331,7 @@ async def get_dependents(task_id: str) -> list[dict]:
         rows = await db.execute_fetchall(
             "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at", (task_id,),
         )
-        return [dict(r) for r in rows]
+        return [_strip_embedding(dict(r)) for r in rows]
 
 
 async def get_chain(task_id: str) -> list[dict]:
@@ -347,7 +347,7 @@ async def get_chain(task_id: str) -> list[dict]:
             rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
             if not rows:
                 break
-            task = dict(rows[0])
+            task = _strip_embedding(dict(rows[0]))
             if not task.get("depends_on"):
                 break
             current_id = task["depends_on"]
@@ -356,7 +356,7 @@ async def get_chain(task_id: str) -> list[dict]:
         chain = []
         rows = await db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (current_id,))
         if rows:
-            chain.append(dict(rows[0]))
+            chain.append(_strip_embedding(dict(rows[0])))
             while True:
                 deps = await db.execute_fetchall(
                     "SELECT * FROM tasks WHERE depends_on = ? ORDER BY created_at LIMIT 1",
@@ -364,7 +364,7 @@ async def get_chain(task_id: str) -> list[dict]:
                 )
                 if not deps:
                     break
-                chain.append(dict(deps[0]))
+                chain.append(_strip_embedding(dict(deps[0])))
         return chain
 
 
@@ -505,7 +505,7 @@ async def get_task_status(task_id: str) -> dict:
         if not rows:
             raise ValueError(f"Task '{task_id}' not found")
 
-        task = dict(rows[0])
+        task = _strip_embedding(dict(rows[0]))
 
         # Checklist summary
         cl_rows = await db.execute_fetchall(
