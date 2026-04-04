@@ -288,6 +288,11 @@ async def _handle_list_tasks(arguments):
         status=arguments.get("status"),
         tag=arguments.get("tag"),
         active_only=arguments.get("active_only", True),  # MCP default: active tasks only
+        query=arguments.get("query"),
+        after=arguments.get("after"),
+        before=arguments.get("before"),
+        limit=arguments.get("limit", 50),
+        sort=arguments.get("sort", "date"),
     )
     # Cache project lookups for state definitions
     project_cache: dict[str, dict | None] = {}

@@ -384,7 +384,7 @@ TASK_TOOLS = [
     ),
     Tool(
         name="list_tasks",
-        description="List tasks, optionally filtered by project, status, or tag. By default excludes cancelled tasks and stale error/conflict tasks (active_only=true).",
+        description="List tasks, optionally filtered by project, status, tag, keyword search, date range, with configurable sort and limit. By default excludes cancelled tasks and stale error/conflict tasks (active_only=true).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -392,6 +392,11 @@ TASK_TOOLS = [
                 "status": {"type": "string", "description": "Filter by status: ready, working, needs-review, completed, failed, cancelled"},
                 "tag": {"type": "string", "description": "Filter by tag"},
                 "active_only": {"type": "boolean", "description": "Exclude cancelled tasks and stale error/conflict tasks that exhausted retries. Default true.", "default": True},
+                "query": {"type": "string", "description": "Keyword search on task goals using FTS5. Results ranked by BM25 relevance by default."},
+                "after": {"type": "string", "description": "Return tasks created after this ISO datetime (e.g. 2026-04-03T00:00:00Z)"},
+                "before": {"type": "string", "description": "Return tasks created before this ISO datetime (e.g. 2026-04-04T00:00:00Z)"},
+                "limit": {"type": "integer", "description": "Maximum number of tasks to return. Default 50.", "default": 50},
+                "sort": {"type": "string", "description": "Sort order: date (last_activity desc, default), created (created_at desc), status (grouped by status), cost (total_cost_usd desc), relevance (BM25 score, auto-selected when query is set)", "enum": ["date", "created", "status", "cost", "relevance"]},
             },
         },
     ),
