@@ -39,32 +39,11 @@ export function ProjectHeader({ project, id }) {
         flexShrink: 0,
     };
 
-    const wrenchStyle = {
-        background: 'transparent',
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.sm,
-        color: colors.textTertiary,
-        cursor: 'pointer',
-        fontSize: '14px',
-        padding: '2px 7px',
-        lineHeight: 1,
-        transition: 'color 120ms, border-color 120ms',
-        flexShrink: 0,
-        textDecoration: 'none',
-        display: 'inline-flex',
-        alignItems: 'center',
-    };
-
     return html`
         <div style=${headerStyle}>
-            <h1 style=${titleStyle}>${project?.id || id}</h1>
+            <h1 style=${titleStyle}>${project?.display_name || project?.id || id}</h1>
             ${repoShort ? html`<span style=${repoTagStyle}>${repoShort}</span>` : null}
             <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
-                <a
-                    href=${routes.projectTab(id, 'settings')}
-                    title="Project settings"
-                    style=${wrenchStyle}
-                >✎</a>
                 <a
                     href=${routes.taskNew(id)}
                     style=${{

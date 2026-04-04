@@ -113,6 +113,13 @@ class TestProjectCRUD:
         updated = await db.update_project("upd-proj", test_command="make test")
         assert updated["test_command"] == "make test"
 
+    async def test_update_project_display_name(self, db):
+        await db.create_project(id="name-proj", repo="git@x.git", working_dir="/w")
+        updated = await db.update_project("name-proj", display_name="My Project")
+        assert updated["display_name"] == "My Project"
+        fetched = await db.get_project("name-proj")
+        assert fetched["display_name"] == "My Project"
+
     async def test_list_projects(self, db):
         await db.create_project(id="list-a", repo="git@a.git", working_dir="/a")
         await db.create_project(id="list-b", repo="git@b.git", working_dir="/b")

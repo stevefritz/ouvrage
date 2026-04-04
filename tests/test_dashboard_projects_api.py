@@ -364,3 +364,18 @@ class TestPatchProject:
 
         project = await sw_db.get_project(proj_id)
         assert project["github_pat_override"] is None
+
+    async def test_patch_project_display_name(self, db):
+        """PATCH with display_name stores the human-readable name."""
+        import switchboard.db as sw_db
+        from switchboard.dashboard.api import handle_request
+
+        proj_id = await self._create_project(db)
+        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
+        resp = _Capture()
+        await handle_request(scope, _make_receive({"display_name": "My Project"}), resp)
+
+        assert resp.status == 200
+        assert resp.json()["display_name"] == "My Project"
+        project = await sw_db.get_project(proj_id)
+        assert project["display_name"] == "My Project"
