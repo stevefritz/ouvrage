@@ -135,6 +135,13 @@ function injectConvStyles() {
     font-weight: ${typography.weight.medium};
 }
 
+/* Code blocks: horizontal scroll within block, not page */
+.foreman-conv-message pre,
+.foreman-conv-message code {
+    overflow-x: auto;
+    max-width: 100%;
+}
+
 /* Heading anchor links in pinned messages */
 .foreman-conv-message h2,
 .foreman-conv-message h3 {
@@ -331,6 +338,8 @@ function ConversationMessage({ msg, isPinned, highlighted, searchQuery }) {
         fontSize: typography.size.sm,
         color: colors.textSecondary,
         lineHeight: typography.lineHeight.relaxed,
+        overflowWrap: 'break-word',
+        maxWidth: '100%',
     };
 
     return html`
@@ -383,9 +392,9 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
         borderRight: `1px solid ${colors.border}`,
         flexDirection: 'column',
         overflowY: 'auto',
-        maxHeight: 'calc(100vh - 52px)',
+        maxHeight: 'calc(100vh - 32px)',
         position: 'sticky',
-        top: '0',
+        top: '16px',
         alignSelf: 'flex-start',
         padding: '12px 0',
     };
