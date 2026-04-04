@@ -106,7 +106,7 @@ After CC completes a task, an automatic quality pipeline runs:
 1. **Auto-test** — runs the project's `test_command`. If tests fail, CC is retried with the failure output injected (up to `max_test_retries`, default 3). If tests pass, moves to review.
 2. **Auto-review** — dispatches a review subtask (Opus reads the diff + original spec). Reviewer either approves or posts feedback. On feedback, CC is retried with the review injected (up to `max_review_retries`, default 2).
 3. **Auto-PR** — creates a GitHub PR when all gates pass (if `auto_pr=true`).
-4. **Auto-merge** — merges the branch directly (if `auto_merge=true`). Use with caution — usually only mid-chain tasks.
+4. **Auto-merge** — merges the final branch into main without a PR (if `auto_merge=true`). Use on chain tails that should merge directly without human review. Mid-chain tasks don't need this flag — the chain mechanism handles branch merging between tasks automatically.
 
 ### Key actions via `transition_task`
 
@@ -201,8 +201,9 @@ Task A (depends_on: none) → Task B (depends_on: A) → Task C (depends_on: B)
 When tasks are independent — different files, different concerns. Dispatch all at once.
 
 ### Chain tail configuration
-- Mid-chain tasks: `auto_merge=true` — merge into the next task's branch automatically
-- Last task in chain: `auto_pr=true` — create a PR for human review
+- Mid-chain tasks: no flags needed — the chain mechanism merges branches between tasks automatically
+- Last task (chain tail), merge to main: `auto_merge=true` — merges directly to main without a PR
+- Last task (chain tail), PR for review: `auto_pr=true` — creates a PR for human review
 - **Never set both `auto_merge` and `auto_pr` on the same task** — they're mutually exclusive
 
 ### Opus review at chain end
