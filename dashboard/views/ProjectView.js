@@ -827,23 +827,24 @@ export function ProjectView({ id, tab }) {
         return () => clearInterval(timer);
     }, [load]);
 
-    const handleSearch = useCallback(async (query) => {
+    const handleSearch = useCallback((query) => {
         setSearchQuery(query);
         if (!query) {
             setSearchResults(null);
             setSearchLoading(false);
             return;
         }
-        setSearchLoading(true);
-        try {
-            const result = await api.search({ q: query, project_id: id, limit: 20 });
-            setSearchResults(result.results || []);
-        } catch (e) {
-            setSearchResults([]);
-        } finally {
-            setSearchLoading(false);
-        }
-    }, [id]);
+        const q = query.toLowerCase();
+        const filtered = tasks.filter(t => {
+            const haystack = [
+                t.id, t.goal, t.status, t.branch, t.phase,
+                ...(Array.isArray(t.tags) ? t.tags : []),
+            ].filter(Boolean).join(' ').toLowerCase();
+            return haystack.includes(q);
+        });
+        setSearchResults(filtered);
+        setSearchLoading(false);
+    }, [tasks]);
 
     const pageStyle = {
         display: 'flex',
