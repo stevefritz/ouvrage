@@ -11,7 +11,14 @@ log = logging.getLogger("switchboard.web_push")
 
 from switchboard.config.settings import VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY, VAPID_CLAIM_EMAIL
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-push")
+_executor = None
+
+
+def get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-push")
+    return _executor
 
 
 def is_enabled() -> bool:
@@ -52,7 +59,7 @@ async def send_notification(payload: dict) -> int:
     loop = asyncio.get_event_loop()
 
     results = await asyncio.gather(
-        *[loop.run_in_executor(_executor, _send_one, sub, payload_str) for sub in subscriptions],
+        *[loop.run_in_executor(get_executor(), _send_one, sub, payload_str) for sub in subscriptions],
         return_exceptions=True,
     )
     return sum(1 for r in results if r is True)
