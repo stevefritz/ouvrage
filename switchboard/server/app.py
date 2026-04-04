@@ -22,10 +22,31 @@ import switchboard.dispatch as tasks
 from switchboard.server.tools import TOOLS, WORKER_TOOLS, WORKER_TOOL_ALLOWLIST
 from switchboard.server.dispatch import _dispatch_tool
 from switchboard.server.context import set_request_context, get_request_is_worker
+from switchboard.config.settings import OAUTH_BASE_URL
 
 log = logging.getLogger("switchboard.server")
 
 _SYSTEM_AUTHORS = frozenset({"dispatcher", "cc-worker", "switchboard"})
+
+
+def _resolve_base_url(scope) -> str | None:
+    """Compute the instance base URL from config or the request's Host header.
+
+    Preference order:
+    1. OAUTH_BASE_URL env var (already contains scheme + host)
+    2. Host header from the request + ASGI scheme
+    """
+    if OAUTH_BASE_URL:
+        return OAUTH_BASE_URL.rstrip("/")
+    host: str | None = None
+    for name, value in scope.get("headers", []):
+        if name.lower() == b"host":
+            host = value.decode("utf-8", errors="replace")
+            break
+    if not host:
+        return None
+    scheme = scope.get("scheme", "https")
+    return f"{scheme}://{host}"
 
 
 async def _resolve_mcp_user_id(scope) -> tuple[int | None, bool]:
@@ -331,13 +352,13 @@ async def main():
             await send({"type": "http.response.body", "body": b"Switchboard OK"})
         elif path == "/mcp":
             user_id, is_token_auth = await _resolve_mcp_user_id(scope)
-            set_request_context(user_id, is_token_auth)
+            set_request_context(user_id, is_token_auth, base_url=_resolve_base_url(scope))
             await session_manager.handle_request(scope, receive, send)
         elif path == "/mcp/worker":
             # Worker endpoint — trust-based, no token auth required.
             # Sets is_worker=True so handlers can enforce field-level restrictions.
             # user_id is None; attribution comes from the task's dispatched_by.
-            set_request_context(user_id=None, is_token_auth=False, is_worker=True)
+            set_request_context(user_id=None, is_token_auth=False, is_worker=True, base_url=_resolve_base_url(scope))
             await session_manager.handle_request(scope, receive, send)
         elif path.startswith("/dashboard/api/"):
             await dashboard_api.handle_request(scope, receive, send)

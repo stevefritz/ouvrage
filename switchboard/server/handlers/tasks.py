@@ -11,7 +11,7 @@ import switchboard.db as db
 from switchboard.notifications import slack as notify
 import switchboard.dispatch as task_engine
 from switchboard.server.handlers.common import _embed_message_async, PR_URL_RE
-from switchboard.server.context import get_request_user_id, get_request_is_token_auth, get_request_is_worker
+from switchboard.server.context import get_request_user_id, get_request_is_token_auth, get_request_is_worker, get_request_base_url
 from switchboard.config.settings import SKIP_CREDENTIAL_CHECK
 
 log = logging.getLogger("switchboard.server")
@@ -88,6 +88,14 @@ WORKER_BLOCKED_FIELDS = {
 }
 
 
+def _task_url(task_id: str) -> str | None:
+    """Build the canonical dashboard URL for a task, or None if no base URL is known."""
+    base = get_request_base_url()
+    if not base:
+        return None
+    return f"{base.rstrip('/')}/dashboard#/task/{task_id}"
+
+
 async def _handle_dispatch_task(arguments):
     # Auto-prefix task ID with project to avoid global collisions
     project_id = arguments["project_id"]
@@ -153,6 +161,9 @@ async def _handle_dispatch_task(arguments):
     if tags:
         await db.set_task_tags(task_id, tags)
         result["tags"] = tags
+    url = _task_url(task_id)
+    if url:
+        result["url"] = url
     return result
 
 
@@ -172,6 +183,9 @@ async def _handle_transition_task(arguments):
             source_detail=f"transition_task ({action})",
             **options,
         )
+        url = _task_url(task_id)
+        if url and isinstance(result, dict):
+            result["url"] = url
         return result
     except IllegalTransition as e:
         return {"error": str(e), "task_id": task_id, "action": action}
@@ -231,6 +245,9 @@ async def _handle_get_task_status(arguments):
             ]
 
         result["available_actions"] = available_actions
+        url = _task_url(arguments["task_id"])
+        if url:
+            result["url"] = url
         return result
 
     # Slim summary — only the fields a caller needs for "is this done yet?"
@@ -243,7 +260,7 @@ async def _handle_get_task_status(arguments):
         excerpt = content[:120].replace("\n", " ").strip()
         last_message_at = last_msg.get("created_at")
 
-    return {
+    slim = {
         "task_id": result["id"],
         "status": result.get("status"),
         "phase": result.get("phase"),
@@ -259,6 +276,10 @@ async def _handle_get_task_status(arguments):
         "last_message_at": last_message_at,
         "available_actions": available_actions,
     }
+    url = _task_url(arguments["task_id"])
+    if url:
+        slim["url"] = url
+    return slim
 
 
 async def _handle_list_tasks(arguments):
@@ -275,6 +296,9 @@ async def _handle_list_tasks(arguments):
         if pid not in project_cache:
             project_cache[pid] = await db.get_project(pid)
         task["state_definition"] = db.get_state_definition(task.get("status", ""), project_cache[pid])
+        url = _task_url(task["id"])
+        if url:
+            task["url"] = url
     return task_list
 
 
