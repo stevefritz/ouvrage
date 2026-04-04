@@ -3,7 +3,7 @@
 // Spec: foreman-design conversation, messages [6-9]
 
 import { h } from 'https://esm.sh/preact@10.25.4';
-import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout, animation } from '../tokens.js';
 import { routes, navigate } from '../router.js';
@@ -827,24 +827,42 @@ export function ProjectView({ id, tab }) {
         return () => clearInterval(timer);
     }, [load]);
 
+    const searchTimer = useRef(null);
     const handleSearch = useCallback((query) => {
         setSearchQuery(query);
+        clearTimeout(searchTimer.current);
         if (!query) {
             setSearchResults(null);
             setSearchLoading(false);
             return;
         }
-        const q = query.toLowerCase();
-        const filtered = tasks.filter(t => {
-            const haystack = [
-                t.id, t.goal, t.status, t.branch, t.phase,
-                ...(Array.isArray(t.tags) ? t.tags : []),
-            ].filter(Boolean).join(' ').toLowerCase();
-            return haystack.includes(q);
-        });
-        setSearchResults(filtered);
-        setSearchLoading(false);
-    }, [tasks]);
+        setSearchLoading(true);
+        searchTimer.current = setTimeout(async () => {
+            try {
+                const result = await api.search({ q: query, project_id: id, limit: 30 });
+                const hits = result.results || [];
+                // Filter for task-related results and deduplicate by task_id
+                const taskMap = new Map(tasks.map(t => [t.id, t]));
+                const seen = new Set();
+                const enriched = [];
+                for (const hit of hits) {
+                    // Resolve task_id: for type="task" it's entity_id, for messages it's task_id
+                    const tid = hit.type === 'task' ? hit.entity_id : hit.task_id;
+                    if (!tid || seen.has(tid)) continue;
+                    seen.add(tid);
+                    const task = taskMap.get(tid) || {
+                        id: tid, goal: hit.title || tid, status: hit.status || 'unknown',
+                    };
+                    enriched.push({ ...task, _searchHit: hit });
+                }
+                setSearchResults(enriched);
+            } catch (_) {
+                setSearchResults([]);
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 300);
+    }, [id, tasks]);
 
     const pageStyle = {
         display: 'flex',
