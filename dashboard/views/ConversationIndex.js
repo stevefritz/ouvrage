@@ -15,6 +15,66 @@ import { relativeTime } from '../components/utils.js';
 const html = htm.bind(h);
 
 // ---------------------------------------------------------------------------
+// Message type metadata (subset — matches ConversationView MSG_META)
+// ---------------------------------------------------------------------------
+
+const MSG_META = {
+    spec:          { label: 'Spec',     bg: 'rgba(217,119,6,0.18)',    color: '#d97706' },
+    plan:          { label: 'Plan',     bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    progress:      { label: 'Progress', bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    result:        { label: 'Result',   bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+    review:        { label: 'Review',   bg: 'rgba(236,72,153,0.15)',   color: '#ec4899' },
+    question:      { label: 'Question', bg: 'rgba(245,166,35,0.15)',   color: '#f5a623' },
+    answer:        { label: 'Answer',   bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    handoff:       { label: 'Handoff',  bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    'test-result': { label: 'Tests',    bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+    note:          { label: 'Note',     bg: 'rgba(136,126,114,0.15)',  color: '#b0a89e' },
+    status:        { label: 'Status',   bg: 'rgba(136,126,114,0.12)',  color: '#887e72' },
+};
+
+function getMsgMeta(type) {
+    return MSG_META[type] || MSG_META.note;
+}
+
+// ---------------------------------------------------------------------------
+// MiniTypeBadge — inline type badge for search result cards
+// ---------------------------------------------------------------------------
+
+function MiniTypeBadge({ type }) {
+    const meta = getMsgMeta(type);
+    return html`
+        <span style=${{
+            display: 'inline-block',
+            padding: '1px 5px',
+            borderRadius: layout.borderRadius.pill,
+            background: meta.bg,
+            color: meta.color,
+            fontSize: typography.size.xs,
+            fontWeight: typography.weight.medium,
+            fontFamily: typography.fontMono,
+            lineHeight: '1.4',
+            flexShrink: 0,
+        }}>${meta.label}</span>
+    `;
+}
+
+// ---------------------------------------------------------------------------
+// SnippetLine — renders snippet text with <mark> around matched query terms
+// ---------------------------------------------------------------------------
+
+function SnippetLine({ text, query }) {
+    if (!text) return null;
+    if (!query) return html`<span>${text}</span>`;
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return html`<span>${parts.map((part, i) =>
+        i % 2 === 1
+            ? html`<mark key=${i} style=${{ background: 'rgba(255,220,50,0.35)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>${part}</mark>`
+            : part
+    )}</span>`;
+}
+
+// ---------------------------------------------------------------------------
 // ConversationCard — single conversation row/card
 // ---------------------------------------------------------------------------
 
@@ -80,6 +140,88 @@ function ConversationCard({ conv, projectId }) {
                     <div style=${titleStyle}>${title}</div>
                     ${conv.has_pinned && conv.pinned_title ? html`
                         <div style=${pinnedPreviewStyle}>📌 ${conv.pinned_title}</div>
+                    ` : null}
+                </div>
+            </div>
+            <div style=${metaStyle}>
+                <span style=${{ ...metaTextStyle, color: colors.textTertiary }}>
+                    ${msgCount} ${msgCount === 1 ? 'message' : 'messages'}
+                </span>
+                <span style=${metaTextStyle}>${relativeTime(lastAt)}</span>
+            </div>
+        </a>
+    `;
+}
+
+// ---------------------------------------------------------------------------
+// SearchResultCard — ConversationCard + snippet line + type badge
+// ---------------------------------------------------------------------------
+
+function SearchResultCard({ result, conv, projectId, searchQuery }) {
+    const href = projectId
+        ? routes.projectConversation(projectId, conv.id)
+        : routes.conversation(conv.id);
+
+    const cardStyle = {
+        display: 'block',
+        padding: '12px 14px',
+        borderRadius: layout.borderRadius.md,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        textDecoration: 'none',
+        color: colors.text,
+        transition: `background ${animation.durationFast}`,
+        ...(conv.has_pinned ? { borderLeft: `3px solid ${colors.accent}` } : {}),
+    };
+
+    const titleStyle = {
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.medium,
+        color: colors.text,
+        marginBottom: '4px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    };
+
+    const snippetStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        marginTop: '2px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    };
+
+    const metaStyle = {
+        display: 'flex',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: '8px',
+        marginTop: '6px',
+    };
+
+    const metaTextStyle = {
+        fontFamily: typography.fontMono,
+        fontSize: typography.size.xs,
+        color: colors.textTertiary,
+        flexShrink: 0,
+    };
+
+    const title = conv.goal || conv.id;
+    const msgCount = conv.message_count ?? 0;
+    const lastAt = conv.last_message_at || conv.updated_at;
+
+    return html`
+        <a href=${href} style=${cardStyle} class="foreman-conv-card foreman-conv-search-result">
+            <div style=${{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                <div style=${{ flex: 1, minWidth: 0 }}>
+                    <div style=${titleStyle}>${title}</div>
+                    ${result.snippet ? html`
+                        <div style=${snippetStyle}>
+                            ${result.message_type ? html`<${MiniTypeBadge} type=${result.message_type} /> ` : null}
+                            <${SnippetLine} text=${result.snippet} query=${searchQuery} />
+                        </div>
                     ` : null}
                 </div>
             </div>
@@ -168,7 +310,9 @@ export function ConversationIndex({ projectId }) {
         searchTimer.current = setTimeout(async () => {
             try {
                 const data = await api.search({ q, project_id: projectId });
-                const results = (data.results || []).filter(r => r.conversation_id);
+                const results = (data.results || [])
+                    .filter(r => r.conversation_id)
+                    .sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
                 setSearchResults(results);
             } catch (_) {
                 setSearchResults([]);
@@ -291,7 +435,7 @@ export function ConversationIndex({ projectId }) {
                                 message_count: null,
                                 updated_at: null,
                             };
-                            return html`<${ConversationCard} key=${conv.id} conv=${conv} projectId=${projectId} />`;
+                            return html`<${SearchResultCard} key=${r.conversation_id + '-' + (r.message_id || '')} result=${r} conv=${conv} projectId=${projectId} searchQuery=${searchQuery} />`;
                         })}
                     </div>
                 ` : null}
