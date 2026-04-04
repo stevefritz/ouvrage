@@ -562,6 +562,59 @@ async def init_db():
                 (user_id,),
             )
 
+        # FTS5 virtual tables for full-text search
+        fts_tables = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_fts', 'tasks_fts')"
+        )
+        fts_table_names = {r["name"] for r in fts_tables}
+
+        if "messages_fts" not in fts_table_names:
+            await conn.executescript("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+                    USING fts5(content, content='messages', content_rowid='id');
+            """)
+
+        if "tasks_fts" not in fts_table_names:
+            await conn.executescript("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts
+                    USING fts5(goal, content='tasks', content_rowid='rowid');
+            """)
+
+        # FTS5 sync triggers (CREATE TRIGGER IF NOT EXISTS supported in SQLite >= 3.16)
+        await conn.executescript("""
+            CREATE TRIGGER IF NOT EXISTS messages_fts_insert
+                AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_delete
+                AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_update
+                AFTER UPDATE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+                    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_insert
+                AFTER INSERT ON tasks BEGIN
+                    INSERT INTO tasks_fts(rowid, goal) VALUES (new.rowid, new.goal);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_delete
+                AFTER DELETE ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, goal) VALUES ('delete', old.rowid, old.goal);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_update
+                AFTER UPDATE ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, goal) VALUES ('delete', old.rowid, old.goal);
+                    INSERT INTO tasks_fts(rowid, goal) VALUES (new.rowid, new.goal);
+                END;
+        """)
+
         # Create/recreate indexes
         await conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project);

@@ -261,6 +261,19 @@ async def _backfill_task_goals() -> None:
         log.error("Task goal backfill aborted: %s", e)
 
 
+async def _backfill_fts_indexes() -> None:
+    """Rebuild FTS5 indexes from the source tables (idempotent, runs at startup)."""
+    try:
+        from switchboard.db.connection import get_db
+        async with get_db() as conn:
+            await conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            await conn.execute("INSERT INTO tasks_fts(tasks_fts) VALUES('rebuild')")
+            await conn.commit()
+        log.info("FTS5 index rebuild complete")
+    except Exception as e:
+        log.error("FTS5 index rebuild failed: %s", e)
+
+
 async def _backfill_message_chunks() -> None:
     """Background task: chunk and embed existing long messages that haven't been chunked yet."""
     total = 0
@@ -330,6 +343,8 @@ async def main():
                 asyncio.create_task(tasks.recover_orphaned_tasks())
                 # Start stall detection background loop
                 asyncio.create_task(tasks.check_stalled_tasks())
+                # Rebuild FTS5 full-text search indexes
+                asyncio.create_task(_backfill_fts_indexes())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
                 # Backfill task goal embeddings for existing tasks

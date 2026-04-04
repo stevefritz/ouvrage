@@ -572,6 +572,92 @@ async def search_tasks_semantic(
     return results[:limit]
 
 
+async def search_messages_fts(
+    query: str,
+    conversation_id: str | None = None,
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """FTS5 full-text search over messages.content with BM25 ranking.
+
+    Returns rows with message_id, snippet (~200 chars), bm25_score, author, type,
+    task_id, conversation_id, created_at.
+    """
+    async with get_db() as db:
+        conditions = ["messages_fts MATCH ?"]
+        params: list = [query]
+
+        if conversation_id:
+            conditions.append("m.conversation_id = ?")
+            params.append(conversation_id)
+
+        if project_id:
+            conditions.append(
+                "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+            )
+            params.extend([project_id, project_id])
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        sql = f"""
+            SELECT
+                m.id AS message_id,
+                snippet(messages_fts, 0, '', '', '...', 32) AS snippet,
+                -bm25(messages_fts) AS bm25_score,
+                m.author,
+                m.type,
+                m.task_id,
+                m.conversation_id,
+                m.created_at
+            FROM messages_fts
+            JOIN messages m ON m.id = messages_fts.rowid
+            WHERE {where}
+            ORDER BY bm25(messages_fts)
+            LIMIT ?
+        """
+        rows = await db.execute_fetchall(sql, params)
+        return [dict(r) for r in rows]
+
+
+async def search_tasks_fts(
+    query: str,
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """FTS5 full-text search over tasks.goal with BM25 ranking.
+
+    Returns rows with task_id, goal, bm25_score, status, created_at.
+    """
+    async with get_db() as db:
+        conditions = ["tasks_fts MATCH ?"]
+        params: list = [query]
+
+        if project_id:
+            conditions.append("t.project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        sql = f"""
+            SELECT
+                t.id AS task_id,
+                t.goal,
+                -bm25(tasks_fts) AS bm25_score,
+                t.status,
+                t.created_at
+            FROM tasks_fts
+            JOIN tasks t ON t.rowid = tasks_fts.rowid
+            WHERE {where}
+            ORDER BY bm25(tasks_fts)
+            LIMIT ?
+        """
+        rows = await db.execute_fetchall(sql, params)
+        return [dict(r) for r in rows]
+
+
 async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:
     """Return messages >= 500 chars that haven't been chunked yet (no entry in message_chunks)."""
     async with get_db() as db:
