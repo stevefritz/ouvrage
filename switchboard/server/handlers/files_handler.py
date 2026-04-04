@@ -226,9 +226,10 @@ async def _handle_add_project_file(arguments: dict) -> dict:
 
 
 async def _handle_get_file(arguments: dict) -> dict:
-    file_id = arguments.get("id")
+    # Accept both "id" (get_file) and "file_id" (deprecated get_attached_file alias)
+    file_id = arguments.get("id") or arguments.get("file_id")
     if not file_id:
-        raise ValueError("id is required")
+        raise ValueError("file_id is required")
 
     record = await db.get_file(file_id)
     if not record:

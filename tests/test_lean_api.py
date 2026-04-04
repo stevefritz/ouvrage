@@ -88,7 +88,7 @@ class TestGetTaskStatusSummaryMode:
             "task_id", "status", "phase", "gate_status", "alive", "stale",
             "idle_minutes", "checklist_done", "checklist_total",
             "total_cost_usd", "pr_status", "last_message_excerpt", "last_message_at",
-            "available_actions",
+            "available_actions", "files",
         }
         assert set(result.keys()) == expected_keys
 

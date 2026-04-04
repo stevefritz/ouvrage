@@ -217,6 +217,20 @@ async def _handle_get_task_status(arguments):
     except Exception:
         available_actions = []
 
+    # Include files attached to this task in both slim and detail responses
+    task_files = await db.list_files(task_id=arguments["task_id"])
+    from switchboard.server.handlers.files_handler import _is_readable
+    files_list = [
+        {
+            "id": f["id"],
+            "filename": f["filename"],
+            "size_bytes": f["size_bytes"],
+            "mime_type": f["mime_type"],
+            "readable": _is_readable(f.get("filename", "")),
+        }
+        for f in task_files
+    ]
+
     include_detail = arguments.get("include_detail", False)
 
     if include_detail:
@@ -245,6 +259,7 @@ async def _handle_get_task_status(arguments):
             ]
 
         result["available_actions"] = available_actions
+        result["files"] = files_list
         url = _task_url(arguments["task_id"])
         if url:
             result["url"] = url
@@ -275,6 +290,7 @@ async def _handle_get_task_status(arguments):
         "last_message_excerpt": excerpt,
         "last_message_at": last_message_at,
         "available_actions": available_actions,
+        "files": files_list,
     }
     url = _task_url(arguments["task_id"])
     if url:
