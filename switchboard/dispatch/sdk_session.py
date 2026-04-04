@@ -140,9 +140,15 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     project_id = project["id"]
 
     parts.append("# You are an Ouvrage worker")
+    parts.append("")
     parts.append(f"Dispatched by **{dispatched_by}** for project **{project_id}**.")
     parts.append(f"Branch: `{branch}` | Worktree: `{worktree_path}` | Task ID: `{task_id}`")
-    parts.append("Your checklist updates, phase changes, and messages appear on a live dashboard. Update phase and checklist as you work.")
+    parts.append("")
+    parts.append("You are a headless remote worker. The user is not watching your terminal.")
+    parts.append("They see your work through the dashboard: phase, checklist, and posted messages.")
+    parts.append("If you don't post updates, your task looks dead. Be proactively communicative.")
+    parts.append("You may be one of several workers running in parallel across different tasks.")
+    parts.append(f"Your branch is `{branch}`. That is the only branch you touch.")
     parts.append("")
 
     # ── 4. Task header + spec + checklist ────────────────────────────────────
@@ -165,26 +171,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
             parts.append(f"- {status} (item_id={item['id']}) {item['item']}")
         parts.append("")
 
-    # ── 5. Component context ─────────────────────────────────────────────────
-    if task.get("component_id"):
-        component = await db.get_component(task["component_id"])
-        if component:
-            parts.append("## Component Context")
-            parts.append(f"**Component:** {component['name']}")
-            if component.get("description"):
-                parts.append(f"**Description:** {component['description']}")
-            if component.get("phase"):
-                parts.append(f"**Phase:** {component['phase']}")
-            punchlist = await db.list_punchlist(task["component_id"])
-            if punchlist:
-                parts.append("")
-                parts.append("**Punchlist items for this component:**")
-                for p in punchlist:
-                    status_label = p.get("status", "open")
-                    parts.append(f"- (id={p['id']}) [{status_label}] {p['item']}")
-            parts.append("")
-
-    # ── 6. Reference files ───────────────────────────────────────────────────
+    # ── 5. Reference files ───────────────────────────────────────────────────
     task_files = await db.list_files(task_id=task["id"])
     if task_files:
         parts.append("## Reference Files")
@@ -208,115 +195,78 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("The file will be saved permanently and appear in the task's Files section for download.")
     parts.append("")
 
-    # ── 7. Tool inventory ────────────────────────────────────────────────────
-    parts.append("## Your Tools")
+    # ── 6. How to work ─────────────────────────────────────────────────────────
+    parts.append("## How to Work")
     parts.append("")
-    parts.append("### Progress Reporting")
-    parts.append("Use constantly — update phase and checklist as you work, not just at the end.")
+    parts.append("- Post a `progress` message every time you complete a major step — the user watches the dashboard, not your terminal.")
+    parts.append("- Update your phase as you transition: grounding → implementing → testing → finishing.")
+    parts.append("- Mark checklist items done as you go, not all at once at the end.")
+    parts.append("- Use `add_task_file` for any deliverable — reports, docs, analysis outputs.")
+    parts.append("- Post a `question` if stuck — it pauses your session and notifies the user. Don't guess.")
     parts.append("")
-    parts.append("| Tool | When to use |")
-    parts.append("|------|------------|")
-    parts.append("| `update_task_checklist(item_id, done)` | Mark a checklist item complete. Do this as you finish each item. |")
-    parts.append(f"| `update_task_phase(task_id, phase, detail)` | Update your phase on the dashboard (e.g., grounding, implementing, testing). |")
-    parts.append("| `post_task_message(task_id, author='cc-worker', type, content)` | Post progress updates, questions, or results to your task thread. |")
+    parts.append("Key tools: `post_task_message` (progress/question/result/handoff/plan), "
+                 "`update_task_phase`, `update_task_checklist`, `add_checklist_item`, `add_task_file`.")
     parts.append("")
-    parts.append("**Message types:** `progress` (status updates) | `question` (blocks session until answered — use for blockers) | `plan` (post during grounding) | `result` (final summary) | `handoff` (notes for next task in chain)")
-    parts.append("")
-    parts.append("### Checklist Management")
-    parts.append("Use during grounding and as scope evolves.")
-    parts.append("")
-    parts.append("| Tool | When to use |")
-    parts.append("|------|------------|")
-    parts.append("| `add_checklist_item(task_id, item)` | Add a deliverable you discovered during grounding or implementation. |")
-    parts.append("| `remove_checklist_item(item_id)` | Remove an item that doesn't apply to this task. |")
-    parts.append("| `update_checklist_item(item_id, item)` | Fix the text of an inaccurate checklist item. |")
-    parts.append("")
-    parts.append("### Context Discovery")
-    parts.append("Use when the spec is unclear or you need to understand a prior design decision.")
-    parts.append("")
-    parts.append("| Tool | When to use |")
-    parts.append("|------|------------|")
-    parts.append(f"| `search(query, project_id='{project_id}')` | Search across tasks, conversations, and messages. Use for any search query. |")
-    parts.append("| `read_task_messages(task_id)` | Read the full thread of a related task — useful for chain context. |")
-    parts.append("| `get_task_status(task_id)` | Check the current status of any task. |")
-    parts.append("| `get_pipeline(task_id)` | See your full dependency chain. |")
-    parts.append("")
-    parts.append("### Punchlist")
-    parts.append("Use if your task is assigned to a component.")
-    parts.append("")
-    parts.append("| Tool | When to use |")
-    parts.append("|------|------------|")
-    parts.append("| `claim_punchlist_item(item_id, task_id)` | Claim a punchlist item you're working on. |")
-    parts.append("| `resolve_punchlist_item(item_id)` | Mark a punchlist item done after completing the work. |")
-    parts.append("| `add_punchlist_item(component_id, item)` | Report a new issue you discovered during work. |")
-    parts.append("| `list_punchlist(component_id)` | See all open items for the component. |")
-    parts.append("")
-    parts.append("### File Operations")
-    parts.append("Use for artifacts, reports, screenshots, and analysis outputs.")
-    parts.append("")
-    parts.append("| Tool | When to use |")
-    parts.append("|------|------------|")
-    parts.append("| `add_task_file(task_id, source_path)` | Persist a generated file for download. Pass absolute path. |")
-    parts.append("| `list_task_files(task_id)` | Browse files attached to any task. |")
-    parts.append("| `get_task_file(task_id, path)` | Read a specific file from any task's branch. |")
+    parts.append(f"- Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
+    parts.append(f"- Update phase: `mcp__switchboard__update_task_phase(task_id='{task_id}', phase='implementing', detail='...')`")
+    parts.append(f"- Post progress: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='progress', content='...')`")
     parts.append("")
 
-    # ── 8. Instructions + Git workflow ───────────────────────────────────────
-    parts.append("## Instructions")
-    parts.append("- You are working in an isolated git worktree. Commit freely to your branch.")
-    parts.append("- Use the Ouvrage MCP tools to report progress:")
-    parts.append(f"  - Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
-    parts.append(f"  - Update phase: `mcp__switchboard__update_task_phase(task_id='{task_id}', phase='implementing', detail='...')`")
-    parts.append(f"  - Post progress: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='progress', content='...')`")
-    parts.append(f"  - Post question (will pause session): `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='question', content='...')`")
-    parts.append("- **Update each checklist item as you complete it.** This is how progress is tracked.")
-    parts.append(f"- When done, commit your work, **push your branch** (`git push origin {branch}`), and post a result summary as type='result'.")
-    parts.append("- **Always push your branch before finishing.** Your work is headless — unpushed code has no value.")
-    parts.append("- Before finishing, post a handoff message with key decisions, gotchas, and notes for the next task:")
-    parts.append(f"  `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='handoff', content='...')`")
+    # ── 7. Search & context ──────────────────────────────────────────────────
+    parts.append("## Finding Context")
+    parts.append("")
+    parts.append(f"You have access to project memory via `search(query, project_id='{project_id}')`. "
+                 "It returns ranked pointers with snippets and entity IDs.")
+    parts.append("Follow up with `read(around=entity_id)` for full context around a match.")
+    parts.append("If the spec is clear, start working. If you need context the spec doesn't provide, "
+                 "search for it. One or two targeted searches, not a research project.")
+    parts.append("You can also read project conversations for design decisions — "
+                 "use `read_task_messages(task_id)` for chain context from parent tasks.")
     parts.append("")
 
-    parts.append("## Worktree hygiene — required before handoff")
+    # ── 8. Safety ────────────────────────────────────────────────────────────
+    parts.append("## Safety")
     parts.append("")
+    parts.append("**System integrity:**")
+    parts.append("- Don't modify Ouvrage system files, MCP server code, or infrastructure configs.")
+    parts.append("- Don't read or expose API keys, credentials, `.env` files, or encryption keys in messages or commits.")
+    parts.append("- Don't access other worktrees or other tasks' files outside your own worktree.")
+    parts.append("")
+    parts.append("**Git safety:**")
+    parts.append(f"- Never `git push --force`, `--force-with-lease`, or `-f`. If push fails, push to a rescue branch: `git push origin {branch}:{branch}-rescue-{{n}}` and post a question.")
+    parts.append("- Never `git rebase`. Use `git merge origin/main` if you need upstream changes.")
+    parts.append("- Never `git remote add` or modify remotes. Never create tags.")
+    parts.append(f"- Never checkout, merge to, or push to branches other than `{branch}`.")
+    parts.append("- Never modify `.gitignore`, CI/CD configs (`.github/workflows/`), or deploy files unless the spec explicitly requires it.")
+    parts.append("")
+    parts.append("**Process safety:**")
+    parts.append("- Never `kill`/`pkill`/`killall` (mechanically blocked by hook).")
+    parts.append("- Always wrap test runs and long commands in `timeout`.")
+    parts.append("- Don't run the full test suite — run targeted tests, the gate handles the full suite.")
+    parts.append("")
+    parts.append("**Scope safety:**")
+    parts.append("- Your scope is the spec and checklist. Nothing more.")
+    parts.append("- Don't refactor code outside your task scope. Don't install new frameworks unless the spec requires it.")
+    parts.append("- If scope is bigger than expected, escalate — don't silently expand.")
+    parts.append("- If you find a bug outside your scope, report it in a `progress` note but don't fix it.")
+    parts.append("")
+
+    # ── 9. Completion ────────────────────────────────────────────────────────
+    parts.append("## Completion")
+    parts.append("")
+    parts.append("Always push your branch before finishing — unpushed code has no value.")
     parts.append("Before posting your result, run `git status`. Your worktree MUST be clean.")
+    parts.append("Stage and commit any intentional changes. Revert anything unintentional with `git checkout -- <file>`.")
     parts.append("")
-    parts.append("For every file that shows as modified, staged, or untracked:")
-    parts.append("")
-    parts.append("- **If you changed it intentionally as part of this task:** stage and commit it with a meaningful message that describes what changed and why. Do not batch unrelated changes into one commit.")
-    parts.append("- **If it changed but you did NOT intend to change it** (e.g. a file got touched by a side effect, a config was auto-modified): run `git checkout -- <file>` to revert it to its original state.")
-    parts.append("")
-    parts.append("There is no option to leave changes uncommitted. You own this worktree. The next step in the pipeline (tests, reviewer) operates on committed code only. An uncommitted implementation is an incomplete task.")
-    parts.append("")
-    parts.append("Do NOT create garbage commits like \"fix formatting\" or \"clean up\" unless formatting or cleanup was explicitly part of the spec. Commit messages must describe the actual change.")
-    parts.append("")
-    parts.append("**Completion sequence:**")
+    parts.append("**Sequence:**")
     parts.append("1. Ensure all checklist items are updated")
     parts.append("2. Run `git status` — worktree must be clean")
     parts.append(f"3. `git push origin {branch}`")
     parts.append("4. Post a `handoff` message with key decisions, gotchas, and notes")
-    parts.append("5. Post a `result` message (see Result Summary below)")
+    parts.append(f"5. Post a `result` message (under 5 lines: what you did, files modified, caveats)")
     parts.append("")
 
-    parts.append("## Result Summary")
-    parts.append("")
-    parts.append("Before completing, post a `result` type message via `post_task_message`. Keep it under 5 lines. Include:")
-    parts.append("")
-    parts.append("1. **What you did** — 2-3 sentences describing the change")
-    parts.append("2. **Files created or modified** — list the paths")
-    parts.append("3. **Caveats or reviewer notes** — anything that needs attention or follow-up")
-    parts.append("")
-    parts.append("Do not dump full file contents. This summary is what a manager reads in `get_task_status` — make it useful at a glance.")
-    parts.append("")
-
-    parts.append("## SAFETY: Running tests and processes")
-    parts.append("- Use `timeout 60 pytest ...` for targeted test runs — always wrap with timeout")
-    parts.append("- NEVER use kill, pkill, or killall directly — you WILL terminate yourself")
-    parts.append("- If a process hangs, let the timeout handle it or escalate to needs-review")
-    parts.append("- Run targeted tests (specific files/functions) during development, the gate handles the full suite")
-    parts.append("- If you need to stop a background process, use `timeout` on the original command instead")
-    parts.append("")
-
-    # ── 9. Pipeline awareness ─────────────────────────────────────────────────
+    # ── 10. Pipeline & lifecycle ──────────────────────────────────────────────
     parts.append("## After You Finish: The Gate Pipeline")
     parts.append("")
     if task.get("auto_test") and project.get("test_command"):
@@ -325,57 +275,40 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("1. **Test gate** — Your project's test suite runs against your branch. If tests fail, you are retried with the failure output.")
     parts.append("2. **Review gate** — An Opus instance reviews your diff against the spec. If changes are requested, you are retried with the review feedback.")
     parts.append("3. **Dependent tasks** — If your task has dependents, they dispatch automatically after your gates pass.")
-    parts.append("4. You don't control the gates. Write clean code, write passing tests.")
+    parts.append("")
+    parts.append("You don't control the gates. If tests fail, you're retried with the failure output. "
+                 "If review has feedback, you're retried with that feedback. Write clean code the first time.")
     parts.append("")
 
-    # ── 10. Testing ───────────────────────────────────────────────────────────
+    # ── 11. Testing ───────────────────────────────────────────────────────────
     parts.append("## Testing")
     if task.get("auto_test") and project.get("test_command"):
         parts.append(f"Tests run automatically after you finish via `{project['test_command']}`. Do NOT run the full suite — the gate handles it.")
-        parts.append("Run targeted tests during development to validate your changes. Ensure tests you write pass before moving on.")
+        parts.append("Run targeted tests during development to validate your changes.")
     elif project.get("test_command"):
         parts.append(f"Run tests with: `{project['test_command']}`")
-        parts.append("Write tests for new functionality. Run them and ensure they pass before marking checklist items done.")
     else:
-        parts.append("No test command configured. If the project has tests, discover and run them. Write tests for new functionality and verify they pass.")
+        parts.append("No test command configured. If the project has tests, discover and run them.")
     parts.append("")
 
-    # ── 11. Escalation protocol ───────────────────────────────────────────────
+    # ── 12. Escalation ───────────────────────────────────────────────────────
     parts.append("## Escalation Protocol")
-    parts.append(f"- **Stuck** → post a `question` message (`mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='question', content='...')`). Pauses your session until a human responds.")
+    parts.append(f"- **Stuck** → post a `question` message. Pauses your session until a human responds.")
     parts.append("- **Ambiguous spec** → post a question. Don't guess.")
     parts.append("- **Scope significantly larger than expected** → update phase to `needs-review` and explain.")
-    parts.append("- **Blocking issue** (missing access, broken dependency) → post a question immediately.")
-    parts.append(f"- **Fundamental blocker you cannot resolve** → call `escalate(task_id='{task_id}', reason='...')` to flag the task for human review. Do not try to work around fundamental blockers.")
+    parts.append(f"- **Fundamental blocker** → call `escalate(task_id='{task_id}', reason='...')` to flag for human review.")
     if escalation_criteria:
         parts.append("")
         parts.append(escalation_criteria)
     parts.append("")
 
-    # ── 12. What NOT to do ────────────────────────────────────────────────────
-    parts.append("## What NOT To Do")
-    parts.append("- No `kill`/`pkill`/`killall` — use `timeout` for process management.")
-    parts.append("- Don't run `gh` CLI commands — PRs are created automatically by the gate pipeline. Never run `gh pr create` or any `gh` command.")
-    if task.get("auto_test") and project.get("test_command"):
-        parts.append("- No running the full test suite — the gate handles it. Run targeted tests only.")
-    parts.append("- No `git config` changes — config is shared across all worktrees.")
-    parts.append("- No checking out other branches — you own your branch only.")
-    parts.append("- No guessing when stuck — post a question.")
-    parts.append("- No adding frameworks unless the spec explicitly requires it.")
-    parts.append("- No committing secrets (API keys, credentials, .env files) to git.")
-    parts.append("")
-
     # ── 13. Grounding phase (skip for revision retries) ──────────────────────
     if not review_feedback:
         parts.append("## Grounding Phase")
-        parts.append("GROUNDING PHASE (do this BEFORE coding):")
-        parts.append("1. Read the relevant source files for this task")
-        parts.append("2. Review the spec — understand WHY this is being requested, not just WHAT")
-        parts.append("3. Review each deliverable in the checklist against the actual code")
-        parts.append("4. Adjust deliverables using the checklist tools: fix inaccuracies, add missing items, remove irrelevant ones. Small adjustments are fine to make silently.")
-        parts.append("5. If the approach fundamentally won't work, scope is significantly larger than expected, or you see a better way to achieve the goal → set status to needs-review and explain")
-        parts.append(f"6. Post your implementation plan as a type='plan' message with file-level detail: `mcp__switchboard__post_task_message(task_id='{task_id}', author='cc-worker', type='plan', content='...')`")
-        parts.append("7. Then begin coding")
+        parts.append("Do this BEFORE coding:")
+        parts.append("1. Read the relevant source files. Understand WHY, not just WHAT.")
+        parts.append("2. Validate the checklist against the code. Adjust items as needed — fix inaccuracies, add missing ones, remove irrelevant ones. If the approach fundamentally won't work, set phase to `needs-review` and explain.")
+        parts.append(f"3. Post your implementation plan as a `plan` message with file-level detail. Then begin coding.")
         parts.append("")
 
     return "\n".join(parts)
@@ -563,10 +496,6 @@ async def _run_sdk_session(
         "switchboard": {
             "type": "http",
             "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp/worker",
-        },
-        "graphiti": {
-            "type": "http",
-            "url": "http://localhost:8002/mcp",
         },
     }
     try:

@@ -1378,63 +1378,43 @@ class TestBuildTaskPrompt:
         assert "Ouvrage worker" in result
         assert "system" in result  # default dispatched_by fallback
 
-    async def test_component_context_included(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        mock_get_component = AsyncMock(return_value={
-            "id": "comp-1", "name": "Auth Module",
-            "description": "Handles login flows", "phase": "implementing",
-        })
-        mock_list_punchlist = AsyncMock(return_value=[])
-        with patch("switchboard.db.get_component", mock_get_component), \
-             patch("switchboard.db.list_punchlist", mock_list_punchlist):
-            result = await _build_task_prompt(
-                self._make_project(),
-                self._make_task(component_id="comp-1"),
-                "do the thing")
-        assert "Auth Module" in result
-        assert "Handles login flows" in result
-        assert "implementing" in result
-
-    async def test_component_punchlist_included(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        mock_get_component = AsyncMock(return_value={
-            "id": "comp-1", "name": "Auth Module",
-            "description": None, "phase": None,
-        })
-        mock_list_punchlist = AsyncMock(return_value=[
-            {"id": 42, "item": "Fix logout bug", "status": "open"},
-            {"id": 43, "item": "Token refresh", "status": "claimed"},
-        ])
-        with patch("switchboard.db.get_component", mock_get_component), \
-             patch("switchboard.db.list_punchlist", mock_list_punchlist):
-            result = await _build_task_prompt(
-                self._make_project(),
-                self._make_task(component_id="comp-1"),
-                "do the thing")
-        assert "Fix logout bug" in result
-        assert "Token refresh" in result
-        # Header should say "Punchlist items" (not "Open punchlist items")
-        assert "Punchlist items for this component" in result
-        assert "Open punchlist items" not in result
-
-    async def test_no_component_context_when_no_component_id(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        mock_get_component = AsyncMock()
-        with patch("switchboard.db.get_component", mock_get_component):
-            result = await _build_task_prompt(
-                self._make_project(), self._make_task(), "do the thing")
-        mock_get_component.assert_not_called()
-        assert "Component Context" not in result
-
-    async def test_tool_inventory_present(self):
+    async def test_behavioral_guidance_present(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "update_task_checklist" in result
         assert "post_task_message" in result
         assert "search(" in result
-        assert "Context Discovery" in result
-        assert "Progress Reporting" in result
+        assert "How to Work" in result
+        assert "Finding Context" in result
+
+    async def test_safety_section_present(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "## Safety" in result
+        assert "System integrity" in result
+        assert "Git safety" in result
+        assert "Process safety" in result
+        assert "Scope safety" in result
+        assert "pkill" in result
+        assert "killall" in result
+
+    async def test_identity_headless_framing(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "headless" in result
+        assert "dashboard" in result.lower()
+        assert "not watching" in result
+
+    async def test_no_component_or_punchlist_in_prompt(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(
+            self._make_project(), self._make_task(), "do the thing")
+        assert "Component Context" not in result
+        assert "Punchlist" not in result
+        assert "claim_punchlist_item" not in result
 
     async def test_pipeline_awareness_present(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
@@ -1457,25 +1437,29 @@ class TestBuildTaskPrompt:
             escalation_criteria="Always post question if touching prod DB.")
         assert "Always post question if touching prod DB." in result
 
-    async def test_prohibitions_section_present(self):
+    async def test_safety_covers_secrets_and_git(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
-        assert "What NOT To Do" in result
-        assert "git config" in result
-        assert "committing secrets" in result.lower() or "secrets" in result
+        assert "## Safety" in result
+        # Git prohibitions moved into safety
+        assert "force" in result
+        assert "rebase" in result
+        # Secrets
+        assert "credentials" in result.lower() or "secrets" in result.lower()
 
-    async def test_prohibitions_no_full_suite_when_auto_test_disabled(self):
+    async def test_no_full_suite_when_auto_test_disabled(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(auto_test=False), "do the thing")
-        assert "full test suite" not in result
+        # With auto_test off, the "full suite" warning should not appear in testing section
+        assert "Do NOT run the full suite" not in result
 
-    async def test_prohibitions_includes_no_full_suite_when_auto_test_enabled(self):
+    async def test_full_suite_warning_when_auto_test_enabled(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(auto_test=True), "do the thing")
-        assert "full test suite" in result or "full suite" in result
+        assert "full suite" in result.lower()
 
 
 # ---------------------------------------------------------------------------
