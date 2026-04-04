@@ -331,6 +331,7 @@ function SettingsTab({ project, projectId, onSaved }) {
     const [error, setError] = useState(null);
     const [saveSuccess, setSaveSuccess] = useState(false);
 
+    const [displayName, setDisplayName] = useState(project.display_name || '');
     const [defaultBranch, setDefaultBranch] = useState(project.default_branch || 'main');
     const [model, setModel] = useState(project.model || '');
     const [reviewModel, setReviewModel] = useState(project.review_model || '');
@@ -373,6 +374,7 @@ function SettingsTab({ project, projectId, onSaved }) {
         setSaveSuccess(false);
         try {
             const fields = {
+                display_name: displayName.trim() || null,
                 default_branch: defaultBranch.trim() || 'main',
                 model: model || null,
                 review_model: reviewModel || null,
@@ -469,6 +471,22 @@ function SettingsTab({ project, projectId, onSaved }) {
                     fontSize: typography.size.sm,
                 }}>Settings saved</div>
             ` : null}
+
+            <!-- Project Name section -->
+            <div>
+                <${FormField} label="Project Name">
+                    <input
+                        type="text"
+                        value=${displayName}
+                        onInput=${e => setDisplayName(e.target.value)}
+                        style=${fkStyles.input}
+                        placeholder=${project.id}
+                    />
+                    <div style=${{ fontSize: '10px', color: colors.textTertiary, fontStyle: 'italic', marginTop: '3px' }}>
+                        Display name — project ID (${project.id}) cannot change
+                    </div>
+                </${FormField}>
+            </div>
 
             <!-- Git section -->
             <div>

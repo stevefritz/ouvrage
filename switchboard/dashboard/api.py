@@ -542,7 +542,7 @@ async def _handle_update_project(receive, send, project_id):
         return await _error(send, "Invalid JSON body", 400)
 
     ALLOWED = {
-        "default_branch", "setup_command", "teardown_command", "test_command",
+        "display_name", "default_branch", "setup_command", "teardown_command", "test_command",
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
         "state_definitions", "github_pat_override",

@@ -467,6 +467,10 @@ async def init_db():
         if "github_pat_override" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN github_pat_override TEXT")
 
+        # Migrate projects: add display_name for human-readable project title
+        if "display_name" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN display_name TEXT")
+
         # Migrate instance: add github_pat_encrypted column
         instance_columns = await conn.execute_fetchall("PRAGMA table_info(instance)")
         instance_col_names = [c["name"] for c in instance_columns]
