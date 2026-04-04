@@ -610,10 +610,17 @@ async def init_db():
                     USING fts5(goal, content='tasks', content_rowid='rowid');
             """)
 
-        # FTS5 sync triggers (CREATE TRIGGER IF NOT EXISTS supported in SQLite >= 3.16)
+        # FTS5 sync triggers — drop before recreating so updated definitions take effect.
+        # messages_fts_insert: skip NULL content (avoids FTS null-token errors).
+        # messages_fts_update: scoped to content column only (avoids spurious FTS churn).
+        # tasks_fts_update: scoped to goal column only.
         await conn.executescript("""
+            DROP TRIGGER IF EXISTS messages_fts_insert;
+            DROP TRIGGER IF EXISTS messages_fts_update;
+            DROP TRIGGER IF EXISTS tasks_fts_update;
+
             CREATE TRIGGER IF NOT EXISTS messages_fts_insert
-                AFTER INSERT ON messages BEGIN
+                AFTER INSERT ON messages WHEN new.content IS NOT NULL BEGIN
                     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
                 END;
 
@@ -623,7 +630,7 @@ async def init_db():
                 END;
 
             CREATE TRIGGER IF NOT EXISTS messages_fts_update
-                AFTER UPDATE ON messages BEGIN
+                AFTER UPDATE OF content ON messages BEGIN
                     INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
                     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
                 END;
@@ -639,7 +646,7 @@ async def init_db():
                 END;
 
             CREATE TRIGGER IF NOT EXISTS tasks_fts_update
-                AFTER UPDATE ON tasks BEGIN
+                AFTER UPDATE OF goal ON tasks BEGIN
                     INSERT INTO tasks_fts(tasks_fts, rowid, goal) VALUES ('delete', old.rowid, old.goal);
                     INSERT INTO tasks_fts(rowid, goal) VALUES (new.rowid, new.goal);
                 END;
@@ -658,7 +665,7 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_artifact_task ON task_artifacts(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags ON task_tags(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
-            CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
+            DROP INDEX IF EXISTS idx_msg_content;
             CREATE INDEX IF NOT EXISTS idx_component_project ON components(project_id);
             CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
             CREATE INDEX IF NOT EXISTS idx_punchlist_component ON punchlist(component_id);

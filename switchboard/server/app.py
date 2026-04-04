@@ -276,74 +276,94 @@ async def _backfill_fts_indexes() -> None:
 
 
 async def _backfill_vec_tables() -> None:
-    """Populate vec0 tables from existing BLOB embeddings (idempotent, runs at startup)."""
+    """Populate vec0 tables from existing BLOB embeddings (idempotent, runs at startup).
+
+    Processes in batches of 1000 to avoid loading all embeddings into memory at once.
+    At 100K messages × 6KB each that would be ~600MB — batching caps working set.
+    """
+    _BATCH_SIZE = 1000
+    _expected_blob_len = 1536 * 4  # float32 × 1536 dims
+
     try:
         from switchboard.db.connection import get_db
-        from switchboard.embeddings.service import decode_vector, encode_vector
 
-        async with get_db() as conn:
-            _expected_blob_len = 1536 * 4  # float32 × 1536 dims
-
-            # Messages
-            msg_rows = await conn.execute_fetchall(
-                "SELECT id, embedding FROM messages WHERE embedding IS NOT NULL"
-            )
-            msg_count = 0
-            for row in msg_rows:
-                if len(row["embedding"]) != _expected_blob_len:
-                    continue
-                try:
-                    await conn.execute(
-                        "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
-                        (row["id"], row["embedding"]),
-                    )
-                    msg_count += 1
-                except Exception:
-                    pass
-            if msg_count:
+        msg_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT id, embedding FROM messages WHERE embedding IS NOT NULL LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["id"], row["embedding"]),
+                        )
+                        msg_count += 1
+                    except Exception:
+                        pass
                 await conn.commit()
+            offset += _BATCH_SIZE
 
-            # Tasks (id is TEXT, use rowid)
-            task_rows = await conn.execute_fetchall(
-                "SELECT rowid, embedding FROM tasks WHERE embedding IS NOT NULL"
-            )
-            task_count = 0
-            for row in task_rows:
-                if len(row["embedding"]) != _expected_blob_len:
-                    continue
-                try:
-                    await conn.execute(
-                        "INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
-                        (row["rowid"], row["embedding"]),
-                    )
-                    task_count += 1
-                except Exception:
-                    pass
-            if task_count:
+        task_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT rowid, embedding FROM tasks WHERE embedding IS NOT NULL LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["rowid"], row["embedding"]),
+                        )
+                        task_count += 1
+                    except Exception:
+                        pass
                 await conn.commit()
+            offset += _BATCH_SIZE
 
-            # Message chunks
-            chunk_rows = await conn.execute_fetchall(
-                "SELECT id, embedding FROM message_chunks WHERE embedding IS NOT NULL AND chunk_index >= 0"
-            )
-            chunk_count = 0
-            for row in chunk_rows:
-                if len(row["embedding"]) != _expected_blob_len:
-                    continue
-                try:
-                    await conn.execute(
-                        "INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (?, ?)",
-                        (row["id"], row["embedding"]),
-                    )
-                    chunk_count += 1
-                except Exception:
-                    pass
-            if chunk_count:
+        chunk_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT id, embedding FROM message_chunks "
+                    "WHERE embedding IS NOT NULL AND chunk_index >= 0 LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["id"], row["embedding"]),
+                        )
+                        chunk_count += 1
+                    except Exception:
+                        pass
                 await conn.commit()
+            offset += _BATCH_SIZE
 
-            # Prune orphaned vec0 entries — rows whose source was deleted
-            # but the trigger didn't fire (pre-trigger data or direct deletes).
-            try:
+        # Prune orphaned vec0 entries — rows whose source was deleted
+        # but the trigger didn't fire (pre-trigger data or direct deletes).
+        try:
+            async with get_db() as conn:
                 await conn.execute(
                     "DELETE FROM messages_vec WHERE rowid NOT IN "
                     "(SELECT id FROM messages WHERE embedding IS NOT NULL)"
@@ -357,9 +377,9 @@ async def _backfill_vec_tables() -> None:
                     "(SELECT id FROM message_chunks WHERE embedding IS NOT NULL)"
                 )
                 await conn.commit()
-                log.info("vec0 orphan reconciliation complete")
-            except Exception as prune_err:
-                log.warning("vec0 orphan reconciliation failed: %s", prune_err)
+            log.info("vec0 orphan reconciliation complete")
+        except Exception as prune_err:
+            log.warning("vec0 orphan reconciliation failed: %s", prune_err)
 
         log.info(
             "vec0 backfill complete: %d messages, %d tasks, %d chunks",

@@ -1,6 +1,9 @@
 """Task CRUD, checklist, artifacts, tags, subtasks, and state definitions."""
 import json
+import logging
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 
 from switchboard.config.constants import (
     TASK_MUTABLE_FIELDS,
@@ -436,8 +439,8 @@ async def set_message_embedding(message_id: int, embedding_blob: bytes) -> None:
                     "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
                     (message_id, embedding_blob),
                 )
-            except Exception:
-                pass  # vec0 update is best-effort
+            except Exception as e:
+                log.warning("vec0 insert failed for message %d: %s", message_id, e)
         await db.commit()
 
 
