@@ -48,7 +48,7 @@ COPY switchboard/ switchboard/
 COPY dashboard/ dashboard/
 COPY foreman.html ./
 
-RUN pip install --no-cache-dir ".[dev]"
+RUN pip install --no-cache-dir ".[dev]" sqlite-vec
 
 # --- Playwright (optional, for visual verification) ---
 # Higher-tier plans get Chromium so CC workers can screenshot pages and verify UI.

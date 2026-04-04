@@ -54,6 +54,16 @@ if [ -n "${SWITCHBOARD_OWNER_EMAIL:-}" ] && [ -n "${SWITCHBOARD_OWNER_PASSWORD_H
     || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
 fi
 
+# --- OpenAI key ---
+# Read from Docker secret file if present. Chown to service user only —
+# worker user must NOT be able to read this (prevents tenant code exfiltration).
+OPENAI_SECRET="/run/secrets/openai_key"
+if [ -f "$OPENAI_SECRET" ]; then
+    chown switchboard-svc "$OPENAI_SECRET" 2>/dev/null || true
+    chmod 400 "$OPENAI_SECRET"
+    echo "[entrypoint] OpenAI key loaded from Docker secret (service-user only)"
+fi
+
 # --- Fix /data ownership after any file creation above ---
 chown -R switchboard-svc:switchboard /data
 

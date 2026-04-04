@@ -1255,8 +1255,9 @@ async def _handle_search_conversation(scope, send, conv_id: str):
     results = await db.search_conversation_messages(conv_id, q)
     seen_ids = {r["id"] for r in results}
 
-    # Semantic search — runs only when OPENAI_API_KEY is available
-    if os.environ.get("OPENAI_API_KEY"):
+    # Semantic search — runs only when OpenAI API key is available
+    from switchboard.embeddings.service import _get_openai_api_key
+    if _get_openai_api_key():
         try:
             from switchboard.embeddings import service as emb
             from switchboard.embeddings.service import compute_relevance_score
