@@ -8,7 +8,7 @@ import pytest
 from switchboard.config.nudges import (
     NUDGE_CATEGORIES,
     TOOL_CATEGORY_MAP,
-    append_nudge,
+    inject_nudge,
     select_nudge,
 )
 
@@ -116,34 +116,45 @@ class TestSelectNudge:
         assert nudge1 == nudge2
 
 
-class TestAppendNudge:
-    """append_nudge() integration."""
+class TestInjectNudge:
+    """inject_nudge() integration."""
 
-    def test_appends_nudge_separator_and_emoji(self):
-        result = append_nudge('{"key":"value"}', "dispatch_task")
-        assert "\n\n---\n" in result
-        assert "\U0001f4a1" in result  # 💡
+    def test_injects_nudge_field_with_emoji(self):
+        result = {"key": "value"}
+        inject_nudge(result, "dispatch_task")
+        assert "_nudge" in result
+        assert result["_nudge"].startswith("\U0001f4a1")  # 💡
 
-    def test_nudge_is_appended_after_response_text(self):
-        response = '{"status":"ok"}'
-        result = append_nudge(response, "search")
-        assert result.startswith(response)
+    def test_nudge_field_does_not_corrupt_existing_fields(self):
+        result = {"status": "ok"}
+        inject_nudge(result, "search")
+        assert result["status"] == "ok"
+        assert "_nudge" in result
 
-    def test_no_nudge_appended_for_get_guide(self):
-        response = '{"guide":"..."}'
-        result = append_nudge(response, "get_guide")
-        assert result == response
+    def test_no_nudge_injected_for_get_guide(self):
+        result = {"guide": "..."}
+        inject_nudge(result, "get_guide")
+        assert "_nudge" not in result
 
-    def test_no_nudge_appended_for_get_context(self):
-        response = '{"context":"..."}'
-        result = append_nudge(response, "get_context")
-        assert result == response
+    def test_no_nudge_injected_for_get_context(self):
+        result = {"context": "..."}
+        inject_nudge(result, "get_context")
+        assert "_nudge" not in result
 
     def test_nudge_text_is_from_known_pool(self):
         all_nudges = {n for nudges in NUDGE_CATEGORIES.values() for n in nudges}
-        result = append_nudge('{}', "post")
-        # Extract the nudge text after the separator
-        parts = result.split("\n\n---\n\U0001f4a1 ", 1)
-        assert len(parts) == 2
-        nudge_text = parts[1]
+        result = {}
+        inject_nudge(result, "post")
+        assert "_nudge" in result
+        # Strip the emoji prefix to get raw nudge text
+        nudge_text = result["_nudge"][len("\U0001f4a1 "):]
         assert nudge_text in all_nudges
+
+    def test_result_remains_valid_json_after_inject(self):
+        import json
+        result = {"task_id": "proj/task-1", "status": "completed"}
+        inject_nudge(result, "dispatch_task")
+        serialized = json.dumps(result)
+        parsed = json.loads(serialized)
+        assert parsed["status"] == "completed"
+        assert parsed["_nudge"].startswith("\U0001f4a1")
