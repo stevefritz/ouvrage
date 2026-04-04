@@ -42,13 +42,13 @@ class TestBackwardCompat:
         assert "status" in task
         assert "tags" in task
 
-    async def test_default_limit_is_50(self, db, sample_project):
-        """Default limit is 50 — more than 50 tasks in DB truncates to 50."""
+    async def test_no_default_limit(self, db, sample_project):
+        """Default limit is None — more than 50 tasks in DB all come back."""
         # Create 55 tasks
         for i in range(55):
             await _make_task(db, "test-project", f"test-project/task-{i}", f"Task {i}")
         result = await list_tasks(project_id="test-project")
-        assert len(result) == 50
+        assert len(result) == 55
 
     async def test_no_limit_on_small_set(self, db, sample_project):
         """Small result sets are unaffected by default limit."""

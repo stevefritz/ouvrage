@@ -180,7 +180,7 @@ async def list_tasks(
     query: str | None = None,
     after: str | None = None,
     before: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     sort: str = "date",
 ) -> list[dict]:
     from switchboard.db.search import sanitize_fts_query
@@ -247,6 +247,7 @@ async def list_tasks(
         if effective_sort == "relevance" and fts_query is None:
             sort_clause = "t.updated_at DESC"
 
+        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
         sql = f"""
             SELECT t.*{bm25_select},
                 (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id) as checklist_total,
@@ -256,9 +257,8 @@ async def list_tasks(
             {fts_join}
             {where}
             ORDER BY {sort_clause}
-            LIMIT ?
+            {limit_clause}
         """
-        params.append(limit)
 
         rows = await db.execute_fetchall(sql, params)
         tasks = []
