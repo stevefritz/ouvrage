@@ -206,6 +206,53 @@ async def _list_with_aggregates(
         return [dict(r) for r in rows]
 
 
+async def read_messages_around(message_id: int, window: int = 3) -> dict:
+    """Fetch N messages centered on message_id.
+
+    Resolves the parent conversation_id or task_id from the message, then
+    returns `window` messages ordered chronologically around the target.
+    Default window=3 returns 1 before + target + 1 after.
+    """
+    from switchboard.db.connection import get_db
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM messages WHERE id = ?", (message_id,)
+        )
+        if not rows:
+            return {"error": f"Message {message_id} not found"}
+        target = dict(rows[0])
+
+    conversation_id = target.get("conversation_id")
+    task_id = target.get("task_id")
+
+    if task_id:
+        filter_col = "task_id"
+        filter_val = task_id
+    elif conversation_id:
+        filter_col = "conversation_id"
+        filter_val = conversation_id
+    else:
+        return {"error": f"Message {message_id} has no parent conversation or task"}
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            f"SELECT * FROM messages WHERE {filter_col} = ? ORDER BY ABS(id - ?) LIMIT ?",
+            (filter_val, message_id, window),
+        )
+
+    messages = [_strip_embedding(dict(r)) for r in rows]
+    # Re-sort chronologically by id ASC
+    messages.sort(key=lambda m: m["id"])
+
+    return {
+        "messages": messages,
+        "around_message_id": message_id,
+        "conversation_id": conversation_id,
+        "task_id": task_id,
+    }
+
+
 def _make_snippet(content: str, query: str) -> str:
     """Extract a ~120-char snippet around the first match of query in content."""
     lower_content = content.lower()

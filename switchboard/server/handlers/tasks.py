@@ -403,7 +403,14 @@ async def _handle_post_task_message(arguments):
 
 
 async def _handle_read_task_messages(arguments):
-    task_id = arguments["task_id"]
+    # Around mode — center on a specific message, resolve task_id internally
+    around = arguments.get("around")
+    if around is not None:
+        return await db.read_messages_around(message_id=around, window=3)
+
+    task_id = arguments.get("task_id")
+    if not task_id:
+        return {"error": "task_id is required when around is not set"}
 
     # Single message lookup — ignores all other params
     message_id = arguments.get("message_id")

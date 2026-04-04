@@ -3,11 +3,11 @@
 Covers:
 - Returns error when embedding fails (no OPENAI_API_KEY)
 - Searches task goals, task messages, and message chunks
-- Groups all matches by task — returns task objects, not typed result cards
-- De-duplicates: a task appears once even if matched on goal AND message AND chunk
+- Returns compact result cards (type, entity_id, snippet, relevance_score, ...)
+- De-duplicates message hits covered by chunk hits
 - Optional project_id scopes results
 - Limit parameter respected (max 30)
-- Results ordered by best relevance score per task
+- Results ordered by best relevance score
 """
 
 import asyncio
@@ -51,11 +51,11 @@ class TestSearchEmbedError:
 
 
 # ---------------------------------------------------------------------------
-# Task results — returns full task objects
+# Task results — returns compact result cards with entity_id, snippet, etc.
 # ---------------------------------------------------------------------------
 
 class TestSearchTaskResults:
-    async def test_task_objects_returned(self, db, sample_project):
+    async def test_task_card_returned(self, db, sample_project):
         from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
@@ -75,12 +75,12 @@ class TestSearchTaskResults:
         try:
             result = await _handle_search({"query": "authentication", "limit": 10})
             assert "results" in result
-            ids = [r["id"] for r in result["results"]]
-            assert task["id"] in ids
+            entity_ids = [r["entity_id"] for r in result["results"]]
+            assert task["id"] in entity_ids
         finally:
             set_embedding_service(None)
 
-    async def test_task_result_has_task_fields(self, db, sample_project):
+    async def test_task_result_has_compact_fields(self, db, sample_project):
         from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 1)
@@ -99,25 +99,52 @@ class TestSearchTaskResults:
         set_embedding_service(MockService())
         try:
             result = await _handle_search({"query": "cache"})
-            matching = [r for r in result["results"] if r["id"] == task["id"]]
+            matching = [r for r in result["results"] if r["entity_id"] == task["id"]]
             assert len(matching) == 1
             r = matching[0]
-            # Must be a full task object with standard fields
-            assert "id" in r
-            assert "goal" in r
-            assert "status" in r
-            assert r["goal"] == "Fix the caching bug"
+            assert r["type"] == "task"
+            assert r["entity_id"] == task["id"]
+            assert "snippet" in r
+            assert "relevance_score" in r
+            assert r["author"] is None
+            assert r["message_type"] is None
+        finally:
+            set_embedding_service(None)
+
+    async def test_task_snippet_is_from_goal(self, db, sample_project):
+        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+
+        vec = _unit_vec(4, 2)
+
+        class MockService(EmbeddingService):
+            async def embed(self, text):
+                return vec
+
+        task = await db.create_task(
+            id="test-project/snippet-task",
+            project_id="test-project",
+            goal="Fix the caching bug in production",
+        )
+        await db.set_task_embedding(task["id"], encode_vector(vec))
+
+        set_embedding_service(MockService())
+        try:
+            result = await _handle_search({"query": "cache"})
+            matching = [r for r in result["results"] if r["entity_id"] == task["id"]]
+            assert len(matching) == 1
+            # Snippet should be derived from the goal
+            assert "Fix the caching bug" in matching[0]["snippet"]
         finally:
             set_embedding_service(None)
 
 
 # ---------------------------------------------------------------------------
-# Task message results — matched via task message, returns task object
+# Task message results — returned as task_message cards
 # ---------------------------------------------------------------------------
 
 class TestSearchMessageResults:
-    async def test_task_message_match_returns_task(self, db, sample_project):
-        """A match in a task message should return the parent task object."""
+    async def test_task_message_returns_message_card(self, db, sample_project):
+        """A match in a task message returns a task_message card, not a task object."""
         from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 3)
@@ -142,49 +169,14 @@ class TestSearchMessageResults:
         set_embedding_service(MockService())
         try:
             result = await _handle_search({"query": "pipeline result"})
-            ids = [r["id"] for r in result["results"]]
-            assert task["id"] in ids
+            # Should find the message card
+            msg_cards = [r for r in result["results"] if r["type"] == "task_message"]
+            msg_ids = [r["entity_id"] for r in msg_cards]
+            assert str(msg["id"]) in msg_ids
         finally:
             set_embedding_service(None)
 
-    async def test_conversation_message_without_task_excluded(self, db, sample_project):
-        """Conversation messages with no task_id do not appear in results."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-
-        vec = _unit_vec(4, 2)
-
-        class MockService(EmbeddingService):
-            async def embed(self, text):
-                return vec
-
-        await db.create_conversation(id="search-conv", project="test-project", goal="Search test")
-        msg = await db.post_message(
-            conversation_id="search-conv",
-            author="human",
-            content="We decided to use Redis for session storage because it supports TTL natively.",
-            type="note",
-        )
-        await db.set_message_embedding(msg["id"], encode_vector(vec))
-
-        set_embedding_service(MockService())
-        try:
-            result = await _handle_search({"query": "session storage"})
-            # No result should be a conversation-only item (they have no task context)
-            # Results are task objects; all have an "id" (task id) and "goal"
-            for r in result["results"]:
-                assert "id" in r
-                assert "goal" in r
-        finally:
-            set_embedding_service(None)
-
-
-# ---------------------------------------------------------------------------
-# De-duplication: same task matched via multiple sources → appears once
-# ---------------------------------------------------------------------------
-
-class TestSearchDeduplication:
-    async def test_task_appears_once_when_matched_multiple_ways(self, db, sample_project):
-        """If a task matches on goal AND a message, it appears once in results."""
+    async def test_message_card_has_author_and_message_type(self, db, sample_project):
         from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
@@ -194,27 +186,64 @@ class TestSearchDeduplication:
                 return vec
 
         task = await db.create_task(
-            id="test-project/dedup-task",
+            id="test-project/msg-fields-task",
             project_id="test-project",
-            goal="Implement the deduplication feature",
+            goal="Build something",
         )
-        # Match on task goal embedding
-        await db.set_task_embedding(task["id"], encode_vector(vec))
-        # Also match on a task message
         msg = await db.post_task_message(
             task_id=task["id"],
             author="cc-worker",
-            content="Deduplication logic is now in place.",
-            type="progress",
+            content="Completed implementation with full test coverage.",
+            type="result",
         )
         await db.set_message_embedding(msg["id"], encode_vector(vec))
 
         set_embedding_service(MockService())
         try:
-            result = await _handle_search({"query": "deduplication"})
-            task_matches = [r for r in result["results"] if r["id"] == task["id"]]
-            # Task must appear exactly once
-            assert len(task_matches) == 1
+            result = await _handle_search({"query": "implementation"})
+            msg_cards = [r for r in result["results"] if r.get("entity_id") == str(msg["id"])]
+            assert len(msg_cards) == 1
+            card = msg_cards[0]
+            assert card["author"] == "cc-worker"
+            assert card["message_type"] == "result"
+            assert "snippet" in card
+        finally:
+            set_embedding_service(None)
+
+
+# ---------------------------------------------------------------------------
+# Snippet truncation
+# ---------------------------------------------------------------------------
+
+class TestSearchSnippet:
+    async def test_snippet_max_200_chars(self, db, sample_project):
+        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+
+        vec = _unit_vec(4, 0)
+
+        class MockService(EmbeddingService):
+            async def embed(self, text):
+                return vec
+
+        long_content = "This is a very long message. " * 20  # 580 chars
+        task = await db.create_task(
+            id="test-project/long-msg-task",
+            project_id="test-project",
+            goal="Task with long message",
+        )
+        msg = await db.post_task_message(
+            task_id=task["id"],
+            author="human",
+            content=long_content,
+            type="note",
+        )
+        await db.set_message_embedding(msg["id"], encode_vector(vec))
+
+        set_embedding_service(MockService())
+        try:
+            result = await _handle_search({"query": "long message"})
+            for r in result["results"]:
+                assert len(r["snippet"]) <= 201  # 200 chars + possible ellipsis char
         finally:
             set_embedding_service(None)
 
@@ -255,9 +284,9 @@ class TestSearchProjectScoping:
                 "project_id": "test-project",
                 "limit": 10,
             })
-            ids = [r["id"] for r in result["results"]]
-            assert task_mine["id"] in ids
-            assert task_other["id"] not in ids
+            entity_ids = [r["entity_id"] for r in result["results"]]
+            assert task_mine["id"] in entity_ids
+            assert task_other["id"] not in entity_ids
         finally:
             set_embedding_service(None)
 
@@ -306,9 +335,9 @@ class TestSearchProjectScoping:
                 "project_id": "test-project",
                 "limit": 10,
             })
-            ids = [r["id"] for r in result["results"]]
-            assert task_mine["id"] in ids
-            assert task_other["id"] not in ids
+            entity_ids = [r["entity_id"] for r in result["results"]]
+            assert str(msg_mine["id"]) in entity_ids
+            assert str(msg_other["id"]) not in entity_ids
         finally:
             set_embedding_service(None)
 
@@ -369,7 +398,7 @@ class TestSearchLimit:
 
 
 # ---------------------------------------------------------------------------
-# Results are ranked by best relevance score per task
+# Results are ranked by best relevance score
 # ---------------------------------------------------------------------------
 
 class TestSearchRanking:
@@ -401,10 +430,10 @@ class TestSearchRanking:
         set_embedding_service(MockService())
         try:
             result = await _handle_search({"query": "relevance", "limit": 10})
-            ids = [r["id"] for r in result["results"]]
+            entity_ids = [r["entity_id"] for r in result["results"]]
             # High relevance task should appear before low relevance task
-            assert task_high["id"] in ids
-            assert ids.index(task_high["id"]) < ids.index(task_low["id"])
+            assert task_high["id"] in entity_ids
+            assert entity_ids.index(task_high["id"]) < entity_ids.index(task_low["id"])
         finally:
             set_embedding_service(None)
 

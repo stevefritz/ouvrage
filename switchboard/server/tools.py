@@ -56,15 +56,17 @@ CONVERSATION_TOOLS = [
         name="read",
         description=(
             "Get messages from a conversation. Supports pagination (offset/limit), "
-            "single-message lookup (message_id), and summary mode for lightweight browsing. "
+            "single-message lookup (message_id), summary mode, and around (jump to a message by ID). "
+            "When around is set, conversation_id is resolved automatically — caller only needs the message_id. "
             "When last_n is set, offset/limit are ignored (backward compat). "
             "Default limit is 50 messages."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "conversation_id": {"type": "string", "description": "Which conversation to read"},
-                "message_id": {"type": "integer", "description": "Fetch a single message by ID with full content. When set, all other params are ignored."},
+                "conversation_id": {"type": "string", "description": "Which conversation to read. Optional when around is set (resolved automatically)."},
+                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns 3 messages centered on it (1 before + target + 1 after). Resolves conversation automatically. When set, all other params are ignored."},
+                "message_id": {"type": "integer", "description": "Fetch a single message by ID with full content. When set, all other params except conversation_id are ignored."},
                 "after": {"type": "integer", "description": "Cursor: return only messages with id > this value. Use the cursor from a previous read response."},
                 "last_n": {"type": "integer", "description": "Return only the N most recent messages (pinned shown at top). When set, offset/limit are ignored."},
                 "since": {"type": "string", "description": "ISO timestamp, return messages after this time"},
@@ -75,7 +77,6 @@ CONVERSATION_TOOLS = [
                 "limit": {"type": "integer", "description": "Max messages to return (default 50, max 50).", "default": 50},
                 "summary": {"type": "boolean", "description": "When true, return lightweight objects with id, title, type, author, created_at, pinned, char_count, preview (first 150 chars). Full content omitted.", "default": False},
             },
-            "required": ["conversation_id"],
         },
     ),
     Tool(
@@ -438,14 +439,16 @@ TASK_TOOLS = [
         name="read_task_messages",
         description=(
             "Read messages from a task's thread. Supports pagination (offset/limit), "
-            "single-message lookup (message_id), summary mode, and attempt filtering. "
+            "single-message lookup (message_id), summary mode, attempt filtering, and around (jump to a message by ID). "
+            "When around is set, task_id is resolved automatically — caller only needs the message_id. "
             "Default limit is 50 messages."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task ID"},
-                "message_id": {"type": "integer", "description": "Fetch a single message by ID with full untruncated content. When provided, all other params are ignored."},
+                "task_id": {"type": "string", "description": "Task ID. Optional when around is set (resolved automatically)."},
+                "around": {"type": "integer", "description": "Jump to a specific message by ID. Returns 3 messages centered on it (1 before + target + 1 after). Resolves task automatically. When set, all other params are ignored."},
+                "message_id": {"type": "integer", "description": "Fetch a single message by ID with full untruncated content. When provided, all other params except task_id are ignored."},
                 "after": {"type": "integer", "description": "Cursor for polling"},
                 "last_n": {"type": "integer", "description": "Return only N most recent (pinned at top). When set, offset/limit are ignored."},
                 "type": {"type": "string", "description": "Filter by message type"},
@@ -454,7 +457,6 @@ TASK_TOOLS = [
                 "limit": {"type": "integer", "description": "Max messages to return (default 50, max 50).", "default": 50},
                 "summary": {"type": "boolean", "description": "When true, return lightweight objects with id, title, type, author, created_at, pinned, char_count, preview. Full content omitted.", "default": False},
             },
-            "required": ["task_id"],
         },
     ),
     Tool(
