@@ -1,10 +1,37 @@
 """Semantic search, full-text search, activity feeds, component search, and chunk indexing."""
 import json
+import logging
 import httpx
 
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import _make_snippet
 from switchboard.embeddings.chunks import MIN_CHUNK_LENGTH, chunk_message
+
+log = logging.getLogger(__name__)
+
+# Expected embedding dimension for vec0 tables
+_VEC_DIM = 1536
+
+# Module-level flag: True when sqlite-vec is loaded and vec0 tables are queryable.
+# Set by _check_vec_tables() at startup. Default False prevents crashes when
+# sqlite-vec extension is missing but OPENAI_API_KEY is set.
+VEC_AVAILABLE = False
+
+
+async def _check_vec_tables() -> None:
+    """Check if vec0 tables are queryable and set VEC_AVAILABLE accordingly.
+
+    Called at app startup. Sets the module-level VEC_AVAILABLE flag so search
+    handlers can skip vec queries when sqlite-vec is not loaded.
+    """
+    global VEC_AVAILABLE
+    try:
+        async with get_db() as db:
+            await db.execute_fetchall("SELECT count(*) FROM messages_vec LIMIT 1")
+        VEC_AVAILABLE = True
+    except Exception:
+        VEC_AVAILABLE = False
+        log.warning("sqlite-vec tables not available — vector search degraded to FTS-only")
 
 
 async def search_messages_semantic(
@@ -14,23 +41,47 @@ async def search_messages_semantic(
     type_filter: list[str] | None = None,
     limit: int = 20,
 ) -> list[dict]:
-    """Load candidate messages with embeddings and return them with raw similarity scores.
+    """Search messages by vector similarity.
+
+    Uses sqlite-vec indexed queries for standard 1536-dim OpenAI embeddings.
+    Falls back to Python cosine loop for non-standard dimensions (e.g. in tests).
 
     Filtering by project_id joins through the conversations table.
     Actual relevance scoring (type weights, pinned boost) is applied by the caller.
+    Returns up to limit*3 results so caller has room to re-rank.
     """
-    from switchboard.embeddings.service import decode_vector, cosine_similarity
+    from switchboard.embeddings.service import encode_vector, decode_vector, cosine_similarity
 
-    async with get_db() as db:
-        conditions = ["m.embedding IS NOT NULL"]
-        params: list = []
+    # Only use vec0 for the expected 1536-dim vectors
+    if len(query_vector) == _VEC_DIM:
+        blob = encode_vector(query_vector)
+        oversample = limit * 15  # Oversample to account for filtering
+
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("messages_vec query failed, returning empty results: %s", exc)
+            return []
+
+        if not vec_rows:
+            return []
+
+        rowids = [r["rowid"] for r in vec_rows]
+        distance_map = {r["rowid"]: r["distance"] for r in vec_rows}
+
+        id_placeholders = ",".join("?" * len(rowids))
+        conditions = [f"m.id IN ({id_placeholders})"]
+        params: list = list(rowids)
 
         if conversation_id:
             conditions.append("m.conversation_id = ?")
             params.append(conversation_id)
 
         if project_id:
-            # Join conversations to filter by project
             conditions.append(
                 "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
                 "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
@@ -38,20 +89,69 @@ async def search_messages_semantic(
             params.extend([project_id, project_id])
 
         if type_filter:
-            placeholders = ",".join("?" * len(type_filter))
-            conditions.append(f"m.type IN ({placeholders})")
+            type_placeholders = ",".join("?" * len(type_filter))
+            conditions.append(f"m.type IN ({type_placeholders})")
             params.extend(type_filter)
 
         where = " AND ".join(conditions)
-        query = f"""
-            SELECT m.id, m.conversation_id, m.task_id, m.author, m.type, m.title,
-                   m.content, m.pinned, m.created_at, m.embedding
-            FROM messages m
-            WHERE {where}
-        """
-        rows = await db.execute_fetchall(query, params)
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                f"""SELECT m.id, m.conversation_id, m.task_id, m.author, m.type, m.title,
+                           m.content, m.pinned, m.created_at
+                    FROM messages m WHERE {where}""",
+                params,
+            )
 
-    # Compute cosine similarity in Python — fine for ~5K messages
+        results = []
+        for row in rows:
+            distance = distance_map[row["id"]]
+            # OpenAI embeddings are normalized: L2 dist = 2 - 2*cosine → similarity = 1 - dist/2
+            similarity = max(0.0, 1.0 - (distance / 2.0))
+            results.append({
+                "message_id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "task_id": row["task_id"],
+                "author": row["author"],
+                "type": row["type"],
+                "title": row["title"],
+                "content": row["content"],
+                "pinned": bool(row["pinned"]),
+                "created_at": row["created_at"],
+                "similarity": similarity,
+            })
+
+        results.sort(key=lambda r: r["similarity"], reverse=True)
+        return results[:limit * 3]
+
+    # Fallback: Python cosine loop for non-1536-dim vectors
+    async with get_db() as db:
+        conditions = ["m.embedding IS NOT NULL"]
+        params_fb: list = []
+
+        if conversation_id:
+            conditions.append("m.conversation_id = ?")
+            params_fb.append(conversation_id)
+
+        if project_id:
+            conditions.append(
+                "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+            )
+            params_fb.extend([project_id, project_id])
+
+        if type_filter:
+            placeholders = ",".join("?" * len(type_filter))
+            conditions.append(f"m.type IN ({placeholders})")
+            params_fb.extend(type_filter)
+
+        where = " AND ".join(conditions)
+        rows = await db.execute_fetchall(
+            f"""SELECT m.id, m.conversation_id, m.task_id, m.author, m.type, m.title,
+                       m.content, m.pinned, m.created_at, m.embedding
+                FROM messages m WHERE {where}""",
+            params_fb,
+        )
+
     results = []
     for row in rows:
         blob = row["embedding"]
@@ -75,9 +175,8 @@ async def search_messages_semantic(
             "similarity": sim,
         })
 
-    # Sort by similarity descending before caller applies weights
     results.sort(key=lambda r: r["similarity"], reverse=True)
-    return results[:limit * 3]  # Return extra so caller has room to re-rank
+    return results[:limit * 3]
 
 
 async def get_messages_needing_embedding(batch_size: int = 100) -> list[dict]:
@@ -369,11 +468,20 @@ async def index_message_chunks(message_id: int, content: str) -> None:
         for chunk in chunks:
             vector = await service.embed_safe(chunk["content"])
             blob = encode_vector(vector) if vector else None
-            await db.execute(
+            cursor = await db.execute(
                 """INSERT INTO message_chunks (message_id, chunk_index, heading, content, embedding)
                    VALUES (?, ?, ?, ?, ?)""",
                 (message_id, chunk["chunk_index"], chunk["heading"], chunk["content"], blob),
             )
+            # Also insert into chunks_vec — only for standard 1536-dim embeddings
+            if blob and cursor.lastrowid and len(blob) == 1536 * 4:
+                try:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (?, ?)",
+                        (cursor.lastrowid, blob),
+                    )
+                except Exception as e:
+                    log.warning("vec0 insert failed for chunk rowid %d: %s", cursor.lastrowid, e)
         await db.commit()
 
 
@@ -384,12 +492,53 @@ async def search_message_chunks(
     type_filter: str | None = None,
     limit: int = 5,
 ) -> list[dict]:
-    """Search message chunks by cosine similarity, returning hits with adjacent context."""
-    from switchboard.embeddings.service import decode_vector, cosine_similarity
+    """Search message chunks by vector similarity, returning hits with adjacent context.
 
-    async with get_db() as db:
-        conditions = ["mc.embedding IS NOT NULL", "mc.chunk_index >= 0"]
-        params: list = []
+    Uses sqlite-vec indexed queries for standard 1536-dim OpenAI embeddings.
+    Falls back to Python cosine loop for non-standard dimensions (e.g. in tests).
+    """
+    from switchboard.embeddings.service import encode_vector, decode_vector, cosine_similarity
+
+    def _build_chunk_result(row, similarity):
+        return {
+            "chunk_id": row["id"],
+            "message_id": row["message_id"],
+            "chunk_index": row["chunk_index"],
+            "chunk_heading": row["heading"],
+            "chunk_content": row["content"],
+            "conversation_id": row["conversation_id"],
+            "task_id": row["task_id"],
+            "author": row["author"],
+            "type": row["type"],
+            "title": row["title"],
+            "pinned": bool(row["pinned"]),
+            "created_at": row["created_at"],
+            "similarity": similarity,
+        }
+
+    if len(query_vector) == _VEC_DIM:
+        blob = encode_vector(query_vector)
+        oversample = limit * 10
+
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("chunks_vec query failed, returning empty results: %s", exc)
+            return []
+
+        if not vec_rows:
+            return []
+
+        rowids = [r["rowid"] for r in vec_rows]
+        distance_map = {r["rowid"]: r["distance"] for r in vec_rows}
+
+        id_placeholders = ",".join("?" * len(rowids))
+        conditions = [f"mc.id IN ({id_placeholders})", "mc.chunk_index >= 0"]
+        params: list = list(rowids)
 
         if conversation_id:
             conditions.append("m.conversation_id = ?")
@@ -407,41 +556,63 @@ async def search_message_chunks(
             params.append(type_filter)
 
         where = " AND ".join(conditions)
-        query = f"""
-            SELECT mc.id, mc.message_id, mc.chunk_index, mc.heading, mc.content, mc.embedding,
-                   m.conversation_id, m.task_id, m.author, m.type, m.title, m.created_at, m.pinned
-            FROM message_chunks mc
-            JOIN messages m ON m.id = mc.message_id
-            WHERE {where}
-        """
-        rows = await db.execute_fetchall(query, params)
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                f"""SELECT mc.id, mc.message_id, mc.chunk_index, mc.heading, mc.content,
+                           m.conversation_id, m.task_id, m.author, m.type, m.title, m.created_at, m.pinned
+                    FROM message_chunks mc
+                    JOIN messages m ON m.id = mc.message_id
+                    WHERE {where}""",
+                params,
+            )
 
-    # Score chunks by cosine similarity
-    scored = []
-    for row in rows:
-        blob = row["embedding"]
-        if not blob:
-            continue
-        try:
-            vec = decode_vector(blob)
-        except Exception:
-            continue
-        sim = cosine_similarity(query_vector, vec)
-        scored.append({
-            "chunk_id": row["id"],
-            "message_id": row["message_id"],
-            "chunk_index": row["chunk_index"],
-            "chunk_heading": row["heading"],
-            "chunk_content": row["content"],
-            "conversation_id": row["conversation_id"],
-            "task_id": row["task_id"],
-            "author": row["author"],
-            "type": row["type"],
-            "title": row["title"],
-            "pinned": bool(row["pinned"]),
-            "created_at": row["created_at"],
-            "similarity": sim,
-        })
+        scored = [
+            _build_chunk_result(row, max(0.0, 1.0 - (distance_map[row["id"]] / 2.0)))
+            for row in rows
+        ]
+
+    else:
+        # Fallback: Python cosine loop for non-1536-dim vectors
+        async with get_db() as db:
+            conditions = ["mc.embedding IS NOT NULL", "mc.chunk_index >= 0"]
+            params_fb: list = []
+
+            if conversation_id:
+                conditions.append("m.conversation_id = ?")
+                params_fb.append(conversation_id)
+
+            if project_id:
+                conditions.append(
+                    "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                    "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+                )
+                params_fb.extend([project_id, project_id])
+
+            if type_filter:
+                conditions.append("m.type = ?")
+                params_fb.append(type_filter)
+
+            where = " AND ".join(conditions)
+            rows = await db.execute_fetchall(
+                f"""SELECT mc.id, mc.message_id, mc.chunk_index, mc.heading, mc.content, mc.embedding,
+                           m.conversation_id, m.task_id, m.author, m.type, m.title, m.created_at, m.pinned
+                    FROM message_chunks mc
+                    JOIN messages m ON m.id = mc.message_id
+                    WHERE {where}""",
+                params_fb,
+            )
+
+        scored = []
+        for row in rows:
+            blob = row["embedding"]
+            if not blob:
+                continue
+            try:
+                vec = decode_vector(blob)
+            except Exception:
+                continue
+            sim = cosine_similarity(query_vector, vec)
+            scored.append(_build_chunk_result(row, sim))
 
     scored.sort(key=lambda r: r["similarity"], reverse=True)
     top = scored[:limit]
@@ -502,12 +673,26 @@ async def search_conversation_messages(
 
 
 async def set_task_embedding(task_id: str, blob: bytes) -> None:
-    """Store the embedding blob for a task's goal."""
+    """Store the embedding blob for a task's goal and update tasks_vec."""
     async with get_db() as db:
         await db.execute(
             "UPDATE tasks SET embedding = ? WHERE id = ?",
             (blob, task_id),
         )
+        # Keep tasks_vec in sync — only for standard 1536-dim embeddings (6144 bytes)
+        # tasks.id is TEXT; use the INTEGER rowid to key the vec0 table
+        if len(blob) == 1536 * 4:
+            try:
+                rows = await db.execute_fetchall(
+                    "SELECT rowid FROM tasks WHERE id = ?", (task_id,)
+                )
+                if rows:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
+                        (rows[0]["rowid"], blob),
+                    )
+            except Exception as e:
+                log.warning("vec0 insert failed for task %s: %s", task_id, e)
         await db.commit()
 
 
@@ -532,21 +717,78 @@ async def search_tasks_semantic(
     project_id: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    """Cosine similarity search across task goals. Returns task IDs, goals, and scores."""
-    from switchboard.embeddings.service import decode_vector, cosine_similarity
+    """Vector similarity search across task goals.
 
-    async with get_db() as db:
-        conditions = ["embedding IS NOT NULL"]
-        params: list = []
+    Uses sqlite-vec indexed queries for standard 1536-dim OpenAI embeddings.
+    Falls back to Python cosine loop for non-standard dimensions (e.g. in tests).
+    """
+    from switchboard.embeddings.service import encode_vector, decode_vector, cosine_similarity
+
+    if len(query_vector) == _VEC_DIM:
+        blob = encode_vector(query_vector)
+        oversample = limit * 10
+
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("tasks_vec query failed, returning empty results: %s", exc)
+            return []
+
+        if not vec_rows:
+            return []
+
+        rowids = [r["rowid"] for r in vec_rows]
+        distance_map = {r["rowid"]: r["distance"] for r in vec_rows}
+
+        rowid_placeholders = ",".join("?" * len(rowids))
+        conditions = [f"rowid IN ({rowid_placeholders})"]
+        params: list = list(rowids)
 
         if project_id:
             conditions.append("project_id = ?")
             params.append(project_id)
 
         where = " AND ".join(conditions)
+
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                f"SELECT rowid, id, project_id, goal, status, created_at FROM tasks WHERE {where}",
+                params,
+            )
+
+        results = []
+        for row in rows:
+            distance = distance_map[row["rowid"]]
+            similarity = max(0.0, 1.0 - (distance / 2.0))
+            results.append({
+                "task_id": row["id"],
+                "project_id": row["project_id"],
+                "goal": row["goal"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "similarity": similarity,
+            })
+
+        results.sort(key=lambda r: r["similarity"], reverse=True)
+        return results[:limit]
+
+    # Fallback: Python cosine loop for non-1536-dim vectors
+    async with get_db() as db:
+        conditions = ["embedding IS NOT NULL"]
+        params_fb: list = []
+
+        if project_id:
+            conditions.append("project_id = ?")
+            params_fb.append(project_id)
+
+        where = " AND ".join(conditions)
         rows = await db.execute_fetchall(
             f"SELECT id, project_id, goal, status, created_at, embedding FROM tasks WHERE {where}",
-            params,
+            params_fb,
         )
 
     results = []
@@ -570,6 +812,127 @@ async def search_tasks_semantic(
 
     results.sort(key=lambda r: r["similarity"], reverse=True)
     return results[:limit]
+
+
+def sanitize_fts_query(query: str) -> str | None:
+    """Wrap each word in double quotes for literal FTS5 matching.
+
+    Prevents special characters (*, +, -, (, ), AND, OR, NOT, NEAR, double-quote) from
+    being interpreted as FTS5 operators. Internal double quotes are escaped as two double quotes.
+
+    Examples::
+
+        C++ (advanced)  -> "C++" "(advanced)"
+        AND OR NOT       -> "AND" "OR" "NOT"
+
+    Returns None if query has no words.
+    """
+    words = query.split()
+    if not words:
+        return None
+    return ' '.join('"' + w.replace('"', '""') + '"' for w in words)
+
+
+async def search_messages_fts(
+    query: str,
+    conversation_id: str | None = None,
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """FTS5 full-text search over messages.content with BM25 ranking.
+
+    Returns rows with message_id, snippet (~200 chars), bm25_score, author, type,
+    task_id, conversation_id, created_at.
+    """
+    sanitized = sanitize_fts_query(query)
+    if sanitized is None:
+        return []
+
+    try:
+        async with get_db() as db:
+            conditions = ["messages_fts MATCH ?"]
+            params: list = [sanitized]
+
+            if conversation_id:
+                conditions.append("m.conversation_id = ?")
+                params.append(conversation_id)
+
+            if project_id:
+                conditions.append(
+                    "(m.conversation_id IN (SELECT id FROM conversations WHERE project = ?) "
+                    "OR m.task_id IN (SELECT id FROM tasks WHERE project_id = ?))"
+                )
+                params.extend([project_id, project_id])
+
+            where = " AND ".join(conditions)
+            params.append(limit)
+
+            sql = f"""
+                SELECT
+                    m.id AS message_id,
+                    snippet(messages_fts, 0, '', '', '...', 32) AS snippet,
+                    -bm25(messages_fts) AS bm25_score,
+                    m.author,
+                    m.type,
+                    m.task_id,
+                    m.conversation_id,
+                    m.created_at
+                FROM messages_fts
+                JOIN messages m ON m.id = messages_fts.rowid
+                WHERE {where}
+                ORDER BY bm25(messages_fts)
+                LIMIT ?
+            """
+            rows = await db.execute_fetchall(sql, params)
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        log.error("messages_fts search failed, returning empty results: %s", exc)
+        return []
+
+
+async def search_tasks_fts(
+    query: str,
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """FTS5 full-text search over tasks.goal with BM25 ranking.
+
+    Returns rows with task_id, goal, bm25_score, status, created_at.
+    """
+    sanitized = sanitize_fts_query(query)
+    if sanitized is None:
+        return []
+
+    try:
+        async with get_db() as db:
+            conditions = ["tasks_fts MATCH ?"]
+            params: list = [sanitized]
+
+            if project_id:
+                conditions.append("t.project_id = ?")
+                params.append(project_id)
+
+            where = " AND ".join(conditions)
+            params.append(limit)
+
+            sql = f"""
+                SELECT
+                    t.id AS task_id,
+                    t.goal,
+                    -bm25(tasks_fts) AS bm25_score,
+                    t.status,
+                    t.created_at
+                FROM tasks_fts
+                JOIN tasks t ON t.rowid = tasks_fts.rowid
+                WHERE {where}
+                ORDER BY bm25(tasks_fts)
+                LIMIT ?
+            """
+            rows = await db.execute_fetchall(sql, params)
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        log.error("tasks_fts search failed, returning empty results: %s", exc)
+        return []
 
 
 async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:

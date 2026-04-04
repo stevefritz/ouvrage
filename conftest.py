@@ -40,6 +40,9 @@ async def db(tmp_db):
     """Initialized database ready for use. Yields the database module."""
     import switchboard.db as _db
     await _db.init_db()
+    # Update VEC_AVAILABLE flag so tests reflect actual vec0 table availability.
+    from switchboard.db.search import _check_vec_tables
+    await _check_vec_tables()
     yield _db
     await _db.close_db()
     # Reset connection singleton for test isolation

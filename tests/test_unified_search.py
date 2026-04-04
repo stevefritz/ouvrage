@@ -34,7 +34,8 @@ def _unit_vec(dim: int, index: int) -> list[float]:
 # ---------------------------------------------------------------------------
 
 class TestSearchEmbedError:
-    async def test_returns_error_when_embed_fails(self, db, sample_project):
+    async def test_falls_back_to_fts_when_embed_fails(self, db, sample_project):
+        """When embedding fails, search falls back to FTS-only and returns results (not an error)."""
         from switchboard.embeddings.service import set_embedding_service, EmbeddingService
 
         class FailService(EmbeddingService):
@@ -44,8 +45,10 @@ class TestSearchEmbedError:
         set_embedding_service(FailService())
         try:
             result = await _handle_search({"query": "anything"})
-            assert "error" in result
-            assert "OPENAI_API_KEY" in result["error"]
+            # Should return results dict (not an error), possibly empty
+            assert "results" in result
+            assert "total_candidates" in result
+            assert "error" not in result
         finally:
             set_embedding_service(None)
 

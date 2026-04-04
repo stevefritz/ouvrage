@@ -198,6 +198,8 @@ from switchboard.db.search import (
     set_task_embedding,
     get_tasks_needing_embedding,
     search_tasks_semantic,
+    search_messages_fts,
+    search_tasks_fts,
 )
 
 __all__ = [
@@ -255,6 +257,7 @@ __all__ = [
     "search_task_messages", "search_component", "search_conversation_messages",
     "index_message_chunks", "search_message_chunks", "get_messages_needing_chunking",
     "set_task_embedding", "get_tasks_needing_embedding", "search_tasks_semantic",
+    "search_messages_fts", "search_tasks_fts",
     # constants
     "DEFAULT_MAX_CONCURRENT",
     "DEFAULT_MAX_TURNS",

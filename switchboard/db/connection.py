@@ -15,6 +15,14 @@ async def _get_shared_connection() -> aiosqlite.Connection:
         _connection.row_factory = aiosqlite.Row
         await _connection.execute("PRAGMA journal_mode=WAL")
         await _connection.execute("PRAGMA foreign_keys=ON")
+        # Load sqlite-vec extension for vector similarity search
+        try:
+            import sqlite_vec
+            await _connection.enable_load_extension(True)
+            await _connection.load_extension(sqlite_vec.loadable_path())
+            await _connection.enable_load_extension(False)
+        except Exception:
+            pass  # Degrade gracefully if sqlite-vec is not available
     return _connection
 
 

@@ -253,6 +253,7 @@ async def _backfill_task_goals() -> None:
                     if vector:
                         blob = encode_vector(vector)
                         await db.set_task_embedding(task["id"], blob)
+                        # set_task_embedding also updates tasks_vec automatically
                         total += 1
                         if total % 100 == 0:
                             log.info("Task goal backfill progress: %d tasks processed", total)
@@ -262,6 +263,133 @@ async def _backfill_task_goals() -> None:
             log.info("Task goal backfill complete: %d tasks processed", total)
     except Exception as e:
         log.error("Task goal backfill aborted: %s", e)
+
+
+async def _backfill_fts_indexes() -> None:
+    """Rebuild FTS5 indexes from the source tables (idempotent, runs at startup)."""
+    try:
+        from switchboard.db.connection import get_db
+        async with get_db() as conn:
+            await conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            await conn.execute("INSERT INTO tasks_fts(tasks_fts) VALUES('rebuild')")
+            await conn.commit()
+        log.info("FTS5 index rebuild complete")
+    except Exception as e:
+        log.error("FTS5 index rebuild failed: %s", e)
+
+
+async def _backfill_vec_tables() -> None:
+    """Populate vec0 tables from existing BLOB embeddings (idempotent, runs at startup).
+
+    Processes in batches of 1000 to avoid loading all embeddings into memory at once.
+    At 100K messages × 6KB each that would be ~600MB — batching caps working set.
+    """
+    _BATCH_SIZE = 1000
+    _expected_blob_len = 1536 * 4  # float32 × 1536 dims
+
+    try:
+        from switchboard.db.connection import get_db
+
+        msg_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT id, embedding FROM messages WHERE embedding IS NOT NULL LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["id"], row["embedding"]),
+                        )
+                        msg_count += 1
+                    except Exception:
+                        pass
+                await conn.commit()
+            offset += _BATCH_SIZE
+
+        task_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT rowid, embedding FROM tasks WHERE embedding IS NOT NULL LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["rowid"], row["embedding"]),
+                        )
+                        task_count += 1
+                    except Exception:
+                        pass
+                await conn.commit()
+            offset += _BATCH_SIZE
+
+        chunk_count = 0
+        offset = 0
+        while True:
+            async with get_db() as conn:
+                rows = await conn.execute_fetchall(
+                    "SELECT id, embedding FROM message_chunks "
+                    "WHERE embedding IS NOT NULL AND chunk_index >= 0 LIMIT ? OFFSET ?",
+                    (_BATCH_SIZE, offset),
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    if len(row["embedding"]) != _expected_blob_len:
+                        continue
+                    try:
+                        await conn.execute(
+                            "INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (?, ?)",
+                            (row["id"], row["embedding"]),
+                        )
+                        chunk_count += 1
+                    except Exception:
+                        pass
+                await conn.commit()
+            offset += _BATCH_SIZE
+
+        # Prune orphaned vec0 entries — rows whose source was deleted
+        # but the trigger didn't fire (pre-trigger data or direct deletes).
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    "DELETE FROM messages_vec WHERE rowid NOT IN "
+                    "(SELECT id FROM messages WHERE embedding IS NOT NULL)"
+                )
+                await conn.execute(
+                    "DELETE FROM tasks_vec WHERE rowid NOT IN "
+                    "(SELECT rowid FROM tasks WHERE embedding IS NOT NULL)"
+                )
+                await conn.execute(
+                    "DELETE FROM chunks_vec WHERE rowid NOT IN "
+                    "(SELECT id FROM message_chunks WHERE embedding IS NOT NULL)"
+                )
+                await conn.commit()
+            log.info("vec0 orphan reconciliation complete")
+        except Exception as prune_err:
+            log.warning("vec0 orphan reconciliation failed: %s", prune_err)
+
+        log.info(
+            "vec0 backfill complete: %d messages, %d tasks, %d chunks",
+            msg_count, task_count, chunk_count,
+        )
+    except Exception as e:
+        log.error("vec0 backfill failed: %s", e)
 
 
 async def _backfill_message_chunks() -> None:
@@ -333,6 +461,13 @@ async def main():
                 asyncio.create_task(tasks.recover_orphaned_tasks())
                 # Start stall detection background loop
                 asyncio.create_task(tasks.check_stalled_tasks())
+                # Check if sqlite-vec is loaded and set VEC_AVAILABLE flag
+                from switchboard.db.search import _check_vec_tables
+                await _check_vec_tables()
+                # Rebuild FTS5 full-text search indexes
+                asyncio.create_task(_backfill_fts_indexes())
+                # Populate vec0 tables from existing BLOB embeddings
+                asyncio.create_task(_backfill_vec_tables())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
                 # Backfill task goal embeddings for existing tasks

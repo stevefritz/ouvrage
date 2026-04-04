@@ -1,6 +1,9 @@
 """Task CRUD, checklist, artifacts, tags, subtasks, and state definitions."""
 import json
+import logging
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 
 from switchboard.config.constants import (
     TASK_MUTABLE_FIELDS,
@@ -168,7 +171,32 @@ async def move_task(task_id: str, component_id: str) -> dict:
     return await update_task(task_id, component_id=component_id)
 
 
-async def list_tasks(project_id: str | None = None, status: str | None = None, tag: str | None = None, component_id: str | None = None, active_only: bool = False) -> list[dict]:
+async def list_tasks(
+    project_id: str | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    component_id: str | None = None,
+    active_only: bool = False,
+    query: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    limit: int = 50,
+    sort: str = "date",
+) -> list[dict]:
+    from switchboard.db.search import sanitize_fts_query
+
+    # Sanitize FTS query early — return empty list if query yields nothing
+    fts_query: str | None = None
+    if query is not None:
+        fts_query = sanitize_fts_query(query)
+        if fts_query is None:
+            return []
+
+    # When a text query is active and no explicit non-date sort requested, use relevance
+    effective_sort = sort
+    if fts_query is not None and sort == "date":
+        effective_sort = "relevance"
+
     async with get_db() as db:
         conditions = []
         params: list = []
@@ -191,19 +219,48 @@ async def list_tasks(project_id: str | None = None, status: str | None = None, t
             conditions.append(
                 "NOT (t.pr_status IN ('error', 'conflict') AND t.gate_retries >= t.max_gate_retries)"
             )
+        if after:
+            conditions.append("t.created_at > ?")
+            params.append(after)
+        if before:
+            conditions.append("t.created_at < ?")
+            params.append(before)
+
+        if fts_query is not None:
+            conditions.append("tasks_fts MATCH ?")
+            params.append(fts_query)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        query = f"""
-            SELECT t.*,
+        fts_join = "JOIN tasks_fts ON tasks_fts.rowid = t.rowid" if fts_query is not None else ""
+        bm25_select = ", bm25(tasks_fts) as bm25_score" if fts_query is not None else ""
+
+        sort_clause = {
+            "date": "t.updated_at DESC",
+            "created": "t.created_at DESC",
+            "status": "t.status ASC, t.updated_at DESC",
+            "cost": "t.total_cost_usd DESC",
+            "relevance": "bm25(tasks_fts) ASC",
+        }.get(effective_sort, "t.updated_at DESC")
+
+        # Fall back to date sort if relevance requested but no FTS join
+        if effective_sort == "relevance" and fts_query is None:
+            sort_clause = "t.updated_at DESC"
+
+        sql = f"""
+            SELECT t.*{bm25_select},
                 (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id) as checklist_total,
                 (SELECT COUNT(*) FROM task_checklist WHERE task_id = t.id AND done = TRUE) as checklist_done,
                 (SELECT ref FROM task_artifacts WHERE task_id = t.id AND type = 'pr_url' LIMIT 1) as pr_url
             FROM tasks t
+            {fts_join}
             {where}
-            ORDER BY t.updated_at DESC
+            ORDER BY {sort_clause}
+            LIMIT ?
         """
-        rows = await db.execute_fetchall(query, params)
+        params.append(limit)
+
+        rows = await db.execute_fetchall(sql, params)
         tasks = []
         for r in rows:
             task = dict(r)
@@ -423,12 +480,21 @@ async def get_message_by_id(message_id: int) -> dict | None:
 
 
 async def set_message_embedding(message_id: int, embedding_blob: bytes) -> None:
-    """Store a packed float32 embedding blob on a message row."""
+    """Store a packed float32 embedding blob on a message row and update messages_vec."""
     async with get_db() as db:
         await db.execute(
             "UPDATE messages SET embedding = ? WHERE id = ?",
             (embedding_blob, message_id),
         )
+        # Keep messages_vec in sync — only for standard 1536-dim embeddings (6144 bytes)
+        if len(embedding_blob) == 1536 * 4:
+            try:
+                await db.execute(
+                    "INSERT OR REPLACE INTO messages_vec(rowid, embedding) VALUES (?, ?)",
+                    (message_id, embedding_blob),
+                )
+            except Exception as e:
+                log.warning("vec0 insert failed for message %d: %s", message_id, e)
         await db.commit()
 
 

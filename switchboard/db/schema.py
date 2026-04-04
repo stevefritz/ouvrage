@@ -562,6 +562,96 @@ async def init_db():
                 (user_id,),
             )
 
+        # vec0 virtual tables for vector similarity search (sqlite-vec)
+        vec_tables = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+        )
+        vec_table_names = {r["name"] for r in vec_tables}
+
+        if "messages_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass  # sqlite-vec not available
+
+        if "tasks_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS tasks_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
+        if "chunks_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
+        # FTS5 virtual tables for full-text search
+        fts_tables = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_fts', 'tasks_fts')"
+        )
+        fts_table_names = {r["name"] for r in fts_tables}
+
+        if "messages_fts" not in fts_table_names:
+            await conn.executescript("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+                    USING fts5(content, content='messages', content_rowid='id');
+            """)
+
+        if "tasks_fts" not in fts_table_names:
+            await conn.executescript("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts
+                    USING fts5(goal, content='tasks', content_rowid='rowid');
+            """)
+
+        # FTS5 sync triggers — drop before recreating so updated definitions take effect.
+        # messages_fts_insert: skip NULL content (avoids FTS null-token errors).
+        # messages_fts_update: scoped to content column only (avoids spurious FTS churn).
+        # tasks_fts_update: scoped to goal column only.
+        await conn.executescript("""
+            DROP TRIGGER IF EXISTS messages_fts_insert;
+            DROP TRIGGER IF EXISTS messages_fts_update;
+            DROP TRIGGER IF EXISTS tasks_fts_update;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_insert
+                AFTER INSERT ON messages WHEN new.content IS NOT NULL BEGIN
+                    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_delete
+                AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_update
+                AFTER UPDATE OF content ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+                    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_insert
+                AFTER INSERT ON tasks BEGIN
+                    INSERT INTO tasks_fts(rowid, goal) VALUES (new.rowid, new.goal);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_delete
+                AFTER DELETE ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, goal) VALUES ('delete', old.rowid, old.goal);
+                END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_fts_update
+                AFTER UPDATE OF goal ON tasks BEGIN
+                    INSERT INTO tasks_fts(tasks_fts, rowid, goal) VALUES ('delete', old.rowid, old.goal);
+                    INSERT INTO tasks_fts(rowid, goal) VALUES (new.rowid, new.goal);
+                END;
+        """)
+
         # Create/recreate indexes
         await conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project);
@@ -575,7 +665,7 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_artifact_task ON task_artifacts(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags ON task_tags(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
-            CREATE INDEX IF NOT EXISTS idx_msg_content ON messages(content);
+            DROP INDEX IF EXISTS idx_msg_content;
             CREATE INDEX IF NOT EXISTS idx_component_project ON components(project_id);
             CREATE INDEX IF NOT EXISTS idx_task_component ON tasks(component_id);
             CREATE INDEX IF NOT EXISTS idx_punchlist_component ON punchlist(component_id);
@@ -625,6 +715,35 @@ async def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_task_attempts_task ON task_attempts(task_id, attempt_number);
         """)
+
+        # vec0 delete triggers — keep vec0 tables in sync when rows are deleted.
+        # Created here (after message_chunks is created) so the trigger reference to
+        # message_chunks is valid. Only created when all three vec0 tables exist.
+        # ON DELETE CASCADE from messages→message_chunks fires AFTER DELETE triggers on
+        # message_chunks, so chunks_vec_delete fires correctly on cascade deletes.
+        vec_tables_for_triggers = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+        )
+        if len(vec_tables_for_triggers) == 3:
+            try:
+                await conn.executescript("""
+                    CREATE TRIGGER IF NOT EXISTS messages_vec_delete
+                        AFTER DELETE ON messages BEGIN
+                            DELETE FROM messages_vec WHERE rowid = old.id;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS tasks_vec_delete
+                        AFTER DELETE ON tasks BEGIN
+                            DELETE FROM tasks_vec WHERE rowid = old.rowid;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS chunks_vec_delete
+                        AFTER DELETE ON message_chunks BEGIN
+                            DELETE FROM chunks_vec WHERE rowid = old.id;
+                        END;
+                """)
+            except Exception:
+                pass  # sqlite-vec not available at trigger-creation time
 
         # Credential encryption migration: encrypt any plaintext values in user_credentials.
         # Only runs if SWITCHBOARD_MASTER_KEY is set — skipped silently otherwise.
