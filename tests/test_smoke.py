@@ -117,6 +117,15 @@ class TestPromptBuilding:
         result = await _build_task_prompt(self._project(), self._task(), "spec")
         assert "push your branch" in result.lower()
 
+    async def test_prompt_includes_result_summary_instruction(self):
+        from switchboard.dispatch.sdk_session import _build_task_prompt
+        result = await _build_task_prompt(self._project(), self._task(), "spec")
+        assert "Result Summary" in result
+        assert "post_task_message" in result
+        assert "files created or modified" in result.lower()
+        assert "caveats" in result.lower()
+        assert "5 lines" in result or "under 5" in result
+
 
 # ===========================================================================
 # Task status with liveness
