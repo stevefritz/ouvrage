@@ -1,13 +1,37 @@
 """Semantic search, full-text search, activity feeds, component search, and chunk indexing."""
 import json
+import logging
 import httpx
 
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import _make_snippet
 from switchboard.embeddings.chunks import MIN_CHUNK_LENGTH, chunk_message
 
+log = logging.getLogger(__name__)
+
 # Expected embedding dimension for vec0 tables
 _VEC_DIM = 1536
+
+# Module-level flag: True when sqlite-vec is loaded and vec0 tables are queryable.
+# Set by _check_vec_tables() at startup. Default False prevents crashes when
+# sqlite-vec extension is missing but OPENAI_API_KEY is set.
+VEC_AVAILABLE = False
+
+
+async def _check_vec_tables() -> None:
+    """Check if vec0 tables are queryable and set VEC_AVAILABLE accordingly.
+
+    Called at app startup. Sets the module-level VEC_AVAILABLE flag so search
+    handlers can skip vec queries when sqlite-vec is not loaded.
+    """
+    global VEC_AVAILABLE
+    try:
+        async with get_db() as db:
+            await db.execute_fetchall("SELECT count(*) FROM messages_vec LIMIT 1")
+        VEC_AVAILABLE = True
+    except Exception:
+        VEC_AVAILABLE = False
+        log.warning("sqlite-vec tables not available — vector search degraded to FTS-only")
 
 
 async def search_messages_semantic(
@@ -33,11 +57,15 @@ async def search_messages_semantic(
         blob = encode_vector(query_vector)
         oversample = limit * 15  # Oversample to account for filtering
 
-        async with get_db() as db:
-            vec_rows = await db.execute_fetchall(
-                "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-                (blob, oversample),
-            )
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("messages_vec query failed, returning empty results: %s", exc)
+            return []
 
         if not vec_rows:
             return []
@@ -492,11 +520,15 @@ async def search_message_chunks(
         blob = encode_vector(query_vector)
         oversample = limit * 10
 
-        async with get_db() as db:
-            vec_rows = await db.execute_fetchall(
-                "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-                (blob, oversample),
-            )
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("chunks_vec query failed, returning empty results: %s", exc)
+            return []
 
         if not vec_rows:
             return []
@@ -696,11 +728,15 @@ async def search_tasks_semantic(
         blob = encode_vector(query_vector)
         oversample = limit * 10
 
-        async with get_db() as db:
-            vec_rows = await db.execute_fetchall(
-                "SELECT rowid, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-                (blob, oversample),
-            )
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("tasks_vec query failed, returning empty results: %s", exc)
+            return []
 
         if not vec_rows:
             return []

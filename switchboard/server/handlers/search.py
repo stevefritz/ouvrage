@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 
 import switchboard.db as db
+import switchboard.db.search as _search_db
 from switchboard.embeddings import service as emb
 
 # Type boosts for message relevance scoring
@@ -92,10 +93,10 @@ async def _handle_search(arguments: dict) -> dict:
     limit = min(int(arguments.get("limit", 10)), 30)
     now = datetime.now(timezone.utc)
 
-    # Try to embed the query — falls back to FTS-only if embedding unavailable
+    # Try to embed the query — falls back to FTS-only if embedding unavailable or vec tables missing
     service = emb.get_embedding_service()
     query_vector = await service.embed_safe(query)
-    has_embeddings = query_vector is not None
+    has_embeddings = query_vector is not None and _search_db.VEC_AVAILABLE
 
     if has_embeddings:
         # Run FTS and vec searches in parallel

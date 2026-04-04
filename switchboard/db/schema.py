@@ -709,6 +709,35 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_task_attempts_task ON task_attempts(task_id, attempt_number);
         """)
 
+        # vec0 delete triggers — keep vec0 tables in sync when rows are deleted.
+        # Created here (after message_chunks is created) so the trigger reference to
+        # message_chunks is valid. Only created when all three vec0 tables exist.
+        # ON DELETE CASCADE from messages→message_chunks fires AFTER DELETE triggers on
+        # message_chunks, so chunks_vec_delete fires correctly on cascade deletes.
+        vec_tables_for_triggers = await conn.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+        )
+        if len(vec_tables_for_triggers) == 3:
+            try:
+                await conn.executescript("""
+                    CREATE TRIGGER IF NOT EXISTS messages_vec_delete
+                        AFTER DELETE ON messages BEGIN
+                            DELETE FROM messages_vec WHERE rowid = old.id;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS tasks_vec_delete
+                        AFTER DELETE ON tasks BEGIN
+                            DELETE FROM tasks_vec WHERE rowid = old.rowid;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS chunks_vec_delete
+                        AFTER DELETE ON message_chunks BEGIN
+                            DELETE FROM chunks_vec WHERE rowid = old.id;
+                        END;
+                """)
+            except Exception:
+                pass  # sqlite-vec not available at trigger-creation time
+
         # Credential encryption migration: encrypt any plaintext values in user_credentials.
         # Only runs if SWITCHBOARD_MASTER_KEY is set — skipped silently otherwise.
         import os as _os

@@ -341,6 +341,26 @@ async def _backfill_vec_tables() -> None:
             if chunk_count:
                 await conn.commit()
 
+            # Prune orphaned vec0 entries — rows whose source was deleted
+            # but the trigger didn't fire (pre-trigger data or direct deletes).
+            try:
+                await conn.execute(
+                    "DELETE FROM messages_vec WHERE rowid NOT IN "
+                    "(SELECT id FROM messages WHERE embedding IS NOT NULL)"
+                )
+                await conn.execute(
+                    "DELETE FROM tasks_vec WHERE rowid NOT IN "
+                    "(SELECT rowid FROM tasks WHERE embedding IS NOT NULL)"
+                )
+                await conn.execute(
+                    "DELETE FROM chunks_vec WHERE rowid NOT IN "
+                    "(SELECT id FROM message_chunks WHERE embedding IS NOT NULL)"
+                )
+                await conn.commit()
+                log.info("vec0 orphan reconciliation complete")
+            except Exception as prune_err:
+                log.warning("vec0 orphan reconciliation failed: %s", prune_err)
+
         log.info(
             "vec0 backfill complete: %d messages, %d tasks, %d chunks",
             msg_count, task_count, chunk_count,
@@ -418,6 +438,9 @@ async def main():
                 asyncio.create_task(tasks.recover_orphaned_tasks())
                 # Start stall detection background loop
                 asyncio.create_task(tasks.check_stalled_tasks())
+                # Check if sqlite-vec is loaded and set VEC_AVAILABLE flag
+                from switchboard.db.search import _check_vec_tables
+                await _check_vec_tables()
                 # Rebuild FTS5 full-text search indexes
                 asyncio.create_task(_backfill_fts_indexes())
                 # Populate vec0 tables from existing BLOB embeddings
