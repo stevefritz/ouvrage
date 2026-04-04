@@ -1,11 +1,90 @@
 import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { colors, typography, layout } from '../tokens.js';
+import { colors, typography, layout, animation } from '../tokens.js';
 import { FilterBar } from './FilterBar.js';
 import { TaskRow } from './TaskRow.js';
 
 const html = htm.bind(h);
+
+// ---------------------------------------------------------------------------
+// Message type metadata for search result badges
+// ---------------------------------------------------------------------------
+
+const MSG_META = {
+    spec:          { label: 'Spec',     bg: 'rgba(217,119,6,0.18)',    color: '#d97706' },
+    plan:          { label: 'Plan',     bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    progress:      { label: 'Progress', bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    result:        { label: 'Result',   bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+    review:        { label: 'Review',   bg: 'rgba(236,72,153,0.15)',   color: '#ec4899' },
+    question:      { label: 'Question', bg: 'rgba(245,166,35,0.15)',   color: '#f5a623' },
+    answer:        { label: 'Answer',   bg: 'rgba(77,163,255,0.15)',   color: '#4da3ff' },
+    handoff:       { label: 'Handoff',  bg: 'rgba(139,92,246,0.18)',   color: '#8b5cf6' },
+    'test-result': { label: 'Tests',    bg: 'rgba(61,214,140,0.15)',   color: '#3dd68c' },
+};
+
+// ---------------------------------------------------------------------------
+// SearchResultRow — TaskRow with search snippet overlay
+// ---------------------------------------------------------------------------
+
+function SearchResultRow({ task, searchQuery, chainMap, allTasks, conversations, onSelect }) {
+    const hit = task._searchHit;
+    if (!hit) {
+        return html`<${TaskRow} task=${task} chainMap=${chainMap} allTasks=${allTasks}
+            conversations=${conversations} onSelect=${onSelect} />`;
+    }
+
+    const snippetStyle = {
+        fontSize: typography.size.xs,
+        color: colors.textSecondary,
+        padding: '0 14px 6px 14px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        marginTop: '-4px',
+    };
+
+    const badgeStyle = (meta) => ({
+        display: 'inline-block',
+        padding: '1px 5px',
+        borderRadius: '9px',
+        background: meta.bg,
+        color: meta.color,
+        fontSize: typography.size.xs,
+        fontWeight: 500,
+        fontFamily: 'var(--font-mono, monospace)',
+        lineHeight: '1.4',
+        marginRight: '6px',
+    });
+
+    const meta = hit.message_type ? MSG_META[hit.message_type] : null;
+
+    // Highlight query terms in snippet
+    const snippet = hit.snippet || '';
+    let snippetContent = snippet;
+    if (snippet && searchQuery) {
+        const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const parts = snippet.split(new RegExp(`(${escaped})`, 'gi'));
+        snippetContent = html`${parts.map((part, i) =>
+            i % 2 === 1
+                ? html`<mark key=${i} style=${{ background: 'rgba(255,220,50,0.35)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>${part}</mark>`
+                : part
+        )}`;
+    }
+
+    return html`
+        <div>
+            <${TaskRow} task=${task} chainMap=${chainMap} allTasks=${allTasks}
+                conversations=${conversations} onSelect=${onSelect} />
+            ${snippet ? html`
+                <div style=${snippetStyle}>
+                    ${meta ? html`<span style=${badgeStyle(meta)}>${meta.label}</span>` : null}
+                    ${snippetContent}
+                </div>
+            ` : null}
+        </div>
+    `;
+}
 
 // ---------------------------------------------------------------------------
 // Section label style — 11px uppercase muted, 600 weight
@@ -140,9 +219,10 @@ export function TaskList({ tasks, conversations, chainMap, statusFilter, onStatu
                 ` : searchResults && displaySearchResults.length === 0 ? html`
                     <div style=${emptyStyle}>No results found for "${searchQuery}"</div>
                 ` : searchResults ? displaySearchResults.map(task => html`
-                    <${TaskRow}
+                    <${SearchResultRow}
                         key=${task.id}
                         task=${task}
+                        searchQuery=${searchQuery}
                         chainMap=${chainMap}
                         allTasks=${tasks}
                         conversations=${conversations}

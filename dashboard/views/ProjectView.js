@@ -841,19 +841,21 @@ export function ProjectView({ id, tab }) {
             try {
                 const result = await api.search({ q: query, project_id: id, limit: 30 });
                 const hits = result.results || [];
-                // Build a lookup map from loaded tasks
+                // Filter for task-related results and deduplicate by task_id
                 const taskMap = new Map(tasks.map(t => [t.id, t]));
-                // Hydrate search results back to full task objects, preserving relevance order
                 const seen = new Set();
-                const hydrated = [];
+                const enriched = [];
                 for (const hit of hits) {
-                    const tid = hit.task_id;
+                    // Resolve task_id: for type="task" it's entity_id, for messages it's task_id
+                    const tid = hit.type === 'task' ? hit.entity_id : hit.task_id;
                     if (!tid || seen.has(tid)) continue;
                     seen.add(tid);
-                    const full = taskMap.get(tid);
-                    if (full) hydrated.push(full);
+                    const task = taskMap.get(tid) || {
+                        id: tid, goal: hit.title || tid, status: hit.status || 'unknown',
+                    };
+                    enriched.push({ ...task, _searchHit: hit });
                 }
-                setSearchResults(hydrated);
+                setSearchResults(enriched);
             } catch (_) {
                 setSearchResults([]);
             } finally {

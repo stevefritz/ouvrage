@@ -198,12 +198,15 @@ async def _handle_search(arguments: dict) -> dict:
         task_candidates.append({
             "type": "task",
             "entity_id": task_id,
+            "task_id": task_id,
+            "conversation_id": None,
             "title": goal,
             "snippet": _make_search_snippet(goal),
             "relevance_score": round(final_score, 4),
             "author": None,
             "message_type": None,
             "created_at": meta.get("created_at"),
+            "status": meta.get("status"),
         })
 
     # --- Build message candidates (skip those covered by chunk hits) ---
@@ -236,6 +239,8 @@ async def _handle_search(arguments: dict) -> dict:
         msg_candidates.append({
             "type": result_type,
             "entity_id": str(msg_id),
+            "task_id": meta.get("task_id"),
+            "conversation_id": meta.get("conversation_id"),
             "title": meta.get("title"),
             "snippet": snippet,
             "relevance_score": round(final_score, 4),
@@ -261,6 +266,8 @@ async def _handle_search(arguments: dict) -> dict:
         chunk_candidates.append({
             "type": "chunk",
             "entity_id": str(hit["message_id"]),
+            "task_id": hit.get("task_id"),
+            "conversation_id": hit.get("conversation_id"),
             "title": title,
             "snippet": _make_search_snippet(hit.get("chunk_content") or ""),
             "relevance_score": round(final_score, 4),

@@ -594,3 +594,69 @@ class TestWeights:
         from switchboard.server.handlers.search import _MSG_FTS_WEIGHT, _MSG_VEC_WEIGHT
         assert _MSG_VEC_WEIGHT == 0.6
         assert _MSG_FTS_WEIGHT == 0.4
+
+
+# ---------------------------------------------------------------------------
+# Result shape — task_id / conversation_id fields for dashboard hydration
+# ---------------------------------------------------------------------------
+
+class TestResultShapeFields:
+    async def test_task_result_has_task_id(self, db, sample_project):
+        """Task results include task_id equal to entity_id for dashboard hydration."""
+        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+
+        class NoKeyService(EmbeddingService):
+            async def embed(self, text):
+                raise RuntimeError("no API key")
+
+        await db.create_task(
+            id="test-project/shape-task",
+            project_id="test-project",
+            goal="shape_field_unique_token task",
+        )
+
+        set_embedding_service(NoKeyService())
+        try:
+            result = await _handle_search({"query": "shape_field_unique_token"})
+            task_results = [r for r in result["results"] if r["type"] == "task"]
+            assert len(task_results) >= 1
+            tr = task_results[0]
+            assert "task_id" in tr
+            assert tr["task_id"] == tr["entity_id"]
+            assert "conversation_id" in tr
+            assert tr["conversation_id"] is None
+            assert "status" in tr
+        finally:
+            set_embedding_service(None)
+
+    async def test_message_result_has_task_id_and_conversation_id(self, db, sample_project):
+        """Message results include task_id and conversation_id fields."""
+        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+
+        class NoKeyService(EmbeddingService):
+            async def embed(self, text):
+                raise RuntimeError("no API key")
+
+        await db.create_task(
+            id="test-project/msg-shape-task",
+            project_id="test-project",
+            goal="msg shape task",
+        )
+        await db.post_task_message(
+            task_id="test-project/msg-shape-task",
+            type="progress",
+            author="worker",
+            content="msg_shape_unique_token progress update",
+        )
+
+        set_embedding_service(NoKeyService())
+        try:
+            result = await _handle_search({"query": "msg_shape_unique_token"})
+            msg_results = [r for r in result["results"] if r["type"] == "task_message"]
+            assert len(msg_results) >= 1
+            mr = msg_results[0]
+            assert "task_id" in mr
+            assert mr["task_id"] == "test-project/msg-shape-task"
+            assert "conversation_id" in mr
+        finally:
+            set_embedding_service(None)
