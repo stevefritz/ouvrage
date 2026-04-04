@@ -16,6 +16,9 @@ const html = htm.bind(h);
 const POLL_INTERVAL_MS = 15_000;
 const TOC_MSG_LIMIT = 8;
 
+// Message types that render as compact single-line rows by default
+const COMPACT_TYPES = new Set(['progress', 'status', 'handoff', 'test-result']);
+
 // ── Inject CSS once (CSS-first responsive + animations) ───────
 
 let _cssInjected = false;
@@ -164,6 +167,52 @@ function injectConvStyles() {
 .foreman-conv-message h3:hover .foreman-heading-anchor {
     opacity: 1;
 }
+
+/* Collapsed message preview fade */
+.foreman-msg-preview-fade {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 32px;
+    pointer-events: none;
+}
+
+/* Compact message row hover */
+.foreman-msg-compact:hover {
+    background: ${colors.surfaceHover} !important;
+}
+
+/* Search results panel mark highlighting */
+.foreman-search-results mark {
+    background: rgba(255, 220, 50, 0.35);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* Search nav button */
+.foreman-search-nav-btn {
+    background: none;
+    border: 1px solid ${colors.border};
+    color: ${colors.textSecondary};
+    border-radius: ${layout.borderRadius.sm};
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 11px;
+    flex-shrink: 0;
+    transition: color 120ms, border-color 120ms;
+}
+.foreman-search-nav-btn:hover {
+    color: ${colors.text};
+    border-color: ${colors.borderHover};
+}
+.foreman-search-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
 `;
     document.head.appendChild(style);
 }
@@ -267,21 +316,37 @@ function TypeBadge({ type, mini }) {
     `;
 }
 
+// ── HighlightedSnippet — inline <mark> on plain text ─────────
+
+function HighlightedSnippet({ text, query }) {
+    if (!query || !text) return html`<span>${text || ''}</span>`;
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return html`<span>${parts.map((part, i) =>
+        i % 2 === 1
+            ? html`<mark key=${i}>${part}</mark>`
+            : part
+    )}</span>`;
+}
+
 // ── Message component ─────────────────────────────────────────
 
-function ConversationMessage({ msg, isPinned, highlighted, searchQuery }) {
+function ConversationMessage({ msg, isPinned, isCurrentMatch, isMatch, isSearchActive, searchQuery, isExpanded, onToggle }) {
+    const isCompactType = COMPACT_TYPES.has(msg.type);
+    const showAsCompact = isCompactType && !isPinned && !isExpanded;
+
     const renderedContent = useMemo(() => {
-        const html = renderMarkdown(msg.content);
-        return searchQuery ? highlightQuery(html, searchQuery) : html;
+        const rawHtml = renderMarkdown(msg.content);
+        return searchQuery ? highlightQuery(rawHtml, searchQuery) : rawHtml;
     }, [msg.content, searchQuery]);
 
-    const handleCopyLink = useCallback(() => {
+    const handleCopyLink = useCallback((e) => {
+        e.stopPropagation();
         const url = window.location.origin
             + window.location.pathname
             + window.location.search
             + '#msg-' + msg.id;
         navigator.clipboard.writeText(url).catch(() => {
-            // fallback: prompt copy
             const ta = document.createElement('textarea');
             ta.value = url;
             document.body.appendChild(ta);
@@ -291,96 +356,241 @@ function ConversationMessage({ msg, isPinned, highlighted, searchQuery }) {
         });
     }, [msg.id]);
 
-    const containerStyle = {
-        padding: '14px 16px',
-        borderBottom: `1px solid ${colors.border}22`,
-        ...(isPinned ? {
-            background: `${colors.accentBg || 'rgba(217,119,6,0.07)'}`,
-            borderLeft: `3px solid #d97706`,
-            marginBottom: '2px',
-        } : {}),
-        ...(highlighted ? {
-            background: `rgba(77,163,255,0.08)`,
-            borderLeft: `3px solid ${colors.blue}`,
-        } : {}),
-    };
+    // Dimming: search is active and this message doesn't match (pinned never dimmed)
+    const isDimmed = isSearchActive && !isMatch && !isPinned;
 
-    const headerStyle = {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        flexWrap: 'wrap',
-        marginBottom: msg.title ? '6px' : '8px',
-    };
+    // Left border based on match state
+    let leftBorder;
+    if (isPinned) leftBorder = `3px solid ${colors.accent}`;
+    else if (isCurrentMatch) leftBorder = `3px solid ${colors.accent}`;
+    else if (isMatch) leftBorder = `2px solid rgba(217,119,6,0.4)`;
 
-    const authorStyle = {
-        fontSize: typography.size.sm,
-        fontWeight: typography.weight.medium,
-        color: colors.text,
-    };
+    // Background based on match state
+    let bg;
+    if (isPinned) bg = colors.accentBg || 'rgba(217,119,6,0.07)';
+    else if (isCurrentMatch) bg = 'rgba(217,119,6,0.10)';
+    else if (isMatch) bg = 'rgba(217,119,6,0.04)';
 
-    const timeStyle = {
-        fontSize: typography.size.xs,
-        color: colors.textTertiary,
-        marginLeft: 'auto',
-        flexShrink: 0,
-    };
+    const baseTransition = `opacity ${animation.durationFast}, background ${animation.durationFast}`;
 
-    const titleStyle = {
-        fontSize: '15px',
-        fontWeight: typography.weight.medium,
-        color: colors.text,
-        marginBottom: '6px',
-        lineHeight: typography.lineHeight.tight,
-    };
+    // ── Compact single-line row ──
+    if (showAsCompact) {
+        const firstLine = (msg.title || (msg.content || '').replace(/^#+\s*/m, '').split('\n')[0]).trim();
+        return html`
+            <div
+                id=${'msg-' + msg.id}
+                data-msg-id=${String(msg.id)}
+                class="foreman-msg-compact"
+                style=${{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '4px 16px',
+                    borderBottom: `1px solid ${colors.border}33`,
+                    cursor: 'pointer',
+                    opacity: isDimmed ? 0.35 : 1,
+                    transition: baseTransition,
+                    ...(leftBorder ? { borderLeft: leftBorder } : {}),
+                    ...(bg ? { background: bg } : {}),
+                }}
+                onClick=${onToggle}
+            >
+                <${TypeBadge} type=${msg.type} mini=${true} />
+                <span style=${{
+                    fontSize: typography.size.sm,
+                    color: colors.textSecondary,
+                    fontWeight: typography.weight.medium,
+                    flexShrink: 0,
+                }}>${msg.author || 'unknown'}</span>
+                <span style=${{ color: colors.textTertiary, flexShrink: 0 }}>—</span>
+                <span style=${{
+                    fontSize: typography.size.sm,
+                    color: colors.textTertiary,
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                }}>${firstLine}</span>
+                <span style=${{
+                    fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                    flexShrink: 0,
+                }}>${relativeTime(msg.created_at)}</span>
+            </div>
+        `;
+    }
 
-    const contentStyle = {
-        fontSize: typography.size.sm,
-        color: colors.textSecondary,
-        lineHeight: typography.lineHeight.relaxed,
-        overflowWrap: 'break-word',
-        maxWidth: '100%',
-    };
+    // ── Card view (collapsed or expanded, or pinned) ──
+    const firstLineText = (msg.content || '').replace(/^#+\s*/m, '').split('\n').slice(0, 4).join(' ').slice(0, 300);
 
     return html`
         <div
             id=${'msg-' + msg.id}
             data-msg-id=${String(msg.id)}
-            style=${containerStyle}
+            style=${{
+                padding: '12px 16px',
+                borderBottom: `1px solid ${colors.border}22`,
+                position: 'relative',
+                cursor: isPinned ? 'default' : 'pointer',
+                opacity: isDimmed ? 0.35 : 1,
+                transition: baseTransition,
+                ...(leftBorder ? { borderLeft: leftBorder } : {}),
+                ...(bg ? { background: bg } : {}),
+            }}
             class="foreman-conv-message"
+            onClick=${isPinned ? null : onToggle}
         >
-            <button
-                class="foreman-permalink"
-                onClick=${handleCopyLink}
-                title="Copy link to this message"
-                aria-label="Copy link"
-            >⧉</button>
-            <div style=${headerStyle}>
-                <span style=${authorStyle}>${msg.author || 'unknown'}</span>
+            ${!isPinned ? html`
+                <button
+                    class="foreman-permalink"
+                    onClick=${handleCopyLink}
+                    title="Copy link to this message"
+                    aria-label="Copy link"
+                >⧉</button>
+            ` : null}
+
+            <!-- Header: author + badge + [pinned label] + timestamp -->
+            <div style=${{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flexWrap: 'wrap',
+                marginBottom: '4px',
+            }}>
+                <span style=${{
+                    fontSize: typography.size.sm,
+                    fontWeight: typography.weight.medium,
+                    color: colors.text,
+                }}>${msg.author || 'unknown'}</span>
                 <${TypeBadge} type=${msg.type || 'note'} />
                 ${isPinned ? html`
                     <span style=${{
                         fontSize: typography.size.xs,
-                        color: '#d97706',
+                        color: colors.accent,
                         fontWeight: typography.weight.medium,
                     }}>📌 Pinned</span>
                 ` : null}
-                <span style=${timeStyle}>${relativeTime(msg.created_at)}</span>
+                <span style=${{
+                    fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                    marginLeft: 'auto',
+                    flexShrink: 0,
+                }}>${relativeTime(msg.created_at)}</span>
             </div>
 
-            ${msg.title ? html`<div style=${titleStyle}>${msg.title}</div>` : null}
+            <!-- Title line (14px/500) -->
+            ${msg.title ? html`
+                <div style=${{
+                    fontSize: '14px',
+                    fontWeight: typography.weight.medium,
+                    color: colors.text,
+                    marginBottom: '4px',
+                    lineHeight: typography.lineHeight.tight,
+                }}>${msg.title}</div>
+            ` : null}
 
-            <div
-                style=${contentStyle}
-                dangerouslySetInnerHTML=${{ __html: renderedContent }}
-            />
+            ${(isPinned || isExpanded) ? html`
+                <!-- Expanded / pinned: separator + full content -->
+                ${!isPinned ? html`
+                    <div style=${{
+                        borderTop: `1px solid ${colors.border}44`,
+                        margin: '6px 0',
+                    }} />
+                ` : null}
+                <div
+                    style=${{
+                        fontSize: typography.size.sm,
+                        color: colors.textSecondary,
+                        lineHeight: typography.lineHeight.relaxed,
+                        overflowWrap: 'break-word',
+                        maxWidth: '100%',
+                    }}
+                    dangerouslySetInnerHTML=${{ __html: renderedContent }}
+                />
+            ` : html`
+                <!-- Collapsed: ~2-line preview with gradient fade -->
+                <div style=${{ position: 'relative', maxHeight: '120px', overflow: 'hidden' }}>
+                    <div style=${{
+                        fontSize: typography.size.sm,
+                        color: colors.textTertiary,
+                        lineHeight: '1.5',
+                        overflowWrap: 'break-word',
+                    }}>${firstLineText}</div>
+                    <div
+                        class="foreman-msg-preview-fade"
+                        style=${{ background: `linear-gradient(to bottom, transparent, ${bg || colors.surface})` }}
+                    />
+                </div>
+            `}
+        </div>
+    `;
+}
+
+// ── Search Results Panel ──────────────────────────────────────
+
+function SearchResultsPanel({ results, matchList, currentMatchIndex, searchQuery, onSelectMatch }) {
+    if (!results || results.length === 0 || matchList.length === 0) return null;
+
+    const resultMap = useMemo(() => {
+        const m = new Map();
+        for (const r of results) m.set(r.id, r);
+        return m;
+    }, [results]);
+
+    return html`
+        <div
+            class="foreman-search-results"
+            style=${{
+                maxHeight: '200px',
+                overflowY: 'auto',
+                borderBottom: `1px solid ${colors.border}`,
+                background: colors.bg,
+            }}
+        >
+            ${matchList.map((id, idx) => {
+                const r = resultMap.get(id);
+                if (!r) return null;
+                const isActive = idx === currentMatchIndex;
+                const snippet = r.snippet || (r.content || '').slice(0, 200);
+                return html`
+                    <div
+                        key=${id}
+                        onClick=${() => onSelectMatch(idx)}
+                        style=${{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '8px',
+                            padding: '6px 12px',
+                            cursor: 'pointer',
+                            borderLeft: isActive
+                                ? `2px solid ${colors.accent}`
+                                : '2px solid transparent',
+                            background: isActive ? colors.accentBg : 'transparent',
+                            transition: `background ${animation.durationFast}`,
+                        }}
+                    >
+                        <${TypeBadge} type=${r.type || 'note'} mini=${true} />
+                        <div style=${{
+                            fontSize: typography.size.xs,
+                            color: colors.textSecondary,
+                            lineHeight: '1.4',
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                        }}>
+                            <${HighlightedSnippet} text=${snippet} query=${searchQuery} />
+                        </div>
+                    </div>
+                `;
+            })}
         </div>
     `;
 }
 
 // ── TOC Sidebar (desktop) ─────────────────────────────────────
 
-function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onScrollToMsg, matchIds }) {
+function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onScrollToMsg, matchIds, currentMatchId }) {
     const [showAll, setShowAll] = useState(false);
     const visibleMsgs = showAll ? messages : messages.slice(0, TOC_MSG_LIMIT);
     const hiddenCount = messages.length - TOC_MSG_LIMIT;
@@ -412,6 +622,8 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
     const tocItemStyle = (isHeading, isActive, msgId) => {
         const isMatch = msgId && hasFilter && matchIds.has(msgId);
         const isDimmed = hasFilter && msgId && !matchIds.has(msgId);
+        // eslint-disable-next-line eqeqeq -- currentMatchId is string, msgId may be number
+        const isCurrent = currentMatchId != null && msgId != null && currentMatchId == msgId;
         return {
             display: 'flex',
             alignItems: 'center',
@@ -423,13 +635,16 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
             cursor: 'pointer',
             padding: isHeading ? '3px 14px 3px 20px' : '4px 14px',
             fontSize: typography.size.xs,
-            color: isMatch ? colors.accent : isActive ? colors.accent : isDimmed ? `${colors.textSecondary}55` : colors.textSecondary,
-            fontWeight: (isMatch || isActive) ? typography.weight.medium : typography.weight.normal,
+            color: isCurrent ? colors.accent : isMatch ? colors.accent : isActive ? colors.accent : isDimmed ? `${colors.textSecondary}55` : colors.textSecondary,
+            fontWeight: (isCurrent || isMatch || isActive) ? typography.weight.medium : typography.weight.normal,
             lineHeight: '1.4',
             overflow: 'hidden',
             transition: `color ${animation.durationFast}`,
             fontFamily: typography.fontBody,
             minWidth: 0,
+            // Accent bar for active search match
+            borderLeft: isCurrent ? `2px solid ${colors.accent}` : '2px solid transparent',
+            opacity: isDimmed ? 0.35 : 1,
         };
     };
 
@@ -659,11 +874,14 @@ export function ConversationView({ id, projectId }) {
     // Scroll spy active message ID
     const [activeId, setActiveId] = useState(null);
 
+    // Expanded message IDs (non-pinned messages the user has clicked to expand)
+    const [expandedIds, setExpandedIds] = useState(new Set());
+
     // Search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState(null);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [highlightedIds, setHighlightedIds] = useState(new Set());
+    const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
     const searchTimer = useRef(null);
 
     // Inject CSS on first render
@@ -696,7 +914,8 @@ export function ConversationView({ id, projectId }) {
         setCursor(null);
         setSearchQuery('');
         setSearchResults(null);
-        setHighlightedIds(new Set());
+        setExpandedIds(new Set());
+        setCurrentMatchIndex(0);
         loadFull();
     }, [loadFull]);
 
@@ -726,13 +945,11 @@ export function ConversationView({ id, projectId }) {
         if (!thread) return;
         const hash = window.location.hash;
         if (!hash) return;
-        const targetId = hash.slice(1); // e.g. "msg-42" or "heading-foo"
-        // Delay to let DOM render
+        const targetId = hash.slice(1);
         const timer = setTimeout(() => {
             const el = document.getElementById(targetId);
             if (el) {
                 el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                // Flash highlight if it's a message
                 if (targetId.startsWith('msg-')) {
                     el.classList.add('foreman-permalink-flash');
                     setTimeout(() => el.classList.remove('foreman-permalink-flash'), 1400);
@@ -747,10 +964,8 @@ export function ConversationView({ id, projectId }) {
         if (!thread) return;
         const observer = new IntersectionObserver(
             (entries) => {
-                // Find the topmost intersecting entry
                 const visible = entries.filter(e => e.isIntersecting);
                 if (visible.length > 0) {
-                    // Take the one with the highest Y position (closest to top of viewport)
                     const topmost = visible.reduce((a, b) =>
                         a.boundingClientRect.top < b.boundingClientRect.top ? a : b
                     );
@@ -764,20 +979,18 @@ export function ConversationView({ id, projectId }) {
             }
         );
 
-        // Observe all message elements
-        const elements = document.querySelectorAll('.foreman-conv-message[data-msg-id]');
+        const elements = document.querySelectorAll('[data-msg-id]');
         elements.forEach(el => observer.observe(el));
 
         return () => observer.disconnect();
-    }, [thread]);
+    }, [thread, expandedIds]);
 
     // Add heading anchors to pinned message content after render
     useEffect(() => {
         if (!thread || !pinnedMsg) return;
         const pinnedEl = document.getElementById('pinned-msg');
         if (!pinnedEl) return;
-        const container = pinnedEl;
-        const headings = container.querySelectorAll('h2, h3');
+        const headings = pinnedEl.querySelectorAll('h2, h3');
         headings.forEach(h => {
             const text = h.textContent.trim();
             const slug = slugify(text);
@@ -785,7 +998,6 @@ export function ConversationView({ id, projectId }) {
                 h.id = 'heading-' + slug;
                 h.style.position = 'relative';
                 h.style.paddingLeft = '4px';
-                // Add anchor link if not already present
                 if (!h.querySelector('.foreman-heading-anchor')) {
                     const a = document.createElement('a');
                     a.className = 'foreman-heading-anchor';
@@ -799,13 +1011,72 @@ export function ConversationView({ id, projectId }) {
         });
     }, [thread]);
 
-    // Scoped search — debounced 300ms, filter by conversation_id === id
+    // Derived data (needs to be before handleSearch uses it)
+    const messages = thread?.messages || [];
+    const pinned = messages.filter(m => m._pinned_marker || m.pinned);
+    const pinnedMsg = pinned[0] || null;
+    const pinnedHeadings = useMemo(() => extractHeadings(pinnedMsg?.content), [pinnedMsg?.content]);
+
+    const regular = useMemo(() => {
+        return messages
+            .filter(m => !m._pinned_marker && !m.pinned)
+            .slice()
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }, [messages]);
+
+    // Search match list — ordered by display position (pinned first, then regular newest-first)
+    const matchList = useMemo(() => {
+        if (!searchResults || searchResults.length === 0) return [];
+        const resultIds = new Set(searchResults.map(r => r.id));
+        const ordered = [];
+        if (pinnedMsg && resultIds.has(pinnedMsg.id)) ordered.push(pinnedMsg.id);
+        for (const msg of regular) {
+            if (resultIds.has(msg.id)) ordered.push(msg.id);
+        }
+        return ordered;
+    }, [searchResults, pinnedMsg, regular]);
+
+    const matchIds = useMemo(() => new Set(matchList), [matchList]);
+
+    const currentMatchId = matchList.length > 0 ? matchList[currentMatchIndex] : null;
+
+    // Reset match index when results change
+    useEffect(() => {
+        setCurrentMatchIndex(0);
+    }, [searchResults]);
+
+    // Scroll to current match when it changes
+    useEffect(() => {
+        if (!currentMatchId) return;
+        const el = document.getElementById('msg-' + currentMatchId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, [currentMatchId]);
+
+    // Toggle expanded state for a message
+    const toggleExpanded = useCallback((msgId) => {
+        setExpandedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(msgId)) next.delete(msgId);
+            else next.add(msgId);
+            return next;
+        });
+    }, []);
+
+    // Navigate between matches
+    const navigateMatch = useCallback((delta) => {
+        setCurrentMatchIndex(prev => {
+            const n = matchList.length;
+            if (n === 0) return 0;
+            return ((prev + delta) % n + n) % n;
+        });
+    }, [matchList]);
+
+    // Scoped search — debounced 300ms
     const handleSearch = useCallback((q) => {
         setSearchQuery(q);
         clearTimeout(searchTimer.current);
         if (!q.trim()) {
             setSearchResults(null);
-            setHighlightedIds(new Set());
             setSearchLoading(false);
             return;
         }
@@ -815,23 +1086,27 @@ export function ConversationView({ id, projectId }) {
                 const data = await api.searchConversation(id, q);
                 const results = data.results || [];
                 setSearchResults(results);
-                // Highlight matched messages — dedicated endpoint returns r.id directly
-                const ids = new Set(results.map(r => r.id).filter(Boolean));
-                setHighlightedIds(ids);
-                // Scroll to first match
-                if (ids.size > 0) {
-                    const firstId = [...ids][0];
-                    const el = document.getElementById('msg-' + firstId);
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
             } catch {
                 setSearchResults([]);
-                setHighlightedIds(new Set());
             } finally {
                 setSearchLoading(false);
             }
         }, 300);
     }, [id]);
+
+    const handleSearchKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (e.shiftKey) navigateMatch(-1);
+            else navigateMatch(1);
+        } else if (e.key === 'Escape') {
+            handleSearch('');
+        }
+    }, [navigateMatch, handleSearch]);
+
+    const handleSelectMatch = useCallback((idx) => {
+        setCurrentMatchIndex(idx);
+    }, []);
 
     // Scroll helpers
     const scrollToMsg = useCallback((msgId) => {
@@ -840,13 +1115,11 @@ export function ConversationView({ id, projectId }) {
     }, []);
 
     const scrollToHeading = useCallback((heading) => {
-        // heading is {text, slug, level}
         const el = document.getElementById('heading-' + heading.slug);
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             return;
         }
-        // Fallback: find by text content
         const pinnedEl = document.getElementById('pinned-msg');
         if (!pinnedEl) return;
         const headings = pinnedEl.querySelectorAll('h2, h3');
@@ -862,21 +1135,6 @@ export function ConversationView({ id, projectId }) {
     const handlePosted = useCallback(() => {
         loadFull();
     }, [loadFull]);
-
-    // ── Derived data ──
-
-    const messages = thread?.messages || [];
-    const pinned = messages.filter(m => m._pinned_marker || m.pinned);
-    const pinnedMsg = pinned[0] || null;
-    const pinnedHeadings = useMemo(() => extractHeadings(pinnedMsg?.content), [pinnedMsg?.content]);
-
-    // Sort regular messages newest-first
-    const regular = useMemo(() => {
-        return messages
-            .filter(m => !m._pinned_marker && !m.pinned)
-            .slice()
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    }, [messages]);
 
     // TOC message list (newest-first, pinned excluded)
     const tocMessages = regular;
@@ -935,19 +1193,6 @@ export function ConversationView({ id, projectId }) {
         marginBottom: '10px',
     };
 
-    const searchInputStyle = {
-        width: '100%',
-        padding: '8px 12px',
-        background: colors.input,
-        border: `1px solid ${colors.border}`,
-        borderRadius: layout.borderRadius.md,
-        color: colors.text,
-        fontSize: typography.size.sm,
-        fontFamily: typography.fontBody,
-        outline: 'none',
-        boxSizing: 'border-box',
-    };
-
     const bodyStyle = {
         display: 'flex',
         flex: 1,
@@ -975,12 +1220,8 @@ export function ConversationView({ id, projectId }) {
         margin: '20px',
     };
 
-    const searchStatusStyle = {
-        padding: '10px 16px',
-        fontSize: typography.size.xs,
-        color: colors.textTertiary,
-        borderBottom: `1px solid ${colors.border}22`,
-    };
+    const isSearchActive = searchQuery.trim().length > 0;
+    const hasMatches = matchList.length > 0;
 
     // Loading skeleton
     if (!thread && !error) {
@@ -1015,15 +1256,64 @@ export function ConversationView({ id, projectId }) {
                     <span>${messages.length} message${messages.length !== 1 ? 's' : ''}</span>
                     ${pinned.length > 0 ? html`<span>📌 ${pinned.length} pinned</span>` : null}
                 </div>
-                <!-- Scoped search -->
-                <input
-                    type="search"
-                    placeholder="Search this conversation…"
-                    value=${searchQuery}
-                    onInput=${e => handleSearch(e.target.value)}
-                    style=${searchInputStyle}
-                    class="foreman-conv-scoped-search"
-                />
+
+                <!-- Search bar with navigation controls -->
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                        type="search"
+                        placeholder="Search this conversation…"
+                        value=${searchQuery}
+                        onInput=${e => handleSearch(e.target.value)}
+                        onKeyDown=${handleSearchKeyDown}
+                        style=${{
+                            flex: 1,
+                            padding: '7px 10px',
+                            background: colors.input,
+                            border: `1px solid ${colors.border}`,
+                            borderRadius: layout.borderRadius.md,
+                            color: colors.text,
+                            fontSize: typography.size.sm,
+                            fontFamily: typography.fontBody,
+                            outline: 'none',
+                            minWidth: 0,
+                        }}
+                        class="foreman-conv-scoped-search"
+                    />
+                    ${isSearchActive ? html`
+                        <!-- Navigation controls -->
+                        <button
+                            class="foreman-search-nav-btn"
+                            onClick=${() => navigateMatch(-1)}
+                            disabled=${!hasMatches}
+                            title="Previous match (Shift+Enter)"
+                            aria-label="Previous match"
+                        >↑</button>
+                        <span style=${{
+                            fontSize: typography.size.xs,
+                            fontFamily: typography.fontMono,
+                            color: searchLoading ? colors.textTertiary : hasMatches ? colors.textSecondary : colors.textTertiary,
+                            minWidth: '40px',
+                            textAlign: 'center',
+                            flexShrink: 0,
+                        }}>
+                            ${searchLoading ? '…' : hasMatches ? `${currentMatchIndex + 1} of ${matchList.length}` : '0 of 0'}
+                        </span>
+                        <button
+                            class="foreman-search-nav-btn"
+                            onClick=${() => navigateMatch(1)}
+                            disabled=${!hasMatches}
+                            title="Next match (Enter)"
+                            aria-label="Next match"
+                        >↓</button>
+                        <button
+                            class="foreman-search-nav-btn"
+                            onClick=${() => handleSearch('')}
+                            title="Clear search"
+                            aria-label="Clear search"
+                            style=${{ borderColor: 'transparent' }}
+                        >✕</button>
+                    ` : null}
+                </div>
             </div>
 
             ${error ? html`
@@ -1044,6 +1334,17 @@ export function ConversationView({ id, projectId }) {
                 onScrollToMsg=${scrollToMsg}
             />
 
+            <!-- Search results panel -->
+            ${isSearchActive ? html`
+                <${SearchResultsPanel}
+                    results=${searchResults}
+                    matchList=${matchList}
+                    currentMatchIndex=${currentMatchIndex}
+                    searchQuery=${searchQuery}
+                    onSelectMatch=${handleSelectMatch}
+                />
+            ` : null}
+
             <!-- Body: sidebar + content -->
             <div style=${bodyStyle}>
                 <!-- Desktop TOC sidebar (hidden on mobile via CSS) -->
@@ -1053,28 +1354,24 @@ export function ConversationView({ id, projectId }) {
                     activeId=${activeId}
                     onScrollToHeading=${scrollToHeading}
                     onScrollToMsg=${scrollToMsg}
-                    matchIds=${highlightedIds}
+                    matchIds=${matchIds}
+                    currentMatchId=${currentMatchId}
                 />
 
                 <!-- Content area -->
                 <div style=${contentStyle}>
-                    <!-- Search status -->
-                    ${searchQuery.trim() ? html`
-                        <div style=${searchStatusStyle}>
-                            ${searchLoading ? 'Searching…' : searchResults
-                                ? `${searchResults.length} match${searchResults.length !== 1 ? 'es' : ''} for "${searchQuery}"`
-                                : ''}
-                        </div>
-                    ` : null}
-
-                    <!-- Pinned message always at top -->
+                    <!-- Pinned message always at top, always expanded -->
                     ${pinnedMsg ? html`
                         <div id="pinned-msg">
                             <${ConversationMessage}
                                 msg=${pinnedMsg}
                                 isPinned=${true}
-                                highlighted=${false}
-                                searchQuery=${highlightedIds.has(pinnedMsg.id) ? searchQuery : null}
+                                isCurrentMatch=${currentMatchId != null && currentMatchId == pinnedMsg.id}
+                                isMatch=${matchIds.has(pinnedMsg.id)}
+                                isSearchActive=${isSearchActive}
+                                searchQuery=${matchIds.has(pinnedMsg.id) ? searchQuery : null}
+                                isExpanded=${true}
+                                onToggle=${null}
                             />
                         </div>
                     ` : null}
@@ -1100,8 +1397,12 @@ export function ConversationView({ id, projectId }) {
                             key=${msg.id}
                             msg=${msg}
                             isPinned=${false}
-                            highlighted=${highlightedIds.has(msg.id)}
-                            searchQuery=${highlightedIds.has(msg.id) ? searchQuery : null}
+                            isCurrentMatch=${currentMatchId != null && currentMatchId == msg.id}
+                            isMatch=${matchIds.has(msg.id)}
+                            isSearchActive=${isSearchActive}
+                            searchQuery=${matchIds.has(msg.id) ? searchQuery : null}
+                            isExpanded=${expandedIds.has(msg.id)}
+                            onToggle=${() => toggleExpanded(msg.id)}
                         />
                     `)}
 
