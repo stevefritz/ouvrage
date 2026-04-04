@@ -241,7 +241,7 @@ class TestGroundingPromptSafety:
         )
         prompt = await _build_task_prompt(sample_project, task, None)
 
-        assert "SAFETY: Running tests and processes" in prompt
+        assert "## Safety" in prompt
         assert "timeout" in prompt
         assert "pkill" in prompt
         assert "killall" in prompt
@@ -259,4 +259,4 @@ class TestGroundingPromptSafety:
         prompt = await _build_task_prompt(sample_project, task, None,
                                           review_feedback=review_feedback)
 
-        assert "SAFETY: Running tests and processes" in prompt
+        assert "## Safety" in prompt

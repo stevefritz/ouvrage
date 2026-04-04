@@ -179,7 +179,6 @@ async def _run_subtask(
     worker_home = pwd.getpwnam(WORKER_USER).pw_dir
     mcp_servers = {
         "switchboard": {"type": "http", "url": f"http://localhost:{os.environ.get('SWITCHBOARD_PORT', '8100')}/mcp"},
-        "graphiti": {"type": "http", "url": "http://localhost:8002/mcp"},
     }
     try:
         with open(os.path.join(worker_home, ".claude.json")) as f:
