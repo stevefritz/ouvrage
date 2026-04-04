@@ -5,18 +5,23 @@
 # ---------------------------------------------------------------------------
 
 CORE_STATE_DEFINITIONS = {
-    "ready":         {"color": "#6b7280", "label": "Ready",        "pulse": False},
-    "blocked":       {"color": "#f59e0b", "label": "Blocked",      "pulse": False},
-    "working":       {"color": "#3b82f6", "label": "Working",      "pulse": True},
-    "testing":       {"color": "#8b5cf6", "label": "Testing",      "pulse": True},
-    "reviewing":     {"color": "#8b5cf6", "label": "Reviewing",    "pulse": True},
-    "needs-review":  {"color": "#f59e0b", "label": "Needs Review", "pulse": False},
-    "turns-exhausted": {"color": "#f59e0b", "label": "Turns Exhausted", "pulse": False},
-    "reopened":      {"color": "#f59e0b", "label": "Reopened",     "pulse": False},
-    "completed":     {"color": "#10b981", "label": "Completed",    "pulse": False},
-    "merged":        {"color": "#10b981", "label": "Merged",       "pulse": False},
-    "failed":        {"color": "#ef4444", "label": "Failed",       "pulse": False},
-    "cancelled":     {"color": "#6b7280", "label": "Cancelled",    "pulse": False},
+    "ready":           {"color": "#6b7280", "label": "Ready",           "pulse": False},
+    "queued":          {"color": "#6b7280", "label": "Queued",          "pulse": False},
+    "blocked":         {"color": "#f59e0b", "label": "Blocked",         "pulse": False},
+    "working":         {"color": "#3b82f6", "label": "Working",         "pulse": True},
+    "testing":         {"color": "#8b5cf6", "label": "Testing",         "pulse": True},
+    "reviewing":       {"color": "#8b5cf6", "label": "Reviewing",       "pulse": True},
+    "needs-review":    {"color": "#d97706", "label": "Needs Review",    "pulse": False},
+    "turns-exhausted": {"color": "#ef4444", "label": "Turns Exhausted", "pulse": False},
+    "reopened":        {"color": "#d97706", "label": "Reopened",        "pulse": False},
+    "completed":       {"color": "#10b981", "label": "Completed",       "pulse": False},
+    "merged":          {"color": "#10b981", "label": "Merged",          "pulse": False},
+    "stopped":         {"color": "#ef4444", "label": "Stopped",         "pulse": False},
+    "failed":          {"color": "#ef4444", "label": "Failed",          "pulse": False},
+    "rate-limited":    {"color": "#8b5cf6", "label": "Rate Limited",    "pulse": False},
+    "error":           {"color": "#ef4444", "label": "Error",           "pulse": False},
+    "conflict":        {"color": "#ef4444", "label": "Conflict",        "pulse": False},
+    "cancelled":       {"color": "#6b7280", "label": "Cancelled",       "pulse": False},
 }
 
 # ---------------------------------------------------------------------------
