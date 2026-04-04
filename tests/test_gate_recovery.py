@@ -635,6 +635,26 @@ class TestStartupRecoveryUnifiedSweep:
         for call in self.mock_resume_pipeline.call_args_list:
             assert call[0][0] != "test-project/gate-task-1"
 
+    async def test_validating_testing_triggers_resume_pipeline(self, db, sample_project):
+        """validating task with gate_status=testing → _resume_gate_pipeline called on startup."""
+        await _make_task(db, status="validating", gate_status="testing")
+
+        await recover_orphaned_tasks()
+
+        self.mock_resume_pipeline.assert_any_call(
+            "test-project/gate-task-1", reason="startup recovery"
+        )
+
+    async def test_validating_reviewing_triggers_resume_pipeline(self, db, sample_project):
+        """validating task with gate_status=reviewing → _resume_gate_pipeline called on startup."""
+        await _make_task(db, status="validating", gate_status="reviewing")
+
+        await recover_orphaned_tasks()
+
+        self.mock_resume_pipeline.assert_any_call(
+            "test-project/gate-task-1", reason="startup recovery"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Background orphan detection in check_stalled_tasks
@@ -765,6 +785,31 @@ class TestBackgroundOrphanDetection:
 
         # May or may not be called depending on updated_at — but should not crash
         # The key thing is no exception is raised
+
+    async def test_validating_testing_orphaned_triggers_recovery(self, db, sample_project):
+        """validating task with gate_status=testing and idle > 120s → recovery triggered."""
+        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
+        await _make_task(db, status="validating", gate_status="testing",
+                         last_activity=old_time)
+
+        await self._run_one_cycle(db)
+
+        self.mock_resume_pipeline.assert_called_with(
+            "test-project/gate-task-1", reason="background monitor"
+        )
+
+    async def test_validating_live_gate_not_recovered(self, db, sample_project):
+        """validating task with live gate in _running_gates → NOT recovered (no double-recovery)."""
+        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
+        await _make_task(db, status="validating", gate_status="testing",
+                         last_activity=old_time)
+
+        _running_gates.add("test-project/gate-task-1")
+
+        await self._run_one_cycle(db)
+
+        for call in self.mock_resume_pipeline.call_args_list:
+            assert call[0][0] != "test-project/gate-task-1"
 
 
 # ---------------------------------------------------------------------------

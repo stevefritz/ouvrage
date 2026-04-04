@@ -63,7 +63,7 @@ async def mark_working_for_recovery():
         log.info(f"Shutdown: marked {task['id']} for recovery")
 
     # Log tasks in active gate states — startup recovery will handle them via unified sweep
-    for gate_status in ("completed", "pending-validation", "turns-exhausted"):
+    for gate_status in ("completed", "pending-validation", "turns-exhausted", "validating"):
         gate_tasks = await db.list_tasks(status=gate_status)
         for task in gate_tasks:
             gate = task.get("gate_status")
@@ -176,7 +176,7 @@ async def recover_orphaned_tasks():
     # Unified sweep for tasks stuck in intermediate gate states across all terminal statuses.
     # Replaces the previous separate Category 1 (completed) and Category 2 (pending-validation)
     # sweeps with a single consistent sweep that also covers turns-exhausted.
-    for status in ("completed", "pending-validation", "turns-exhausted"):
+    for status in ("completed", "pending-validation", "turns-exhausted", "validating"):
         stuck_tasks = await db.list_tasks(status=status)
         for task in stuck_tasks:
             gate = task.get("gate_status")
@@ -571,7 +571,7 @@ async def check_stalled_tasks():
                             await _recover_single_task(task_obj)
 
             # Check for orphaned gate processes (testing/reviewing with no live coroutine)
-            for gate_status in ("completed", "pending-validation", "turns-exhausted"):
+            for gate_status in ("completed", "pending-validation", "turns-exhausted", "validating"):
                 gate_tasks = await db.list_tasks(status=gate_status)
                 for task in gate_tasks:
                     gate = task.get("gate_status")
