@@ -12,13 +12,18 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 def get_master_key() -> bytes:
-    """Read master key from env var or Docker secret file. Raises RuntimeError if neither exists."""
+    """Read master key from secure copy, env var, or Docker secret. Raises RuntimeError if none exist."""
     key = os.environ.get("SWITCHBOARD_MASTER_KEY")
     if not key:
-        secret_path = "/run/secrets/master_key"
-        if os.path.isfile(secret_path):
-            with open(secret_path) as f:
-                key = f.read().strip()
+        # Secure copy (service-user only, worker can't read)
+        for secret_path in ("/data/.secrets/master_key", "/run/secrets/master_key"):
+            if os.path.isfile(secret_path):
+                try:
+                    with open(secret_path) as f:
+                        key = f.read().strip()
+                    break
+                except PermissionError:
+                    continue
     if not key:
         raise RuntimeError(
             "SWITCHBOARD_MASTER_KEY env var or /run/secrets/master_key required. "

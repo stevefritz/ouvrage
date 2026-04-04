@@ -53,19 +53,26 @@ if [ -n "${SWITCHBOARD_OWNER_EMAIL:-}" ] && [ -n "${SWITCHBOARD_OWNER_PASSWORD_H
     || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
 fi
 
-# --- Lock down secrets — service user only, worker must NOT read ---
-# Done after migrate-auth (which runs as root and can still read them)
+# --- Lock down secrets — copy to service-user-only location ---
+# /run/secrets/ may be read-only (bind mount :ro), so we copy secrets to
+# /data/.secrets/ owned by switchboard-svc with mode 400. Worker user can't read.
+# Python helpers read from /data/.secrets/ first, then /run/secrets/ fallback.
+SECURE_DIR="/data/.secrets"
+mkdir -p "$SECURE_DIR"
+
 SECRET_FILE="/run/secrets/master_key"
 if [ -f "$SECRET_FILE" ]; then
-    chown switchboard-svc "$SECRET_FILE" 2>/dev/null || true
-    chmod 400 "$SECRET_FILE"
-    echo "[entrypoint] Master key secret locked to service user"
+    cp "$SECRET_FILE" "$SECURE_DIR/master_key"
+    chown switchboard-svc "$SECURE_DIR/master_key"
+    chmod 400 "$SECURE_DIR/master_key"
+    echo "[entrypoint] Master key locked to service user"
 fi
 OPENAI_SECRET="/run/secrets/openai_key"
 if [ -f "$OPENAI_SECRET" ]; then
-    chown switchboard-svc "$OPENAI_SECRET" 2>/dev/null || true
-    chmod 400 "$OPENAI_SECRET"
-    echo "[entrypoint] OpenAI key secret locked to service user"
+    cp "$OPENAI_SECRET" "$SECURE_DIR/openai_key"
+    chown switchboard-svc "$SECURE_DIR/openai_key"
+    chmod 400 "$SECURE_DIR/openai_key"
+    echo "[entrypoint] OpenAI key locked to service user"
 fi
 
 # --- Fix /data ownership after any file creation above ---

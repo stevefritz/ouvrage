@@ -18,15 +18,19 @@ from typing import Optional
 def _get_openai_api_key() -> Optional[str]:
     """Read OpenAI API key from env var or Docker secret file.
 
-    Priority: OPENAI_API_KEY env var → /run/secrets/openai_key file → None.
+    Priority: OPENAI_API_KEY env var → /data/.secrets/openai_key → /run/secrets/openai_key → None.
     Returns None (not error) so embedding service degrades gracefully.
     """
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
-        secret_path = "/run/secrets/openai_key"
-        if os.path.isfile(secret_path):
-            with open(secret_path) as f:
-                key = f.read().strip()
+        for secret_path in ("/data/.secrets/openai_key", "/run/secrets/openai_key"):
+            if os.path.isfile(secret_path):
+                try:
+                    with open(secret_path) as f:
+                        key = f.read().strip()
+                    break
+                except PermissionError:
+                    continue
     return key or None
 
 logger = logging.getLogger(__name__)
