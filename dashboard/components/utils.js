@@ -33,6 +33,26 @@ export function relativeTime(iso) {
     return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// Smart timestamp: today → time only, within 7 days → relative, older → date
+export function smartTime(iso) {
+    if (!iso) return '\u2014';
+    const norm = iso.endsWith('Z') ? iso : iso + 'Z';
+    const d = new Date(norm);
+    const now = new Date();
+    const diffSec = Math.max(0, (now.getTime() - d.getTime()) / 1000);
+    const diffDays = diffSec / 86400;
+    // Same calendar day: show time only
+    if (d.toDateString() === now.toDateString()) {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    // Within 7 days: show relative
+    if (diffDays < 7) {
+        return `${Math.floor(diffDays)}d ago`;
+    }
+    // Older: show short date
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 export function progressBar(done, total, len = 10) {
     if (total === 0) return '\u2591'.repeat(len);
     const filled = Math.round(done / total * len);

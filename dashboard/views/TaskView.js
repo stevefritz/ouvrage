@@ -15,7 +15,7 @@ import { colors, typography, statusColors, statusBgs, layout, animation, spacing
 import { StatusDot } from '../components/StatusDot.js';
 import { GateDots } from '../components/GateDots.js';
 import { Tag } from '../components/Tag.js';
-import { relativeTime } from '../components/utils.js';
+import { relativeTime, smartTime } from '../components/utils.js';
 import { routes } from '../router.js';
 import { ImageLightbox, isImageFile } from '../components/ImageLightbox.js';
 import { MarkdownLightbox, isMarkdownFile } from '../components/MarkdownLightbox.js';
@@ -534,7 +534,7 @@ function HaikuLine({ msg, isExpanded, onToggle }) {
 
     const reviewerModel = msg.type === 'review' && msg.author ? msg.author.replace('cc-', '') : null;
 
-    const time = msg.created_at ? new Date(normTs(msg.created_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const time = msg.created_at ? smartTime(msg.created_at) : '';
 
     return html`
         <div>
@@ -849,7 +849,7 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
                     ${filteredEntries && filteredEntries.map((entry, i) => {
                         const cls = classifyEntry(entry);
                         const badge = TYPE_BADGE[cls] || TYPE_BADGE.text;
-                        const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+                        const ts = entry.timestamp ? smartTime(entry.timestamp) : '';
                         const preview = entryPreview(entry);
 
                         return html`
