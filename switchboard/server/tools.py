@@ -798,6 +798,7 @@ FILES_TOOLS = [
     Tool(
         name="get_attached_file",
         description=(
+            "Deprecated — use get_file instead. "
             "Read the content of a text-based attached file. Only works for readable files "
             "(txt, md, json, csv, yaml, xml, toml) — use list_files to check the `readable` flag first. "
             "Binary files (images, PDFs) are refused. Returns the file content as text."

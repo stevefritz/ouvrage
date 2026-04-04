@@ -59,7 +59,6 @@ from switchboard.git.files import (
 from switchboard.server.handlers.files_handler import (
     _handle_list_files,
     _handle_add_task_file,
-    _handle_get_attached_file,
     _handle_add_project_file,
     _handle_get_file,
     _handle_promote_task_file,
@@ -118,7 +117,7 @@ TOOL_HANDLERS = {
     "revoke_api_token": _handle_revoke_api_token,
     # Files
     "list_files": _handle_list_files,
-    "get_attached_file": _handle_get_attached_file,
+    "get_attached_file": _handle_get_file,  # deprecated alias for get_file
     "add_task_file": _handle_add_task_file,
     "add_project_file": _handle_add_project_file,
     "get_file": _handle_get_file,

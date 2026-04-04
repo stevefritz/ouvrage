@@ -1413,8 +1413,39 @@ class TestGetFileTool:
 
     async def test_get_file_missing_id_raises(self, db):
         from switchboard.server.handlers.files_handler import _handle_get_file
-        with pytest.raises(ValueError, match="id is required"):
+        with pytest.raises(ValueError, match="file_id is required"):
             await _handle_get_file({})
+
+    async def test_get_file_accepts_file_id_param(self, db, tmp_path):
+        """get_file accepts 'file_id' param (for get_attached_file alias compat)."""
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "compat.txt"
+        dest.write_bytes(b"compat content")
+        await db.create_file(
+            id=fid, filename="compat.txt", stored_path=str(dest),
+            mime_type="text/plain", size_bytes=14, uploaded_by=None,
+        )
+        result = await _handle_get_file({"file_id": fid})
+        assert result["id"] == fid
+        assert result["content"] == "compat content"
+
+    async def test_get_file_same_result_as_get_attached_file(self, db, tmp_path):
+        """get_file and get_attached_file (deprecated alias) return equivalent content."""
+        from switchboard.server.handlers.files_handler import _handle_get_file
+        fid = str(uuid.uuid4())
+        dest = tmp_path / "shared.txt"
+        dest.write_bytes(b"shared file content")
+        await db.create_file(
+            id=fid, filename="shared.txt", stored_path=str(dest),
+            mime_type="text/plain", size_bytes=19, uploaded_by=None,
+        )
+        # get_file via "id" param
+        result_new = await _handle_get_file({"id": fid})
+        # get_attached_file via "file_id" param (same handler after alias redirect)
+        result_deprecated = await _handle_get_file({"file_id": fid})
+        assert result_new["content"] == result_deprecated["content"]
+        assert result_new["id"] == result_deprecated["id"]
 
 
 # ── add_project_file MCP tool ──────────────────────────────────────────────
@@ -1691,3 +1722,82 @@ class TestPromoteTaskFile:
         assert list_resp.status == 200
         project_files = list_resp.json()
         assert any(f["id"] == fid for f in project_files)
+
+    async def test_promote_task_file_works_from_user_endpoint(self, db, sample_project, sample_task):
+        """promote_task_file handler works without worker context (user endpoint)."""
+        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        fid = await self._insert_task_file(db, sample_task)
+        # No is_worker check in promote_task_file — must work from user endpoint
+        result = await _handle_promote_task_file({
+            "file_id": fid,
+            "project_id": sample_project["id"],
+        })
+        assert result["project_id"] == sample_project["id"]
+        assert result["task_id"] == sample_task["id"]
+        assert result["id"] == fid
+
+    async def test_promote_task_file_in_user_tools_list(self):
+        """promote_task_file is registered in TOOLS (user-facing endpoint)."""
+        from switchboard.server.tools import TOOLS
+        names = {t.name for t in TOOLS}
+        assert "promote_task_file" in names
+
+
+# ── get_task_status files array ─────────────────────────────────────────────
+
+
+class TestGetTaskStatusFilesArray:
+    """get_task_status must include a files array in both slim and detail responses."""
+
+    async def test_slim_response_includes_files(self, db, sample_task):
+        """Slim (default) response includes files array."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid,
+            filename="report.md",
+            stored_path="/tmp/fake/report.md",
+            mime_type="text/markdown",
+            size_bytes=34000,
+            uploaded_by=None,
+            task_id=sample_task["id"],
+        )
+        result = await _handle_get_task_status({"task_id": sample_task["id"]})
+        assert "files" in result
+        assert len(result["files"]) == 1
+        f = result["files"][0]
+        assert f["id"] == fid
+        assert f["filename"] == "report.md"
+        assert f["size_bytes"] == 34000
+        assert f["mime_type"] == "text/markdown"
+        assert f["readable"] is True
+
+    async def test_detail_response_includes_files(self, db, sample_task):
+        """Detail response (include_detail=True) also includes files array."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        fid = str(uuid.uuid4())
+        await db.create_file(
+            id=fid,
+            filename="screenshot.png",
+            stored_path="/tmp/fake/screenshot.png",
+            mime_type="image/png",
+            size_bytes=12000,
+            uploaded_by=None,
+            task_id=sample_task["id"],
+        )
+        result = await _handle_get_task_status({
+            "task_id": sample_task["id"],
+            "include_detail": True,
+        })
+        assert "files" in result
+        assert len(result["files"]) == 1
+        f = result["files"][0]
+        assert f["id"] == fid
+        assert f["readable"] is False  # png is not readable
+
+    async def test_empty_files_array_when_no_files(self, db, sample_task):
+        """Files array is empty (not missing) when task has no files."""
+        from switchboard.server.handlers.tasks import _handle_get_task_status
+        result = await _handle_get_task_status({"task_id": sample_task["id"]})
+        assert "files" in result
+        assert result["files"] == []
