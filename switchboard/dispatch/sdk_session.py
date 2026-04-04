@@ -294,7 +294,18 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("2. Run `git status` — worktree must be clean")
     parts.append(f"3. `git push origin {branch}`")
     parts.append("4. Post a `handoff` message with key decisions, gotchas, and notes")
-    parts.append("5. Post a `result` message summarizing what was done")
+    parts.append("5. Post a `result` message (see Result Summary below)")
+    parts.append("")
+
+    parts.append("## Result Summary")
+    parts.append("")
+    parts.append("Before completing, post a `result` type message via `post_task_message`. Keep it under 5 lines. Include:")
+    parts.append("")
+    parts.append("1. **What you did** — 2-3 sentences describing the change")
+    parts.append("2. **Files created or modified** — list the paths")
+    parts.append("3. **Caveats or reviewer notes** — anything that needs attention or follow-up")
+    parts.append("")
+    parts.append("Do not dump full file contents. This summary is what a manager reads in `get_task_status` — make it useful at a glance.")
     parts.append("")
 
     parts.append("## SAFETY: Running tests and processes")
@@ -425,7 +436,7 @@ async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
         "git", "-C", worktree_path, "ls-files", ".switchboard",
     )
     if rc == 0 and stdout.strip():
-        log.info(f"Removing git-tracked .switchboard files from {worktree_path}")
+        log.debug(f"Removing git-tracked .switchboard files from {worktree_path}")
         await _run_as_worker("git", "-C", worktree_path, "rm", "-rf", "--cached", ".switchboard")
 
     # Ensure .switchboard is gitignored so CC never commits it
@@ -671,7 +682,7 @@ async def _run_sdk_session(
                         f"The above message was just posted to your task thread. "
                         f"Read it carefully and adjust your work accordingly."
                     )
-                    log.info(f"Injecting message {msg_id} into task {task_id}")
+                    log.debug(f"Injecting message {msg_id} into task {task_id}")
                     await client.query(injection)
                     await notify.task_heartbeat(
                         task_id=task_id, turns=0,

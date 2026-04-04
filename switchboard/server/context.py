@@ -21,6 +21,12 @@ _REQUEST_IS_WORKER: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_REQUEST_IS_WORKER", default=False
 )
 
+# Base URL for this instance (e.g. "https://switchboard.example.dev"), used to
+# build canonical task URLs. Set from OAUTH_BASE_URL config or request Host header.
+_REQUEST_BASE_URL: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_REQUEST_BASE_URL", default=None
+)
+
 
 def get_request_user_id() -> int | None:
     """Return the resolved user_id for the current request, or None."""
@@ -37,12 +43,19 @@ def get_request_is_worker() -> bool:
     return _REQUEST_IS_WORKER.get()
 
 
+def get_request_base_url() -> str | None:
+    """Return the base URL for the current request (e.g. 'https://switchboard.example.dev')."""
+    return _REQUEST_BASE_URL.get()
+
+
 def set_request_context(
     user_id: int | None,
     is_token_auth: bool,
     is_worker: bool = False,
+    base_url: str | None = None,
 ) -> None:
     """Set all context vars for the current request."""
     _REQUEST_USER_ID.set(user_id)
     _REQUEST_IS_TOKEN_AUTH.set(is_token_auth)
     _REQUEST_IS_WORKER.set(is_worker)
+    _REQUEST_BASE_URL.set(base_url)
