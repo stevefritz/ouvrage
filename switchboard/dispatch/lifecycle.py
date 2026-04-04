@@ -1029,7 +1029,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
-        side_effects=[_stop_cc_session, _post_stop_message, _drain_queue_effect],
+        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
         label="Stop",
         style="secondary",
         confirm=False,
@@ -1045,7 +1045,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
-        side_effects=[_stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
+        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
         label="Stop",
         style="secondary",
         confirm=False,
