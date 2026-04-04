@@ -14,6 +14,16 @@
             "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r .tool_input.command // empty); if echo \"$cmd\" | grep -qE \"\\bpkill\\b|\\bkillall\\b|\\bkill\\s|\\bkill\\s+-\"; then echo \"BLOCKED: Do not use pkill/killall/kill — you will terminate yourself. Use task timeouts instead.\" >&2; exit 2; fi'"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "if": "Bash(git *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-dangerous-git.sh"
+          }
+        ]
       }
     ]
   }
