@@ -131,7 +131,14 @@ def _summarize_messages(result: dict) -> dict:
 
 
 async def _handle_read(arguments):
-    conversation_id = arguments["conversation_id"]
+    # Around mode — center on a specific message, resolve conversation internally
+    around = arguments.get("around")
+    if around is not None:
+        return await db.read_messages_around(message_id=around, window=arguments.get("window", 3))
+
+    conversation_id = arguments.get("conversation_id")
+    if not conversation_id:
+        return {"error": "conversation_id is required when around is not set"}
 
     # Single message lookup — ignores all other params
     message_id = arguments.get("message_id")

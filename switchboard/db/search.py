@@ -545,7 +545,7 @@ async def search_tasks_semantic(
 
         where = " AND ".join(conditions)
         rows = await db.execute_fetchall(
-            f"SELECT id, project_id, goal, status, embedding FROM tasks WHERE {where}",
+            f"SELECT id, project_id, goal, status, created_at, embedding FROM tasks WHERE {where}",
             params,
         )
 
@@ -564,6 +564,7 @@ async def search_tasks_semantic(
             "project_id": row["project_id"],
             "goal": row["goal"],
             "status": row["status"],
+            "created_at": row["created_at"],
             "similarity": sim,
         })
 

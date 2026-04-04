@@ -23,6 +23,7 @@ from switchboard.db._helpers import (
     _list_with_aggregates,
     _make_snippet,
     _determine_attempt_outcome,
+    read_messages_around,
 )
 
 # Push / notifications
@@ -206,7 +207,7 @@ __all__ = [
     "init_db",
     # helpers
     "now_iso", "_strip_embedding", "_read_messages", "_list_with_aggregates",
-    "_make_snippet", "_determine_attempt_outcome",
+    "_make_snippet", "_determine_attempt_outcome", "read_messages_around",
     # push
     "get_push_subscriptions", "save_push_subscription", "delete_push_subscription",
     "get_notification_settings", "update_notification_settings",
