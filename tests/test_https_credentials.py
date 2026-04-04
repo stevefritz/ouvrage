@@ -227,8 +227,8 @@ class TestSetupCredentialHelper:
         with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             result = await setup_credential_helper(self.worktree, self.project_id)
         assert result is not None
-        assert result.startswith(self.worktree)
-        assert result.endswith(".git-credential-helper.sh")
+        assert result.startswith("/tmp/ouvrage-creds-")
+        assert result.endswith(".sh")
 
     @pytest.mark.asyncio
     async def test_helper_file_written(self):
