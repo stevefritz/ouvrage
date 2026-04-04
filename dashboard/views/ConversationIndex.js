@@ -297,7 +297,9 @@ export function ConversationIndex({ projectId }) {
             });
     }, [projectId]);
 
-    // Debounced search
+    // Debounced search — dual approach:
+    // 1) Server-side LIKE filter on conversation titles (fast, partial match)
+    // 2) Vector search for message-content hits within conversations
     const handleSearch = useCallback((q) => {
         setSearchQuery(q);
         clearTimeout(searchTimer.current);
@@ -309,11 +311,41 @@ export function ConversationIndex({ projectId }) {
         setSearchLoading(true);
         searchTimer.current = setTimeout(async () => {
             try {
-                const data = await api.search({ q, project_id: projectId });
-                const results = (data.results || [])
-                    .filter(r => r.conversation_id)
-                    .sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
-                setSearchResults(results);
+                // Run both in parallel: title LIKE search + vector content search
+                const [titleMatches, vecData] = await Promise.all([
+                    api.getConversations({ project: projectId, search: q }).catch(() => []),
+                    api.search({ q, project_id: projectId, limit: 20 }).catch(() => ({ results: [] })),
+                ]);
+
+                // Build results from title matches (synthetic result objects for SearchResultCard)
+                const seen = new Set();
+                const merged = [];
+                for (const conv of (Array.isArray(titleMatches) ? titleMatches : [])) {
+                    seen.add(conv.id);
+                    merged.push({
+                        conversation_id: conv.id,
+                        title: conv.goal || conv.id,
+                        snippet: null,
+                        relevance_score: 2.0, // title matches rank highest
+                        message_type: null,
+                        author: null,
+                        created_at: conv.updated_at,
+                        _conv: conv,
+                    });
+                }
+
+                // Add vector search hits that reference conversations
+                const vecResults = (vecData.results || [])
+                    .filter(r => r.conversation_id && !seen.has(r.conversation_id));
+                for (const r of vecResults) {
+                    if (seen.has(r.conversation_id)) continue;
+                    seen.add(r.conversation_id);
+                    merged.push(r);
+                }
+
+                // Sort by relevance (title matches first via high score, then by vec score)
+                merged.sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
+                setSearchResults(merged);
             } catch (_) {
                 setSearchResults([]);
             } finally {
@@ -427,7 +459,7 @@ export function ConversationIndex({ projectId }) {
                 ` : searchResults ? html`
                     <div style=${listStyle}>
                         ${searchResults.map(r => {
-                            const conv = conversations.find(c => c.id === r.conversation_id) || {
+                            const conv = r._conv || conversations.find(c => c.id === r.conversation_id) || {
                                 id: r.conversation_id,
                                 goal: r.title || r.conversation_id,
                                 has_pinned: false,
