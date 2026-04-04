@@ -205,20 +205,20 @@ class TestGetGuide:
         result = await _handle_get_guide({})
         assert "guide" in result
         guide = result["guide"]
-        assert "# Ouvrage Guide" in guide
-        assert "Mental Model" in guide
+        assert "# Ouvrage" in guide
+        assert "Behavioral Playbook" in guide
 
     async def test_guide_includes_tool_tables(self, db, sample_project):
         result = await _handle_get_guide({})
         guide = result["guide"]
         assert "dispatch_task" in guide
-        assert "resume_task" in guide
+        assert "get_pinned" in guide
         assert "get_task_status" in guide
 
     async def test_guide_includes_patterns(self, db, sample_project):
         result = await _handle_get_guide({})
         guide = result["guide"]
-        assert "Common Patterns" in guide
+        assert "Chain Design Patterns" in guide
         assert "Anti-Patterns" in guide
 
     async def test_guide_includes_live_summary(self, db, sample_project):

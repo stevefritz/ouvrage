@@ -23,6 +23,7 @@ from switchboard.server.tools import TOOLS, WORKER_TOOLS, WORKER_TOOL_ALLOWLIST
 from switchboard.server.dispatch import _dispatch_tool
 from switchboard.server.context import set_request_context, get_request_is_worker
 from switchboard.config.settings import OAUTH_BASE_URL
+from switchboard.config.nudges import append_nudge
 
 log = logging.getLogger("switchboard.server")
 
@@ -140,7 +141,9 @@ async def call_tool(name: str, arguments: dict):
         )]
     try:
         result = await _dispatch_tool(name, arguments)
-        return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]
+        text = json.dumps(result, separators=(",", ":"), default=str)
+        text = append_nudge(text, name)
+        return [TextContent(type="text", text=text)]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {e}")]
 
