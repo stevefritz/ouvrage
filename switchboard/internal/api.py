@@ -191,7 +191,7 @@ async def _handle_usage(scope, receive, send) -> None:
         "total_cost_usd": total_cost_usd,
         "active_tasks": active_tasks,
         "current_concurrency": active_tasks,
-        "projects_count": projects_count,
+        "project_count": projects_count,
     })
 
 

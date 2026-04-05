@@ -285,7 +285,7 @@ class TestUsage:
         assert data["total_cost_usd"] == 0.0
         assert data["active_tasks"] == 0
         assert data["current_concurrency"] == 0
-        assert data["projects_count"] == 0
+        assert data["project_count"] == 0
 
     async def test_usage_counts_tasks_this_month(self, db, sample_project):
         await db.create_task(id="p/t1", project_id="test-project", goal="Task 1")
@@ -327,14 +327,14 @@ class TestUsage:
         assert "total_cost_usd" in data
         assert "active_tasks" in data
         assert "current_concurrency" in data
-        assert "projects_count" in data
+        assert "project_count" in data
 
     async def test_usage_projects_count(self, db):
         await db.create_project(id="proj-1", repo="https://example.com/1.git", working_dir="/work/proj1")
         await db.create_project(id="proj-2", repo="https://example.com/2.git", working_dir="/work/proj2")
         status, data = await _call("GET", "/internal/usage")
         assert status == 200
-        assert data["projects_count"] == 2
+        assert data["project_count"] == 2
 
 
 # ── Instance config DB helper ────────────────────────────────────────────────
