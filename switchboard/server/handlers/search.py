@@ -29,9 +29,9 @@ _MSG_VEC_WEIGHT = 0.6
 _TASK_FTS_WEIGHT = 0.6  # tasks: keyword precision matters more
 _TASK_VEC_WEIGHT = 0.4
 
-# Recency decay: 1.0 today → 0.8 at 6 months
-_RECENCY_MAX_DAYS = 180
-_RECENCY_DECAY = 0.2  # total decay over _RECENCY_MAX_DAYS
+# Recency decay: 1.0 today → 0.3 at 3 months
+_RECENCY_MAX_DAYS = 90
+_RECENCY_DECAY = 0.7  # total decay over _RECENCY_MAX_DAYS
 
 
 def _strip_markdown(text: str) -> str:
@@ -63,7 +63,7 @@ def _make_search_snippet(content: str, max_len: int = 200) -> str:
 
 
 def _recency_mult(created_at_iso: str | None, now: datetime) -> float:
-    """Mild recency multiplier: 1.0 today, 0.8 at 6 months, linear between."""
+    """Recency multiplier: 1.0 today, 0.3 at 3 months, linear between."""
     if not created_at_iso:
         return 1.0
     try:

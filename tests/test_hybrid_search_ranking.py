@@ -47,23 +47,23 @@ class TestRecencyMult:
         now = datetime.now(timezone.utc)
         assert _recency_mult(now.isoformat(), now) == 1.0
 
-    def test_180_days_is_0_8(self):
+    def test_90_days_is_0_3(self):
         now = datetime.now(timezone.utc)
-        old = now - timedelta(days=180)
+        old = now - timedelta(days=90)
         mult = _recency_mult(old.isoformat(), now)
-        assert abs(mult - 0.8) < 0.001
+        assert abs(mult - 0.3) < 0.001
 
-    def test_beyond_180_days_capped_at_0_8(self):
+    def test_beyond_90_days_capped_at_0_3(self):
         now = datetime.now(timezone.utc)
         very_old = now - timedelta(days=365)
         mult = _recency_mult(very_old.isoformat(), now)
-        assert abs(mult - 0.8) < 0.001
+        assert abs(mult - 0.3) < 0.001
 
-    def test_90_days_is_midpoint(self):
+    def test_45_days_is_midpoint(self):
         now = datetime.now(timezone.utc)
-        mid = now - timedelta(days=90)
+        mid = now - timedelta(days=45)
         mult = _recency_mult(mid.isoformat(), now)
-        assert abs(mult - 0.9) < 0.001
+        assert abs(mult - 0.65) < 0.001
 
     def test_none_returns_1(self):
         now = datetime.now(timezone.utc)
