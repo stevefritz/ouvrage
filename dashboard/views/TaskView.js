@@ -2391,6 +2391,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [showEditPanel, setShowEditPanel] = useState(false);
     const [taskActions, setTaskActions] = useState(null);
     const [taskState, setTaskState] = useState(null);
+    const [showSpec, setShowSpec] = useState(false);
     const mountedRef = useRef(true);
     const loadedRef = useRef(false);
 
@@ -2740,6 +2741,31 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                     fontFamily: typography.fontMono, fontSize: typography.size.xs,
                     color: colors.textTertiary,
                 }}>${shortId(task.id)}</div>
+
+                <!-- View Spec button -->
+                ${(() => {
+                    const specMsg = attempts && (
+                        attempts.flatMap(a => a.messages || []).find(m => m.type === 'spec' && m.pinned)
+                        || attempts.flatMap(a => a.messages || []).find(m => m.type === 'spec')
+                    );
+                    return specMsg ? html`
+                        <div>
+                            <button
+                                style=${pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
+                                onClick=${(e) => { e.stopPropagation(); setShowSpec(true); }}
+                                title="View task spec"
+                                class="foreman-view-spec-btn"
+                            >View Spec</button>
+                            ${showSpec ? html`
+                                <${MarkdownLightbox}
+                                    content=${specMsg.content}
+                                    title=${specMsg.title || 'Task Spec'}
+                                    onClose=${() => setShowSpec(false)}
+                                />
+                            ` : null}
+                        </div>
+                    ` : null;
+                })()}
 
                 <!-- Attempt summary (only if >1) -->
                 ${attemptLabel ? html`
