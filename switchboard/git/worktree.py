@@ -1,6 +1,7 @@
 """Git worktree management — setup, teardown, and worker-user primitives."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -217,7 +218,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
 
     # Make worktree group-writable so the service user (switchboard-svc) can
-    # write files like the credential helper into worker-owned directories.
+    # write files into worker-owned directories.
     await _run_as_worker("chmod", "g+w", worktree_path)
 
     # Lock git author to the worker's global config — CC workers sometimes
@@ -270,14 +271,14 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
 
 
 async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:
-    """Write a git credential helper script in the worktree for CC's direct git pushes.
+    """Write a git credential helper script in /tmp for CC's direct git pushes.
 
     Resolves the GitHub PAT (project override → instance → skip if none), writes a
     bash script that outputs username/password, and configures the worktree's git
     credential.helper to use it. Also sets the remote to HTTPS so CC's git push works.
 
     Returns the path to the helper script, or None if no PAT is configured.
-    The script lives inside the worktree and is deleted when the worktree is removed.
+    The script lives in /tmp (not the worktree) and is deleted during worktree teardown.
     """
     # Lazy import to avoid circular dependency (operations.py imports worktree.py)
     from switchboard.git.operations import normalize_repo_url
@@ -288,9 +289,10 @@ async def setup_credential_helper(worktree_path: str, project_id: str) -> str | 
         log.debug(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
         return None
 
-    # Write credential helper script — group-executable so the worker user
-    # (same group as service user) can run it via git credential-helper.
-    helper_path = os.path.join(worktree_path, ".git-credential-helper.sh")
+    # Write credential helper script to /tmp — outside the worktree so CC workers
+    # don't see it when exploring the directory. Path is unique per worktree via hash.
+    path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
+    helper_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
     script_content = f"#!/bin/bash\necho 'username=oauth2'\necho 'password={pat}'\n"
     with open(helper_path, "w") as f:
         f.write(script_content)
@@ -349,6 +351,16 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
             log.warning(f"worktree remove failed: {stderr.decode()}")
         else:
             log.info(f"Removed worktree: {worktree_path}")
+
+    # Clean up credential helper from /tmp
+    if worktree_path:
+        path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
+        cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
+        try:
+            os.unlink(cred_path)
+            log.debug(f"Removed credential helper: {cred_path}")
+        except FileNotFoundError:
+            pass  # no credential helper was configured, nothing to clean up
 
     # Delete branch
     branch = task.get("branch")

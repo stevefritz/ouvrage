@@ -227,8 +227,8 @@ class TestSetupCredentialHelper:
         with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             result = await setup_credential_helper(self.worktree, self.project_id)
         assert result is not None
-        assert result.startswith(self.worktree)
-        assert result.endswith(".git-credential-helper.sh")
+        assert result.startswith("/tmp/ouvrage-creds-")
+        assert result.endswith(".sh")
 
     @pytest.mark.asyncio
     async def test_helper_file_written(self):
@@ -316,6 +316,65 @@ class TestSetupCredentialHelper:
             if c.args[0] == "git":
                 for arg in c.args:
                     assert self.pat not in str(arg), f"PAT found in git command: {c.args}"
+
+
+# ---------------------------------------------------------------------------
+# cleanup_worktree — credential helper teardown
+# ---------------------------------------------------------------------------
+
+class TestCleanupWorktreeCredentialHelper:
+    """cleanup_worktree must delete the /tmp credential helper for the worktree."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        import hashlib
+        self.worktree = str(tmp_path / "my-task-worktree")
+        path_hash = hashlib.sha256(self.worktree.encode()).hexdigest()[:12]
+        self.expected_cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
+
+        self.project = {"working_dir": str(tmp_path), "teardown_command": None}
+        self.task = {"worktree_path": self.worktree, "branch": "test-branch"}
+
+        # Mock git subprocess so no real git calls happen
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+        self.mock_create_subprocess = AsyncMock(return_value=mock_proc)
+
+        self.patches = [
+            patch("asyncio.create_subprocess_exec", self.mock_create_subprocess),
+            patch("os.path.exists", return_value=False),
+        ]
+        for p in self.patches:
+            p.start()
+        yield
+        for p in self.patches:
+            p.stop()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_deletes_credential_file(self):
+        """cleanup_worktree calls os.unlink with the expected /tmp path."""
+        from switchboard.git.worktree import cleanup_worktree
+        with patch("switchboard.git.worktree.os.unlink") as mock_unlink:
+            await cleanup_worktree(self.project, self.task)
+        mock_unlink.assert_called_once_with(self.expected_cred_path)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_ignores_missing_credential_file(self):
+        """cleanup_worktree proceeds without error when credential file doesn't exist."""
+        from switchboard.git.worktree import cleanup_worktree
+        with patch("switchboard.git.worktree.os.unlink", side_effect=FileNotFoundError):
+            # Should not raise
+            await cleanup_worktree(self.project, self.task)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skipped_when_no_worktree_path(self):
+        """No unlink attempt when task has no worktree_path."""
+        from switchboard.git.worktree import cleanup_worktree
+        task_no_path = {"worktree_path": None, "branch": "test-branch"}
+        with patch("switchboard.git.worktree.os.unlink") as mock_unlink:
+            await cleanup_worktree(self.project, task_no_path)
+        mock_unlink.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
