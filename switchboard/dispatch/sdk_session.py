@@ -541,22 +541,29 @@ async def _run_sdk_session(
     task_record = await db.get_task(task_id)
     api_key = None
     dispatched_by_id = task_record.get("dispatched_by") if task_record else None
+    log.info("API key resolution for %s: dispatched_by=%s", task_id, dispatched_by_id)
     if dispatched_by_id:
         try:
             api_key = await db.get_anthropic_key(int(dispatched_by_id))
-        except (ValueError, TypeError):
-            pass
+            log.info("API key resolved from dispatching user %s", dispatched_by_id)
+        except (ValueError, TypeError) as e:
+            log.warning("Failed to get API key from user %s: %s", dispatched_by_id, e)
     if not api_key:
         # Fallback: instance owner's key (covers localhost bypass / null dispatched_by)
         try:
             instance = await db.get_instance()
             owner_id = instance.get("owner_user_id") if instance else None
+            log.info("Falling back to instance owner %s", owner_id)
             if owner_id:
                 api_key = await db.get_anthropic_key(int(owner_id))
-        except (ValueError, TypeError):
-            pass
+                log.info("API key resolved from instance owner %s", owner_id)
+        except (ValueError, TypeError) as e:
+            log.warning("Failed to get API key from instance owner: %s", e)
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
+        log.info("ANTHROPIC_API_KEY set in env (key=%s...)", api_key[:12])
+    else:
+        log.warning("No ANTHROPIC_API_KEY resolved for task %s — CC will use its own auth", task_id)
 
     options = ClaudeAgentOptions(
         user=WORKER_USER,
@@ -573,6 +580,7 @@ async def _run_sdk_session(
         },
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
+        stderr=lambda line: log.warning("CC stderr [%s]: %s", task_id, line.rstrip()),
         extra_args={"replay-user-messages": None},
         can_use_tool=_gh_cli_guard,
     )
