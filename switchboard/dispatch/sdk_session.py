@@ -536,16 +536,27 @@ async def _run_sdk_session(
     except (FileNotFoundError, PermissionError, json.JSONDecodeError):
         pass
 
-    # Resolve the dispatching user's Anthropic API key
+    # Resolve Anthropic API key: dispatching user → instance owner → skip
     env = {"HOME": worker_home}
     task_record = await db.get_task(task_id)
+    api_key = None
     dispatched_by_id = task_record.get("dispatched_by") if task_record else None
     if dispatched_by_id:
         try:
             api_key = await db.get_anthropic_key(int(dispatched_by_id))
-            env["ANTHROPIC_API_KEY"] = api_key
         except (ValueError, TypeError):
-            pass  # No key stored — fall back to worker's own auth
+            pass
+    if not api_key:
+        # Fallback: instance owner's key (covers localhost bypass / null dispatched_by)
+        try:
+            instance = await db.get_instance()
+            owner_id = instance.get("owner_user_id") if instance else None
+            if owner_id:
+                api_key = await db.get_anthropic_key(int(owner_id))
+        except (ValueError, TypeError):
+            pass
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
 
     options = ClaudeAgentOptions(
         user=WORKER_USER,
