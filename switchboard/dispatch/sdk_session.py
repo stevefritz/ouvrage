@@ -504,9 +504,13 @@ def _session_has_conversation(worker_home: str, worktree_path: str, session_id: 
     # CC stores sessions at ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
     cwd_encoded = worktree_path.replace("/", "-").lstrip("-")
     session_file = Path(worker_home) / ".claude" / "projects" / f"-{cwd_encoded}" / f"{session_id}.jsonl"
-    if not session_file.exists():
-        log.warning("Session file not found: %s", session_file)
-        return False
+    try:
+        if not session_file.exists():
+            log.warning("Session file not found: %s", session_file)
+            return False
+    except PermissionError:
+        # Service user can't stat worker-owned session files — assume valid
+        return True
     try:
         with open(session_file) as f:
             for line in f:
