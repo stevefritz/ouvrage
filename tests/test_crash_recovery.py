@@ -581,9 +581,9 @@ class TestResumeFailureFallback:
             call_count["resume"] += 1
             raise RuntimeError("Session expired")
 
-        async def tracking_retry(task_id, clean=False):
+        async def tracking_retry(task_id, fresh=False):
             call_count["retry"] += 1
-            return await original_retry(task_id, clean=clean)
+            return await original_retry(task_id, fresh=fresh)
 
         with patch("switchboard.dispatch.engine.resume_task", side_effect=failing_resume), \
              patch("switchboard.dispatch.engine.retry_task", side_effect=tracking_retry):
@@ -699,7 +699,7 @@ class TestRecoverSingleTask:
 
         status_at_retry = {}
 
-        async def capturing_retry(task_id, clean=False):
+        async def capturing_retry(task_id, fresh=False):
             t = await db.get_task(task_id)
             status_at_retry["status"] = t["status"]
             status_at_retry["reason"] = t.get("reason")
@@ -718,7 +718,7 @@ class TestRecoverSingleTask:
 
         resume_called = []
 
-        async def capturing_retry(task_id, clean=False):
+        async def capturing_retry(task_id, fresh=False):
             t = await db.get_task(task_id)
             resume_called.append(t.get("recovery_count"))
 

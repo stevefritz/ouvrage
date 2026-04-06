@@ -764,7 +764,7 @@ async def resume_task(
     return result
 
 
-async def retry_task(task_id: str, clean: bool = False) -> dict:
+async def retry_task(task_id: str, fresh: bool = False) -> dict:
     """Start a fresh session — thin wrapper around lifecycle.execute("retry").
 
     The lifecycle service handles status transition, audit logging, and side effects
@@ -772,12 +772,16 @@ async def retry_task(task_id: str, clean: bool = False) -> dict:
     feedback collection, worktree setup, prompt building, SDK launch).
 
     Gate-interrupted shortcut (re-enter gate pipeline) is handled by the side effect.
+
+    Args:
+        fresh: If True, skip forking from the previous session. Default False (fork behavior).
     """
     from switchboard.dispatch.lifecycle import lifecycle
     result = await lifecycle.execute(
         task_id, "retry",
         triggered_by="user",
-        source_detail=f"retry_task (clean={clean})",
+        source_detail=f"retry_task (fresh={fresh})",
+        fresh=fresh,
     )
     return result
 

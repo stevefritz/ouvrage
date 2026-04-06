@@ -229,6 +229,54 @@ class TestRetryFork:
         # session_id should NOT have been cleared to None
         assert stored["session_id"] == "sess-preserved"
 
+    async def test_retry_with_fresh_option_skips_fork(self, db, sample_project):
+        """When fresh=True, retry launches without fork_session_id even if previous session exists."""
+        task = await db.create_task(
+            id="test-project/fork-fresh-option",
+            project_id="test-project",
+            goal="Test fresh=True skips fork",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1,
+                             session_id="sess-previous")
+        await db.create_attempt(task["id"], 1)
+        await db.update_attempt(task["id"], 1, session_id="sess-previous")
+
+        mock_launch = AsyncMock()
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
+        ):
+            await retry_task("test-project/fork-fresh-option", fresh=True)
+
+        mock_launch.assert_called_once()
+        call_kwargs = mock_launch.call_args
+        assert call_kwargs.kwargs.get("fork_session_id") is None
+
+    async def test_retry_with_fresh_false_still_forks(self, db, sample_project):
+        """When fresh=False (default), retry still forks from the previous session."""
+        task = await db.create_task(
+            id="test-project/fork-fresh-false",
+            project_id="test-project",
+            goal="Test fresh=False keeps fork",
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1,
+                             session_id="sess-to-fork")
+        await db.create_attempt(task["id"], 1)
+        await db.update_attempt(task["id"], 1, session_id="sess-to-fork")
+
+        mock_launch = AsyncMock()
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
+        ):
+            await retry_task("test-project/fork-fresh-false", fresh=False)
+
+        mock_launch.assert_called_once()
+        call_kwargs = mock_launch.call_args
+        assert call_kwargs.kwargs.get("fork_session_id") == "sess-to-fork"
+
 
 class TestStartFork:
     """Start after reopen should fork from the previous attempt's session."""

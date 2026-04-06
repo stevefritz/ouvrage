@@ -77,8 +77,8 @@ export const api = {
     // Actions
     stopTask: (id) => request(`/tasks/${eid(id)}/stop`, { method: 'POST' }),
     cancelTask: (id) => request(`/tasks/${eid(id)}/cancel`, { method: 'POST' }),
-    retryTask: (id, clean = false) => request(`/tasks/${eid(id)}/retry`, {
-        method: 'POST', body: JSON.stringify({ clean }),
+    retryTask: (id, fresh = false) => request(`/tasks/${eid(id)}/retry`, {
+        method: 'POST', body: JSON.stringify({ fresh }),
     }),
     resumeTask: (id) => request(`/tasks/${eid(id)}/resume`, { method: 'POST' }),
     closeTask: (id) => request(`/tasks/${eid(id)}/close`, { method: 'POST' }),

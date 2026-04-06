@@ -1003,7 +1003,7 @@ async def _handle_cancel(send, task_id):
 async def _handle_retry(receive, send, task_id):
     body = await _read_body(receive)
     data = json.loads(body) if body else {}
-    result = await tasks.retry_task(task_id, clean=data.get("clean", False))
+    result = await tasks.retry_task(task_id, fresh=data.get("fresh", False))
     await _json_response(send, result)
 
 

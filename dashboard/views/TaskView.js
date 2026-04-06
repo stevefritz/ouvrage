@@ -1864,6 +1864,7 @@ const CONFIRM_TEXT = {
 function ConfirmOverlay({ action, onConfirm, onCancel }) {
     if (!action) return null;
     const cfg = CONFIRM_TEXT[action] || { title: action, body: `Proceed with ${action}?` };
+    const [freshRetry, setFreshRetry] = useState(false);
 
     return html`
         <div onClick=${onCancel} style=${{
@@ -1886,6 +1887,17 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
                     color: colors.textSecondary, margin: '0 0 20px',
                     lineHeight: typography.lineHeight.normal,
                 }}>${cfg.body}</p>
+                ${action === 'retry' ? html`
+                    <div style=${{ display: 'flex', alignItems: 'center', gap: '10px', padding: '0 0 16px' }}>
+                        <input type="checkbox" id="retry-fresh-session" checked=${freshRetry}
+                            onChange=${e => setFreshRetry(e.target.checked)}
+                            style=${{ accentColor: colors.accent, width: '15px', height: '15px', cursor: 'pointer' }} />
+                        <label for="retry-fresh-session" style=${{
+                            fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                            color: colors.text, cursor: 'pointer',
+                        }}>Fresh session (no prior context)</label>
+                    </div>
+                ` : null}
                 <div style=${{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                     <button onClick=${onCancel} style=${{
                         padding: '6px 16px', borderRadius: layout.borderRadius.sm,
@@ -1893,7 +1905,7 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
                         color: colors.textSecondary, cursor: 'pointer',
                         fontFamily: typography.fontBody, fontSize: typography.size.sm,
                     }}>Cancel</button>
-                    <button onClick=${onConfirm} style=${{
+                    <button onClick=${() => onConfirm(action === 'retry' ? { fresh: freshRetry } : {})} style=${{
                         padding: '6px 16px', borderRadius: layout.borderRadius.sm,
                         background: colors.accent, border: 'none',
                         color: '#fff', cursor: 'pointer',
@@ -2547,7 +2559,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         stop: () => api.stopTask(id),
         cancel: () => api.cancelTask(id),
         'cancel-reopen': () => api.cancelReopen(id),
-        retry: () => api.retryTask(id),
+        retry: (opts = {}) => api.retryTask(id, opts.fresh || false),
         resume: () => api.resumeTask(id),
         close: () => api.closeTask(id),
         'skip-gate': () => api.skipGate(id),
@@ -2582,13 +2594,13 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         }
     }, [id, resolveAction, loadTask, loadAttempts, loadActions]);
 
-    const executeAction = useCallback(async () => {
+    const executeAction = useCallback(async (extra = {}) => {
         if (!confirmAction || !task) return;
         const action = confirmAction;
         setConfirmAction(null);
         try {
             const fn = resolveAction(action);
-            if (fn) await fn();
+            if (fn) await fn(extra);
             // Reload after action
             setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
         } catch (e) {
