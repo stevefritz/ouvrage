@@ -99,8 +99,10 @@ def select_nudge(tool_name: str) -> str | None:
     return pool[-1][0]
 
 
-def inject_nudge(result: dict, tool_name: str) -> None:
+def inject_nudge(result, tool_name: str) -> None:
     """Inject a behavioral nudge into a tool response dict as a _nudge field."""
+    if not isinstance(result, dict):
+        return
     nudge = select_nudge(tool_name)
     if nudge:
         result["_nudge"] = f"\U0001f4a1 {nudge}"
