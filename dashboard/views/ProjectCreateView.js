@@ -166,6 +166,11 @@ function validate(state) {
         fieldErrors.maxWallClock = true;
     }
 
+    if (state.folderName && state.folderName.trim() && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(state.folderName.trim())) {
+        errors.push('Must be a folder name only (e.g. my-app). No paths or special characters.');
+        fieldErrors.folderName = true;
+    }
+
     if (state.autoPr && state.autoMerge) {
         errors.push('Auto PR and Auto Merge cannot both be enabled');
         fieldErrors.autoPr = true;
@@ -195,6 +200,7 @@ export function ProjectCreateView() {
 
     // Optional fields
     const [optionalOpen, setOptionalOpen] = useState(false);
+    const [advancedOpen, setAdvancedOpen] = useState(false);
     const [folderName, setFolderName] = useState('');
     const [testCommand, setTestCommand] = useState('');
     const [setupCommand, setSetupCommand] = useState('');
@@ -230,7 +236,7 @@ export function ProjectCreateView() {
         e.preventDefault();
         setServerError(null);
 
-        const state = { id, repo, defaultBranch, model, reviewModel, autoTest, autoReview, autoPr, autoMerge, maxTurns, maxWallClock };
+        const state = { id, repo, defaultBranch, model, reviewModel, autoTest, autoReview, autoPr, autoMerge, maxTurns, maxWallClock, folderName };
         const { errors, fieldErrors: fe } = validate(state);
 
         if (errors.length > 0) {
@@ -691,11 +697,14 @@ export function ProjectCreateView() {
                                     type="text"
                                     value=${folderName}
                                     onInput=${e => setFolderName(e.target.value)}
-                                    style=${inputMono}
+                                    style=${fieldErrors.folderName ? inputMonoError : inputMono}
                                     placeholder="my-project-2 (defaults to repo name)"
                                     spellcheck="false"
                                     autocomplete="off"
                                 />
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                                    Folder name only, e.g. my-app
+                                </div>
                             </div>
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Test Command" helpText="Shell command for the test suite. Example: 'pytest -v', 'npm test'. Leave blank if no automated tests." />
@@ -708,6 +717,9 @@ export function ProjectCreateView() {
                                     placeholder="pytest -v"
                                     spellcheck="false"
                                 />
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                                    Runs automatically after task completion when auto_test is enabled (e.g. npm test, pytest).
+                                </div>
                             </div>
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Setup Command" helpText="Runs in each new worktree after creation. Example: 'npm install', 'pip install -r requirements.txt'." />
@@ -720,6 +732,9 @@ export function ProjectCreateView() {
                                     placeholder="npm install"
                                     spellcheck="false"
                                 />
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                                    Runs in each new worktree after creation. Use for dependency install (e.g. npm install, composer install).
+                                </div>
                             </div>
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Review Ignore Patterns" helpText="File glob patterns to exclude from reviewer diffs. Comma-separated. Example: '*.lock, vendor/, node_modules/'" />
@@ -732,9 +747,12 @@ export function ProjectCreateView() {
                                     placeholder="*.lock, vendor/, node_modules/"
                                     spellcheck="false"
                                 />
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                                    File patterns excluded from code review diffs (e.g. *.lock, vendor/)
+                                </div>
                             </div>
                             <div style=${fieldStyle}>
-                                <${FieldLabel} label="Env Overrides" helpText="Environment variables appended to .env.testing in each worktree." />
+                                <${FieldLabel} label="Env Overrides" helpText="Environment variables written to .env.testing in each worktree." />
                                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                     ${envOverrides.map((row, i) => html`
                                         <div key=${i} style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '8px', alignItems: 'center' }}>
@@ -789,18 +807,9 @@ export function ProjectCreateView() {
                                         }}
                                     >+ Add</button>
                                 </div>
-                            </div>
-                            <div style=${fieldStyle}>
-                                <${FieldLabel} label="Teardown Command" helpText="Runs when a worktree is cleaned up. Rarely needed." />
-                                <input
-                                    class="foreman-input-mono"
-                                    type="text"
-                                    value=${teardownCommand}
-                                    onInput=${e => setTeardownCommand(e.target.value)}
-                                    style=${inputMono}
-                                    placeholder="make clean"
-                                    spellcheck="false"
-                                />
+                                <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                                    Environment variables written to .env.testing in each worktree. For test suite config (e.g. APP_ENV=testing, DB_CONNECTION=sqlite).
+                                </div>
                             </div>
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="GitHub PAT (project-specific)" helpText="Optional. Uses instance PAT if not set. Use this for repos that need a different token (different org, client repo, SaaS isolation)." />
@@ -812,6 +821,53 @@ export function ProjectCreateView() {
                                     placeholder="ghp_…"
                                     autocomplete="new-password"
                                 />
+                            </div>
+
+                            <!-- Advanced subsection -->
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick=${() => setAdvancedOpen(o => !o)}
+                                    style=${{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        cursor: 'pointer',
+                                        userSelect: 'none',
+                                        padding: '8px 0',
+                                        borderTop: `1px solid ${colors.border}`,
+                                        borderBottom: advancedOpen ? `1px solid ${colors.border}` : 'none',
+                                        borderLeft: 'none',
+                                        borderRight: 'none',
+                                        color: colors.textTertiary,
+                                        fontSize: typography.size.xs,
+                                        fontWeight: typography.weight.semibold,
+                                        letterSpacing: '0.08em',
+                                        background: 'none',
+                                        width: '100%',
+                                        textAlign: 'left',
+                                    }}
+                                >
+                                    <span>${advancedOpen ? '▾' : '▸'}</span>
+                                    <span>ADVANCED</span>
+                                </button>
+
+                                ${advancedOpen ? html`
+                                    <div style=${{ ...sectionStyle, marginTop: '14px' }}>
+                                        <div style=${fieldStyle}>
+                                            <${FieldLabel} label="Teardown Command" helpText="Runs when a worktree is cleaned up. Only needed for repos that require explicit cleanup (e.g. stopping services, removing containers)." />
+                                            <input
+                                                class="foreman-input-mono"
+                                                type="text"
+                                                value=${teardownCommand}
+                                                onInput=${e => setTeardownCommand(e.target.value)}
+                                                style=${inputMono}
+                                                placeholder="make clean"
+                                                spellcheck="false"
+                                            />
+                                        </div>
+                                    </div>
+                                ` : null}
                             </div>
                         </div>
                     ` : null}

@@ -316,8 +316,8 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
     if rc != 0:
         log.warning(f"Setup command failed (exit {rc}): {stderr.decode()}")
 
-    # Append env overrides AFTER setup (setup may create .env.testing from template)
-    # Uses >> to append so we don't clobber APP_KEY etc. set by key:generate
+    # Write env overrides AFTER setup (setup may create .env.testing from template)
+    # Uses > (write mode) to recreate fresh each time, preventing duplicate entries on retry
     overrides = env_overrides
     if not overrides and project.get("env_overrides"):
         overrides = project["env_overrides"]
@@ -326,12 +326,12 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
 
     if overrides:
         env_path = os.path.join(worktree_path, ".env.testing")
-        env_content = "\n" + "\n".join(f"{k}={v}" for k, v in overrides.items()) + "\n"
-        # Append as worker user — later values override earlier ones in dotenv
+        env_content = "\n".join(f"{k}={v}" for k, v in overrides.items()) + "\n"
+        # Write fresh each time — prevents duplicate entries on retry/resume
         await _run_as_worker(
-            "sh", "-c", f"cat >> {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
+            "sh", "-c", f"cat > {shlex.quote(env_path)} << 'ENVEOF'\n{env_content}ENVEOF"
         )
-        log.debug(f"Appended env overrides to {env_path}")
+        log.debug(f"Wrote env overrides to {env_path}")
 
 
 async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:

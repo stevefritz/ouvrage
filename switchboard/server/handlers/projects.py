@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 
 import switchboard.db as db
@@ -74,9 +75,13 @@ async def _handle_create_project(arguments):
         if current_count >= max_projects:
             return {"error": f"Project limit reached ({current_count}/{max_projects}). Upgrade your plan for more projects."}
 
+    folder_name = arguments.get("folder_name")
+    if folder_name and not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', folder_name):
+        return {"error": "folder_name must be a folder name only (e.g. my-app). No paths or special characters."}
+
     repo = normalize_repo_url(arguments["repo"])
     working_dir = arguments.get("working_dir") or _resolve_working_dir(
-        repo, arguments.get("folder_name")
+        repo, folder_name
     )
     # Enforce worktree base — no escaping
     resolved = os.path.realpath(working_dir)
