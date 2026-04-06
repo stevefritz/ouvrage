@@ -948,3 +948,104 @@ async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:
             (MIN_CHUNK_LENGTH, batch_size),
         )
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Search invalidations
+# ---------------------------------------------------------------------------
+
+async def upsert_invalidation(
+    entity_type: str, entity_id: str, strength: float, reason: str | None = None
+) -> dict:
+    """Upsert a search invalidation. Returns the stored record."""
+    from switchboard.db._helpers import now_iso
+    ts = now_iso()
+    async with get_db() as db:
+        await db.execute(
+            """INSERT INTO search_invalidations (entity_type, entity_id, strength, reason, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+                   strength = excluded.strength,
+                   reason = excluded.reason,
+                   created_at = excluded.created_at""",
+            (entity_type, entity_id, strength, reason, ts),
+        )
+        await db.commit()
+    return {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "strength": strength,
+        "reason": reason,
+        "created_at": ts,
+    }
+
+
+async def delete_invalidation(entity_type: str, entity_id: str) -> bool:
+    """Remove an invalidation row. Returns True if a row was deleted, False if none existed."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM search_invalidations WHERE entity_type = ? AND entity_id = ?",
+            (entity_type, entity_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_invalidations(project_id: str | None = None) -> list[dict]:
+    """Get all active invalidations.
+
+    If project_id is set, filter to entities belonging to that project.
+    For simplicity, loads all invalidations and filters at application level.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT entity_type, entity_id, strength, reason, created_at FROM search_invalidations"
+        )
+        all_inv = [dict(r) for r in rows]
+
+    if not project_id or not all_inv:
+        return all_inv
+
+    # Filter by project: collect valid entity IDs for this project
+    # Tasks: directly have project_id
+    # Messages: belong to a task with project_id, or a conversation with project
+    task_ids: set[str] = set()
+    message_ids: set[str] = set()
+    chunk_message_ids: set[str] = set()
+
+    # Gather candidate entity IDs to check
+    candidate_task_ids = [i["entity_id"] for i in all_inv if i["entity_type"] == "task"]
+    candidate_msg_ids = [i["entity_id"] for i in all_inv if i["entity_type"] == "message"]
+    candidate_chunk_ids = [i["entity_id"] for i in all_inv if i["entity_type"] == "chunk"]
+
+    async with get_db() as db:
+        if candidate_task_ids:
+            placeholders = ",".join("?" * len(candidate_task_ids))
+            task_rows = await db.execute_fetchall(
+                f"SELECT id FROM tasks WHERE project_id = ? AND id IN ({placeholders})",
+                [project_id] + candidate_task_ids,
+            )
+            task_ids = {r["id"] for r in task_rows}
+
+        all_msg_ids = candidate_msg_ids + candidate_chunk_ids
+        if all_msg_ids:
+            placeholders = ",".join("?" * len(all_msg_ids))
+            msg_rows = await db.execute_fetchall(
+                f"""SELECT m.id FROM messages m
+                    WHERE m.id IN ({placeholders})
+                      AND (
+                          m.task_id IN (SELECT id FROM tasks WHERE project_id = ?)
+                          OR m.conversation_id IN (SELECT id FROM conversations WHERE project = ?)
+                      )""",
+                all_msg_ids + [project_id, project_id],
+            )
+            matched_msg_ids = {str(r["id"]) for r in msg_rows}
+            message_ids = {i for i in candidate_msg_ids if i in matched_msg_ids}
+            chunk_message_ids = {i for i in candidate_chunk_ids if i in matched_msg_ids}
+
+    return [
+        i for i in all_inv
+        if (i["entity_type"] == "task" and i["entity_id"] in task_ids)
+        or (i["entity_type"] == "message" and i["entity_id"] in message_ids)
+        or (i["entity_type"] == "chunk" and i["entity_id"] in chunk_message_ids)
+    ]

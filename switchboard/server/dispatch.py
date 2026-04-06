@@ -43,6 +43,7 @@ from switchboard.server.handlers.tasks import (
     _handle_search_task_messages,
 )
 from switchboard.server.handlers.search import _handle_search
+from switchboard.server.handlers.invalidations import _handle_invalidate
 from switchboard.server.handlers.ops import (
     _handle_get_context,
     _handle_get_guide,
@@ -111,6 +112,7 @@ TOOL_HANDLERS = {
     "get_guide": _handle_get_guide,
     # Search
     "search": _handle_search,
+    "invalidate": _handle_invalidate,
     # Token management
     "create_api_token": _handle_create_api_token,
     "list_api_tokens": _handle_list_api_tokens,

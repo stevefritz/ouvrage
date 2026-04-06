@@ -726,8 +726,52 @@ SEARCH_TOOLS = [
                     "description": "Maximum results to return (default 10, max 30)",
                     "default": 10,
                 },
+                "include_invalidated": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, return raw scores without invalidation adjustments",
+                },
             },
             "required": ["query"],
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Invalidation Tools
+# ---------------------------------------------------------------------------
+
+INVALIDATION_TOOLS = [
+    Tool(
+        name="invalidate",
+        description=(
+            "Soft-suppress a search entity. strength 0.1-1.0 suppresses (higher = more suppressed). "
+            "strength 0 removes the invalidation (restores full weight). "
+            "Calling again on the same entity updates the strength."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["message", "task", "chunk"],
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity ID from search results",
+                },
+                "strength": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "0 = remove invalidation (restore full weight). 0.1-1.0 = suppress (higher = more suppressed)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional: why this entity is being suppressed",
+                },
+            },
+            "required": ["entity_type", "entity_id", "strength"],
         },
     ),
 ]
@@ -961,6 +1005,7 @@ TOOLS = (
     + OPS_TOOLS
     + CONTROL_TOOLS
     + SEARCH_TOOLS
+    + INVALIDATION_TOOLS
     + TOKEN_TOOLS
     + FILES_TOOLS
 )

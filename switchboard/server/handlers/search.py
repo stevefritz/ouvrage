@@ -91,7 +91,14 @@ async def _handle_search(arguments: dict) -> dict:
     query = arguments["query"]
     project_id = arguments.get("project_id")
     limit = min(int(arguments.get("limit", 10)), 30)
+    include_invalidated = arguments.get("include_invalidated", False)
     now = datetime.now(timezone.utc)
+
+    # Load invalidations once for suppression (skip if include_invalidated=True)
+    inv_map: dict[tuple[str, str], float] = {}
+    if not include_invalidated:
+        invalidations = await db.get_invalidations(project_id)
+        inv_map = {(i["entity_type"], i["entity_id"]): i["strength"] for i in invalidations}
 
     # Try to embed the query — falls back to FTS-only if embedding unavailable or vec tables missing
     service = emb.get_embedding_service()
@@ -194,6 +201,11 @@ async def _handle_search(arguments: dict) -> dict:
 
         final_score = base * dual_mult * rec_mult
 
+        if inv_map:
+            inv_strength = inv_map.get(("task", task_id), 0.0)
+            if inv_strength:
+                final_score *= (1.0 - inv_strength)
+
         goal = meta.get("goal") or ""
         task_candidates.append({
             "type": "task",
@@ -231,6 +243,11 @@ async def _handle_search(arguments: dict) -> dict:
 
         final_score = base * type_mult * pinned_mult * dual_mult * rec_mult
 
+        if inv_map:
+            inv_strength = inv_map.get(("message", str(msg_id)), 0.0)
+            if inv_strength:
+                final_score *= (1.0 - inv_strength)
+
         # Prefer rich content snippet; fall back to FTS snippet
         content = meta.get("content")
         snippet = _make_search_snippet(content) if content else (meta.get("fts_snippet") or "")
@@ -260,6 +277,11 @@ async def _handle_search(arguments: dict) -> dict:
         # No dual-match boost for chunks (no FTS chunk search exists)
 
         final_score = base * type_mult * pinned_mult * rec_mult
+
+        if inv_map:
+            inv_strength = inv_map.get(("chunk", str(hit["message_id"])), 0.0)
+            if inv_strength:
+                final_score *= (1.0 - inv_strength)
 
         result_type = "task_message" if hit.get("task_id") else "conversation_message"
         title = hit.get("title") or hit.get("chunk_heading")

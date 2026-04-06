@@ -200,6 +200,9 @@ from switchboard.db.search import (
     search_tasks_semantic,
     search_messages_fts,
     search_tasks_fts,
+    upsert_invalidation,
+    delete_invalidation,
+    get_invalidations,
 )
 
 __all__ = [
@@ -258,6 +261,7 @@ __all__ = [
     "index_message_chunks", "search_message_chunks", "get_messages_needing_chunking",
     "set_task_embedding", "get_tasks_needing_embedding", "search_tasks_semantic",
     "search_messages_fts", "search_tasks_fts",
+    "upsert_invalidation", "delete_invalidation", "get_invalidations",
     # constants
     "DEFAULT_MAX_CONCURRENT",
     "DEFAULT_MAX_TURNS",

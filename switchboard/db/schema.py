@@ -264,6 +264,15 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS search_invalidations (
+                entity_type TEXT NOT NULL,
+                entity_id   TEXT NOT NULL,
+                strength    REAL NOT NULL DEFAULT 0.5,
+                reason      TEXT,
+                created_at  TEXT NOT NULL,
+                PRIMARY KEY (entity_type, entity_id)
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
