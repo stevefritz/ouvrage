@@ -7,6 +7,7 @@ import logging
 import os
 import pwd
 import shlex
+import shutil
 
 import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
@@ -56,6 +57,65 @@ async def _find_branch_holder(branch: str) -> dict | None:
             r = rows[0]
             return {"task_id": r["id"], "status": r["status"], "worktree_path": r["worktree_path"]}
     return None
+
+
+async def _seed_empty_repo(bare_path: str, project_id: str, default_branch: str, auth_url: str | None) -> None:
+    """If the bare repo has no commits, create an initial commit and push to origin.
+
+    Empty repos cause `git worktree add` to fail because there is no base ref
+    to branch from. This seeds a minimal README.md commit so the first task
+    dispatch can create a worktree successfully.
+    """
+    _, _, rc = await _run_as_worker("git", "-C", bare_path, "rev-parse", "HEAD")
+    if rc == 0:
+        return  # repo has commits — nothing to do
+
+    log.info(f"Empty repo detected at {bare_path} — seeding initial commit for project '{project_id}'")
+
+    stdout, _, rc = await _run_as_worker("mktemp", "-d", "/tmp/ouvrage-seed-XXXXXXXX")
+    if rc != 0:
+        raise RuntimeError("Failed to create temp dir for repo seeding")
+    tmp_dir = stdout.decode().strip()
+    try:
+        # Clone the bare repo into a temp working tree
+        _, stderr, rc = await _run_as_worker("git", "clone", bare_path, tmp_dir)
+        if rc != 0:
+            raise RuntimeError(f"git clone (seed) failed: {stderr.decode()}")
+
+        # Set minimal git identity so the commit doesn't fail without global config
+        await _run_as_worker("git", "-C", tmp_dir, "config", "user.email", "ouvrage@localhost")
+        await _run_as_worker("git", "-C", tmp_dir, "config", "user.name", "Ouvrage")
+
+        # Write README.md
+        readme_path = os.path.join(tmp_dir, "README.md")
+        with open(readme_path, "w") as f:
+            f.write(f"# {project_id}\n\nInitialized by Ouvrage.\n")
+
+        await _run_as_worker("git", "-C", tmp_dir, "add", "README.md")
+        _, stderr, rc = await _run_as_worker(
+            "git", "-C", tmp_dir, "commit", "-m", "Initial commit",
+        )
+        if rc != 0:
+            raise RuntimeError(f"git commit (seed) failed: {stderr.decode()}")
+
+        # Push to origin using auth URL so credentials work
+        push_url = auth_url or "origin"
+        _, stderr, rc = await _run_as_worker(
+            "git", "-C", tmp_dir, "push", push_url, f"HEAD:{default_branch}",
+        )
+        if rc != 0:
+            raise RuntimeError(f"git push (seed) failed: {stderr.decode()}")
+
+        log.info(f"Seeded initial commit on '{default_branch}' for project '{project_id}'")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Re-fetch bare repo so origin/* refs are updated
+    fetch_url = auth_url or "origin"
+    await _run_as_worker(
+        "git", "-C", bare_path, "fetch", fetch_url,
+        "+refs/heads/*:refs/remotes/origin/*",
+    )
 
 
 async def setup_worktree(project: dict, dir_name: str, branch: str,
@@ -151,6 +211,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     _, fetch_err, fetch_rc = await _run_as_worker(*fetch_args)
     if fetch_rc != 0:
         log.warning(f"git fetch failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
+
+    # Seed an initial commit if the repo is empty (zero commits).
+    # git worktree add requires at least one commit to exist as a base ref.
+    await _seed_empty_repo(bare_path, project["id"], project["default_branch"], auth_url)
 
     # Auto-detect default branch from bare clone HEAD if project config is wrong
     default_branch = project["default_branch"]
