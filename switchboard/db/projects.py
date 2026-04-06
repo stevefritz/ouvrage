@@ -116,8 +116,9 @@ async def count_projects() -> int:
 async def delete_project(project_id: str) -> None:
     """Delete a project and all its child records from the database.
 
-    Cascades through tasks (checklist, artifacts, tags, subtasks, messages,
-    files) and components (punchlist, component_conversations).
+    Cascades through tasks (checklist, artifacts, tags, subtasks, audit_log,
+    messages, files) and components (punchlist, component_conversations),
+    and conversations linked to this project.
     Does NOT remove files from disk — callers are responsible for cleanup.
     Raises ValueError if the project doesn't exist.
     """
@@ -134,15 +135,32 @@ async def delete_project(project_id: str) -> None:
 
         if task_ids:
             placeholders = ",".join("?" * len(task_ids))
+            # message_chunks cascade via ON DELETE CASCADE when messages are deleted
+            await db.execute(f"DELETE FROM messages WHERE task_id IN ({placeholders})", task_ids)
+            await db.execute(f"DELETE FROM task_audit_log WHERE task_id IN ({placeholders})", task_ids)
             await db.execute(f"DELETE FROM task_checklist WHERE task_id IN ({placeholders})", task_ids)
             await db.execute(f"DELETE FROM task_artifacts WHERE task_id IN ({placeholders})", task_ids)
             await db.execute(f"DELETE FROM task_tags WHERE task_id IN ({placeholders})", task_ids)
             await db.execute(f"DELETE FROM subtasks WHERE task_id IN ({placeholders})", task_ids)
             await db.execute(f"DELETE FROM files WHERE task_id IN ({placeholders})", task_ids)
-            # messages with task_id (message_chunks cascade via ON DELETE CASCADE)
-            await db.execute(f"DELETE FROM messages WHERE task_id IN ({placeholders})", task_ids)
 
+        # task_attempts have ON DELETE CASCADE on task_id, so they are cleaned up automatically
         await db.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
+
+        # Delete conversations and their messages (project is stored as a text field, no FK)
+        conv_rows = await db.execute_fetchall(
+            "SELECT id FROM conversations WHERE project = ?", (project_id,)
+        )
+        conv_ids = [r["id"] for r in conv_rows]
+        if conv_ids:
+            placeholders = ",".join("?" * len(conv_ids))
+            # message_chunks cascade via ON DELETE CASCADE when messages are deleted
+            await db.execute(f"DELETE FROM messages WHERE conversation_id IN ({placeholders})", conv_ids)
+            await db.execute(f"DELETE FROM conversations WHERE id IN ({placeholders})", conv_ids)
+
+        # Delete project-level files (files with project_id but no task_id, or task already deleted)
+        # files.project_id has a FK to projects(id) — must delete before the project row
+        await db.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
 
         # Collect component IDs for this project
         comp_rows = await db.execute_fetchall(
