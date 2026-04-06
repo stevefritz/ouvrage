@@ -499,32 +499,46 @@ async def _gh_cli_guard(
     return PermissionResultAllow()
 
 
-def _session_has_conversation(worker_home: str, worktree_path: str, session_id: str) -> bool:
-    """Check if a CC session file has real conversation content (not just queue ops)."""
-    # CC stores sessions at ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+async def _session_has_conversation(worker_home: str, worktree_path: str, session_id: str) -> bool:
+    """Check if a CC session file has real conversation content (not just queue ops).
+
+    Runs as the worker user since session files are owned by the worker (0600).
+    """
     cwd_encoded = worktree_path.replace("/", "-").lstrip("-")
     session_file = Path(worker_home) / ".claude" / "projects" / f"-{cwd_encoded}" / f"{session_id}.jsonl"
     try:
-        if not session_file.exists():
+        result = await _run_as_worker(
+            ["python3", "-c", f"""
+import json, sys
+try:
+    with open("{session_file}") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if entry.get("type") not in ("queue-operation",):
+                print("has_conversation")
+                sys.exit(0)
+    print("empty")
+except FileNotFoundError:
+    print("not_found")
+except Exception as e:
+    print(f"error:{{e}}")
+"""],
+            cwd=worktree_path,
+        )
+        output = result.stdout.strip() if result.stdout else ""
+        if output == "has_conversation":
+            return True
+        if output == "not_found":
             log.warning("Session file not found: %s", session_file)
-            return False
-    except PermissionError:
-        # Service user can't stat worker-owned session files — assume valid
-        return True
-    try:
-        with open(session_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                entry = json.loads(line)
-                # Real conversation has assistant/user/result messages, not just queue-operation
-                if entry.get("type") not in ("queue-operation",):
-                    return True
+        elif output == "empty":
+            log.warning("Session %s has no conversation content", session_id)
         return False
-    except (json.JSONDecodeError, OSError) as e:
-        log.warning("Failed to read session file %s: %s", session_file, e)
-        return False
+    except Exception as e:
+        log.warning("Failed to check session file %s: %s", session_file, e)
+        return True  # Can't check — let CC try
 
 
 # ---------------------------------------------------------------------------
@@ -609,13 +623,13 @@ async def _run_sdk_session(
     # If resuming, use the resume option — but only if the session file
     # has real conversation content (not just queue metadata)
     if is_resume and session_id:
-        if _session_has_conversation(worker_home, worktree_path, session_id):
+        if await _session_has_conversation(worker_home, worktree_path, session_id):
             options.resume = session_id
         else:
             log.warning("Session %s has no conversation content, starting fresh", session_id)
     # If forking from a previous attempt's session
     elif fork_session_id:
-        if _session_has_conversation(worker_home, worktree_path, fork_session_id):
+        if await _session_has_conversation(worker_home, worktree_path, fork_session_id):
             options.resume = fork_session_id
             options.fork_session = True
         else:
