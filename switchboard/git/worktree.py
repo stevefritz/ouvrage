@@ -8,7 +8,6 @@ import os
 import pwd
 import shlex
 import shutil
-import tempfile
 
 import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
@@ -73,7 +72,10 @@ async def _seed_empty_repo(bare_path: str, project_id: str, default_branch: str,
 
     log.info(f"Empty repo detected at {bare_path} — seeding initial commit for project '{project_id}'")
 
-    tmp_dir = tempfile.mkdtemp(prefix="ouvrage-seed-", dir="/tmp")
+    stdout, _, rc = await _run_as_worker("mktemp", "-d", "/tmp/ouvrage-seed-XXXXXXXX")
+    if rc != 0:
+        raise RuntimeError("Failed to create temp dir for repo seeding")
+    tmp_dir = stdout.decode().strip()
     try:
         # Clone the bare repo into a temp working tree
         _, stderr, rc = await _run_as_worker("git", "clone", bare_path, tmp_dir)

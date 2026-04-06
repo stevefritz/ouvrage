@@ -113,33 +113,33 @@ class TestSeedEmptyRepo:
     async def test_readme_contains_project_id(self, tmp_path):
         """README.md written during seeding contains the project ID."""
         from switchboard.git.worktree import _seed_empty_repo
+        import io
 
-        written_files = {}
+        written_content = {}
+
+        class FakeFile(io.StringIO):
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                written_content["readme"] = self.getvalue()
 
         async def fake_run(*cmd, **kwargs):
             self.run_calls.append(cmd)
             if "rev-parse" in cmd and "HEAD" in cmd:
                 return b"", b"fatal: bad default revision 'HEAD'\n", 128
-            # Capture what was written to the clone dir (simulated via tmp_path)
+            if cmd[0] == "mktemp":
+                return b"/tmp/ouvrage-seed-test\n", b"", 0
             return b"", b"", 0
 
         self.run_mock.side_effect = fake_run
 
-        # Patch tempfile.mkdtemp to return a real temp dir so we can inspect README
-        real_tmp = str(tmp_path / "seed-tmp")
-        os.makedirs(real_tmp, exist_ok=True)
-
-        with patch("switchboard.git.worktree.tempfile.mkdtemp", return_value=real_tmp):
+        with patch("builtins.open", return_value=FakeFile()):
             bare_path = str(tmp_path / ".bare")
             await _seed_empty_repo(bare_path, "my-awesome-project", "main", None)
 
-        readme = os.path.join(real_tmp, "README.md")
-        # tmp_dir is cleaned up — but we patched mkdtemp so we can check before cleanup
-        # Actually shutil.rmtree runs in finally, so file is gone. Instead check via
-        # the written content captured during fake_run. Let's check add call includes README.md
-        add_calls = [c for c in self.run_calls if "add" in c]
-        assert any("README.md" in " ".join(c) for c in add_calls), (
-            f"Expected 'git add README.md' call, got add calls: {add_calls}"
+        assert "readme" in written_content, "open() was not called for README.md"
+        assert "my-awesome-project" in written_content["readme"], (
+            f"project_id not in README content: {written_content['readme']!r}"
         )
 
 
