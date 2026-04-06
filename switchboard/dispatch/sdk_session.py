@@ -42,7 +42,7 @@ from claude_agent_sdk.types import TextBlock, ToolPermissionContext, ToolUseBloc
 
 import switchboard.db as db
 from switchboard.notifications import slack as notify
-from switchboard.config.settings import WORKER_USER
+from switchboard.config.settings import WORKER_USER, SKIP_CREDENTIAL_CHECK
 from switchboard.config.constants import MESSAGE_POLL_INTERVAL, DEFAULT_MODEL
 from switchboard.git.worktree import _run_as_worker
 
@@ -578,28 +578,43 @@ async def _run_sdk_session(
     except (FileNotFoundError, PermissionError, json.JSONDecodeError):
         pass
 
-    # Resolve Anthropic API key: dispatching user → instance owner → skip
+    # Resolve Anthropic API key: dispatching user → instance owner → skip.
+    # When SKIP_CREDENTIAL_CHECK is set and the worker has OAuth credentials,
+    # prefer the CC subscription (don't inject API key into env).
     env = {"HOME": worker_home}
-    task_record = await db.get_task(task_id)
-    api_key = None
-    dispatched_by_id = task_record.get("dispatched_by") if task_record else None
-    if dispatched_by_id:
+    _worker_has_oauth = False
+    if SKIP_CREDENTIAL_CHECK:
+        creds_file = Path(worker_home) / ".claude" / ".credentials.json"
         try:
-            api_key = await db.get_anthropic_key(int(dispatched_by_id))
-        except (ValueError, TypeError):
+            with open(creds_file) as f:
+                creds_data = json.loads(f.read())
+                oauth = creds_data.get("claudeAiOauth", {})
+                if oauth.get("accessToken") or oauth.get("refreshToken"):
+                    _worker_has_oauth = True
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError):
             pass
-    if not api_key:
-        try:
-            instance = await db.get_instance()
-            owner_id = instance.get("owner_user_id") if instance else None
-            if owner_id:
-                api_key = await db.get_anthropic_key(int(owner_id))
-        except (ValueError, TypeError):
-            pass
-    if api_key:
-        env["ANTHROPIC_API_KEY"] = api_key
-    else:
-        log.warning("No ANTHROPIC_API_KEY resolved for task %s", task_id)
+
+    if not _worker_has_oauth:
+        api_key = None
+        task_record = await db.get_task(task_id)
+        dispatched_by_id = task_record.get("dispatched_by") if task_record else None
+        if dispatched_by_id:
+            try:
+                api_key = await db.get_anthropic_key(int(dispatched_by_id))
+            except (ValueError, TypeError):
+                pass
+        if not api_key:
+            try:
+                instance = await db.get_instance()
+                owner_id = instance.get("owner_user_id") if instance else None
+                if owner_id:
+                    api_key = await db.get_anthropic_key(int(owner_id))
+            except (ValueError, TypeError):
+                pass
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        else:
+            log.warning("No ANTHROPIC_API_KEY resolved for task %s", task_id)
 
     options = ClaudeAgentOptions(
         user=WORKER_USER,
