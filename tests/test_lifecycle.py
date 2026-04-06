@@ -5,6 +5,7 @@ through the service interface — no mocking of db.update_task.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
