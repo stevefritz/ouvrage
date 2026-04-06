@@ -703,7 +703,8 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS instance_config (
                 id INTEGER PRIMARY KEY,
                 concurrency_limit INTEGER,
-                max_projects INTEGER
+                max_projects INTEGER,
+                trial_ends_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS task_attempts (
@@ -847,6 +848,12 @@ async def init_db():
                         _schema_log.info(f"Updated bare repo remote for project '{row['id']}' to {https_url}")
                     else:
                         _schema_log.warning(f"Failed to update bare repo remote for '{row['id']}': {stderr.decode().strip()}")
+
+        # Migrate instance_config: add trial_ends_at column if missing
+        ic_cols = await conn.execute_fetchall("PRAGMA table_info(instance_config)")
+        ic_col_names = {row["name"] for row in ic_cols}
+        if "trial_ends_at" not in ic_col_names:
+            await conn.execute("ALTER TABLE instance_config ADD COLUMN trial_ends_at TEXT")
 
         await conn.commit()
 
