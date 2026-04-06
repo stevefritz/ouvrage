@@ -13,22 +13,24 @@ from switchboard.db.connection import get_db
 async def get_instance_config() -> dict:
     """Return the current instance config row.
 
-    Returns a dict with keys `concurrency_limit` and `max_projects`.
-    Either value may be None (meaning "use the default").
+    Returns a dict with keys `concurrency_limit`, `max_projects`, and `trial_ends_at`.
+    Any value may be None (meaning "use the default" or "not set").
     """
     async with get_db() as db:
         rows = await db.execute_fetchall(
-            "SELECT concurrency_limit, max_projects FROM instance_config WHERE id = 1"
+            "SELECT concurrency_limit, max_projects, trial_ends_at FROM instance_config WHERE id = 1"
         )
         if rows:
             return {"concurrency_limit": rows[0]["concurrency_limit"],
-                    "max_projects": rows[0]["max_projects"]}
-        return {"concurrency_limit": None, "max_projects": None}
+                    "max_projects": rows[0]["max_projects"],
+                    "trial_ends_at": rows[0]["trial_ends_at"]}
+        return {"concurrency_limit": None, "max_projects": None, "trial_ends_at": None}
 
 
 async def set_instance_config(
     concurrency_limit: int | None = None,
     max_projects: int | None = None,
+    trial_ends_at: str | None = None,
 ) -> dict:
     """Upsert the instance config row with the given values.
 
@@ -37,20 +39,22 @@ async def set_instance_config(
     """
     async with get_db() as db:
         await db.execute(
-            """INSERT INTO instance_config (id, concurrency_limit, max_projects)
-               VALUES (1, ?, ?)
+            """INSERT INTO instance_config (id, concurrency_limit, max_projects, trial_ends_at)
+               VALUES (1, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    concurrency_limit = excluded.concurrency_limit,
-                   max_projects = excluded.max_projects""",
-            (concurrency_limit, max_projects),
+                   max_projects = excluded.max_projects,
+                   trial_ends_at = excluded.trial_ends_at""",
+            (concurrency_limit, max_projects, trial_ends_at),
         )
         await db.commit()
         rows = await db.execute_fetchall(
-            "SELECT concurrency_limit, max_projects FROM instance_config WHERE id = 1"
+            "SELECT concurrency_limit, max_projects, trial_ends_at FROM instance_config WHERE id = 1"
         )
         row = rows[0]
         return {"concurrency_limit": row["concurrency_limit"],
-                "max_projects": row["max_projects"]}
+                "max_projects": row["max_projects"],
+                "trial_ends_at": row["trial_ends_at"]}
 
 
 async def get_max_projects() -> int:

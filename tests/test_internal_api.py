@@ -367,3 +367,59 @@ class TestInstanceConfig:
         await db.set_instance_config(concurrency_limit=9)
         cfg = await db.get_instance_config()
         assert cfg["concurrency_limit"] == 9
+
+    async def test_get_instance_config_includes_trial_ends_at(self, db):
+        cfg = await db.get_instance_config()
+        assert "trial_ends_at" in cfg
+        assert cfg["trial_ends_at"] is None
+
+    async def test_set_instance_config_stores_trial_ends_at(self, db):
+        await db.set_instance_config(trial_ends_at="2099-01-01T00:00:00Z")
+        cfg = await db.get_instance_config()
+        assert cfg["trial_ends_at"] == "2099-01-01T00:00:00Z"
+
+    async def test_set_instance_config_clears_trial_ends_at(self, db):
+        await db.set_instance_config(trial_ends_at="2099-01-01T00:00:00Z")
+        await db.set_instance_config(trial_ends_at=None)
+        cfg = await db.get_instance_config()
+        assert cfg["trial_ends_at"] is None
+
+
+# ── POST /internal/config — trial_ends_at ────────────────────────────────────
+
+class TestConfigTrialEndsAt:
+
+    @pytest.fixture(autouse=True)
+    def saas_mode(self):
+        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
+             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+            yield
+
+    async def test_accepts_trial_ends_at(self, db):
+        status, data = await _call("POST", "/internal/config",
+                                   _json({"trial_ends_at": "2099-06-01T00:00:00Z"}))
+        assert status == 200
+        assert data["ok"] is True
+        assert data["trial_ends_at"] == "2099-06-01T00:00:00Z"
+
+    async def test_trial_ends_at_persists_in_db(self, db):
+        await _call("POST", "/internal/config",
+                    _json({"trial_ends_at": "2099-06-01T00:00:00Z"}))
+        cfg = await db.get_instance_config()
+        assert cfg["trial_ends_at"] == "2099-06-01T00:00:00Z"
+
+    async def test_clears_trial_ends_at_when_null(self, db):
+        await _call("POST", "/internal/config",
+                    _json({"trial_ends_at": "2099-06-01T00:00:00Z"}))
+        status, data = await _call("POST", "/internal/config",
+                                   _json({"trial_ends_at": None}))
+        assert status == 200
+        assert data["trial_ends_at"] is None
+        cfg = await db.get_instance_config()
+        assert cfg["trial_ends_at"] is None
+
+    async def test_rejects_non_string_trial_ends_at(self, db):
+        status, data = await _call("POST", "/internal/config",
+                                   _json({"trial_ends_at": 12345}))
+        assert status == 422
+        assert data["error"] == "invalid_type"

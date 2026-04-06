@@ -18,7 +18,7 @@ from switchboard.config.settings import AUTH_MODE, INTERNAL_API_TOKEN
 
 logger = logging.getLogger("switchboard.internal.api")
 
-_ALLOWED_CONFIG_FIELDS = frozenset({"concurrency_limit", "max_projects"})
+_ALLOWED_CONFIG_FIELDS = frozenset({"concurrency_limit", "max_projects", "trial_ends_at"})
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -91,6 +91,7 @@ async def _handle_config(scope, receive, send) -> None:
     # Validate field types
     concurrency_limit = data.get("concurrency_limit")
     max_projects = data.get("max_projects")
+    trial_ends_at = data.get("trial_ends_at")
 
     for field_name, val in [("concurrency_limit", concurrency_limit), ("max_projects", max_projects)]:
         if val is not None and (not isinstance(val, int) or isinstance(val, bool)):
@@ -100,14 +101,23 @@ async def _handle_config(scope, receive, send) -> None:
             })
             return
 
+    if trial_ends_at is not None and not isinstance(trial_ends_at, str):
+        await _send_json(send, 422, {
+            "error": "invalid_type",
+            "message": "trial_ends_at must be an ISO 8601 datetime string or null",
+        })
+        return
+
     cfg = await db.set_instance_config(
         concurrency_limit=concurrency_limit,
         max_projects=max_projects,
+        trial_ends_at=trial_ends_at,
     )
     await _send_json(send, 200, {
         "ok": True,
         "concurrency_limit": cfg["concurrency_limit"],
         "max_projects": cfg["max_projects"],
+        "trial_ends_at": cfg["trial_ends_at"],
     })
 
 
