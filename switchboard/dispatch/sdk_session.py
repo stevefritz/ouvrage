@@ -536,10 +536,21 @@ async def _run_sdk_session(
     except (FileNotFoundError, PermissionError, json.JSONDecodeError):
         pass
 
+    # Resolve the dispatching user's Anthropic API key
+    env = {"HOME": worker_home}
+    task_record = await db.get_task(task_id)
+    dispatched_by_id = task_record.get("dispatched_by") if task_record else None
+    if dispatched_by_id:
+        try:
+            api_key = await db.get_anthropic_key(int(dispatched_by_id))
+            env["ANTHROPIC_API_KEY"] = api_key
+        except (ValueError, TypeError):
+            pass  # No key stored — fall back to worker's own auth
+
     options = ClaudeAgentOptions(
         user=WORKER_USER,
         cwd=str(worktree_path),
-        env={"HOME": worker_home},
+        env=env,
         permission_mode="bypassPermissions",
         model=model,
         max_turns=max_turns,

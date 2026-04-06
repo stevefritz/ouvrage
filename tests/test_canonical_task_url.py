@@ -124,8 +124,8 @@ class TestDispatchTaskUrl:
     """dispatch_task return dict includes url when base URL is set."""
 
     @pytest.fixture(autouse=True)
-    def _patches(self, mock_git):
-        pass
+    def _patches(self, mock_git, monkeypatch):
+        monkeypatch.setattr("switchboard.server.handlers.tasks.SKIP_CREDENTIAL_CHECK", True)
 
     async def test_dispatch_includes_url(self, db, sample_project):
         _set_base_url(BASE_URL)
