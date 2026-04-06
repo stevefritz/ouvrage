@@ -507,8 +507,8 @@ async def _session_has_conversation(worker_home: str, worktree_path: str, sessio
     cwd_encoded = worktree_path.replace("/", "-").lstrip("-")
     session_file = Path(worker_home) / ".claude" / "projects" / f"-{cwd_encoded}" / f"{session_id}.jsonl"
     try:
-        result = await _run_as_worker(
-            ["python3", "-c", f"""
+        stdout, _, _ = await _run_as_worker(
+            "python3", "-c", f"""
 import json, sys
 try:
     with open("{session_file}") as f:
@@ -525,10 +525,10 @@ except FileNotFoundError:
     print("not_found")
 except Exception as e:
     print(f"error:{{e}}")
-"""],
+""",
             cwd=worktree_path,
         )
-        output = result.stdout.strip() if result.stdout else ""
+        output = stdout.decode().strip() if stdout else ""
         if output == "has_conversation":
             return True
         if output == "not_found":
@@ -585,15 +585,18 @@ async def _run_sdk_session(
     _worker_has_oauth = False
     if SKIP_CREDENTIAL_CHECK:
         try:
-            result = await _run_as_worker(
-                ["python3", "-c",
-                 "import json; d=json.load(open('" + str(Path(worker_home) / ".claude" / ".credentials.json") + "')); "
-                 "o=d.get('claudeAiOauth',{}); print('yes' if o.get('accessToken') or o.get('refreshToken') else 'no')"],
+            creds_path = str(Path(worker_home) / ".claude" / ".credentials.json")
+            stdout, _, _ = await _run_as_worker(
+                "python3", "-c",
+                f"import json; d=json.load(open('{creds_path}')); "
+                "o=d.get('claudeAiOauth',{}); print('yes' if o.get('accessToken') or o.get('refreshToken') else 'no')",
                 cwd=worker_home,
             )
-            _worker_has_oauth = (result.stdout.strip() == "yes") if result.stdout else False
-        except Exception:
-            pass
+            _worker_has_oauth = (stdout.decode().strip() == "yes") if stdout else False
+        except Exception as e:
+            log.warning("OAuth check failed: %s", e)
+
+    log.info("Auth resolution for %s: SKIP_CREDENTIAL_CHECK=%s, worker_has_oauth=%s", task_id, SKIP_CREDENTIAL_CHECK, _worker_has_oauth)
 
     if not _worker_has_oauth:
         api_key = None

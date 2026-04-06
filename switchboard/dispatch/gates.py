@@ -199,13 +199,14 @@ async def _run_subtask(
     if SKIP_CREDENTIAL_CHECK:
         from switchboard.git.worktree import _run_as_worker
         try:
-            result = await _run_as_worker(
-                ["python3", "-c",
-                 "import json; d=json.load(open('" + str(Path(worker_home) / ".claude" / ".credentials.json") + "')); "
-                 "o=d.get('claudeAiOauth',{}); print('yes' if o.get('accessToken') or o.get('refreshToken') else 'no')"],
+            creds_path = str(Path(worker_home) / ".claude" / ".credentials.json")
+            stdout, _, _ = await _run_as_worker(
+                "python3", "-c",
+                f"import json; d=json.load(open('{creds_path}')); "
+                "o=d.get('claudeAiOauth',{}); print('yes' if o.get('accessToken') or o.get('refreshToken') else 'no')",
                 cwd=worker_home,
             )
-            _worker_has_oauth = (result.stdout.strip() == "yes") if result.stdout else False
+            _worker_has_oauth = (stdout.decode().strip() == "yes") if stdout else False
         except Exception:
             pass
 
