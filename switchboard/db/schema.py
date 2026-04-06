@@ -1,6 +1,7 @@
 """Database schema initialization and migrations."""
 from pathlib import Path
 
+from switchboard.config.settings import AUTH_MODE
 from switchboard.db.connection import get_db
 from switchboard.db._helpers import now_iso
 
@@ -531,40 +532,53 @@ async def init_db():
         user_count_rows = await conn.execute_fetchall("SELECT COUNT(*) as cnt FROM users")
         if user_count_rows[0]["cnt"] == 0:
             ts = now_iso()
-            cursor = await conn.execute(
-                """INSERT INTO users (email, name, role, timezone, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                ("owner@localhost", "Owner", "owner", "America/Toronto", ts, ts),
-            )
-            user_id = cursor.lastrowid
+            if AUTH_MODE == "saas":
+                # SaaS mode: create instance row without a placeholder user.
+                # The real owner is created via POST /internal/bootstrap-user
+                # during provisioning, which also sets owner_user_id.
+                inst_rows = await conn.execute_fetchall("SELECT COUNT(*) as cnt FROM instance")
+                if inst_rows[0]["cnt"] == 0:
+                    await conn.execute(
+                        """INSERT INTO instance (id, name, slug, plan_tier, owner_user_id, created_at)
+                           VALUES (1, ?, ?, ?, NULL, ?)""",
+                        ("Ouvrage", "default", "free", ts),
+                    )
+            else:
+                # Local mode: seed a default owner user for single-tenant setups
+                cursor = await conn.execute(
+                    """INSERT INTO users (email, name, role, timezone, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("owner@localhost", "Owner", "owner", "America/Toronto", ts, ts),
+                )
+                user_id = cursor.lastrowid
 
-            await conn.execute(
-                """INSERT INTO instance (id, name, slug, plan_tier, owner_user_id, created_at)
-                   VALUES (1, ?, ?, ?, ?, ?)""",
-                ("Ouvrage", "default", "free", user_id, ts),
-            )
+                await conn.execute(
+                    """INSERT INTO instance (id, name, slug, plan_tier, owner_user_id, created_at)
+                       VALUES (1, ?, ?, ?, ?, ?)""",
+                    ("Ouvrage", "default", "free", user_id, ts),
+                )
 
-            # Backfill FK columns on existing rows
-            await conn.execute(
-                "UPDATE projects SET created_by = ? WHERE created_by IS NULL", (user_id,)
-            )
-            await conn.execute(
-                "UPDATE components SET created_by = ? WHERE created_by IS NULL", (user_id,)
-            )
-            await conn.execute(
-                "UPDATE conversations SET created_by = ? WHERE created_by IS NULL", (user_id,)
-            )
-            await conn.execute(
-                "UPDATE tasks SET created_by = ?, dispatched_by = ? WHERE created_by IS NULL",
-                (user_id, user_id),
-            )
-            # Only backfill messages authored by humans (not system actors)
-            await conn.execute(
-                """UPDATE messages SET user_id = ?
-                   WHERE author NOT IN ('dispatcher', 'cc-worker', 'switchboard')
-                   AND user_id IS NULL""",
-                (user_id,),
-            )
+                # Backfill FK columns on existing rows
+                await conn.execute(
+                    "UPDATE projects SET created_by = ? WHERE created_by IS NULL", (user_id,)
+                )
+                await conn.execute(
+                    "UPDATE components SET created_by = ? WHERE created_by IS NULL", (user_id,)
+                )
+                await conn.execute(
+                    "UPDATE conversations SET created_by = ? WHERE created_by IS NULL", (user_id,)
+                )
+                await conn.execute(
+                    "UPDATE tasks SET created_by = ?, dispatched_by = ? WHERE created_by IS NULL",
+                    (user_id, user_id),
+                )
+                # Only backfill messages authored by humans (not system actors)
+                await conn.execute(
+                    """UPDATE messages SET user_id = ?
+                       WHERE author NOT IN ('dispatcher', 'cc-worker', 'switchboard')
+                       AND user_id IS NULL""",
+                    (user_id,),
+                )
 
         # vec0 virtual tables for vector similarity search (sqlite-vec)
         vec_tables = await conn.execute_fetchall(

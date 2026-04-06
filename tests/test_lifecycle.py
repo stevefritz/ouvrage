@@ -297,8 +297,10 @@ class TestExecuteValidTransitions:
     # --- System actions ---
 
     async def test_working_complete(self):
-        await self._make_task("t/17", status="working")
-        result = await self.lifecycle.execute("t/17", "complete")
+        from unittest.mock import AsyncMock, patch
+        await self._make_task("t/17", status="working", worktree_path="/tmp/test-wt")
+        with patch("switchboard.dispatch.gates._dispatch_review", new_callable=AsyncMock):
+            result = await self.lifecycle.execute("t/17", "complete")
         assert result["status"] == "validating"
 
     async def test_working_exhaust_turns_with_gates(self):

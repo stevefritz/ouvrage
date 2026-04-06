@@ -154,11 +154,22 @@ async def _handle_bootstrap_user(scope, receive, send) -> None:
 
     name = email.split("@")[0]
     try:
-        await db.create_user(email=email, name=name, role=role)
+        user = await db.create_user(email=email, name=name, role=role)
     except Exception as e:
         logger.error("bootstrap-user create_user failed: %s", e)
         await _send_json(send, 500, {"error": "server_error", "message": "Internal error"})
         return
+
+    # If instance has no owner yet (SaaS mode), set this user as the owner
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if user_id:
+        try:
+            instance = await db.get_instance()
+            if instance and not instance.get("owner_user_id"):
+                await db.update_instance(owner_user_id=user_id)
+                logger.info("Set instance owner to bootstrapped user %s (%s)", user_id, email)
+        except Exception as e:
+            logger.warning("Failed to set instance owner: %s", e)
 
     await _send_json(send, 200, {"ok": True, "created": True})
 

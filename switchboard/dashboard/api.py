@@ -174,7 +174,7 @@ async def handle_request(scope, receive, send):
 
         # POST /dashboard/api/tasks — create a new task
         if path == "/dashboard/api/tasks" and method == "POST":
-            return await _handle_create_task(receive, send)
+            return await _handle_create_task(scope, receive, send)
 
         # GET /dashboard/api/tasks/depends-on-candidates
         if path == "/dashboard/api/tasks/depends-on-candidates" and method == "GET":
@@ -221,7 +221,7 @@ async def handle_request(scope, receive, send):
                     return await _handle_release_worktree(send, task_id)
                 if rest.endswith("/dispatch"):
                     task_id = rest[:-len("/dispatch")]
-                    return await _handle_dispatch(send, task_id)
+                    return await _handle_dispatch(scope, send, task_id)
                 if rest.endswith("/reopen"):
                     task_id = rest[:-len("/reopen")]
                     return await _handle_reopen(send, task_id)
@@ -1025,7 +1025,7 @@ async def _handle_approve(send, task_id):
     await _json_response(send, result)
 
 
-async def _handle_create_task(receive, send):
+async def _handle_create_task(scope, receive, send):
     """Create a new task via the dashboard form. Held by default."""
     body = await _read_body(receive)
     if not body:
@@ -1051,6 +1051,9 @@ async def _handle_create_task(receive, send):
     if existing:
         return await _error(send, f"Task '{task_id}' already exists", 409)
 
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+
     try:
         result = await tasks.dispatch_task(
             project_id=project_id,
@@ -1073,6 +1076,8 @@ async def _handle_create_task(receive, send):
             depends_on=data.get("depends_on") or None,
             base_branch=data.get("base_branch") or None,
             escalation_criteria=data.get("escalation_criteria") or None,
+            created_by=user_id,
+            dispatched_by=user_id,
         )
         # Store tags separately (dispatch_task doesn't accept tags param)
         tags = data.get("tags")
@@ -1086,12 +1091,17 @@ async def _handle_create_task(receive, send):
         await _error(send, str(e), 500)
 
 
-async def _handle_dispatch(send, task_id):
+async def _handle_dispatch(scope, send, task_id):
     task = await db.get_task(task_id)
     if not task:
         return await _error(send, f"Task '{task_id}' not found", 404)
     if task["status"] != "ready":
         return await _error(send, f"Task is '{task['status']}', expected 'ready'", 400)
+    user = scope.get("session_user") or {}
+    user_id = user.get("id")
+    # Set dispatched_by if not already set (task may have been created by someone else)
+    if user_id and not task.get("dispatched_by"):
+        await db.update_task(task_id, dispatched_by=user_id)
     result = await tasks.dispatch_task(
         project_id=task["project_id"],
         task_id=task_id,
