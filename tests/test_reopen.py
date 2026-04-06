@@ -675,31 +675,33 @@ class TestStartReopenedTaskOverrides:
     """start_reopened_task transitions through lifecycle with side effects."""
 
     async def test_start_passes_auto_test_override(self, db, sample_project, mock_git, mock_sdk):
-        """auto_test/auto_review overrides are accepted by start_reopened_task (currently unused by lifecycle)."""
+        """auto_test=False override is applied to the task in the DB before dispatch."""
         from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-override-test",
             project_id="test-project",
             goal="Override auto_test",
+            auto_test=True,
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
         await reopen_task(task["id"])
 
-        # start_reopened_task now goes through lifecycle — it accepts auto_test
-        # but the lifecycle start side effect doesn't use it (it uses task's existing config)
         await start_reopened_task(task["id"], auto_test=False)
         updated = await db.get_task(task["id"])
         assert updated["status"] == "working"
+        assert updated["auto_test"] == False  # noqa: E712 — override was applied
 
     async def test_start_without_overrides_omits_auto_test_key(self, db, sample_project, mock_git, mock_sdk):
-        """start_reopened_task works without any overrides."""
+        """start_reopened_task without overrides leaves task auto_test unchanged."""
         from switchboard.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-no-override",
             project_id="test-project",
             goal="No override",
+            auto_test=True,
+            auto_review=True,
         )
         await db.update_task(task["id"], status="completed", current_attempt=1)
         await reopen_task(task["id"])
@@ -707,6 +709,80 @@ class TestStartReopenedTaskOverrides:
         await start_reopened_task(task["id"])
         updated = await db.get_task(task["id"])
         assert updated["status"] == "working"
+        assert updated["auto_test"] == True   # noqa: E712 — unchanged
+        assert updated["auto_review"] == True  # noqa: E712 — unchanged
+
+    async def test_start_with_auto_test_false_skips_test_gate(self, db, sample_project, mock_git, mock_sdk):
+        """start(auto_test=False) causes test gate to be skipped on completion."""
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        task = await db.create_task(
+            id="test-project/start-skip-test-gate",
+            project_id="test-project",
+            goal="Skip test gate",
+            auto_test=True,
+            auto_review=False,
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await reopen_task(task["id"])
+        await start_reopened_task(task["id"], auto_test=False)
+
+        # Verify override was persisted
+        updated = await db.get_task(task["id"])
+        assert updated["auto_test"] == False  # noqa: E712
+
+        # Simulate task completion and verify test gate is NOT triggered
+        mock_test_gate = AsyncMock()
+        mock_review_gate = AsyncMock()
+        mock_dispatch_dependents = AsyncMock()
+        mock_drain_queue = AsyncMock()
+        with (
+            patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate),
+            patch("switchboard.dispatch.gates._dispatch_review", mock_review_gate),
+            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
+            patch("switchboard.dispatch.queue._drain_queue", mock_drain_queue),
+        ):
+            await lifecycle.execute(task["id"], "complete", triggered_by="sdk")
+
+        mock_test_gate.assert_not_awaited()
+        mock_review_gate.assert_not_awaited()
+
+    async def test_start_with_auto_review_false_skips_review_gate(self, db, sample_project, mock_git, mock_sdk):
+        """start(auto_review=False) causes review gate to be skipped on completion."""
+        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        task = await db.create_task(
+            id="test-project/start-skip-review-gate",
+            project_id="test-project",
+            goal="Skip review gate",
+            auto_test=False,
+            auto_review=True,
+        )
+        await db.update_task(task["id"], status="completed", current_attempt=1)
+        await reopen_task(task["id"])
+        await start_reopened_task(task["id"], auto_review=False)
+
+        # Verify override was persisted
+        updated = await db.get_task(task["id"])
+        assert updated["auto_review"] == False  # noqa: E712
+
+        # Simulate task completion and verify review gate is NOT triggered
+        mock_test_gate = AsyncMock()
+        mock_review_gate = AsyncMock()
+        mock_dispatch_dependents = AsyncMock()
+        mock_drain_queue = AsyncMock()
+        with (
+            patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate),
+            patch("switchboard.dispatch.gates._dispatch_review", mock_review_gate),
+            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
+            patch("switchboard.dispatch.queue._drain_queue", mock_drain_queue),
+        ):
+            await lifecycle.execute(task["id"], "complete", triggered_by="sdk")
+
+        mock_test_gate.assert_not_awaited()
+        mock_review_gate.assert_not_awaited()
 
     async def test_start_fires_notification_with_correct_args(self, db, sample_project, mock_git, mock_sdk):
         """start_reopened_task fires task_attempt_starting with correct task_id, attempt, and goal."""
