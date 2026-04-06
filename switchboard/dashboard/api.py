@@ -197,7 +197,7 @@ async def handle_request(scope, receive, send):
                     return await _handle_retry(receive, send, task_id)
                 if rest.endswith("/resume"):
                     task_id = rest[:-len("/resume")]
-                    return await _handle_resume(send, task_id)
+                    return await _handle_resume(receive, send, task_id)
                 if rest.endswith("/close"):
                     task_id = rest[:-len("/close")]
                     return await _handle_close(receive, send, task_id)
@@ -1007,8 +1007,16 @@ async def _handle_retry(receive, send, task_id):
     await _json_response(send, result)
 
 
-async def _handle_resume(send, task_id):
-    result = await tasks.resume_task(task_id)
+async def _handle_resume(receive, send, task_id):
+    body = await _read_body(receive)
+    params = json.loads(body) if body else {}
+    auto_test = params.get("auto_test")
+    auto_review = params.get("auto_review")
+    result = await tasks.resume_task(
+        task_id,
+        auto_test=bool(auto_test) if auto_test is not None else None,
+        auto_review=bool(auto_review) if auto_review is not None else None,
+    )
     await _json_response(send, result)
 
 

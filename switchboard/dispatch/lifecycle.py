@@ -276,6 +276,18 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     task_id = task["id"]
     prev_status = ctx.get("_previous_status")
 
+    # Apply per-dispatch gate overrides if provided
+    auto_test = ctx.get("auto_test")
+    auto_review = ctx.get("auto_review")
+    if auto_test is not None or auto_review is not None:
+        updates = {}
+        if auto_test is not None:
+            updates["auto_test"] = auto_test
+        if auto_review is not None:
+            updates["auto_review"] = auto_review
+        await db.update_task(task_id, **updates)
+        task.update(updates)
+
     # Gate-passed shortcut: re-trigger post-gate pipeline instead of CC launch
     if (task.get("gate_passed_at")
             and prev_status in ("completed", "merged", "pending-validation")
@@ -475,6 +487,18 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
 
     task_id = task["id"]
     current_attempt = task.get("current_attempt") or 1
+
+    # Apply per-dispatch gate overrides (from dashboard checkboxes)
+    auto_test = ctx.get("auto_test")
+    auto_review = ctx.get("auto_review")
+    if auto_test is not None or auto_review is not None:
+        updates = {}
+        if auto_test is not None:
+            updates["auto_test"] = auto_test
+        if auto_review is not None:
+            updates["auto_review"] = auto_review
+        await db.update_task(task_id, **updates)
+        task.update(updates)
 
     # Look up previous attempt's session_id for forking
     fork_session_id = await db.get_previous_attempt_session_id(task_id, current_attempt)

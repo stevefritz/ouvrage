@@ -736,7 +736,12 @@ async def dispatch_task(
     }
 
 
-async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
+async def resume_task(
+    task_id: str,
+    reset_recovery_count: bool = True,
+    auto_test: bool | None = None,
+    auto_review: bool | None = None,
+) -> dict:
     """Resume a paused task with the same session ID.
 
     Thin wrapper around lifecycle.execute("resume"). The lifecycle service
@@ -745,6 +750,7 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
 
     reset_recovery_count: set False when called from auto-recovery so the
     recovery_count increment is preserved.
+    auto_test / auto_review: optional per-dispatch gate overrides.
     """
     from switchboard.dispatch.lifecycle import lifecycle
     result = await lifecycle.execute(
@@ -752,6 +758,8 @@ async def resume_task(task_id: str, reset_recovery_count: bool = True) -> dict:
         triggered_by="user",
         source_detail=f"resume_task (reset_recovery={reset_recovery_count})",
         reset_recovery_count=reset_recovery_count,
+        auto_test=auto_test,
+        auto_review=auto_review,
     )
     return result
 
@@ -820,6 +828,8 @@ async def start_reopened_task(
         task_id, "start",
         triggered_by="user",
         source_detail="start_reopened_task",
+        auto_test=auto_test,
+        auto_review=auto_review,
     )
     return result
 
