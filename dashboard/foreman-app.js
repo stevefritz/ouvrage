@@ -3,7 +3,8 @@
 
 import { h, render } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
-import { useRouter } from './router.js';
+import { useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useRouter, navigate } from './router.js';
 import { ForemanShell } from './foreman-shell.js';
 import { LandingView } from './views/LandingView.js';
 import { ProjectCreateView } from './views/ProjectCreateView.js';
@@ -14,8 +15,13 @@ import { ConversationView } from './views/ConversationView.js';
 import { LoginView } from './views/LoginView.js';
 import { Settings } from './components/Settings.js';
 import { Files } from './components/Files.js';
+import { api } from './api.js';
 
 const html = htm.bind(h);
+
+// One-time flag: only redirect to settings on the very first page load.
+// Module-level so it survives re-renders but resets on full page reload.
+let _onboardingChecked = false;
 
 function ForemanApp() {
     // Login page is served at /foreman/login (full URL path, not hash route)
@@ -24,6 +30,28 @@ function ForemanApp() {
     }
 
     const { view, params } = useRouter();
+
+    // On initial load, check if credentials are configured.
+    // If not, redirect to Settings so the user can set them up.
+    useEffect(() => {
+        if (_onboardingChecked) return;
+        _onboardingChecked = true;
+
+        // Don't redirect if already on settings
+        if (location.hash === '#/settings') return;
+
+        api.getUserSettings().then(data => {
+            const skip = data?.anthropic?.skip_credential_check;
+            if (skip) return;
+            const anthropicMissing = !data?.anthropic?.configured;
+            const githubMissing = !data?.github?.configured;
+            if (anthropicMissing || githubMissing) {
+                navigate('/settings');
+            }
+        }).catch(() => {
+            // Silently ignore — don't redirect on API errors
+        });
+    }, []);
 
     let content;
 

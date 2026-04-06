@@ -208,6 +208,61 @@ function GitHubCard({ github, onSaved }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Setup banner — shown when credentials are missing
+// ══════════════════════════════════════════════════════════════════════════
+
+const DOCS_URL = 'https://docs.ouvrage.dev/connect';
+
+function SetupBanner({ anthropic, github }) {
+    if (!anthropic || !github) return null;
+    if (anthropic.skip_credential_check) return null;
+
+    const anthropicDone = anthropic.configured;
+    const githubDone = github.configured;
+    if (anthropicDone && githubDone) return null;
+
+    return html`
+        <div style=${{
+            border: `1px solid ${colors.yellow || '#d97706'}`,
+            borderRadius: '8px',
+            padding: '16px 20px',
+            marginBottom: '24px',
+            background: 'rgba(217, 119, 6, 0.06)',
+        }}>
+            <div style=${{
+                fontSize: '13px',
+                fontWeight: '600',
+                color: colors.text,
+                marginBottom: '10px',
+            }}>
+                ⚠️ Complete your setup to start using Ouvrage
+            </div>
+            <div style=${{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: colors.text }}>
+                    <span style=${{ color: anthropicDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
+                        ${anthropicDone ? '✓' : '☐'}
+                    </span>
+                    <span style=${{ color: anthropicDone ? colors.textSecondary : colors.text }}>
+                        Anthropic API Key${anthropicDone ? ' — configured' : ' — required to dispatch workers'}
+                    </span>
+                </div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: colors.text }}>
+                    <span style=${{ color: githubDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
+                        ${githubDone ? '✓' : '☐'}
+                    </span>
+                    <span style=${{ color: githubDone ? colors.textSecondary : colors.text }}>
+                        GitHub Personal Access Token${githubDone ? ' — configured' : ' — required to connect your repos'}
+                    </span>
+                </div>
+            </div>
+            <div style=${{ fontSize: '12px', color: colors.textTertiary }}>
+                Set these up below, then you're ready to go.
+            </div>
+        </div>
+    `;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // OAuth / MCP Connection
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -229,10 +284,12 @@ function OAuthCard({ oauth, onRegenerated }) {
         }
     }, [onRegenerated]);
 
+    const mcpUrl = window.location.origin + '/mcp';
+
     if (!oauth.client_id) {
         return html`
             <div style=${styles.card}>
-                <div style=${styles.cardTitle}>OAuth / MCP connection</div>
+                <div style=${styles.cardTitle}>MCP Connection</div>
                 <div style=${{ ...styles.cardSubtitle, marginTop: '4px' }}>OAuth client not configured.</div>
             </div>
         `;
@@ -240,13 +297,40 @@ function OAuthCard({ oauth, onRegenerated }) {
 
     return html`
         <div style=${styles.card}>
-            <div style=${{ ...styles.cardTitle, marginBottom: '4px' }}>OAuth / MCP connection</div>
+            <div style=${{ ...styles.cardTitle, marginBottom: '4px' }}>Connect to Ouvrage</div>
             <div style=${{ fontSize: '12px', color: colors.textSecondary, marginBottom: '14px' }}>
-                Use these credentials to connect Claude.ai to your Ouvrage instance
+                Use these credentials to connect Claude.ai or any MCP client to your Ouvrage instance
             </div>
 
+            <${SecretRow} label="MCP Endpoint URL" value=${mcpUrl} alwaysVisible=${true} />
             <${SecretRow} label="Client ID" value=${oauth.client_id} alwaysVisible=${true} />
             <${SecretRow} label="Client secret" value=${oauth.client_secret} />
+
+            <div style=${{
+                marginTop: '14px',
+                padding: '12px 14px',
+                background: colors.surface,
+                border: `0.5px solid ${colors.border}`,
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: colors.textSecondary,
+                lineHeight: '1.6',
+            }}>
+                <div style=${{ fontWeight: '500', color: colors.text, marginBottom: '6px' }}>
+                    To connect Claude.ai:
+                </div>
+                <ol style=${{ margin: '0', paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <li>Open Claude.ai Settings → Integrations</li>
+                    <li>Add a new MCP connector</li>
+                    <li>Enter your MCP URL and credentials above</li>
+                </ol>
+                <div style=${{ marginTop: '8px' }}>
+                    <a href=${DOCS_URL} target="_blank" rel="noopener"
+                        style=${{ color: colors.accent, textDecoration: 'none', fontSize: '12px' }}>
+                        See detailed setup instructions →
+                    </a>
+                </div>
+            </div>
 
             <div style=${{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <${ConfirmAction}
@@ -1002,6 +1086,14 @@ export function Settings() {
                 <div style=${{ fontSize: '13px', color: colors.red, marginBottom: '16px' }}>
                     Failed to load user settings: ${userError}
                 </div>
+            `}
+
+            <!-- ═══ SETUP BANNER (shown when credentials missing) ═══ -->
+            ${userSettings && html`
+                <${SetupBanner}
+                    anthropic=${userSettings.anthropic}
+                    github=${userSettings.github}
+                />
             `}
 
             <!-- ═══ INSTANCE section (admin/owner only) ═══ -->
