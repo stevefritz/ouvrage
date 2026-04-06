@@ -193,10 +193,31 @@ async def _run_subtask(
     stderr_path = log_dir / f"{subtask_type}-{count}-stderr.log"
     stderr_log = _open_shared(stderr_path)
 
+    # Resolve Anthropic API key: task owner → instance owner → skip
+    env = {"HOME": worker_home}
+    api_key = None
+    task_record = await db.get_task(task_id)
+    dispatched_by_id = task_record.get("dispatched_by") if task_record else None
+    if dispatched_by_id:
+        try:
+            api_key = await db.get_anthropic_key(int(dispatched_by_id))
+        except (ValueError, TypeError):
+            pass
+    if not api_key:
+        try:
+            instance = await db.get_instance()
+            owner_id = instance.get("owner_user_id") if instance else None
+            if owner_id:
+                api_key = await db.get_anthropic_key(int(owner_id))
+        except (ValueError, TypeError):
+            pass
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
+
     options = ClaudeAgentOptions(
         user=WORKER_USER,
         cwd=str(worktree),
-        env={"HOME": worker_home},
+        env=env,
         permission_mode="bypassPermissions",
         model=model,
         max_turns=max_turns,
@@ -513,6 +534,7 @@ async def _dispatch_review(task_id: str, project: dict, task: dict) -> None:
 
 async def _dispatch_review_inner(task_id: str, project: dict, task: dict) -> None:
     """Inner implementation of review dispatch (called by _dispatch_review after liveness check)."""
+    from switchboard.dispatch.lifecycle import lifecycle
     await db.update_task(task_id, gate_status="reviewing")
 
     # --- Component context ---

@@ -499,6 +499,30 @@ async def _gh_cli_guard(
     return PermissionResultAllow()
 
 
+def _session_has_conversation(worker_home: str, worktree_path: str, session_id: str) -> bool:
+    """Check if a CC session file has real conversation content (not just queue ops)."""
+    # CC stores sessions at ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+    cwd_encoded = worktree_path.replace("/", "-").lstrip("-")
+    session_file = Path(worker_home) / ".claude" / "projects" / f"-{cwd_encoded}" / f"{session_id}.jsonl"
+    if not session_file.exists():
+        log.warning("Session file not found: %s", session_file)
+        return False
+    try:
+        with open(session_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                # Real conversation has assistant/user/result messages, not just queue-operation
+                if entry.get("type") not in ("queue-operation",):
+                    return True
+        return False
+    except (json.JSONDecodeError, OSError) as e:
+        log.warning("Failed to read session file %s: %s", session_file, e)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Agent SDK Dispatch
 # ---------------------------------------------------------------------------
@@ -541,29 +565,23 @@ async def _run_sdk_session(
     task_record = await db.get_task(task_id)
     api_key = None
     dispatched_by_id = task_record.get("dispatched_by") if task_record else None
-    log.info("API key resolution for %s: dispatched_by=%s", task_id, dispatched_by_id)
     if dispatched_by_id:
         try:
             api_key = await db.get_anthropic_key(int(dispatched_by_id))
-            log.info("API key resolved from dispatching user %s", dispatched_by_id)
-        except (ValueError, TypeError) as e:
-            log.warning("Failed to get API key from user %s: %s", dispatched_by_id, e)
+        except (ValueError, TypeError):
+            pass
     if not api_key:
-        # Fallback: instance owner's key (covers localhost bypass / null dispatched_by)
         try:
             instance = await db.get_instance()
             owner_id = instance.get("owner_user_id") if instance else None
-            log.info("Falling back to instance owner %s", owner_id)
             if owner_id:
                 api_key = await db.get_anthropic_key(int(owner_id))
-                log.info("API key resolved from instance owner %s", owner_id)
-        except (ValueError, TypeError) as e:
-            log.warning("Failed to get API key from instance owner: %s", e)
+        except (ValueError, TypeError):
+            pass
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
-        log.info("ANTHROPIC_API_KEY set in env (key=%s...)", api_key[:12])
     else:
-        log.warning("No ANTHROPIC_API_KEY resolved for task %s — CC will use its own auth", task_id)
+        log.warning("No ANTHROPIC_API_KEY resolved for task %s", task_id)
 
     options = ClaudeAgentOptions(
         user=WORKER_USER,
@@ -580,18 +598,24 @@ async def _run_sdk_session(
         },
         mcp_servers=mcp_servers,
         debug_stderr=stderr_log,
-        stderr=lambda line: log.warning("CC stderr [%s]: %s", task_id, line.rstrip()),
         extra_args={"replay-user-messages": None},
         can_use_tool=_gh_cli_guard,
     )
 
-    # If resuming, use the resume option
+    # If resuming, use the resume option — but only if the session file
+    # has real conversation content (not just queue metadata)
     if is_resume and session_id:
-        options.resume = session_id
+        if _session_has_conversation(worker_home, worktree_path, session_id):
+            options.resume = session_id
+        else:
+            log.warning("Session %s has no conversation content, starting fresh", session_id)
     # If forking from a previous attempt's session
     elif fork_session_id:
-        options.resume = fork_session_id
-        options.fork_session = True
+        if _session_has_conversation(worker_home, worktree_path, fork_session_id):
+            options.resume = fork_session_id
+            options.fork_session = True
+        else:
+            log.warning("Fork session %s has no conversation content, starting fresh", fork_session_id)
 
     # Capture the current attempt number for writing to attempt records
     _task_for_attempt = await db.get_task(task_id)
