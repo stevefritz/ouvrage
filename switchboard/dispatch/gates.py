@@ -197,14 +197,16 @@ async def _run_subtask(
     env = {"HOME": worker_home}
     _worker_has_oauth = False
     if SKIP_CREDENTIAL_CHECK:
-        creds_file = Path(worker_home) / ".claude" / ".credentials.json"
+        from switchboard.git.worktree import _run_as_worker
         try:
-            with open(creds_file) as f:
-                creds_data = json.loads(f.read())
-                oauth = creds_data.get("claudeAiOauth", {})
-                if oauth.get("accessToken") or oauth.get("refreshToken"):
-                    _worker_has_oauth = True
-        except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+            result = await _run_as_worker(
+                ["python3", "-c",
+                 "import json; d=json.load(open('" + str(Path(worker_home) / ".claude" / ".credentials.json") + "')); "
+                 "o=d.get('claudeAiOauth',{}); print('yes' if o.get('accessToken') or o.get('refreshToken') else 'no')"],
+                cwd=worker_home,
+            )
+            _worker_has_oauth = (result.stdout.strip() == "yes") if result.stdout else False
+        except Exception:
             pass
 
     if not _worker_has_oauth:
