@@ -644,3 +644,77 @@ class TestResolveDashboardLogDir:
             result = await _resolve_dashboard_log_dir(task, attempt=5)
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _filter_empty_text_entries
+# ---------------------------------------------------------------------------
+
+class TestFilterEmptyTextEntries:
+    """Unit tests for dashboard_api._filter_empty_text_entries."""
+
+    def test_removes_empty_text_assistant_message(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        entries = [
+            {"type": "AssistantMessage", "content": [{"type": "text", "text": ""}]},
+        ]
+        assert _filter_empty_text_entries(entries) == []
+
+    def test_removes_whitespace_only_text(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        entries = [
+            {"type": "AssistantMessage", "content": [{"type": "text", "text": "   \n  "}]},
+        ]
+        assert _filter_empty_text_entries(entries) == []
+
+    def test_keeps_non_empty_text_assistant_message(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        entry = {"type": "AssistantMessage", "content": [{"type": "text", "text": "hello"}]}
+        assert _filter_empty_text_entries([entry]) == [entry]
+
+    def test_keeps_tool_use_assistant_message_even_with_empty_text(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        # Has a tool_use block alongside an empty text block — classified as TOOL, not filtered
+        entry = {
+            "type": "AssistantMessage",
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ],
+        }
+        assert _filter_empty_text_entries([entry]) == [entry]
+
+    def test_keeps_non_assistant_message_types(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        entries = [
+            {"type": "UserMessage", "content": [{"type": "tool_result", "preview": ""}]},
+            {"type": "SystemMessage", "subtype": "init"},
+            {"type": "ResultMessage", "num_turns": 5},
+        ]
+        assert _filter_empty_text_entries(entries) == entries
+
+    def test_removes_empty_content_list(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        # AssistantMessage with no content blocks at all — treated as empty
+        entries = [{"type": "AssistantMessage", "content": []}]
+        assert _filter_empty_text_entries(entries) == []
+
+    def test_mixed_entries_filters_only_empty_text(self):
+        from switchboard.dashboard.api import _filter_empty_text_entries
+
+        empty_text = {"type": "AssistantMessage", "content": [{"type": "text", "text": ""}]}
+        real_text = {"type": "AssistantMessage", "content": [{"type": "text", "text": "doing work"}]}
+        tool_call = {
+            "type": "AssistantMessage",
+            "content": [{"type": "tool_use", "name": "Bash", "input": {}}],
+        }
+        system = {"type": "SystemMessage", "subtype": "init"}
+
+        result = _filter_empty_text_entries([empty_text, real_text, tool_call, system])
+        assert result == [real_text, tool_call, system]
