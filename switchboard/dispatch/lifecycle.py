@@ -1027,6 +1027,15 @@ def _gate_fail_reason(task: dict, **ctx: Any) -> str | None:
     return ctx.get("reason", "gate_failed")
 
 
+async def _finalize_attempt(task: dict, **ctx: Any) -> None:
+    """Close out the current attempt record with finished_at and outcome."""
+    attempt = task.get("current_attempt")
+    if not attempt:
+        return
+    outcome = task.get("reason") or ctx.get("_previous_status", "unknown")
+    await db.update_attempt(task["id"], attempt, finished_at=db.now_iso(), outcome=outcome)
+
+
 TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     # --- User-Initiated Actions -------------------------------------------
     ("ready", "dispatch"): TransitionDef(
@@ -1053,14 +1062,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("working", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
-        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
+        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect, _finalize_attempt],
         label="Stop",
         style="secondary",
         confirm=False,
     ),
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
-        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
+        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect, _finalize_attempt],
         # No label — Cancel not shown in dashboard for working state.
         # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
@@ -1069,7 +1078,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "stop"): TransitionDef(
         to_state="stopped",
         reason="paused_by_user",
-        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect],
+        side_effects=[_stop_cc_session, _stop_gate_subprocess, _post_stop_message, _drain_queue_effect, _finalize_attempt],
         label="Stop",
         style="secondary",
         confirm=False,
@@ -1077,14 +1086,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "skip_gate"): TransitionDef(
         to_state="completed",
         reason="gate_skipped",
-        side_effects=[_stop_gate_subprocess, _skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
+        side_effects=[_stop_gate_subprocess, _skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents, _finalize_attempt],
         label="Skip Gate",
         style="secondary",
         confirm=True,
     ),
     ("validating", "cancel"): TransitionDef(
         to_state="cancelled",
-        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect],
+        side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect, _finalize_attempt],
         # No label — Cancel not shown in dashboard for validating state.
         # User flow: Stop first → land in stopped → then Cancel if needed.
         style="danger",
@@ -1174,49 +1183,49 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="validating",
         label="Complete",
         user_action=False,
-        side_effects=[_on_sdk_complete],
+        side_effects=[_on_sdk_complete, _finalize_attempt],
     ),
     ("working", "exhaust_turns"): TransitionDef(
         to_state=_exhaust_turns_state,
         reason=_exhaust_turns_reason,
         label="Exhaust Turns",
         user_action=False,
-        side_effects=[_on_exhaust_turns],
+        side_effects=[_on_exhaust_turns, _finalize_attempt],
     ),
     ("working", "timeout"): TransitionDef(
         to_state="stopped",
         reason="wall_clock_timeout",
         label="Timeout",
         user_action=False,
-        side_effects=[_on_timeout],
+        side_effects=[_on_timeout, _finalize_attempt],
     ),
     ("working", "rate_limit"): TransitionDef(
         to_state="stopped",
         reason="rate_limited",
         label="Rate Limit",
         user_action=False,
-        side_effects=[_on_rate_limit],
+        side_effects=[_on_rate_limit, _finalize_attempt],
     ),
     ("working", "error"): TransitionDef(
         to_state="stopped",
         reason="dispatch_error",
         label="Error",
         user_action=False,
-        side_effects=[_on_error],
+        side_effects=[_on_error, _finalize_attempt],
     ),
     ("validating", "gate_pass"): TransitionDef(
         to_state="completed",
         reason="gate_passed",
         label="Gate Pass",
         user_action=False,
-        side_effects=[_on_gate_pass],
+        side_effects=[_on_gate_pass, _finalize_attempt],
     ),
     ("validating", "gate_fail"): TransitionDef(
         to_state="stopped",
         reason=_gate_fail_reason,
         label="Gate Fail",
         user_action=False,
-        side_effects=[_on_gate_fail],
+        side_effects=[_on_gate_fail, _finalize_attempt],
     ),
     ("validating", "gate_retry"): TransitionDef(
         to_state="working",
@@ -1237,14 +1246,14 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="working",
         label="Signal Kill",
         user_action=False,
-        side_effects=[_on_signal_kill],
+        side_effects=[_on_signal_kill, _finalize_attempt],
     ),
     # --- Recovery Actions -------------------------------------------------
     ("working", "recover_park"): TransitionDef(
         to_state="stopped",
         reason="recovery_pending",
         user_action=False,
-        side_effects=[_drain_queue_effect],
+        side_effects=[_drain_queue_effect, _finalize_attempt],
     ),
     ("stopped", "recover_park"): TransitionDef(
         to_state="stopped",
@@ -1266,12 +1275,12 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="stopped",
         reason="recovery_failed",
         user_action=False,
-        side_effects=[_recover_fail_post_message, _drain_queue_effect],
+        side_effects=[_recover_fail_post_message, _drain_queue_effect, _finalize_attempt],
     ),
     ("working", "recover_cancel"): TransitionDef(
         to_state="cancelled",
         user_action=False,
-        side_effects=[_revert_punchlist],
+        side_effects=[_revert_punchlist, _finalize_attempt],
     ),
     ("stopped", "recover_cancel"): TransitionDef(
         to_state="cancelled",

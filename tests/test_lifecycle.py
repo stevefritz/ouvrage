@@ -425,6 +425,75 @@ class TestExecuteValidTransitions:
 
 
 # ---------------------------------------------------------------------------
+# Attempt finalization
+# ---------------------------------------------------------------------------
+
+class TestAttemptFinalization:
+    """Transitions out of working/validating must finalize the current attempt."""
+
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db, mock_git, mock_sdk):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        await db.create_project(
+            id=PROJECT_ID,
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp/lifecycle-test",
+        )
+
+    async def _make_working_task(self, task_id, attempt=1):
+        task = await self.db.create_task(id=task_id, project_id=PROJECT_ID, goal="test")
+        await self.db.update_task(task_id, status="working", current_attempt=attempt)
+        await self.db.create_attempt(task_id, attempt)
+        return task
+
+    async def _get_attempt(self, task_id, attempt=1):
+        from switchboard.db.connection import get_db
+        async with get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM task_attempts WHERE task_id = ? AND attempt_number = ?",
+                (task_id, attempt),
+            )
+            return dict(rows[0]) if rows else None
+
+    async def test_error_finalizes_attempt(self):
+        await self._make_working_task("t/fin-1")
+        await self.lifecycle.execute("t/fin-1", "error")
+        attempt = await self._get_attempt("t/fin-1")
+        assert attempt["finished_at"] is not None
+        assert attempt["outcome"] == "dispatch_error"
+
+    async def test_stop_finalizes_attempt(self):
+        await self._make_working_task("t/fin-2")
+        await self.lifecycle.execute("t/fin-2", "stop")
+        attempt = await self._get_attempt("t/fin-2")
+        assert attempt["finished_at"] is not None
+        assert attempt["outcome"] == "paused_by_user"
+
+    async def test_timeout_finalizes_attempt(self):
+        await self._make_working_task("t/fin-3")
+        await self.lifecycle.execute("t/fin-3", "timeout")
+        attempt = await self._get_attempt("t/fin-3")
+        assert attempt["finished_at"] is not None
+        assert attempt["outcome"] == "wall_clock_timeout"
+
+    async def test_gate_pass_finalizes_attempt(self):
+        await self._make_working_task("t/fin-4")
+        await self.db.update_task("t/fin-4", status="validating")
+        await self.lifecycle.execute("t/fin-4", "gate_pass")
+        attempt = await self._get_attempt("t/fin-4")
+        assert attempt["finished_at"] is not None
+        assert attempt["outcome"] == "gate_passed"
+
+    async def test_gate_fail_finalizes_attempt(self):
+        await self._make_working_task("t/fin-5")
+        await self.db.update_task("t/fin-5", status="validating")
+        await self.lifecycle.execute("t/fin-5", "gate_fail")
+        attempt = await self._get_attempt("t/fin-5")
+        assert attempt["finished_at"] is not None
+
+
+# ---------------------------------------------------------------------------
 # execute() — illegal transitions
 # ---------------------------------------------------------------------------
 

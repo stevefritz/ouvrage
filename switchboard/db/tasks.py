@@ -576,8 +576,12 @@ async def get_task_status(task_id: str) -> dict:
 async def get_task_attempts(task_id: str) -> list[dict]:
     """Return messages grouped by attempt_number, each group with an outcome summary.
 
+    Outcome is read from task_attempts.outcome (set by the lifecycle state machine).
+    Falls back to message-based heuristic for attempts created before this was wired in.
+
     Outcome values: "in-progress", "success", "test-failure", "review-rejection",
-                    "wall-clock-timeout", "turns-exhausted", "error", "retried"
+                    "wall-clock-timeout", "turns-exhausted", "error", "retried",
+                    or any lifecycle reason (e.g. "dispatch_error", "paused_by_user")
     """
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT id FROM tasks WHERE id = ?", (task_id,))
@@ -591,6 +595,13 @@ async def get_task_attempts(task_id: str) -> list[dict]:
         )
         messages = [dict(r) for r in msg_rows]
 
+        # Load stored attempt outcomes
+        attempt_rows = await db.execute_fetchall(
+            "SELECT attempt_number, outcome, finished_at FROM task_attempts WHERE task_id = ?",
+            (task_id,),
+        )
+        stored_outcomes = {r["attempt_number"]: r for r in attempt_rows}
+
     # Group by attempt_number (default to 1 if NULL)
     groups: dict[int, list[dict]] = {}
     for msg in messages:
@@ -603,7 +614,14 @@ async def get_task_attempts(task_id: str) -> list[dict]:
     for attempt_num in sorted(groups.keys()):
         group_messages = groups[attempt_num]
         is_last = attempt_num == max_attempt
-        outcome = _determine_attempt_outcome(group_messages, is_last, attempt_num < max_attempt)
+
+        # Prefer stored outcome from task_attempts table
+        stored = stored_outcomes.get(attempt_num)
+        if stored and stored["outcome"]:
+            outcome = stored["outcome"]
+        else:
+            outcome = _determine_attempt_outcome(group_messages, is_last, attempt_num < max_attempt)
+
         result.append({
             "attempt_number": attempt_num,
             "messages": group_messages,
