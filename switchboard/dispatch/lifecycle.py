@@ -71,16 +71,9 @@ async def _close_archive_and_cleanup(task: dict, **ctx: Any) -> None:
     project = await db.get_project(task["project_id"])
     if project:
         await archive_task_logs(task, project, "close")
+        await cleanup_worktree(project, task, False)
 
-    cleanup = ctx.get("cleanup", True)
-    force_delete_branch = ctx.get("force_delete_branch", False)
-
-    update_fields: dict[str, Any] = {"gate_passed_at": None, "held": False}
-    if cleanup and project:
-        await cleanup_worktree(project, task, force_delete_branch)
-        update_fields["worktree_path"] = None
-
-    await db.update_task(task["id"], **update_fields)
+    await db.update_task(task["id"], gate_passed_at=None, held=False, worktree_path=None)
 
 
 async def _post_close_message(task: dict, **ctx: Any) -> None:
@@ -1093,7 +1086,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("ready", "cancel"): TransitionDef(
         to_state="cancelled",
         side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect],
-        label="Cancel",
+        label="Discard",
         style="danger",
         confirm=True,
     ),
@@ -1604,6 +1597,23 @@ class TaskLifecycle:
                     "style": tdef.style,
                     "confirm": tdef.confirm,
                 })
+
+        # For stopped state, combine cancel + close into a single compound end_task action
+        if effective == "stopped":
+            action_names = {a["name"] for a in actions}
+            if "cancel" in action_names and "close" in action_names:
+                actions = [a for a in actions if a["name"] not in ("cancel", "close")]
+                actions.append({
+                    "name": "end_task",
+                    "label": "End Task",
+                    "style": "compound",
+                    "confirm": None,
+                    "options": [
+                        {"action": "close", "label": "Complete", "description": "Mark as done. Work and branch preserved."},
+                        {"action": "cancel", "label": "Discard", "description": "Mark as unwanted. Removed from active view."},
+                    ],
+                })
+
         return actions
 
     async def get_state_label(self, task_id: str) -> dict:

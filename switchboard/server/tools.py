@@ -345,10 +345,7 @@ TASK_TOOLS = [
         description=(
             "Execute a lifecycle action on a task. "
             "Call get_task_status first to see available_actions for the current state.\n\n"
-            "Actions: resume, retry, reopen, start, stop, cancel, close, approve, skip_gate\n\n"
-            "options dict (action-specific):\n"
-            "  close: cleanup (bool, default true) — remove worktree; "
-            "force_delete_branch (bool, default false) — git branch -D"
+            "Actions: resume, retry, reopen, start, stop, cancel, close, approve, skip_gate"
         ),
         inputSchema={
             "type": "object",

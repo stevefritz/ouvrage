@@ -4,7 +4,7 @@ Covers:
 - Valid action dispatched to lifecycle
 - Invalid action (wrong state) returns error dict
 - Unknown action returns error dict
-- Options passthrough for close (cleanup, force_delete_branch)
+- Close action works through transition_task
 - available_actions included in get_task_status (slim + detail)
 """
 
@@ -87,33 +87,20 @@ class TestTransitionTaskHandler:
 
         assert "error" in result
 
-    async def test_options_passthrough_close(self, db, mock_git, mock_sdk):
-        """Options dict is passed through to lifecycle.execute for close action."""
+    async def test_close_via_transition(self, db, mock_git, mock_sdk):
+        """Close on a stopped task transitions to completed via transition_task."""
         from switchboard.server.handlers.tasks import _handle_transition_task
-        from switchboard.dispatch.lifecycle import lifecycle
 
-        task_id = f"{PROJECT_ID}/t-close-opts"
+        task_id = f"{PROJECT_ID}/t-close"
         await _seed(db, task_id, status="stopped")
 
-        captured_ctx = {}
-
-        original_execute = lifecycle.execute
-
-        async def capturing_execute(tid, action, **ctx):
-            if action == "close":
-                captured_ctx.update(ctx)
-            return await original_execute(tid, action, **ctx)
-
-        with patch.object(lifecycle, "execute", side_effect=capturing_execute):
-            result = await _handle_transition_task({
-                "task_id": task_id,
-                "action": "close",
-                "options": {"cleanup": False, "force_delete_branch": True},
-            })
+        result = await _handle_transition_task({
+            "task_id": task_id,
+            "action": "close",
+        })
 
         assert "error" not in result, f"Expected success, got error: {result}"
-        assert captured_ctx.get("cleanup") is False
-        assert captured_ctx.get("force_delete_branch") is True
+        assert result["status"] == "completed"
 
     async def test_unknown_action_returns_error(self, db, mock_git, mock_sdk):
         """A completely bogus action name returns an error dict, not an exception."""
