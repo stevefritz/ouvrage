@@ -346,11 +346,13 @@ class TestEncryption:
         with pytest.raises(ValueError, match="Anthropic API key"):
             await db.get_anthropic_key(user["id"])
 
-    async def test_get_github_pat_from_instance(self, db):
-        """get_github_pat falls back to instance.github_pat_encrypted."""
-        await db.set_instance_github_pat("ghp_instancetoken")
+    async def test_get_github_pat_from_instance_owner(self, db):
+        """get_github_pat falls back to instance owner's user_credentials.github_pat."""
+        user = await db.create_user(email="owner-pat@test.com", name="owner")
+        await db.update_user_credentials(user["id"], github_pat="ghp_ownertoken")
+        await db.update_instance(owner_user_id=user["id"])
         pat = await db.get_github_pat("nonexistent-project")
-        assert pat == "ghp_instancetoken"
+        assert pat == "ghp_ownertoken"
 
     async def test_get_github_pat_raises_if_not_configured(self, db):
         """get_github_pat raises ValueError when no PAT is found."""

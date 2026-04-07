@@ -63,7 +63,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
             "git", "-C", worktree_path, "merge", "--ff-only",
             f"origin/{branch}",
         )
-        await _engine.setup_credential_helper(worktree_path, task["project_id"])
+        await _engine.setup_credential_helper(worktree_path, task["project_id"], user_id=task.get("dispatched_by"))
         return worktree_path
 
     # Fetch so origin refs are current
@@ -105,7 +105,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
         content=f"Branch `{branch}` found on origin — checked out existing work.",
     )
 
-    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    await _engine.setup_credential_helper(worktree_path, task["project_id"], user_id=task.get("dispatched_by"))
     await _engine.run_setup_command(project, worktree_path)
 
     return worktree_path
@@ -135,7 +135,7 @@ async def setup_task_worktree(project: dict, task: dict) -> str:
     )
 
     # Configure credential helper so CC's direct git pushes use PAT auth
-    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    await _engine.setup_credential_helper(worktree_path, task["project_id"], user_id=task.get("dispatched_by"))
 
     # Run setup command
     await _engine.run_setup_command(project, worktree_path)

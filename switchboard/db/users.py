@@ -313,24 +313,35 @@ async def list_api_tokens(user_id: int) -> list[dict]:
 # Credential resolution — project override → user default → error
 # ---------------------------------------------------------------------------
 
-async def get_github_pat(project_id: str) -> str:
-    """Resolve GitHub PAT: project.github_pat_override → instance.github_pat_encrypted → error.
+async def get_github_pat(project_id: str, user_id: int | None = None) -> str:
+    """Resolve GitHub PAT: project override → user → instance owner → error.
 
     Decrypts the value before returning.
     """
     from switchboard.db.projects import get_project
     from switchboard.crypto import decrypt_value, is_fernet_token
 
+    # 1. Project-level override
     project = await get_project(project_id)
     if project and project.get("github_pat_override"):
         override = project["github_pat_override"]
         return decrypt_value(override) if is_fernet_token(override) else override
 
-    try:
-        return await get_instance_github_pat()
-    except ValueError:
-        pass
-    raise ValueError("No GitHub PAT configured. Add one in settings or on the project.")
+    # 2. Dispatching user's PAT
+    if user_id:
+        creds = await get_user_credentials(user_id)
+        if creds and creds.get("github_pat"):
+            return creds["github_pat"]  # already decrypted by get_user_credentials
+
+    # 3. Instance owner's PAT
+    instance = await get_instance()
+    owner_id = instance.get("owner_user_id") if instance else None
+    if owner_id and owner_id != user_id:
+        creds = await get_user_credentials(int(owner_id))
+        if creds and creds.get("github_pat"):
+            return creds["github_pat"]
+
+    raise ValueError("No GitHub PAT configured. Add one in Settings.")
 
 
 async def get_anthropic_key(user_id: int) -> str:

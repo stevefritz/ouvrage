@@ -180,17 +180,29 @@ class TestGetGithubPatResolution:
         pat = await db.get_github_pat("ppat-proj")
         assert pat == "ghp_projecttoken"
 
-    async def test_get_github_pat_falls_back_to_instance(self, db):
-        """get_github_pat falls back to instance PAT when project override is not set."""
+    async def test_get_github_pat_falls_back_to_user(self, db):
+        """get_github_pat falls back to user PAT when project override is not set."""
         await db.create_project(id="fallback-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
-        await db.set_instance_github_pat("ghp_instancetoken")
+        user = await db.create_user(email="pat@test.com", name="pat-user")
+        await db.update_user_credentials(user["id"], github_pat="ghp_usertoken")
 
-        pat = await db.get_github_pat("fallback-proj")
-        assert pat == "ghp_instancetoken"
+        pat = await db.get_github_pat("fallback-proj", user_id=user["id"])
+        assert pat == "ghp_usertoken"
 
-    async def test_get_github_pat_project_overrides_instance(self, db):
-        """Project PAT takes priority over instance PAT."""
-        await db.set_instance_github_pat("ghp_instancetoken")
+    async def test_get_github_pat_falls_back_to_instance_owner(self, db):
+        """get_github_pat falls back to instance owner's PAT."""
+        await db.create_project(id="fallback-owner", repo="https://github.com/org/r.git", working_dir="/work/r")
+        user = await db.create_user(email="owner-pat@test.com", name="owner")
+        await db.update_user_credentials(user["id"], github_pat="ghp_ownertoken")
+        await db.update_instance(owner_user_id=user["id"])
+
+        pat = await db.get_github_pat("fallback-owner")
+        assert pat == "ghp_ownertoken"
+
+    async def test_get_github_pat_project_overrides_user(self, db):
+        """Project PAT takes priority over user PAT."""
+        user = await db.create_user(email="proj-user@test.com", name="proj-user")
+        await db.update_user_credentials(user["id"], github_pat="ghp_usertoken")
         from switchboard.crypto import encrypt_value
         encrypted = encrypt_value("ghp_projectwins")
         await db.create_project(
@@ -200,7 +212,7 @@ class TestGetGithubPatResolution:
             github_pat_override=encrypted,
         )
 
-        pat = await db.get_github_pat("prio-proj")
+        pat = await db.get_github_pat("prio-proj", user_id=user["id"])
         assert pat == "ghp_projectwins"
 
     async def test_get_github_pat_raises_if_none_configured(self, db):

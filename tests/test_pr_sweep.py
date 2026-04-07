@@ -262,7 +262,7 @@ class TestPrStatusSweep:
 
         call_count = 0
 
-        async def _flaky_check(pr_url, project_id):
+        async def _flaky_check(pr_url, project_id, user_id=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

@@ -33,13 +33,13 @@ def _parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     return m.group("owner"), m.group("repo"), int(m.group("number"))
 
 
-async def _check_pr_status(pr_url: str, project_id: str) -> str:
+async def _check_pr_status(pr_url: str, project_id: str, user_id: int | None = None) -> str:
     """Call the GitHub API and return 'open', 'merged', or 'closed'.
 
     Raises on HTTP errors or invalid URLs.
     """
     owner, repo, pr_number = _parse_pr_url(pr_url)
-    pat = await get_github_pat(project_id)
+    pat = await get_github_pat(project_id, user_id=user_id)
 
     api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
     headers = {
@@ -109,7 +109,7 @@ async def _pr_status_sweep() -> None:
                 if not pr_url:
                     continue
                 project_id = task.get("project_id")
-                status = await _check_pr_status(pr_url, project_id)
+                status = await _check_pr_status(pr_url, project_id, user_id=task.get("dispatched_by"))
                 if status != task.get("pr_status"):
                     await db.update_task(task["id"], pr_status=status)
                     log.info(
