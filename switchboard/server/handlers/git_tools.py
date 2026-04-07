@@ -83,10 +83,20 @@ async def _handle_git_push(arguments: dict) -> dict:
     )
 
     if rc == 0:
-        # Update tracking refs so future `git log origin/branch..HEAD` works
-        await _run_as_worker(
-            "git", "-C", worktree, "fetch", "origin",
-        )
+        # Update tracking ref directly so future `git log origin/branch..HEAD` works.
+        # We can't use `git fetch origin` here because the remote URL is unauthenticated
+        # and would fail on private repos. Instead, update the ref in the bare repo directly.
+        # Worktrees share refs with the bare repo, so this is immediately visible.
+        bare_path = os.path.join(project["working_dir"], ".bare")
+        head_stdout, _, head_rc = await _run_as_worker(
+                "git", "-C", worktree, "rev-parse", "HEAD",
+            )
+        if head_rc == 0:
+            head_sha = head_stdout.decode().strip()
+            await _run_as_worker(
+                "git", "-C", bare_path, "update-ref",
+                f"refs/remotes/origin/{branch}", head_sha,
+            )
         return {"pushed": True, "branch": branch, "commits": num_commits}
 
     stderr_text = stderr.decode()
@@ -148,14 +158,8 @@ async def _handle_git_fetch(arguments: dict) -> dict:
             return {"fetched": False, "error": "fetch_failed",
                     "message": f"Fetch failed: {stderr.decode()[:1000]}"}
 
-        # Update worktree's view
-        _, stderr, rc = await _run_as_worker(
-            "git", "-C", worktree, "fetch", "origin", ref,
-        )
-        if rc != 0:
-            return {"fetched": False, "error": "fetch_failed",
-                    "message": f"Worktree fetch failed: {stderr.decode()[:1000]}"}
-
+        # No need to fetch in the worktree — worktrees share refs/remotes/origin/*
+        # with the bare repo, so the refs fetched above are immediately visible.
         return {"fetched": True, "ref": ref}
     else:
         # Fetch all into bare repo
@@ -167,12 +171,6 @@ async def _handle_git_fetch(arguments: dict) -> dict:
             return {"fetched": False, "error": "fetch_failed",
                     "message": f"Fetch failed: {stderr.decode()[:1000]}"}
 
-        # Update worktree
-        _, stderr, rc = await _run_as_worker(
-            "git", "-C", worktree, "fetch", "origin",
-        )
-        if rc != 0:
-            return {"fetched": False, "error": "fetch_failed",
-                    "message": f"Worktree fetch failed: {stderr.decode()[:1000]}"}
-
+        # No need to fetch in the worktree — worktrees share refs/remotes/origin/*
+        # with the bare repo, so the refs fetched above are immediately visible.
         return {"fetched": True, "ref": "all"}

@@ -53,12 +53,14 @@ class TestGitPush:
         # rev-parse returns task branch
         # log returns unpushed commits
         # push succeeds
-        # fetch origin succeeds
+        # rev-parse HEAD for tracking ref update
+        # update-ref succeeds
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),           # rev-parse --abbrev-ref HEAD
             (b"abc123 fix bug\ndef456 add test\n", b"", 0),  # log origin/branch..HEAD
             (b"", b"", 0),                       # push
-            (b"", b"", 0),                       # fetch origin (tracking ref update)
+            (b"abc123abc123abc123\n", b"", 0),   # rev-parse HEAD
+            (b"", b"", 0),                       # update-ref
         ]
 
         result = await _handle_git_push({"task_id": "proj/task1"})
@@ -142,11 +144,12 @@ class TestGitPush:
         from switchboard.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
-            (b"my-branch\n", b"", 0),            # rev-parse
+            (b"my-branch\n", b"", 0),            # rev-parse --abbrev-ref HEAD
             (b"", b"unknown revision", 128),     # log fails — no origin/branch
             (b"abc123 init\n", b"", 0),          # log -1 shows commits exist
             (b"", b"", 0),                       # push succeeds
-            (b"", b"", 0),                       # fetch origin
+            (b"abc123abc123abc123\n", b"", 0),   # rev-parse HEAD
+            (b"", b"", 0),                       # update-ref
         ]
 
         result = await _handle_git_push({"task_id": "proj/task1"})
@@ -204,9 +207,9 @@ class TestGitFetch:
         assert result["fetched"] is True
         assert result["ref"] == "main"
 
-        # Should have called fetch twice: bare repo + worktree
-        assert self.mock_run.await_count == 2
-        # First call: bare repo fetch with auth URL and specific refspec
+        # Only one call: bare repo fetch (worktrees share refs, no second fetch needed)
+        assert self.mock_run.await_count == 1
+        # Bare repo fetch with auth URL and specific refspec
         bare_call = self.mock_run.call_args_list[0]
         assert "+refs/heads/main:refs/remotes/origin/main" in bare_call[0]
 
@@ -219,9 +222,9 @@ class TestGitFetch:
         assert result["fetched"] is True
         assert result["ref"] == "all"
 
-        # Two calls: bare repo + worktree
-        assert self.mock_run.await_count == 2
-        # First call: bare repo fetch all
+        # Only one call: bare repo fetch (worktrees share refs, no second fetch needed)
+        assert self.mock_run.await_count == 1
+        # Bare repo fetch all
         bare_call = self.mock_run.call_args_list[0]
         assert "+refs/heads/*:refs/remotes/origin/*" in bare_call[0]
 
