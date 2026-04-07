@@ -1,6 +1,6 @@
 """
 Smoe gate test — intentional pipeline exercise.
-Attempt 1: contains a deliberately failing test.
+Attempt 2: intentional failure test removed, smelly code remains for reviewer to flag.
 """
 
 
@@ -26,7 +26,3 @@ def x(a, b, c, d):
 class TestSmoeGate:
     def test_smelly_function_returns_magic_number(self):
         assert x(1, 2, 3, 4) == 9999
-
-    def test_intentional_failure(self):
-        # This test is intentionally failing to exercise the test gate pipeline.
-        assert False, "Intentional failure: test gate, please catch me!"
