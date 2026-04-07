@@ -111,6 +111,25 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
     return worktree_path
 
 
+async def ensure_credential_helper(worktree_path: str, task: dict) -> None:
+    """Ensure the git credential helper file exists and is current.
+
+    Idempotent — overwrites the helper script with the latest PAT on every
+    working-state entry, regardless of whether the file already exists. This
+    handles:
+    - Tasks stopped before a PAT was configured (no file written initially)
+    - Tasks dispatched before the PAT resolution fix (stale/wrong file)
+    - Normal resume where the file is still valid (safe no-op overwrite)
+
+    Goes through the engine namespace so test patches on
+    ``switchboard.dispatch.engine.setup_credential_helper`` apply.
+    """
+    import switchboard.dispatch.engine as _engine
+    await _engine.setup_credential_helper(
+        worktree_path, task["project_id"], user_id=task.get("dispatched_by"),
+    )
+
+
 async def setup_task_worktree(project: dict, task: dict) -> str:
     """Create worktree, setup credentials, run setup_command. Returns worktree_path.
 
