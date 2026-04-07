@@ -492,3 +492,161 @@ class TestLaunchSdkSessionFork:
         mock_run.assert_called_once()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("fork_session_id") == "sess-to-fork"
+
+
+class TestGateRetryFresh:
+    """Gate-triggered retries should use fresh sessions (no fork).
+
+    User-triggered retries should still fork from the previous session.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _base_patches(self):
+        patches = [
+            patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
+            patch("switchboard.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
+            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+
+    async def _setup_retryable_task(self, db, task_suffix):
+        """Create a completed task with a previous session, ready for retry."""
+        task_id = f"test-project/{task_suffix}"
+        task = await db.create_task(
+            id=task_id,
+            project_id="test-project",
+            goal="Test gate retry fresh",
+        )
+        await db.update_task(task_id, status="completed", current_attempt=1,
+                             session_id="sess-prev")
+        await db.create_attempt(task_id, 1)
+        await db.update_attempt(task_id, 1, session_id="sess-prev")
+        return task_id
+
+    async def test_gate_retry_fresh_session(self, db, sample_project):
+        """Gate-triggered retry (test failure) should NOT fork — fresh session."""
+        task_id = await self._setup_retryable_task(db, "gate-fresh")
+
+        mock_launch = AsyncMock()
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
+        ):
+            await lifecycle.execute(task_id, "retry", triggered_by="gate",
+                                    source_detail="test failure auto-retry")
+
+        mock_launch.assert_called_once()
+        call_kwargs = mock_launch.call_args
+        assert call_kwargs.kwargs.get("fork_session_id") is None
+
+    async def test_review_retry_fresh_session(self, db, sample_project):
+        """Review-triggered retry should NOT fork — fresh session."""
+        task_id = await self._setup_retryable_task(db, "review-fresh")
+
+        mock_launch = AsyncMock()
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
+        ):
+            await lifecycle.execute(task_id, "retry", triggered_by="review",
+                                    source_detail="review rejection auto-retry")
+
+        mock_launch.assert_called_once()
+        call_kwargs = mock_launch.call_args
+        assert call_kwargs.kwargs.get("fork_session_id") is None
+
+    async def test_user_retry_still_forks(self, db, sample_project):
+        """User-triggered retry should still fork from previous session."""
+        task_id = await self._setup_retryable_task(db, "user-forks")
+
+        mock_launch = AsyncMock()
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
+        ):
+            await lifecycle.execute(task_id, "retry", triggered_by="user",
+                                    source_detail="retry_task")
+
+        mock_launch.assert_called_once()
+        call_kwargs = mock_launch.call_args
+        assert call_kwargs.kwargs.get("fork_session_id") == "sess-prev"
+
+    async def test_gate_retry_status_message_says_fresh(self, db, sample_project):
+        """Gate retry status message should say 'fresh session'."""
+        task_id = await self._setup_retryable_task(db, "gate-msg-fresh")
+
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", AsyncMock()),
+        ):
+            await lifecycle.execute(task_id, "retry", triggered_by="gate",
+                                    source_detail="test failure auto-retry")
+
+        # Read task messages and find the "Attempt N starting" message
+        thread = await db.read_task_messages(task_id)
+        messages = thread.get("messages", [])
+        attempt_msg = [m for m in messages if "Attempt" in (m.get("title") or "")
+                       and "starting" in (m.get("title") or "")]
+        assert len(attempt_msg) >= 1
+        assert "fresh session" in attempt_msg[-1]["content"]
+        assert "forked" not in attempt_msg[-1]["content"]
+
+    async def test_user_retry_status_message_says_forked(self, db, sample_project):
+        """User retry status message should say 'forked from previous session'."""
+        task_id = await self._setup_retryable_task(db, "user-msg-fork")
+
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        with (
+            patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
+            patch(f"{_INTERNALS}.launch_sdk_session", AsyncMock()),
+        ):
+            await lifecycle.execute(task_id, "retry", triggered_by="user",
+                                    source_detail="retry_task")
+
+        thread = await db.read_task_messages(task_id)
+        messages = thread.get("messages", [])
+        attempt_msg = [m for m in messages if "Attempt" in (m.get("title") or "")
+                       and "starting" in (m.get("title") or "")]
+        assert len(attempt_msg) >= 1
+        assert "forked from previous session" in attempt_msg[-1]["content"]
+
+    async def test_dispatch_log_fork_metadata(self, tmp_path):
+        """Dispatch log should record forked: true/false and fork_parent_session."""
+        from switchboard.dispatch.sdk_session import _write_dispatch_log
+
+        # Test with fork
+        log_dir = tmp_path / "forked"
+        log_dir.mkdir()
+        _write_dispatch_log(log_dir, "t/1", "sess-1", 200, 60, "/tmp/wt", False, "sonnet",
+                            forked=True, fork_parent_session="sess-parent")
+        content = (log_dir / "dispatch.log").read_text()
+        assert "forked: True" in content
+        assert "fork_parent_session: sess-parent" in content
+
+        # Test without fork (fresh)
+        log_dir2 = tmp_path / "fresh"
+        log_dir2.mkdir()
+        _write_dispatch_log(log_dir2, "t/2", "(new)", 200, 60, "/tmp/wt", False, "sonnet",
+                            forked=False, fork_parent_session=None)
+        content2 = (log_dir2 / "dispatch.log").read_text()
+        assert "forked: False" in content2
+        assert "fork_parent_session: None" in content2

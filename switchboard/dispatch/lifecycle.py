@@ -377,10 +377,20 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
 
     # Look up previous attempt's session_id for forking before incrementing
     current_attempt = task.get("current_attempt") or 1
-    fork_session_id = await db.get_previous_attempt_session_id(task_id, current_attempt + 1)
-    # Fallback: if no attempt record, use task-level session_id
-    if not fork_session_id:
-        fork_session_id = task.get("session_id")
+
+    # Gate-triggered retries (test failure, review rejection) default to fresh
+    # sessions — no fork. This ensures test output and review feedback in the
+    # prompt are never compacted away by SDK context summarisation on long tasks.
+    triggered_by = ctx.get("triggered_by", "")
+    gate_triggered = triggered_by in ("gate", "review")
+
+    if gate_triggered:
+        fork_session_id = None
+    else:
+        fork_session_id = await db.get_previous_attempt_session_id(task_id, current_attempt + 1)
+        # Fallback: if no attempt record, use task-level session_id
+        if not fork_session_id:
+            fork_session_id = task.get("session_id")
 
     # Increment attempt + clear gate state (keep session_id for reference)
     new_attempt = current_attempt + 1
