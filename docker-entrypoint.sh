@@ -6,6 +6,13 @@ set -euo pipefail
 chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
 
+# --- Uploads directory ---
+# Lives in /work so CC workers can read uploaded files directly.
+# Owned by service user (writes), group-readable by worker (reads).
+mkdir -p /work/.uploads
+chown switchboard-svc:switchboard /work/.uploads
+chmod 770 /work/.uploads
+
 # --- Master key resolution ---
 # Priority: Docker secret file (secure) > env var (bare metal) > generate + warn
 SECRET_FILE="/run/secrets/master_key"

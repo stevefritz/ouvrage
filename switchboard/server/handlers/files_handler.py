@@ -34,8 +34,8 @@ def _is_readable(filename: str) -> bool:
 
 
 def _uploads_dir() -> Path:
-    from switchboard.config.settings import DB_PATH
-    return Path(DB_PATH).parent / "uploads"
+    from switchboard.config.settings import UPLOADS_DIR
+    return Path(UPLOADS_DIR)
 
 
 async def _handle_list_files(arguments: dict) -> dict:

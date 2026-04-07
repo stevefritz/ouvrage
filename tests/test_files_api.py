@@ -119,17 +119,11 @@ def _upload_scope(filename: str, body: bytes, boundary: bytes, user_id: int = 1)
 
 @pytest.fixture(autouse=True)
 def tmp_uploads(tmp_path, monkeypatch):
-    """Redirect ~/uploads to a temp directory for all file tests."""
+    """Redirect uploads to a temp directory for all file tests."""
     uploads = tmp_path / "uploads"
     uploads.mkdir()
 
-    # Patch Path.home() to return tmp_path
-    original_home = Path.home
-
-    def fake_home():
-        return tmp_path
-
-    monkeypatch.setattr(Path, "home", staticmethod(fake_home))
+    monkeypatch.setattr("switchboard.config.settings.UPLOADS_DIR", str(uploads))
     yield uploads
     # Cleanup is automatic via tmp_path
 

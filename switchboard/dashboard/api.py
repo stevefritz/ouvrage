@@ -1706,9 +1706,9 @@ def _human_size(size_bytes: int) -> str:
 
 
 def _uploads_dir() -> Path:
-    """Return the uploads directory (inside data dir, not home)."""
-    from switchboard.config.settings import DB_PATH
-    return Path(DB_PATH).parent / "uploads"
+    """Return the uploads directory (worker-accessible, outside /data)."""
+    from switchboard.config.settings import UPLOADS_DIR
+    return Path(UPLOADS_DIR)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
