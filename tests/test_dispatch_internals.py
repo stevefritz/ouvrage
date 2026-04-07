@@ -44,7 +44,7 @@ class TestSetupTaskWorktree:
 
         assert result == "/tmp/fake-worktree"
         self.setup_worktree_mock.assert_awaited_once()
-        self.setup_cred_mock.assert_awaited_once_with("/tmp/fake-worktree", "test-project", user_id=None)
+        self.setup_cred_mock.assert_awaited_once_with("/tmp/fake-worktree", "test-project")
         self.run_setup_mock.assert_awaited_once_with(sample_project, "/tmp/fake-worktree")
 
     async def test_idempotent_reuses_worktree(self, db, sample_project):
