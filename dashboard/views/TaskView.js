@@ -928,23 +928,13 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, 
     const [expandedMsgs, setExpandedMsgs] = useState(new Set());
 
     const msgs = attempt.messages || [];
-    const outcome = attempt.outcome || 'in-progress';
+    const outcomeLabel = attempt.outcome_label || 'in progress';
+    const outcomeColor = attempt.outcome_color || colors.yellow;
 
-    const outcomeStyle = {
-        'in-progress':       { color: colors.yellow, label: 'in progress' },
-        'retried':           { color: colors.textTertiary, label: 'retried' },
-        'success':           { color: colors.green,  label: 'completed' },
-        'test-failure':      { color: colors.red,    label: 'tests failed' },
-        'review-rejection':  { color: colors.red,    label: 'review rejected' },
-        'failed':            { color: colors.red,    label: 'failed' },
-        'cancelled':         { color: colors.textTertiary, label: 'cancelled' },
-    };
-
-    // For non-latest attempts: show actual outcome if recorded (failed/success/etc.),
-    // fall back to 'retried' when outcome is missing or still shows in-progress
-    // (meaning the attempt was cut short before outcome could be recorded).
-    const effectiveOutcome = (!isLatest && outcome === 'in-progress') ? 'retried' : outcome;
-    const os = outcomeStyle[effectiveOutcome] || outcomeStyle['in-progress'];
+    // For non-latest attempts: if still showing "in progress" (legacy data), show "retried"
+    const effectiveLabel = (!isLatest && outcomeLabel === 'in progress') ? 'retried' : outcomeLabel;
+    const effectiveColor = (!isLatest && outcomeLabel === 'in progress') ? colors.textTertiary : outcomeColor;
+    const os = { label: effectiveLabel, color: effectiveColor };
 
     const toggleMsg = useCallback((msgId) => {
         setExpandedMsgs(prev => {

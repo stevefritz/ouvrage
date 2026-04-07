@@ -622,10 +622,16 @@ async def get_task_attempts(task_id: str) -> list[dict]:
         else:
             outcome = _determine_attempt_outcome(group_messages, is_last, attempt_num < max_attempt)
 
+        # Resolve display label/color from lifecycle
+        from switchboard.dispatch.lifecycle import get_outcome_definition
+        outcome_def = get_outcome_definition(outcome)
+
         result.append({
             "attempt_number": attempt_num,
             "messages": group_messages,
             "outcome": outcome,
+            "outcome_label": outcome_def["label"],
+            "outcome_color": outcome_def["color"],
         })
 
     return result

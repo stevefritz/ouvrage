@@ -1027,6 +1027,44 @@ def _gate_fail_reason(task: dict, **ctx: Any) -> str | None:
     return ctx.get("reason", "gate_failed")
 
 
+OUTCOME_DEFINITIONS = {
+    # Lifecycle reasons (stored in task_attempts.outcome)
+    "gate_passed": {"label": "completed", "color": "#22c55e"},
+    "gate_skipped": {"label": "completed", "color": "#22c55e"},
+    "paused_by_user": {"label": "stopped", "color": "#6b7280"},
+    "dispatch_error": {"label": "failed", "color": "#ef4444"},
+    "wall_clock_timeout": {"label": "timeout", "color": "#ef4444"},
+    "rate_limited": {"label": "rate-limited", "color": "#eab308"},
+    "turns_exhausted": {"label": "turns-exhausted", "color": "#eab308"},
+    "recovery_pending": {"label": "stopped", "color": "#6b7280"},
+    "recovery_failed": {"label": "failed", "color": "#ef4444"},
+    # Legacy heuristic outcomes (from _determine_attempt_outcome)
+    "in-progress": {"label": "in progress", "color": "#eab308"},
+    "retried": {"label": "retried", "color": "#6b7280"},
+    "success": {"label": "completed", "color": "#22c55e"},
+    "test-failure": {"label": "tests failed", "color": "#ef4444"},
+    "review-rejection": {"label": "review rejected", "color": "#ef4444"},
+    "error": {"label": "failed", "color": "#ef4444"},
+    "failed": {"label": "failed", "color": "#ef4444"},
+    "cancelled": {"label": "cancelled", "color": "#6b7280"},
+}
+
+_OUTCOME_FALLBACK = {"label": "unknown", "color": "#6b7280"}
+
+
+def get_outcome_definition(reason: str) -> dict:
+    """Return display label and color for an attempt outcome reason."""
+    return OUTCOME_DEFINITIONS.get(reason, _OUTCOME_FALLBACK)
+
+
+async def _reopen_attempt(task: dict, **ctx: Any) -> None:
+    """Clear finished_at and outcome on the current attempt (resume/gate_retry)."""
+    attempt = task.get("current_attempt")
+    if not attempt:
+        return
+    await db.update_attempt(task["id"], attempt, finished_at=None, outcome=None)
+
+
 async def _finalize_attempt(task: dict, **ctx: Any) -> None:
     """Close out the current attempt record with finished_at and outcome."""
     attempt = task.get("current_attempt")
@@ -1104,7 +1142,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         label="Resume",
         style="primary",
         preconditions=[_reject_awaiting_feedback, _require_session_or_gate_resumable],
-        side_effects=[_resume_launch_session],
+        side_effects=[_reopen_attempt, _resume_launch_session],
     ),
     ("stopped", "retry"): TransitionDef(
         to_state="working",
@@ -1169,7 +1207,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         label="Resume",
         style="primary",
         preconditions=[_require_session_id],
-        side_effects=[_resume_launch_session],
+        side_effects=[_reopen_attempt, _resume_launch_session],
     ),
     ("stopped", "cancel_reopen"): TransitionDef(
         to_state="completed",
@@ -1231,6 +1269,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="working",
         label="Gate Retry",
         user_action=False,
+        side_effects=[_reopen_attempt],
     ),
     ("validating", "retry"): TransitionDef(
         to_state="working",
@@ -1240,13 +1279,13 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "resume"): TransitionDef(
         to_state="working",
         user_action=False,
-        side_effects=[_resume_launch_session],
+        side_effects=[_reopen_attempt, _resume_launch_session],
     ),
     ("working", "signal_kill"): TransitionDef(
         to_state="working",
         label="Signal Kill",
         user_action=False,
-        side_effects=[_on_signal_kill, _finalize_attempt],
+        side_effects=[_on_signal_kill],
     ),
     # --- Recovery Actions -------------------------------------------------
     ("working", "recover_park"): TransitionDef(
