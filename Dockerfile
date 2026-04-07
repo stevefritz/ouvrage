@@ -38,7 +38,9 @@ RUN groupadd -g 999 switchboard \
     && useradd -u 999 -g switchboard -m -s /bin/bash switchboard
 
 # Service user: runs the app (needs CAP_SETUID to spawn workers)
-RUN useradd -r -g switchboard -s /usr/sbin/nologin switchboard-svc
+# svc-only group gives switchboard-svc read access to /app without exposing it to the worker user
+RUN groupadd -r svc-only \
+    && useradd -r -g switchboard -G svc-only -s /usr/sbin/nologin switchboard-svc
 
 # --- App install ---
 WORKDIR /app
@@ -49,6 +51,12 @@ COPY dashboard/ dashboard/
 COPY foreman.html ./
 
 RUN pip install --no-cache-dir ".[dev]" sqlite-vec
+
+# Lock down /app — only root and svc-only group (switchboard-svc) can read.
+# Worker user (switchboard) cannot access the codebase or DB schema.
+RUN chown -R root:svc-only /app/ \
+    && find /app -type d -exec chmod 750 {} + \
+    && find /app -type f -exec chmod 640 {} +
 
 # --- Playwright (optional, for visual verification) ---
 # Higher-tier plans get Chromium so CC workers can screenshot pages and verify UI.

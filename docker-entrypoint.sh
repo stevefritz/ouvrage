@@ -6,6 +6,13 @@ set -euo pipefail
 chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
 
+# --- Uploads directory ---
+# Lives in /work so CC workers can read uploaded files directly.
+# Owned by service user (writes), group-readable by worker (reads).
+mkdir -p /work/.uploads
+chown switchboard-svc:switchboard /work/.uploads
+chmod 770 /work/.uploads
+
 # --- Master key resolution ---
 # Priority: Docker secret file (secure) > env var (bare metal) > generate + warn
 SECRET_FILE="/run/secrets/master_key"
@@ -77,6 +84,12 @@ fi
 
 # --- Fix /data ownership after any file creation above ---
 chown -R switchboard-svc:switchboard /data
+
+# --- Lock down /data from worker user ---
+# Worker (switchboard) is in group switchboard, but /data should only be
+# accessible to the service user. Remove group/other permissions entirely.
+chmod 700 /data
+find /data -type f -exec chmod 600 {} +
 
 # --- Grant capabilities to Python so they survive the user drop ---
 # setuid/setgid/kill needed for spawning CC workers as the switchboard user

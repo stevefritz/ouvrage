@@ -871,7 +871,38 @@ async def init_db():
 
         await conn.commit()
 
-    # Ensure uploads/ directory exists for file storage (inside data dir)
-    from switchboard.config.settings import DB_PATH
-    uploads_dir = Path(DB_PATH).parent / "uploads"
+    # Ensure uploads directory exists (worker-accessible, outside /data)
+    from switchboard.config.settings import UPLOADS_DIR, DB_PATH
+    import logging as _logging_uploads
+    import shutil
+    _uploads_log = _logging_uploads.getLogger(__name__)
+
+    uploads_dir = Path(UPLOADS_DIR)
     uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Migrate uploads from old location (/data/uploads/) if present
+    old_uploads = Path(DB_PATH).parent / "uploads"
+    if old_uploads.exists() and old_uploads.resolve() != uploads_dir.resolve():
+        async with get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT id, stored_path FROM files WHERE stored_path LIKE ?",
+                (str(old_uploads) + "%",),
+            )
+            for row in rows:
+                old_path = Path(row["stored_path"])
+                new_path = uploads_dir / old_path.relative_to(old_uploads)
+                if old_path.exists():
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(old_path), str(new_path))
+                await conn.execute(
+                    "UPDATE files SET stored_path = ? WHERE id = ?",
+                    (str(new_path), row["id"]),
+                )
+            if rows:
+                await conn.commit()
+                _uploads_log.info("Migrated %d files from %s to %s", len(rows), old_uploads, uploads_dir)
+        # Clean up empty old directory
+        try:
+            shutil.rmtree(str(old_uploads))
+        except OSError:
+            pass
