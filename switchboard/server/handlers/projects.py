@@ -199,12 +199,14 @@ async def _handle_delete_project(arguments):
     if not project:
         return {"error": f"Project '{project_id}' not found"}
 
-    # Check for active (working) tasks
-    working_tasks = await db.list_tasks(project_id=project_id, status="working")
-    if working_tasks:
-        task_ids = [t["id"] for t in working_tasks]
+    # Check for active tasks (working or validating)
+    active_tasks = []
+    for active_status in ("working", "validating"):
+        active_tasks.extend(await db.list_tasks(project_id=project_id, status=active_status))
+    if active_tasks:
+        task_ids = [t["id"] for t in active_tasks]
         return {
-            "error": f"Cannot delete project '{project_id}' — {len(working_tasks)} task(s) are still working: {', '.join(task_ids)}. "
+            "error": f"Cannot delete project '{project_id}' — {len(active_tasks)} task(s) are still working or validating: {', '.join(task_ids)}. "
                      "Cancel or wait for them to finish first."
         }
 
