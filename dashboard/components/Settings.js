@@ -157,31 +157,36 @@ function GitHubCard({ github, onSaved }) {
     const maskedValue = (!editing && github.pat_last4) ? `····${github.pat_last4}` : undefined;
 
     const editForm = html`
-        <div style=${{ display: 'flex', gap: '8px' }}>
-            <input type="password"
-                style=${styles.input}
-                placeholder="ghp_xxxxxxxxxxxx"
-                value=${pat}
-                onInput=${(e) => setPat(e.target.value)}
-                onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
-            <button
-                style=${{
-                    ...styles.buttonPrimary,
-                    opacity: (saving || !pat.trim()) ? 0.5 : 1,
-                    cursor: (saving || !pat.trim()) ? 'not-allowed' : 'pointer',
-                    whiteSpace: 'nowrap',
-                }}
-                onClick=${handleSave}
-                disabled=${saving || !pat.trim()}>
-                ${saving ? 'Saving…' : (github.pat_last4 ? 'Update' : 'Connect')}
-            </button>
-            ${github.pat_last4 && html`
+        <div>
+            <div style=${{ display: 'flex', gap: '8px' }}>
+                <input type="password"
+                    style=${styles.input}
+                    placeholder="ghp_xxxxxxxxxxxx"
+                    value=${pat}
+                    onInput=${(e) => setPat(e.target.value)}
+                    onKeyDown=${(e) => e.key === 'Enter' && handleSave()} />
                 <button
-                    style=${styles.button}
-                    onClick=${() => { setEditing(false); setPat(''); setFeedback(null); }}>
-                    Cancel
+                    style=${{
+                        ...styles.buttonPrimary,
+                        opacity: (saving || !pat.trim()) ? 0.5 : 1,
+                        cursor: (saving || !pat.trim()) ? 'not-allowed' : 'pointer',
+                        whiteSpace: 'nowrap',
+                    }}
+                    onClick=${handleSave}
+                    disabled=${saving || !pat.trim()}>
+                    ${saving ? 'Saving…' : (github.pat_last4 ? 'Update' : 'Connect')}
                 </button>
-            `}
+                ${github.pat_last4 && html`
+                    <button
+                        style=${styles.button}
+                        onClick=${() => { setEditing(false); setPat(''); setFeedback(null); }}>
+                        Cancel
+                    </button>
+                `}
+            </div>
+            <div style=${{ fontSize: '11px', color: colors.textTertiary, marginTop: '6px' }}>
+                Required scopes: repo (full control of private repositories)
+            </div>
         </div>
     `;
 
@@ -211,7 +216,7 @@ function GitHubCard({ github, onSaved }) {
 // Setup banner — shown when credentials are missing
 // ══════════════════════════════════════════════════════════════════════════
 
-const DOCS_URL = 'https://docs.ouvrage.dev/connect';
+const DOCS_URL = 'https://ouvrage.build/docs/getting-started';
 
 function SetupBanner({ anthropic, github }) {
     if (!anthropic || !github) return null;
@@ -1117,7 +1122,7 @@ export function Settings() {
                     ${instanceSettings && html`
                         <${GitHubCard}
                             github=${instanceSettings.github}
-                            onSaved=${loadInstanceSettings}
+                            onSaved=${async () => { await loadInstanceSettings(); await loadUserSettings(); }}
                         />
                         <${OAuthCard}
                             oauth=${instanceSettings.oauth}
