@@ -272,6 +272,20 @@
       },
       "wait_ms": 2000
     },
+    "task-end-task-dialog": {
+      "url": "/dashboard#/task/fix-auth-bug",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/fix-auth-bug/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/fix-auth-bug/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/fix-auth-bug/actions": "fixtures/visual/task-stopped-actions.json",
+        "/dashboard/api/tasks/fix-auth-bug": "fixtures/visual/task-stopped-task.json",
+        "/dashboard/api/system": "fixtures/visual/task-detail-system.json"
+      },
+      "wait_ms": 2000,
+      "click": ["text=End Task"],
+      "wait_after_clicks_ms": 500
+    },
     "task-completed-actions": {
       "url": "/dashboard#/task/add-dark-mode",
       "viewport": { "width": 1280, "height": 900 },

@@ -436,7 +436,7 @@ const ACTION_TOOLTIPS = {
     retry:             'Start a fresh CC session. Previous context is lost.',
     reopen:            'Set to reopened. Post feedback, then click Start.',
     start:             'Dispatch CC with feedback as revision instructions.',
-    close:             'Destroy worktree and delete branch. Permanent.',
+    end_task:          'Complete or discard this task.',
     'skip-gate':       'Manually mark gate as passed, bypassing validation.',
     'advance-chain':   'Dispatch dependent tasks in the chain.',
     'release-worktree':'Detach worktree without closing. Frees disk space.',
@@ -471,8 +471,14 @@ function ActionToolbar({ task, chain, apiActions, onAction }) {
     // API-driven buttons (from /actions endpoint)
     if (apiActions) {
         for (const action of apiActions) {
-            const coloring = STYLE_COLORS[action.style] || STYLE_COLORS.secondary;
-            actions.push(btn(action.name, action.label, coloring.bg, coloring.fg, action.confirm));
+            if (action.style === 'compound') {
+                // Compound actions (e.g. end_task) — use secondary styling, always show dialog
+                const coloring = STYLE_COLORS.secondary;
+                actions.push(btn(action.name, action.label, coloring.bg, coloring.fg, true));
+            } else {
+                const coloring = STYLE_COLORS[action.style] || STYLE_COLORS.secondary;
+                actions.push(btn(action.name, action.label, coloring.bg, coloring.fg, action.confirm));
+            }
         }
     }
 
@@ -1839,7 +1845,6 @@ const CONFIRM_TEXT = {
     cancel: { title: 'Cancel Task', body: 'Kill the running CC process? Code changes preserved.' },
     retry: { title: 'Retry Task', body: 'Start a fresh CC session? Previous context will be lost.' },
     resume: { title: 'Resume Session', body: 'Continue the existing CC session with full history?' },
-    close: { title: 'Close Task', body: 'Destroy worktree and delete branch? Cannot be undone.' },
     reopen: { title: 'Reopen Task', body: 'Reopen for revisions? Post feedback then click Start.' },
     'cancel-reopen': { title: 'Cancel Re-open', body: 'Discard re-open and return task to completed state?' },
     'skip-gate': { title: 'Skip Gate', body: 'Manually mark gate as passed, bypassing validation?' },
@@ -1890,6 +1895,74 @@ function ConfirmOverlay({ action, onConfirm, onCancel }) {
                         fontFamily: typography.fontBody, fontSize: typography.size.sm,
                         fontWeight: typography.weight.medium,
                     }}>${cfg.title}</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+
+// ── End Task Dialog (compound action) ──────────────────────
+
+function EndTaskOverlay({ options, onSelect, onCancel }) {
+    const [selected, setSelected] = useState(options[0]?.action || null);
+
+    return html`
+        <div onClick=${onCancel} style=${{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+        }}>
+            <div onClick=${e => e.stopPropagation()} style=${{
+                background: colors.surface, border: `1px solid ${colors.border}`,
+                borderRadius: layout.borderRadius.lg,
+                padding: '24px', maxWidth: '400px', width: '90%',
+            }}>
+                <h3 style=${{
+                    fontFamily: typography.fontBody, fontSize: typography.size.lg,
+                    fontWeight: typography.weight.semibold, color: colors.text,
+                    margin: '0 0 16px',
+                }}>End Task</h3>
+                <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                    ${options.map(opt => html`
+                        <label key=${opt.action} onClick=${() => setSelected(opt.action)} style=${{
+                            display: 'flex', alignItems: 'flex-start', gap: '10px',
+                            padding: '10px 12px', borderRadius: layout.borderRadius.sm,
+                            border: `1px solid ${selected === opt.action ? colors.accent : colors.border}`,
+                            background: selected === opt.action ? 'rgba(99,102,241,0.08)' : 'transparent',
+                            cursor: 'pointer', transition: 'border-color 120ms, background 120ms',
+                        }}>
+                            <input type="radio" name="end_task_option" checked=${selected === opt.action}
+                                onChange=${() => setSelected(opt.action)}
+                                style=${{ marginTop: '2px', accentColor: colors.accent }} />
+                            <div>
+                                <div style=${{
+                                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                                    fontWeight: typography.weight.semibold, color: colors.text,
+                                }}>${opt.label}</div>
+                                <div style=${{
+                                    fontFamily: typography.fontBody, fontSize: typography.size.xs,
+                                    color: colors.textSecondary, marginTop: '2px',
+                                    lineHeight: typography.lineHeight.normal,
+                                }}>${opt.description}</div>
+                            </div>
+                        </label>
+                    `)}
+                </div>
+                <div style=${{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button onClick=${onCancel} style=${{
+                        padding: '6px 16px', borderRadius: layout.borderRadius.sm,
+                        background: colors.surface, border: `1px solid ${colors.border}`,
+                        color: colors.textSecondary, cursor: 'pointer',
+                        fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                    }}>Cancel</button>
+                    <button onClick=${() => onSelect(selected)} style=${{
+                        padding: '6px 16px', borderRadius: layout.borderRadius.sm,
+                        background: colors.accent, border: 'none',
+                        color: '#fff', cursor: 'pointer',
+                        fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                        fontWeight: typography.weight.medium,
+                    }}>Confirm</button>
                 </div>
             </div>
         </div>
@@ -2377,6 +2450,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [chain, setChain] = useState(null);
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
+    const [endTaskOptions, setEndTaskOptions] = useState(null);
     const [showStartOverlay, setShowStartOverlay] = useState(false);
     const [showEditPanel, setShowEditPanel] = useState(false);
     const [taskActions, setTaskActions] = useState(null);
@@ -2558,6 +2632,10 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const handleAction = useCallback(async (action, taskId, needsConfirm = true) => {
         if (action === 'start') {
             setShowStartOverlay(true);
+        } else if (action === 'end_task') {
+            // Compound action — find options from apiActions and show EndTaskOverlay
+            const compound = taskActions?.find(a => a.name === 'end_task');
+            if (compound?.options) setEndTaskOptions(compound.options);
         } else if (!needsConfirm) {
             // Execute immediately without confirmation dialog
             try {
@@ -2570,7 +2648,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         } else {
             setConfirmAction(action);
         }
-    }, [id, resolveAction, loadTask, loadAttempts, loadActions]);
+    }, [id, resolveAction, loadTask, loadAttempts, loadActions, taskActions]);
 
     const executeAction = useCallback(async () => {
         if (!confirmAction || !task) return;
@@ -2595,6 +2673,17 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             console.error('Start action error:', e);
         }
     }, [id, loadTask, loadAttempts, loadActions]);
+
+    const executeEndTask = useCallback(async (selectedAction) => {
+        setEndTaskOptions(null);
+        try {
+            const fn = resolveAction(selectedAction);
+            if (fn) await fn();
+            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
+        } catch (e) {
+            console.error('End task action error:', e);
+        }
+    }, [resolveAction, loadTask, loadAttempts, loadActions]);
 
     // Loading state
     if (error) {
@@ -2883,6 +2972,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 </a>
 
                 <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
+                ${endTaskOptions && html`<${EndTaskOverlay} options=${endTaskOptions} onSelect=${executeEndTask} onCancel=${() => setEndTaskOptions(null)} />`}
             </div>
         `;
     }
@@ -2960,6 +3050,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${DetailsDrawer} task=${task} />
 
             <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
+            ${endTaskOptions && html`<${EndTaskOverlay} options=${endTaskOptions} onSelect=${executeEndTask} onCancel=${() => setEndTaskOptions(null)} />`}
 
             ${showEditPanel ? html`
                 <${EditTaskPanel}

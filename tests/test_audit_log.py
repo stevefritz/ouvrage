@@ -358,7 +358,7 @@ class TestAuditTriggeredBy:
         await self.db.update_task("trig-proj/close-test", status="needs-review")
 
         with patch("switchboard.dispatch.lifecycle._close_archive_and_cleanup", new_callable=AsyncMock):
-            await close_task("trig-proj/close-test", cleanup=False)
+            await close_task("trig-proj/close-test")
 
         logs = await self.db.get_audit_log("trig-proj/close-test")
         close_logs = [l for l in logs if l["action"] == "close"]

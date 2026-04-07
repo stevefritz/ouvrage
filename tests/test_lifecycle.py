@@ -695,8 +695,9 @@ class TestGetAvailableActions:
         # skip_gate: filtered (not a gate failure reason)
         # recover: filtered (user_action=False)
         assert "retry" in names
-        assert "cancel" in names
-        assert "close" in names
+        assert "end_task" in names  # compound action replaces cancel + close
+        assert "cancel" not in names
+        assert "close" not in names
         assert "resume" not in names
         assert "start" not in names
         assert "skip_gate" not in names
@@ -1433,8 +1434,9 @@ class TestActionsFiltered:
         names = await self._names("f/s1")
         assert "resume" in names
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
         assert "start" not in names
 
@@ -1444,8 +1446,9 @@ class TestActionsFiltered:
         names = await self._names("f/s2")
         assert "resume" in names
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
 
     async def test_stopped_rate_limited_with_session(self):
@@ -1454,8 +1457,9 @@ class TestActionsFiltered:
         names = await self._names("f/s3")
         assert "resume" in names
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
 
     # stopped — gate failure reasons → skip_gate appears
     async def test_stopped_max_test_retries(self):
@@ -1463,8 +1467,9 @@ class TestActionsFiltered:
         names = await self._names("f/s4")
         assert "retry" in names
         assert "skip_gate" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "resume" not in names
 
     async def test_stopped_max_review_retries(self):
@@ -1472,38 +1477,43 @@ class TestActionsFiltered:
         names = await self._names("f/s5")
         assert "skip_gate" in names
         assert "retry" in names
-        assert "close" in names
+        assert "end_task" in names
+        assert "close" not in names
 
     async def test_stopped_review_stalled(self):
         await self._make("f/s6", status="stopped", reason="review_stalled")
         names = await self._names("f/s6")
         assert "skip_gate" in names
         assert "retry" in names
-        assert "close" in names
+        assert "end_task" in names
+        assert "close" not in names
 
     # stopped — dispatch_error / push_failed / worktree_missing → no skip_gate
     async def test_stopped_dispatch_error(self):
         await self._make("f/s7", status="stopped", reason="dispatch_error")
         names = await self._names("f/s7")
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
 
     async def test_stopped_push_failed(self):
         await self._make("f/s8", status="stopped", reason="push_failed")
         names = await self._names("f/s8")
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
 
     async def test_stopped_worktree_missing(self):
         await self._make("f/s11", status="stopped", reason="worktree_missing")
         names = await self._names("f/s11")
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
         assert "resume" not in names
 
@@ -1516,13 +1526,14 @@ class TestActionsFiltered:
         assert "close" not in names
         assert "resume" not in names
 
-    # stopped — recovery_limit → retry, close, cancel (no skip_gate)
+    # stopped — recovery_limit → retry, end_task (no skip_gate)
     async def test_stopped_recovery_limit(self):
         await self._make("f/s10", status="stopped", reason="recovery_limit")
         names = await self._names("f/s10")
         assert "retry" in names
-        assert "close" in names
-        assert "cancel" in names
+        assert "end_task" in names
+        assert "close" not in names
+        assert "cancel" not in names
         assert "skip_gate" not in names
 
     # completed
@@ -1558,9 +1569,25 @@ class TestActionsFiltered:
         by_name = {a["name"]: a for a in actions}
         assert by_name["resume"]["confirm"] is False
         assert by_name["retry"]["confirm"] is False
-        # Cancel and close should require confirmation
-        assert by_name["cancel"]["confirm"] is True
-        assert by_name["close"]["confirm"] is True
+        # end_task compound action has confirm=None (uses its own dialog)
+        assert by_name["end_task"]["confirm"] is None
+
+    # Compound end_task structure
+    async def test_stopped_end_task_compound_structure(self):
+        """end_task compound action has correct structure with options."""
+        await self._make("f/et1", status="stopped", reason="paused_by_user")
+        actions = await self.lifecycle.get_available_actions("f/et1")
+        end_task = next(a for a in actions if a["name"] == "end_task")
+        assert end_task["label"] == "End Task"
+        assert end_task["style"] == "compound"
+        assert end_task["confirm"] is None
+        assert len(end_task["options"]) == 2
+        close_opt = next(o for o in end_task["options"] if o["action"] == "close")
+        cancel_opt = next(o for o in end_task["options"] if o["action"] == "cancel")
+        assert close_opt["label"] == "Complete"
+        assert close_opt["description"] == "Mark as done. Work and branch preserved."
+        assert cancel_opt["label"] == "Discard"
+        assert cancel_opt["description"] == "Mark as unwanted. Removed from active view."
 
     # System actions never appear
     async def test_no_system_actions_in_working(self):

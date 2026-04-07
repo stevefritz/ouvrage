@@ -936,7 +936,7 @@ async def approve_task(task_id: str) -> dict:
     )
 
 
-async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bool = False) -> dict:
+async def close_task(task_id: str) -> dict:
     """Close a task through the lifecycle service.
 
     Precondition (reject working), status transition to completed(manually_closed),
@@ -946,10 +946,9 @@ async def close_task(task_id: str, cleanup: bool = True, force_delete_branch: bo
     from switchboard.dispatch.lifecycle import lifecycle
     result = await lifecycle.execute(
         task_id, "close",
-        cleanup=cleanup, force_delete_branch=force_delete_branch,
         triggered_by="user", source_detail="close_task (manual close)",
     )
-    return {"task_id": task_id, "status": "completed", "cleaned_up": cleanup, "manually_closed": True}
+    return {"task_id": task_id, "status": "completed", "manually_closed": True}
 
 
 # ---------------------------------------------------------------------------
