@@ -617,7 +617,10 @@ async def get_task_attempts(task_id: str) -> list[dict]:
 
         # Prefer stored outcome from task_attempts table
         stored = stored_outcomes.get(attempt_num)
-        if stored and stored["outcome"]:
+        if stored and not stored["finished_at"]:
+            # Attempt still open (not finished) — it's in progress
+            outcome = "in-progress"
+        elif stored and stored["outcome"]:
             outcome = stored["outcome"]
         else:
             outcome = _determine_attempt_outcome(group_messages, is_last, attempt_num < max_attempt)
