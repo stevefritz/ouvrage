@@ -1261,7 +1261,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         reason="completed",
         label="Complete",
         user_action=False,
-        side_effects=[_on_sdk_complete, _finalize_attempt],
+        side_effects=[_on_sdk_complete],
     ),
     ("working", "exhaust_turns"): TransitionDef(
         to_state=_exhaust_turns_state,
