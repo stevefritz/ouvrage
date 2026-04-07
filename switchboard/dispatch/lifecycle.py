@@ -1040,6 +1040,11 @@ OUTCOME_DEFINITIONS = {
     "error": {"label": "failed", "color": "#ef4444"},
     "failed": {"label": "failed", "color": "#ef4444"},
     "cancelled": {"label": "cancelled", "color": "#6b7280"},
+    "completed": {"label": "Completed", "color": "#10b981"},
+    "max_test_retries": {"label": "Tests Failed", "color": "#ef4444"},
+    "max_review_retries": {"label": "Review Rejected", "color": "#ef4444"},
+    "review_stalled": {"label": "Review Stalled", "color": "#ef4444"},
+    "gate_failed": {"label": "Failed", "color": "#ef4444"},
 }
 
 _OUTCOME_FALLBACK = {"label": "unknown", "color": "#6b7280"}
@@ -1100,6 +1105,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
+        reason="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect, _finalize_attempt],
         # No label — Cancel not shown in dashboard for working state.
         # User flow: Stop first → land in stopped → then Cancel if needed.
@@ -1124,6 +1130,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("validating", "cancel"): TransitionDef(
         to_state="cancelled",
+        reason="cancelled",
         side_effects=[_cancel_running_process, _revert_punchlist, _clear_held_flag, _drain_queue_effect, _finalize_attempt],
         # No label — Cancel not shown in dashboard for validating state.
         # User flow: Stop first → land in stopped → then Cancel if needed.
@@ -1212,6 +1219,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     # --- System-Initiated Actions -----------------------------------------
     ("working", "complete"): TransitionDef(
         to_state="validating",
+        reason="completed",
         label="Complete",
         user_action=False,
         side_effects=[_on_sdk_complete, _finalize_attempt],
@@ -1311,6 +1319,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("working", "recover_cancel"): TransitionDef(
         to_state="cancelled",
+        reason="cancelled",
         user_action=False,
         side_effects=[_revert_punchlist, _finalize_attempt],
     ),
