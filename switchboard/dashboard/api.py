@@ -963,15 +963,17 @@ async def _handle_get_actions(send, task_id):
     except ValueError as e:
         return await _error(send, str(e), 404)
     # Convert underscore action names to hyphenated for frontend compatibility
-    actions = [
-        {
+    actions = []
+    for a in actions_raw:
+        action_dict = {
             "name": a["name"].replace("_", "-"),
             "label": a["label"],
             "style": a["style"],
             "confirm": a["confirm"],
         }
-        for a in actions_raw
-    ]
+        if "options" in a:
+            action_dict["options"] = a["options"]
+        actions.append(action_dict)
     response = {
         "task_id": task_id,
         "state": {

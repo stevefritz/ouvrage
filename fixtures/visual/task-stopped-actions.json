@@ -10,7 +10,7 @@
   "actions": [
     {"name": "resume", "label": "Resume", "style": "primary", "confirm": false},
     {"name": "retry", "label": "Retry", "style": "primary", "confirm": false},
-    {"name": "end_task", "label": "End Task", "style": "compound", "confirm": null, "options": [
+    {"name": "end-task", "label": "End Task", "style": "compound", "confirm": null, "options": [
       {"action": "close", "label": "Complete", "description": "Mark as done. Work and branch preserved."},
       {"action": "cancel", "label": "Discard", "description": "Mark as unwanted. Removed from active view."}
     ]}

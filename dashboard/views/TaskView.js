@@ -436,7 +436,7 @@ const ACTION_TOOLTIPS = {
     retry:             'Start a fresh CC session. Previous context is lost.',
     reopen:            'Set to reopened. Post feedback, then click Start.',
     start:             'Dispatch CC with feedback as revision instructions.',
-    end_task:          'Complete or discard this task.',
+    'end-task':        'Complete or discard this task.',
     'skip-gate':       'Manually mark gate as passed, bypassing validation.',
     'advance-chain':   'Dispatch dependent tasks in the chain.',
     'release-worktree':'Detach worktree without closing. Frees disk space.',
@@ -2632,9 +2632,9 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const handleAction = useCallback(async (action, taskId, needsConfirm = true) => {
         if (action === 'start') {
             setShowStartOverlay(true);
-        } else if (action === 'end_task') {
+        } else if (action === 'end-task') {
             // Compound action — find options from apiActions and show EndTaskOverlay
-            const compound = taskActions?.find(a => a.name === 'end_task');
+            const compound = taskActions?.find(a => a.name === 'end-task');
             if (compound?.options) setEndTaskOptions(compound.options);
         } else if (!needsConfirm) {
             // Execute immediately without confirmation dialog
