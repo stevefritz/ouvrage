@@ -1047,7 +1047,7 @@ OUTCOME_DEFINITIONS = {
     "dispatch_error": {"label": "failed", "color": "#ef4444"},
     "wall_clock_timeout": {"label": "timeout", "color": "#ef4444"},
     "rate_limited": {"label": "rate-limited", "color": "#eab308"},
-    "turns_exhausted": {"label": "turns-exhausted", "color": "#eab308"},
+    "turns_exhausted": {"label": "turns exhausted", "color": "#eab308"},
     "recovery_pending": {"label": "stopped", "color": "#6b7280"},
     "recovery_failed": {"label": "failed", "color": "#ef4444"},
     # Legacy heuristic outcomes (from _determine_attempt_outcome)
@@ -1059,11 +1059,20 @@ OUTCOME_DEFINITIONS = {
     "error": {"label": "failed", "color": "#ef4444"},
     "failed": {"label": "failed", "color": "#ef4444"},
     "cancelled": {"label": "cancelled", "color": "#6b7280"},
-    "completed": {"label": "Completed", "color": "#10b981"},
-    "max_test_retries": {"label": "Tests Failed", "color": "#ef4444"},
-    "max_review_retries": {"label": "Review Rejected", "color": "#ef4444"},
-    "review_stalled": {"label": "Review Stalled", "color": "#ef4444"},
-    "gate_failed": {"label": "Failed", "color": "#ef4444"},
+    "completed": {"label": "completed", "color": "#22c55e"},
+    "max_test_retries": {"label": "tests failed", "color": "#ef4444"},
+    "max_review_retries": {"label": "review rejected", "color": "#ef4444"},
+    "review_stalled": {"label": "review stalled", "color": "#ef4444"},
+    "gate_failed": {"label": "failed", "color": "#ef4444"},
+    # Hyphenated aliases for heuristic-generated outcomes
+    "wall-clock-timeout": {"label": "timeout", "color": "#ef4444"},
+    "turns-exhausted": {"label": "turns exhausted", "color": "#eab308"},
+    # Gate auto-retry outcomes
+    "test_failure": {"label": "tests failed", "color": "#ef4444"},
+    "review_rejected": {"label": "review rejected", "color": "#ef4444"},
+    # Defensive entries
+    "awaiting_feedback": {"label": "awaiting feedback", "color": "#eab308"},
+    "manually_closed": {"label": "closed", "color": "#6b7280"},
 }
 
 _OUTCOME_FALLBACK = {"label": "unknown", "color": "#6b7280"}
@@ -1087,7 +1096,7 @@ async def _finalize_attempt(task: dict, **ctx: Any) -> None:
     attempt = task.get("current_attempt")
     if not attempt:
         return
-    outcome = task.get("reason") or ctx.get("_previous_status", "unknown")
+    outcome = ctx.get("outcome") or task.get("reason") or ctx.get("_previous_status", "unknown")
     await db.update_attempt(task["id"], attempt, finished_at=db.now_iso(), outcome=outcome)
 
 
@@ -1181,15 +1190,16 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="completed",
         reason="gate_skipped",
         preconditions=[_require_gate_failure_reason],
-        side_effects=[_stop_gate_subprocess, _skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents],
+        side_effects=[_stop_gate_subprocess, _skip_gate_set_fields, _skip_gate_post_message, _skip_gate_dispatch_dependents, _finalize_attempt],
         label="Skip Gate",
         style="secondary",
         confirm=True,
     ),
     ("stopped", "cancel"): TransitionDef(
         to_state="cancelled",
+        reason="cancelled",
         preconditions=[_reject_awaiting_feedback],
-        side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect],
+        side_effects=[_revert_punchlist, _clear_held_flag, _drain_queue_effect, _finalize_attempt],
         label="Cancel",
         style="danger",
         confirm=True,
@@ -1198,7 +1208,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="completed",
         reason="manually_closed",
         preconditions=[_reject_if_working, _reject_if_awaiting_feedback_close],
-        side_effects=[_close_archive_and_cleanup, _post_close_message],
+        side_effects=[_close_archive_and_cleanup, _post_close_message, _finalize_attempt],
         label="Close",
         style="secondary",
         confirm=True,
@@ -1294,7 +1304,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ("validating", "retry"): TransitionDef(
         to_state="working",
         user_action=False,
-        side_effects=[_retry_launch_session],
+        side_effects=[_finalize_attempt, _retry_launch_session],
     ),
     ("validating", "resume"): TransitionDef(
         to_state="working",

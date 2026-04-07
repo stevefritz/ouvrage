@@ -265,9 +265,37 @@ def _make_snippet(content: str, query: str) -> str:
 
 
 def _determine_attempt_outcome(messages: list[dict], is_last: bool, has_next: bool) -> str:
-    """Determine how an attempt ended based on its messages."""
-    # Walk messages in reverse to find the most significant terminal event
-    for msg in reversed(messages):
+    """Determine how an attempt ended based on its messages.
+
+    Walks messages in reverse looking for the most significant terminal event.
+    Resume-aware: if a terminal event (error/failure) is followed by a RESUMED
+    message later in the attempt, the terminal event is discarded.
+    """
+    # Build a set of indices that have a subsequent RESUMED message
+    resumed_after: set[int] = set()
+    for i, msg in enumerate(messages):
+        title = (msg.get("title") or "").upper()
+        if "RESUMED" in title:
+            # All earlier messages are "recovered" by this resume
+            resumed_after.update(range(i))
+
+    # Build reverse index mapping: we walk reversed(messages) but need original index
+    total = len(messages)
+    tests_passed = False
+
+    for rev_idx, msg in enumerate(reversed(messages)):
+        orig_idx = total - 1 - rev_idx
+        # Skip terminal events that were recovered by a later resume
+        if orig_idx in resumed_after:
+            msg_type = msg.get("type") or ""
+            title = (msg.get("title") or "").upper()
+            author = msg.get("author") or ""
+            # Only skip actual terminal events, not benign messages
+            if author == "dispatcher" and msg_type == "status" and (
+                "ERROR" in title or "FAILED" in title or "DISPATCH ERROR" in title
+            ):
+                continue
+
         msg_type = msg.get("type") or ""
         title = (msg.get("title") or "").upper()
         author = msg.get("author") or ""
@@ -275,12 +303,11 @@ def _determine_attempt_outcome(messages: list[dict], is_last: bool, has_next: bo
         if author == "dispatcher":
             if msg_type == "test-result":
                 if "FAILED" in title or "FAIL" in title:
-                    if has_next:
-                        return "test-failure"
                     return "test-failure"
                 elif "PASSED" in title or "PASS" in title:
-                    if not is_last:
-                        return "test-failure"  # more attempts followed
+                    # Don't short-circuit — continue walking to check for
+                    # review rejections in the same attempt
+                    tests_passed = True
             if "WALL CLOCK" in title or "TIMEOUT" in title:
                 return "wall-clock-timeout"
             if "TURNS EXHAUSTED" in title or "TURNS" in title:
@@ -295,9 +322,11 @@ def _determine_attempt_outcome(messages: list[dict], is_last: bool, has_next: bo
                 if not has_next:
                     return "success"
             elif "CHANGES REQUESTED" in title or "REJECT" in title:
-                if has_next:
-                    return "review-rejection"
                 return "review-rejection"
+
+    # If tests passed but no review rejection found, it's a success
+    if tests_passed:
+        return "success"
 
     if has_next:
         return "retried"

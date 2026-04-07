@@ -519,7 +519,8 @@ async def _run_test_gate_inner(task_id: str, project: dict, task: dict) -> None:
             # Auto-retry: dispatch new session with test failure as review feedback
             log.info(f"Task {task_id}: auto-retrying after test failure")
             await lifecycle.execute(task_id, "retry", triggered_by="gate",
-                                    source_detail="test failure auto-retry")
+                                    source_detail="test failure auto-retry",
+                                    outcome="test_failure")
         else:
             await lifecycle.execute(task_id, "gate_fail",
                 triggered_by="gate-pipeline",
@@ -924,7 +925,8 @@ async def _process_review_result_inline(task_id: str) -> None:
 
         if retries < max_retries:
             await lifecycle.execute(task_id, "retry", triggered_by="review",
-                                    source_detail="review rejection auto-retry (inline)")
+                                    source_detail="review rejection auto-retry (inline)",
+                                    outcome="review_rejected")
         else:
             await lifecycle.execute(task_id, "gate_fail",
                 triggered_by="gate-pipeline",
@@ -965,7 +967,8 @@ async def _process_review_result(review_task_id: str, parent_task_id: str) -> No
 
         if retries < max_retries:
             await lifecycle.execute(parent_task_id, "retry", triggered_by="review",
-                                    source_detail="review rejection auto-retry")
+                                    source_detail="review rejection auto-retry",
+                                    outcome="review_rejected")
         else:
             await lifecycle.execute(parent_task_id, "gate_fail",
                 triggered_by="gate-pipeline",

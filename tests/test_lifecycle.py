@@ -1024,11 +1024,11 @@ class TestCancelBehavior:
         with pytest.raises(IllegalTransition, match="cancel"):
             await self.lifecycle.execute(TASK_ID, "cancel")
 
-    async def test_cancel_clears_reason(self):
+    async def test_cancel_sets_reason_cancelled(self):
         await _seed(self.db, status="stopped", reason="paused_by_user")
         result = await self.lifecycle.execute(TASK_ID, "cancel")
         assert result["status"] == "cancelled"
-        assert result.get("reason") is None
+        assert result.get("reason") == "cancelled"
 
 
 class TestCloseBehavior:
