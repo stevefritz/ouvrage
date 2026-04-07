@@ -492,6 +492,65 @@ class TestAttemptFinalization:
         attempt = await self._get_attempt("t/fin-5")
         assert attempt["finished_at"] is not None
 
+    async def test_cancel_from_working_stores_cancelled(self):
+        await self._make_working_task("t/fin-6")
+        await self.lifecycle.execute("t/fin-6", "cancel")
+        attempt = await self._get_attempt("t/fin-6")
+        assert attempt["outcome"] == "cancelled", f"expected 'cancelled', got {attempt['outcome']!r}"
+
+    async def test_resume_clears_attempt_finalization(self):
+        await self._make_working_task("t/fin-7")
+        # Set a session_id so resume precondition passes
+        await self.db.update_task("t/fin-7", session_id="test-session-id")
+        # Stop to finalize the attempt
+        await self.lifecycle.execute("t/fin-7", "stop")
+        attempt = await self._get_attempt("t/fin-7")
+        assert attempt["finished_at"] is not None
+        assert attempt["outcome"] == "paused_by_user"
+        # Resume should clear finalization via _reopen_attempt
+        await self.lifecycle.execute("t/fin-7", "resume")
+        attempt = await self._get_attempt("t/fin-7")
+        assert attempt["finished_at"] is None
+        assert attempt["outcome"] is None
+
+    async def test_gate_retry_clears_attempt_finalization(self):
+        # Set up a task directly in validating with a finalized attempt
+        # (mirrors the pattern in test_gate_pass_finalizes_attempt)
+        await self._make_working_task("t/fin-8")
+        await self.db.update_task("t/fin-8", status="validating")
+        from switchboard.db.connection import get_db
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE task_attempts SET finished_at = ?, outcome = ? WHERE task_id = ? AND attempt_number = ?",
+                ("2026-01-01T00:00:00Z", "completed", "t/fin-8", 1),
+            )
+            await conn.commit()
+        # gate_retry → working, _reopen_attempt clears finalization
+        await self.lifecycle.execute("t/fin-8", "gate_retry")
+        attempt = await self._get_attempt("t/fin-8")
+        assert attempt["finished_at"] is None
+        assert attempt["outcome"] is None
+
+    async def test_complete_then_gate_pass_final_outcome(self):
+        # Set up task in validating state with attempt outcome="completed"
+        # (simulating what the working→complete transition writes via _finalize_attempt).
+        # Then verify gate_pass overwrites with "gate_passed".
+        await self._make_working_task("t/fin-9")
+        await self.db.update_task("t/fin-9", status="validating")
+        from switchboard.db.connection import get_db
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE task_attempts SET finished_at = ?, outcome = ? WHERE task_id = ? AND attempt_number = ?",
+                ("2026-01-01T00:00:00Z", "completed", "t/fin-9", 1),
+            )
+            await conn.commit()
+        attempt = await self._get_attempt("t/fin-9")
+        assert attempt["outcome"] == "completed"
+        # gate_pass should overwrite with "gate_passed"
+        await self.lifecycle.execute("t/fin-9", "gate_pass")
+        attempt = await self._get_attempt("t/fin-9")
+        assert attempt["outcome"] == "gate_passed"
+
 
 # ---------------------------------------------------------------------------
 # execute() — illegal transitions
