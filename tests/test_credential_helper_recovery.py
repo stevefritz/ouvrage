@@ -43,18 +43,18 @@ class TestEnsureCredentialHelper:
         await ensure_credential_helper("/fake/worktree", task)
 
         self.mock_setup_cred.assert_awaited_once_with(
-            "/fake/worktree", "test-project", user_id=42,
+            "/fake/worktree", "test-project",
         )
 
-    async def test_passes_none_user_id_when_dispatched_by_absent(self):
-        """ensure_credential_helper passes user_id=None when dispatched_by not set."""
+    async def test_passes_correct_args_when_dispatched_by_absent(self):
+        """ensure_credential_helper calls setup_credential_helper without user_id."""
         from switchboard.dispatch.internals import ensure_credential_helper
 
         task = {"id": "test-project/t2", "project_id": "test-project"}
         await ensure_credential_helper("/fake/worktree", task)
 
         self.mock_setup_cred.assert_awaited_once_with(
-            "/fake/worktree", "test-project", user_id=None,
+            "/fake/worktree", "test-project",
         )
 
     async def test_idempotent_called_twice(self):
@@ -96,8 +96,8 @@ class TestEnsureCredentialHelper:
              patch("switchboard.git.worktree.get_github_pat", mock_pat), \
              patch("switchboard.git.worktree.db") as mock_db:
             mock_db.get_project = mock_get_project
-            result1 = await setup_credential_helper(worktree, "proj", user_id=1)
-            result2 = await setup_credential_helper(worktree, "proj", user_id=1)
+            result1 = await setup_credential_helper(worktree, "proj")
+            result2 = await setup_credential_helper(worktree, "proj")
 
         # Both calls must succeed and return the same path
         assert result1 is not None

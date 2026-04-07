@@ -9,7 +9,7 @@ from switchboard.db.connection import get_db
 from switchboard.db._helpers import now_iso
 
 # Fields in user_credentials that are encrypted at rest
-_ENCRYPTED_CREDENTIAL_FIELDS = frozenset({"anthropic_api_key", "github_pat"})
+_ENCRYPTED_CREDENTIAL_FIELDS = frozenset({"anthropic_api_key"})
 
 # Field allowlists to prevent SQL injection in dynamic UPDATE queries
 _USER_MUTABLE_FIELDS = frozenset({
@@ -21,7 +21,7 @@ _INSTANCE_MUTABLE_FIELDS = frozenset({
     "github_pat_encrypted",
 })
 _CREDENTIALS_MUTABLE_FIELDS = frozenset({
-    "anthropic_api_key", "github_pat", "slack_webhook_url",
+    "anthropic_api_key", "slack_webhook_url",
     "notification_preferences", "updated_at",
 })
 
@@ -313,8 +313,8 @@ async def list_api_tokens(user_id: int) -> list[dict]:
 # Credential resolution — project override → user default → error
 # ---------------------------------------------------------------------------
 
-async def get_github_pat(project_id: str, user_id: int | None = None) -> str:
-    """Resolve GitHub PAT: project override → user → instance owner → error.
+async def get_github_pat(project_id: str) -> str:
+    """Resolve GitHub PAT: project override → instance → error.
 
     Decrypts the value before returning.
     """
@@ -327,19 +327,11 @@ async def get_github_pat(project_id: str, user_id: int | None = None) -> str:
         override = project["github_pat_override"]
         return decrypt_value(override) if is_fernet_token(override) else override
 
-    # 2. Dispatching user's PAT
-    if user_id:
-        creds = await get_user_credentials(user_id)
-        if creds and creds.get("github_pat"):
-            return creds["github_pat"]  # already decrypted by get_user_credentials
-
-    # 3. Instance owner's PAT
-    instance = await get_instance()
-    owner_id = instance.get("owner_user_id") if instance else None
-    if owner_id and owner_id != user_id:
-        creds = await get_user_credentials(int(owner_id))
-        if creds and creds.get("github_pat"):
-            return creds["github_pat"]
+    # 2. Instance-level PAT
+    try:
+        return await get_instance_github_pat()
+    except ValueError:
+        pass
 
     raise ValueError("No GitHub PAT configured. Add one in Settings.")
 

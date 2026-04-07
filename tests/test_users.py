@@ -301,25 +301,6 @@ class TestEncryption:
         creds = await db.get_user_credentials(user["id"])
         assert creds["anthropic_api_key"] == "sk-plaintext"
 
-    async def test_github_pat_stored_encrypted(self, db):
-        """github_pat written to DB is Fernet-encrypted."""
-        import switchboard.db.connection as _conn
-        user = await db.create_user(email="pat@example.com", name="PAT User")
-        await db.update_user_credentials(user["id"], github_pat="ghp_plaintextpat")
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat FROM user_credentials WHERE user_id = ?", (user["id"],)
-            )
-        raw = rows[0]["github_pat"]
-        assert is_fernet_token(raw), f"Expected Fernet token, got: {raw!r}"
-
-    async def test_github_pat_decrypted_on_read(self, db):
-        """github_pat is decrypted when read back."""
-        user = await db.create_user(email="patread@example.com", name="PAT Read")
-        await db.update_user_credentials(user["id"], github_pat="ghp_mytoken")
-        creds = await db.get_user_credentials(user["id"])
-        assert creds["github_pat"] == "ghp_mytoken"
-
     async def test_slack_webhook_not_encrypted(self, db):
         """slack_webhook_url is stored as plaintext (not sensitive enough to encrypt)."""
         import switchboard.db.connection as _conn
@@ -346,13 +327,11 @@ class TestEncryption:
         with pytest.raises(ValueError, match="Anthropic API key"):
             await db.get_anthropic_key(user["id"])
 
-    async def test_get_github_pat_from_instance_owner(self, db):
-        """get_github_pat falls back to instance owner's user_credentials.github_pat."""
-        user = await db.create_user(email="owner-pat@test.com", name="owner")
-        await db.update_user_credentials(user["id"], github_pat="ghp_ownertoken")
-        await db.update_instance(owner_user_id=user["id"])
+    async def test_get_github_pat_falls_back_to_instance(self, db):
+        """get_github_pat falls back to instance.github_pat_encrypted."""
+        await db.set_instance_github_pat("ghp_instancetoken")
         pat = await db.get_github_pat("nonexistent-project")
-        assert pat == "ghp_ownertoken"
+        assert pat == "ghp_instancetoken"
 
     async def test_get_github_pat_raises_if_not_configured(self, db):
         """get_github_pat raises ValueError when no PAT is found."""

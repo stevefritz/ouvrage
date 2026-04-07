@@ -334,10 +334,10 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         log.debug(f"Wrote env overrides to {env_path}")
 
 
-async def setup_credential_helper(worktree_path: str, project_id: str, user_id: int | None = None) -> str | None:
+async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:
     """Write a git credential helper script in /tmp for CC's direct git pushes.
 
-    Resolves the GitHub PAT (project override → user → instance owner → skip if none),
+    Resolves the GitHub PAT (project override → instance → skip if none),
     writes a bash script that outputs username/password, and configures the worktree's
     git credential.helper to use it. Also sets the remote to HTTPS so CC's git push works.
 
@@ -348,7 +348,7 @@ async def setup_credential_helper(worktree_path: str, project_id: str, user_id: 
     from switchboard.git.operations import normalize_repo_url
 
     try:
-        pat = await get_github_pat(project_id, user_id=user_id)
+        pat = await get_github_pat(project_id)
     except ValueError:
         log.debug(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
         return None

@@ -57,9 +57,9 @@ def _build_authenticated_url(pat: str, repo_url: str) -> str:
     return f"https://oauth2:{pat}@github.com/{owner}/{repo}.git"
 
 
-async def _resolve_push_url(project_id: str, user_id: int | None = None) -> str:
+async def _resolve_push_url(project_id: str) -> str:
     """Resolve PAT and project repo URL into an authenticated HTTPS push URL."""
-    pat = await get_github_pat(project_id, user_id=user_id)
+    pat = await get_github_pat(project_id)
     project = await db.get_project(project_id)
     if not project:
         raise ValueError(f"Project {project_id} not found")
@@ -181,7 +181,7 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> bool:
 
     # Resolve authenticated push URL (needed for ls-remote check and fallback path)
     try:
-        push_url = await _resolve_push_url(task["project_id"], user_id=task.get("dispatched_by"))
+        push_url = await _resolve_push_url(task["project_id"])
     except ValueError as e:
         log.warning(f"Cannot push {task_id}: {e}")
         await db.post_task_message(
@@ -351,7 +351,7 @@ async def _maybe_create_pr(task_id: str) -> None:
 
     # Resolve PAT and parse owner/repo
     try:
-        pat = await get_github_pat(task["project_id"], user_id=task.get("dispatched_by"))
+        pat = await get_github_pat(task["project_id"])
         owner, repo = parse_repo_url(project["repo"])
     except ValueError as e:
         log.warning(f"PR creation skipped for {task_id}: {e}")
@@ -421,7 +421,7 @@ async def _perform_auto_merge(task_id: str) -> bool:
 
     # Resolve authenticated push URL
     try:
-        push_url = await _resolve_push_url(task["project_id"], user_id=task.get("dispatched_by"))
+        push_url = await _resolve_push_url(task["project_id"])
     except ValueError as e:
         log.error(f"Auto-merge {task_id}: {e}")
         await db.update_task(task_id, pr_status="error", pr_error=str(e))
