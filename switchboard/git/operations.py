@@ -164,11 +164,8 @@ async def resolve_branch_target(task: dict) -> str:
 async def _ensure_branch_pushed(task_id: str, task: dict) -> bool:
     """Force-push task branch if there are unpushed commits.
 
-    Checks for a credential helper on the worktree — if present, pushes to
-    `origin` (preferred path; tracking refs update naturally). Otherwise falls
-    back to the raw authenticated URL.
-
-    Uses --force in both paths. The branch is task-owned (single actor), so
+    Always uses the authenticated URL directly (no credential helper on disk).
+    Uses --force because the branch is task-owned (single actor), so
     --force-with-lease provides no safety benefit and causes stale-ref failures
     on retries.
 
@@ -191,12 +188,6 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> bool:
         )
         return False
 
-    # Check if a credential helper is configured on this worktree
-    cred_stdout, _, cred_rc = await _run_as_worker(
-        "git", "-C", worktree, "config", "credential.helper",
-    )
-    has_cred_helper = cred_rc == 0 and bool(cred_stdout.strip())
-
     # Check if remote branch exists
     stdout, _, rc = await _run_as_worker(
         "git", "-C", worktree, "ls-remote", "--heads", push_url, branch,
@@ -212,13 +203,9 @@ async def _ensure_branch_pushed(task_id: str, task: dict) -> bool:
             return True  # nothing to push
     # else: remote doesn't exist yet, push to create it
 
-    # Prefer pushing to the `origin` remote when the credential helper is set up —
-    # git then updates local tracking refs, avoiding stale-ref issues on retries.
-    # Fall back to the raw authenticated URL when the helper is absent.
-    push_target = "origin" if has_cred_helper else push_url
-
+    # Always push via authenticated URL — no credential helper on disk.
     _, stderr, rc = await _run_as_worker(
-        "git", "-C", worktree, "push", "--force", push_target, branch,
+        "git", "-C", worktree, "push", "--force", push_url, branch,
     )
     if rc != 0:
         stderr_text = stderr.decode()

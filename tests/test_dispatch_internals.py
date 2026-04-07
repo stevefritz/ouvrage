@@ -19,12 +19,12 @@ class TestSetupTaskWorktree:
     @pytest.fixture(autouse=True)
     def _patches(self):
         self.setup_worktree_mock = AsyncMock(return_value="/tmp/fake-worktree")
-        self.setup_cred_mock = AsyncMock()
+        self.setup_hook_mock = AsyncMock()
         self.run_setup_mock = AsyncMock()
         # Patch on engine's namespace since internals reads through engine.*
         patches = [
             patch("switchboard.dispatch.engine.setup_worktree", self.setup_worktree_mock),
-            patch("switchboard.dispatch.engine.setup_credential_helper", self.setup_cred_mock),
+            patch("switchboard.dispatch.internals.setup_hook_config", self.setup_hook_mock),
             patch("switchboard.dispatch.engine.run_setup_command", self.run_setup_mock),
         ]
         for p in patches:
@@ -44,7 +44,7 @@ class TestSetupTaskWorktree:
 
         assert result == "/tmp/fake-worktree"
         self.setup_worktree_mock.assert_awaited_once()
-        self.setup_cred_mock.assert_awaited_once_with("/tmp/fake-worktree", "test-project")
+        self.setup_hook_mock.assert_awaited_once_with("/tmp/fake-worktree")
         self.run_setup_mock.assert_awaited_once_with(sample_project, "/tmp/fake-worktree")
 
     async def test_idempotent_reuses_worktree(self, db, sample_project):

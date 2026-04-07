@@ -185,7 +185,6 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
     from switchboard.dispatch.internals import (
         check_and_queue_if_full, setup_task_worktree,
         build_dispatch_prompt, launch_sdk_session, resolve_session_config,
-        ensure_credential_helper,
     )
     from switchboard.notifications import slack as notify
 
@@ -200,10 +199,8 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
     project = await db.get_project(task["project_id"])
 
     try:
-        # Setup worktree (calls setup_credential_helper internally)
+        # Setup worktree (writes hook config internally)
         worktree_path = await setup_task_worktree(project, task)
-        # Ensure credential helper is current — idempotent, defensive call
-        await ensure_credential_helper(worktree_path, task)
         dispatch_count = (task.get("dispatch_count") or 0) + 1
         await db.update_task(task_id,
             worktree_path=worktree_path,
@@ -266,7 +263,7 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     import os
     from switchboard.dispatch.internals import (
         checkout_existing_worktree, launch_sdk_session, resolve_session_config,
-        ensure_credential_helper,
+        setup_hook_config,
     )
     from switchboard.dispatch.sdk_session import _build_resume_prompt
 
@@ -319,10 +316,8 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
         worktree_path = await checkout_existing_worktree(project, task)
         await db.update_task(task_id, worktree_path=worktree_path)
 
-    # Ensure credential helper is current — idempotent, recreates if missing or stale.
-    # Critical: if the worktree already existed above, setup_credential_helper was NOT
-    # called (checkout_existing_worktree was skipped), so we must call it unconditionally.
-    await ensure_credential_helper(worktree_path, task)
+    # Ensure hook config is present — idempotent, writes if missing.
+    await setup_hook_config(worktree_path)
 
     # Build resume prompt
     prompt = await _build_resume_prompt(task_id)
@@ -350,7 +345,7 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
     from switchboard.dispatch.internals import (
         setup_task_worktree, build_dispatch_prompt,
         launch_sdk_session, resolve_session_config,
-        collect_review_feedback, ensure_credential_helper,
+        collect_review_feedback, setup_hook_config,
     )
     from switchboard.dispatch.engine import (
         archive_task_logs, _invalidate_chain,
@@ -426,10 +421,8 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
             worktree_path = await setup_task_worktree(project, task)
             await db.update_task(task_id, worktree_path=worktree_path)
 
-        # Ensure credential helper is current — idempotent, recreates if missing or stale.
-        # Critical: if the worktree already existed above, setup_credential_helper was NOT
-        # called (setup_task_worktree was skipped), so we must call it unconditionally.
-        await ensure_credential_helper(worktree_path, task)
+        # Ensure hook config is present — idempotent, writes if missing.
+        await setup_hook_config(worktree_path)
 
         prompt = await build_dispatch_prompt(project, task, review_feedback=review_feedback)
         config = resolve_session_config(task, project)
@@ -497,7 +490,7 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
     from switchboard.dispatch.internals import (
         checkout_existing_worktree, build_dispatch_prompt,
         launch_sdk_session, resolve_session_config,
-        collect_reopen_feedback, ensure_credential_helper,
+        collect_reopen_feedback, setup_hook_config,
     )
     from switchboard.dispatch.engine import _invalidate_chain
     from switchboard.notifications import slack as notify
@@ -547,10 +540,8 @@ async def _start_launch_session(task: dict, **ctx: Any) -> None:
         worktree_path = await checkout_existing_worktree(project, task)
         await db.update_task(task_id, worktree_path=worktree_path)
 
-    # Ensure credential helper is current — idempotent, recreates if missing or stale.
-    # Critical: if the worktree already existed above, setup_credential_helper was NOT
-    # called (checkout_existing_worktree was skipped), so we must call it unconditionally.
-    await ensure_credential_helper(worktree_path, task)
+    # Ensure hook config is present — idempotent, writes if missing.
+    await setup_hook_config(worktree_path)
 
     # Build prompt with feedback + launch
     prompt = await build_dispatch_prompt(project, task, review_feedback=review_feedback)

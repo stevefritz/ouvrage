@@ -63,7 +63,7 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
             "git", "-C", worktree_path, "merge", "--ff-only",
             f"origin/{branch}",
         )
-        await _engine.setup_credential_helper(worktree_path, task["project_id"])
+        await setup_hook_config(worktree_path)
         return worktree_path
 
     # Fetch so origin refs are current
@@ -105,27 +105,84 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
         content=f"Branch `{branch}` found on origin — checked out existing work.",
     )
 
-    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    await setup_hook_config(worktree_path)
     await _engine.run_setup_command(project, worktree_path)
 
     return worktree_path
 
 
-async def ensure_credential_helper(worktree_path: str, task: dict) -> None:
-    """Ensure the git credential helper file exists and is current.
+async def setup_hook_config(worktree_path: str) -> None:
+    """Write PreToolUse hooks into {worktree}/.claude/settings.json.
 
-    Idempotent — overwrites the helper script with the latest PAT on every
-    working-state entry, regardless of whether the file already exists. This
-    handles:
-    - Tasks stopped before a PAT was configured (no file written initially)
-    - Tasks dispatched before the PAT resolution fix (stale/wrong file)
-    - Normal resume where the file is still valid (safe no-op overwrite)
-
-    Goes through the engine namespace so test patches on
-    ``switchboard.dispatch.engine.setup_credential_helper`` apply.
+    Merges with any existing settings to preserve repo-level config.
+    The hook scripts live at /opt/switchboard/hooks/ on the host —
+    outside the worktree so CC cannot edit them.
     """
-    import switchboard.dispatch.engine as _engine
-    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    settings_dir = os.path.join(worktree_path, ".claude")
+    settings_path = os.path.join(settings_dir, "settings.json")
+
+    # Read existing settings if present
+    existing = {}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path) as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    # Define the hooks to inject
+    push_hook = {
+        "type": "command",
+        "if": "Bash(git push*)",
+        "command": "/opt/switchboard/hooks/block-git-push.sh",
+    }
+    fetch_hook = {
+        "type": "command",
+        "if": "Bash(git fetch*)",
+        "command": "/opt/switchboard/hooks/block-git-fetch.sh",
+    }
+
+    # Merge into existing hooks structure
+    hooks = existing.get("hooks", {})
+    pre_tool_use = hooks.get("PreToolUse", [])
+
+    # Find or create the Bash matcher entry for git push/fetch blocking
+    git_block_entry = None
+    for entry in pre_tool_use:
+        if (entry.get("matcher") == "Bash"
+                and isinstance(entry.get("hooks"), list)):
+            # Check if this entry already has our hooks
+            for h in entry["hooks"]:
+                if h.get("command", "").endswith("block-git-push.sh"):
+                    git_block_entry = entry
+                    break
+            if git_block_entry:
+                break
+
+    if git_block_entry is None:
+        # Add new entry with both hooks
+        pre_tool_use.append({
+            "matcher": "Bash",
+            "hooks": [push_hook, fetch_hook],
+        })
+    else:
+        # Entry exists — ensure both hooks are present
+        existing_cmds = {h.get("command") for h in git_block_entry["hooks"]}
+        if push_hook["command"] not in existing_cmds:
+            git_block_entry["hooks"].append(push_hook)
+        if fetch_hook["command"] not in existing_cmds:
+            git_block_entry["hooks"].append(fetch_hook)
+
+    hooks["PreToolUse"] = pre_tool_use
+    existing["hooks"] = hooks
+
+    # Write back
+    os.makedirs(settings_dir, exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(existing, f, indent=2)
+        f.write("\n")
+
+    log.debug(f"Wrote hook config to {settings_path}")
 
 
 async def setup_task_worktree(project: dict, task: dict) -> str:
@@ -151,8 +208,8 @@ async def setup_task_worktree(project: dict, task: dict) -> str:
         base_branch=task.get("base_branch"),
     )
 
-    # Configure credential helper so CC's direct git pushes use PAT auth
-    await _engine.setup_credential_helper(worktree_path, task["project_id"])
+    # Write hook config to block direct git push/fetch
+    await setup_hook_config(worktree_path)
 
     # Run setup command
     await _engine.run_setup_command(project, worktree_path)

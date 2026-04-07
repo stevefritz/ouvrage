@@ -182,6 +182,7 @@ def mock_git():
         "setup_worktree": AsyncMock(return_value="/tmp/fake-worktree"),
         "cleanup_worktree": AsyncMock(),
         "ensure_branch_pushed": AsyncMock(return_value=True),
+        "setup_hook_config": AsyncMock(),
     }
 
     patches = [
@@ -189,6 +190,7 @@ def mock_git():
         patch("switchboard.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
         patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
         patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
+        patch("switchboard.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
     ]
     for p in patches:
         p.start()

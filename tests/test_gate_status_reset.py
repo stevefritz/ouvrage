@@ -76,7 +76,7 @@ class TestResumeResetsGateStatus:
         await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
 
         with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
              patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
              patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
              patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
@@ -101,7 +101,7 @@ class TestResumeResetsGateStatus:
         await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
 
         with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
              patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
              patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
              patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \

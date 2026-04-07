@@ -998,37 +998,20 @@ class TestEnsureBranchPushed:
 
     async def test_nothing_to_push(self):
         from switchboard.git.operations import _ensure_branch_pushed
-        # credential helper check + ls-remote returns a ref (remote exists) + log shows nothing unpushed
+        # ls-remote returns a ref (remote exists) + log shows nothing unpushed
         self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"", b"", 0),  # log shows nothing unpushed
         ]
         result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         assert result is True
-        assert self.mock_run.await_count == 3  # config + ls-remote + log, no push
+        assert self.mock_run.await_count == 2  # ls-remote + log, no push
 
     async def test_pushes_unpushed_commits(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"abc Fix something\n", b"", 0),  # log shows unpushed
-            (b"", b"", 0),  # push succeeds
-        ]
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is True
-        assert self.mock_run.await_count == 4
-        push_call = self.mock_run.await_args_list[3]
-        assert "push" in push_call.args
-        assert "--force" in push_call.args
-        assert "--force-with-lease" not in push_call.args
-
-    async def test_pushes_when_no_remote_branch(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
-            (b"", b"", 0),  # ls-remote returns empty (no remote branch)
             (b"", b"", 0),  # push succeeds
         ]
         result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
@@ -1036,11 +1019,24 @@ class TestEnsureBranchPushed:
         assert self.mock_run.await_count == 3
         push_call = self.mock_run.await_args_list[2]
         assert "push" in push_call.args
+        assert "--force" in push_call.args
+        assert "--force-with-lease" not in push_call.args
+
+    async def test_pushes_when_no_remote_branch(self):
+        from switchboard.git.operations import _ensure_branch_pushed
+        self.mock_run.side_effect = [
+            (b"", b"", 0),  # ls-remote returns empty (no remote branch)
+            (b"", b"", 0),  # push succeeds
+        ]
+        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
+        assert result is True
+        assert self.mock_run.await_count == 2
+        push_call = self.mock_run.await_args_list[1]
+        assert "push" in push_call.args
 
     async def test_push_failure_returns_false(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"", b"", 0),  # ls-remote empty (no remote branch)
             (b"", b"rejected", 1),  # push fails
         ]
@@ -1050,7 +1046,6 @@ class TestEnsureBranchPushed:
     async def test_push_failure_posts_message(self):
         from switchboard.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
             (b"", b"", 0),  # ls-remote empty
             (b"", b"rejected", 1),  # push fails
         ]
@@ -1067,35 +1062,18 @@ class TestEnsureBranchPushed:
         assert result is False
         self.mock_run.assert_not_awaited()
 
-    async def test_cred_helper_present_pushes_to_origin(self):
+    async def test_always_pushes_via_authenticated_url(self):
+        """After credential helper removal, always pushes via authenticated URL."""
         from switchboard.git.operations import _ensure_branch_pushed
-        # credential helper returns a helper path (non-empty)
         self.mock_run.side_effect = [
-            (b"/path/to/helper.sh\n", b"", 0),  # git config credential.helper — has cred helper
             (b"", b"", 0),  # ls-remote empty (no remote branch)
             (b"", b"", 0),  # push succeeds
         ]
         await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        push_call = self.mock_run.await_args_list[2]
-        assert "push" in push_call.args
-        assert "origin" in push_call.args
-        assert "--force" in push_call.args
-        # Must NOT use the raw URL
-        assert "https://oauth2:ghp_test@github.com" not in str(push_call.args)
-
-    async def test_cred_helper_absent_pushes_to_raw_url(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        # credential helper returns empty (not configured)
-        self.mock_run.side_effect = [
-            (b"", b"", 0),  # git config credential.helper — no cred helper
-            (b"", b"", 0),  # ls-remote empty (no remote branch)
-            (b"", b"", 0),  # push succeeds
-        ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        push_call = self.mock_run.await_args_list[2]
+        push_call = self.mock_run.await_args_list[1]
         assert "push" in push_call.args
         assert "https://oauth2:ghp_test@github.com/acme/widgets.git" in push_call.args
-        assert "origin" not in push_call.args
+        assert "--force" in push_call.args
 
 
 # ---------------------------------------------------------------------------

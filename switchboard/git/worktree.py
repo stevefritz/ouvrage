@@ -1,7 +1,6 @@
 """Git worktree management — setup, teardown, and worker-user primitives."""
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -11,7 +10,6 @@ import shutil
 
 import switchboard.db as db
 from switchboard.config.settings import WORKER_USER
-from switchboard.db.users import get_github_pat
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +168,6 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     bare_path = os.path.join(base, ".bare")
 
     # Resolve authenticated URL once — used for both initial bare clone and fetch.
-    # This ensures new private repos can clone without a credential helper pre-configured.
     # Must be resolved before the bare-path check so the clone gets credentials.
     try:
         from switchboard.git.operations import _resolve_push_url
@@ -200,8 +197,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
                 "remote.origin.url", project["repo"],
             )
 
-    # Fetch latest from remote — use authenticated URL if available (avoids
-    # dependency on credential.helper which may point to a deleted worktree script)
+    # Fetch latest from remote — use authenticated URL if available
     fetch_url = auth_url or "origin"
     # When fetching by URL (not remote name), must pass refspec explicitly
     # or git only fetches HEAD without updating origin/* tracking refs
@@ -329,61 +325,6 @@ async def run_setup_command(project: dict, worktree_path: str, env_overrides: di
         log.debug(f"Wrote env overrides to {env_path}")
 
 
-async def setup_credential_helper(worktree_path: str, project_id: str) -> str | None:
-    """Write a git credential helper script in /tmp for CC's direct git pushes.
-
-    Resolves the GitHub PAT (project override → instance → skip if none),
-    writes a bash script that outputs username/password, and configures the worktree's
-    git credential.helper to use it. Also sets the remote to HTTPS so CC's git push works.
-
-    Returns the path to the helper script, or None if no PAT is configured.
-    The script lives in /tmp (not the worktree) and is deleted during worktree teardown.
-    """
-    # Lazy import to avoid circular dependency (operations.py imports worktree.py)
-    from switchboard.git.operations import normalize_repo_url
-
-    try:
-        pat = await get_github_pat(project_id)
-    except ValueError:
-        log.debug(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
-        return None
-
-    # Write credential helper script to /tmp — outside the worktree so CC workers
-    # don't see it when exploring the directory. Path is unique per worktree via hash.
-    path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
-    helper_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
-    script_content = f"#!/bin/bash\necho 'username=oauth2'\necho 'password={pat}'\n"
-    with open(helper_path, "w") as f:
-        f.write(script_content)
-    os.chmod(helper_path, 0o750)
-
-    # Configure git in the worktree to use the helper — worktree-scoped only
-    # so it doesn't leak into the bare repo config and poison future fetches.
-    # Must also set core.bare=false in worktree config because the bare repo
-    # has core.bare=true and worktreeConfig extension would inherit it.
-    bare_path = os.path.join(os.path.dirname(worktree_path), ".bare")
-    await _run_as_worker(
-        "git", "-C", bare_path, "config", "extensions.worktreeConfig", "true",
-    )
-    await _run_as_worker(
-        "git", "-C", worktree_path, "config", "--worktree", "core.bare", "false",
-    )
-    await _run_as_worker(
-        "git", "-C", worktree_path, "config", "--worktree", "credential.helper", helper_path,
-    )
-
-    # Ensure remote is HTTPS (not SSH) — worktree-scoped
-    project = await db.get_project(project_id)
-    if project and project.get("repo"):
-        https_url = normalize_repo_url(project["repo"])
-        await _run_as_worker(
-            "git", "-C", worktree_path, "config", "--worktree", "remote.origin.url", https_url,
-        )
-
-    log.debug(f"Configured credential helper for worktree {worktree_path}")
-    return helper_path
-
-
 async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool = False):
     """Remove worktree and optionally delete branch."""
     worktree_path = task.get("worktree_path")
@@ -410,16 +351,6 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
             log.warning(f"worktree remove failed: {stderr.decode()}")
         else:
             log.info(f"Removed worktree: {worktree_path}")
-
-    # Clean up credential helper from /tmp
-    if worktree_path:
-        path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
-        cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
-        try:
-            os.unlink(cred_path)
-            log.debug(f"Removed credential helper: {cred_path}")
-        except FileNotFoundError:
-            pass
 
     # Delete branch
     branch = task.get("branch")
