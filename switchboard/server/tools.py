@@ -945,6 +945,46 @@ WORKER_TOOLS = [
             "required": ["task_id", "reason"],
         },
     ),
+    Tool(
+        name="git_push",
+        description=(
+            "Push the task's branch to the remote repository. Authentication is handled "
+            "server-side — do not run `git push` directly. Returns structured result with "
+            "push status, commit count, or error details."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID whose branch to push.",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="git_fetch",
+        description=(
+            "Fetch from the remote repository into the task's worktree. Authentication is "
+            "handled server-side — do not run `git fetch` directly. Optionally specify a "
+            "ref to fetch a specific branch; omit to fetch all branches."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID whose worktree to fetch into.",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Optional branch name to fetch. Omit to fetch all branches.",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -977,4 +1017,6 @@ WORKER_TOOL_ALLOWLIST = {
     "promote_task_file",
     "list_files",
     "escalate",
+    "git_push",
+    "git_fetch",
 }

@@ -63,6 +63,10 @@ from switchboard.server.handlers.files_handler import (
     _handle_get_file,
     _handle_promote_task_file,
 )
+from switchboard.server.handlers.git_tools import (
+    _handle_git_push,
+    _handle_git_fetch,
+)
 
 TOOL_HANDLERS = {
     # Conversation tools
@@ -124,6 +128,8 @@ TOOL_HANDLERS = {
     "promote_task_file": _handle_promote_task_file,
     # Worker-only tools
     "escalate": _handle_escalate,
+    "git_push": _handle_git_push,
+    "git_fetch": _handle_git_fetch,
 }
 
 

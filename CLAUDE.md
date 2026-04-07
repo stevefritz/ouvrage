@@ -52,8 +52,8 @@ shared bare repo. This has implications:
 
 - **Do NOT modify git config** — `git config` writes to the shared bare repo config and
   affects all other worktrees. Never run `git config` directly.
-- **Pushing works automatically** — a credential helper is pre-configured. Just `git push origin <branch>`.
-  Do not set up your own credentials, SSH keys, or remotes.
+- **Pushing works via MCP tools** — use `git_push(task_id)` and `git_fetch(task_id)` MCP tools.
+  Direct `git push`/`git fetch` are blocked by hooks. Do not set up your own credentials, SSH keys, or remotes.
 - **Your remote is HTTPS** — not SSH. Don't change it.
 - **Your branch is yours** — commit freely, push when ready. The branch was created for this task.
 - **Don't touch other branches** — don't checkout main, don't merge main into your branch,
@@ -245,7 +245,7 @@ It should only go up, never down.
 
 Every test that touches dispatch, lifecycle, gates, or SDK code MUST mock:
 - `switchboard.git.worktree.setup_worktree` — creates real git worktrees
-- `switchboard.git.worktree.setup_credential_helper` — writes git config
+- `switchboard.dispatch.internals.setup_hook_config` — writes .claude/settings.json
 - `switchboard.git.worktree.cleanup_worktree` — removes worktrees
 - `switchboard.git.operations._ensure_branch_pushed` — does real `git push`
 - `switchboard.git.operations._maybe_create_pr` — calls GitHub API

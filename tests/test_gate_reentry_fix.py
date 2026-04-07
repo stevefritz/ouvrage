@@ -56,7 +56,7 @@ class TestRetryTaskReviewFailed:
         mock_run_sdk = AsyncMock()
         with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
              patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
              patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
              patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
              patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
@@ -98,7 +98,7 @@ class TestRetryTaskTestFailed:
         mock_run_sdk = AsyncMock()
         with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
              patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.engine.setup_credential_helper", AsyncMock()), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
              patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
              patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
              patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \

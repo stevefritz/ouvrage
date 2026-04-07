@@ -244,7 +244,8 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- Post a `question` if stuck — it pauses your session and notifies the user. Don't guess.")
     parts.append("")
     parts.append("Key tools: `post_task_message` (progress/question/result/handoff/plan), "
-                 "`update_task_phase`, `update_task_checklist`, `add_checklist_item`, `add_task_file`.")
+                 "`update_task_phase`, `update_task_checklist`, `add_checklist_item`, `add_task_file`, "
+                 "`git_push`, `git_fetch`.")
     parts.append("")
     parts.append(f"- Update checklist: `mcp__switchboard__update_task_checklist(item_id=<id>, done=true)`")
     parts.append(f"- Update phase: `mcp__switchboard__update_task_phase(task_id='{task_id}', phase='implementing', detail='...')`")
@@ -272,7 +273,10 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("- Don't access other worktrees or other tasks' files outside your own worktree.")
     parts.append("")
     parts.append("**Git safety:**")
-    parts.append(f"- Never `git push --force`, `--force-with-lease`, or `-f`. If push fails, push to a rescue branch: `git push origin {branch}:{branch}-rescue-{{n}}` and post a question.")
+    parts.append("- Do not run `git push` or `git fetch` directly — these are blocked. Use the MCP tools "
+                 f"`git_push(task_id='{task_id}')` and `git_fetch(task_id='{task_id}', ref=...)` instead. "
+                 "The platform handles authentication. All local git operations (commit, merge, diff, log, status, add, checkout) work normally.")
+    parts.append(f"- Never `git push --force`, `--force-with-lease`, or `-f`. If push fails, push to a rescue branch and post a question.")
     parts.append("- Never `git rebase`. Use `git merge origin/main` if you need upstream changes.")
     parts.append("- Never `git remote add` or modify remotes. Never create tags.")
     parts.append(f"- Never checkout, merge to, or push to branches other than `{branch}`.")
@@ -300,7 +304,7 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
     parts.append("**Sequence:**")
     parts.append("1. Ensure all checklist items are updated")
     parts.append("2. Run `git status` — worktree must be clean")
-    parts.append(f"3. `git push origin {branch}`")
+    parts.append(f"3. Push your branch: `mcp__switchboard__git_push(task_id='{task_id}')`")
     parts.append("4. Post a `handoff` message with key decisions, gotchas, and notes")
     parts.append(f"5. Post a `result` message (under 5 lines: what you did, files modified, caveats)")
     parts.append("")

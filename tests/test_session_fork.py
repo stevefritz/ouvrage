@@ -415,6 +415,7 @@ class TestResume:
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.setup_hook_config", AsyncMock()),
             patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
             patch("os.path.exists", return_value=True),
         ):
@@ -446,6 +447,7 @@ class TestResume:
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
+            patch(f"{_INTERNALS}.setup_hook_config", AsyncMock()),
             patch(f"{_INTERNALS}.launch_sdk_session", mock_launch),
             patch("os.path.exists", return_value=True),
         ):

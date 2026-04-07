@@ -35,7 +35,6 @@ from switchboard.config.constants import DEFAULT_MODEL
 from switchboard.git.worktree import (
     _run_as_worker,
     setup_worktree,
-    setup_credential_helper,
     cleanup_worktree,
     run_setup_command,
 )
