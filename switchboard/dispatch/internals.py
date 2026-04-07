@@ -306,6 +306,8 @@ async def launch_sdk_session(
         log_dir, task_id, session_id or fork_session_id or "(new)",
         max_turns, max_wall_clock,
         worktree_path, is_resume, model,
+        forked=bool(fork_session_id),
+        fork_parent_session=fork_session_id,
     )
 
     task_handle = asyncio.create_task(

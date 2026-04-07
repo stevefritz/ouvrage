@@ -432,7 +432,9 @@ def _open_shared(path, mode="a"):
 def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
                         max_turns: int, max_wall_clock: int,
                         worktree_path: str, is_resume: bool,
-                        model: str = "sonnet"):
+                        model: str = "sonnet",
+                        forked: bool = False,
+                        fork_parent_session: str | None = None):
     """Write dispatch metadata to log file."""
     log_path = log_dir / "dispatch.log"
     with _open_shared(log_path) as f:
@@ -442,6 +444,8 @@ def _write_dispatch_log(log_dir: Path, task_id: str, session_id: str,
         f.write(f"  max_turns: {max_turns}\n")
         f.write(f"  max_wall_clock: {max_wall_clock}m\n")
         f.write(f"  worktree: {worktree_path}\n")
+        f.write(f"  forked: {forked}\n")
+        f.write(f"  fork_parent_session: {fork_parent_session}\n")
 
 
 def _tail_file(path: str, n: int = 20) -> str:
