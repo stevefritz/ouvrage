@@ -57,6 +57,7 @@ def _mock_launch_patches():
         patch(f"{_INTERNALS}.resolve_session_config", MagicMock(return_value={"model": "sonnet", "max_turns": 50})),
         patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
         patch(f"{_INTERNALS}.collect_reopen_feedback", AsyncMock(return_value="user feedback")),
+        patch(f"{_INTERNALS}.setup_hook_config", AsyncMock()),
         patch("switchboard.notifications.slack.task_dispatched", AsyncMock()),
         patch("switchboard.notifications.slack.task_attempt_starting", AsyncMock()),
         patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
