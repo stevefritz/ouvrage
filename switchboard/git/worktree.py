@@ -290,16 +290,11 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.name")
     await _run_as_worker("git", "-C", worktree_path, "config", "--unset", "user.email")
 
-    # Ensure the default branch and all remotes are visible from the worktree.
-    # Bare-repo worktrees have a narrow fetch refspec by default, which makes
-    # `git merge main` fail because CC can't resolve the branch.
+    # Ensure all remote refs are visible from the worktree.
+    # Bare-repo worktrees have a narrow fetch refspec by default.
     await _run_as_worker(
         "git", "-C", worktree_path, "config",
         "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*",
-    )
-    await _run_as_worker(
-        "git", "-C", worktree_path, "fetch", "origin",
-        default_branch + ":" + default_branch,
     )
 
     return worktree_path
