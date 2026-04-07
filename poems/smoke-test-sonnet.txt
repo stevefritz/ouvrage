@@ -1,0 +1,17 @@
+The clock reads three, the coffee long gone cold,
+A stack trace blooms across the terminal screen.
+The error message cryptic, dark, and bold—
+Some line two hundred forty-seven unseen.
+
+I diff the code through bleary, burning eyes,
+A missing semicolon, a stray typo.
+The test suite mocks what real life will disguise,
+And prod breaks down in ways that tests don't show.
+
+But there, at last, the culprit comes to light:
+A race condition born of careless threads.
+I push the fix, the pipelines flash to green and bright,
+And silence falls across the co-working beds.
+
+  The bug is slain, the deploy green and done—
+  I close my laptop as the morning sun.
