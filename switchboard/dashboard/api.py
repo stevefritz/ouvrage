@@ -821,6 +821,21 @@ async def _resolve_dashboard_log_dir(task: dict, attempt: int | None):
     return None
 
 
+def _filter_empty_text_entries(entries):
+    """Remove AssistantMessage entries that are purely empty/whitespace text (no tool_use)."""
+    result = []
+    for entry in entries:
+        if entry.get("type") == "AssistantMessage":
+            blocks = entry.get("content") or []
+            has_tool_use = any(b.get("type") == "tool_use" for b in blocks)
+            if not has_tool_use:
+                text_blocks = [b for b in blocks if b.get("type") == "text"]
+                if all(not (b.get("text") or "").strip() for b in text_blocks):
+                    continue
+        result.append(entry)
+    return result
+
+
 async def _handle_session_log(scope, send, task_id):
     params = _parse_qs(scope)
     attempt = int(params["attempt"]) if "attempt" in params else None
@@ -850,7 +865,7 @@ async def _handle_session_log(scope, send, task_id):
     except Exception:
         pass
 
-    await _json_response(send, entries)
+    await _json_response(send, _filter_empty_text_entries(entries))
 
 
 async def _handle_dispatch_log(scope, send, task_id):
@@ -940,7 +955,7 @@ async def _handle_gate_session_log(scope, send, task_id):
     except Exception:
         pass
 
-    await _json_response(send, entries)
+    await _json_response(send, _filter_empty_text_entries(entries))
 
 
 async def _handle_get_attempts(send, task_id):
