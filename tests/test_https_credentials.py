@@ -227,7 +227,8 @@ class TestSetupCredentialHelper:
         with patch("switchboard.git.worktree.get_github_pat", self.mock_get_pat):
             result = await setup_credential_helper(self.worktree, self.project_id)
         assert result is not None
-        assert result.endswith(".switchboard/git-creds.sh")
+        assert result.startswith("/tmp/ouvrage-creds-")
+        assert result.endswith(".sh")
 
     @pytest.mark.asyncio
     async def test_helper_file_written(self):
@@ -329,8 +330,7 @@ class TestCleanupWorktreeCredentialHelper:
         import hashlib
         self.worktree = str(tmp_path / "my-task-worktree")
         path_hash = hashlib.sha256(self.worktree.encode()).hexdigest()[:12]
-        self.expected_cred_path = os.path.join(self.worktree, ".switchboard", "git-creds.sh")
-        self.legacy_cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
+        self.expected_cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
 
         self.project = {"working_dir": str(tmp_path), "teardown_command": None}
         self.task = {"worktree_path": self.worktree, "branch": "test-branch"}
@@ -353,13 +353,11 @@ class TestCleanupWorktreeCredentialHelper:
 
     @pytest.mark.asyncio
     async def test_cleanup_deletes_credential_file(self):
-        """cleanup_worktree calls os.unlink for both new and legacy paths."""
+        """cleanup_worktree calls os.unlink with the expected /tmp path."""
         from switchboard.git.worktree import cleanup_worktree
         with patch("switchboard.git.worktree.os.unlink") as mock_unlink:
             await cleanup_worktree(self.project, self.task)
-        assert mock_unlink.call_count == 2
-        mock_unlink.assert_any_call(self.expected_cred_path)
-        mock_unlink.assert_any_call(self.legacy_cred_path)
+        mock_unlink.assert_called_once_with(self.expected_cred_path)
 
     @pytest.mark.asyncio
     async def test_cleanup_ignores_missing_credential_file(self):

@@ -353,11 +353,10 @@ async def setup_credential_helper(worktree_path: str, project_id: str, user_id: 
         log.debug(f"No GitHub PAT for project {project_id} — skipping credential helper setup")
         return None
 
-    # Write credential helper script inside .switchboard/ — persists across service
-    # restarts (unlike /tmp which is isolated by PrivateTmp=true on systemd).
-    sb_dir = os.path.join(worktree_path, ".switchboard")
-    os.makedirs(sb_dir, exist_ok=True)
-    helper_path = os.path.join(sb_dir, "git-creds.sh")
+    # Write credential helper script to /tmp — outside the worktree so CC workers
+    # don't see it when exploring the directory. Path is unique per worktree via hash.
+    path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
+    helper_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
     script_content = f"#!/bin/bash\necho 'username=oauth2'\necho 'password={pat}'\n"
     with open(helper_path, "w") as f:
         f.write(script_content)
@@ -417,17 +416,15 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
         else:
             log.info(f"Removed worktree: {worktree_path}")
 
-    # Clean up credential helper (new location: .switchboard/git-creds.sh, legacy: /tmp/)
+    # Clean up credential helper from /tmp
     if worktree_path:
-        for cred_path in [
-            os.path.join(worktree_path, ".switchboard", "git-creds.sh"),
-            f"/tmp/ouvrage-creds-{hashlib.sha256(worktree_path.encode()).hexdigest()[:12]}.sh",
-        ]:
-            try:
-                os.unlink(cred_path)
-                log.debug(f"Removed credential helper: {cred_path}")
-            except FileNotFoundError:
-                pass
+        path_hash = hashlib.sha256(worktree_path.encode()).hexdigest()[:12]
+        cred_path = f"/tmp/ouvrage-creds-{path_hash}.sh"
+        try:
+            os.unlink(cred_path)
+            log.debug(f"Removed credential helper: {cred_path}")
+        except FileNotFoundError:
+            pass
 
     # Delete branch
     branch = task.get("branch")
