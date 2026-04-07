@@ -1106,7 +1106,7 @@ async def _finalize_attempt(task: dict, **ctx: Any) -> None:
     attempt = task.get("current_attempt")
     if not attempt:
         return
-    outcome = ctx.get("outcome") or task.get("reason") or ctx.get("_previous_status", "unknown")
+    outcome = ctx.get("outcome") or ctx.get("reason") or task.get("reason") or ctx.get("_previous_status", "unknown")
     await db.update_attempt(task["id"], attempt, finished_at=db.now_iso(), outcome=outcome)
 
 
@@ -1579,6 +1579,7 @@ class TaskLifecycle:
 
         # 8. Fire side effects (non-blocking errors logged, not raised)
         context["_previous_status"] = previous_status
+        context["reason"] = reason
         # Expose pre-transition gate state for reopen side effects
         context["_saved_gate_status"] = task.get("gate_status")
         context["_saved_gate_passed_at"] = task.get("gate_passed_at")
