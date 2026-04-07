@@ -124,7 +124,8 @@ RUN git clone --depth 1 https://github.com/rbenv/rbenv.git "$RBENV_ROOT" \
 # with different ownership are fixed automatically.
 RUN groupadd -g 1001 switchboard \
     && useradd -u 1001 -g switchboard -m -s /bin/bash switchboard \
-    && useradd -r -g switchboard -s /usr/sbin/nologin switchboard-svc
+    && groupadd -r svc-only \
+    && useradd -r -g switchboard -G svc-only -s /usr/sbin/nologin switchboard-svc
 
 # ── Layer 8: Rust (as switchboard user — rustup is user-scoped) ──────────────
 USER switchboard
@@ -152,6 +153,12 @@ COPY foreman.html ./
 
 RUN python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed hatchling \
     && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed ".[dev]" sqlite-vec
+
+# Lock down /app — only root and svc-only group (switchboard-svc) can read.
+# Worker user (switchboard) cannot access the codebase or DB schema.
+RUN chown -R root:svc-only /app/ \
+    && find /app -type d -exec chmod 750 {} + \
+    && find /app -type f -exec chmod 640 {} +
 
 # ── Layer 11: Playwright (optional) ──────────────────────────────────────────
 ARG WITH_PLAYWRIGHT

@@ -78,6 +78,12 @@ fi
 # --- Fix /data ownership after any file creation above ---
 chown -R switchboard-svc:switchboard /data
 
+# --- Lock down /data from worker user ---
+# Worker (switchboard) is in group switchboard, but /data should only be
+# accessible to the service user. Remove group/other permissions entirely.
+chmod 700 /data
+find /data -type f -exec chmod 600 {} +
+
 # --- Grant capabilities to Python so they survive the user drop ---
 # setuid/setgid/kill needed for spawning CC workers as the switchboard user
 PYTHON_BIN=$(readlink -f "$(which python3)")
