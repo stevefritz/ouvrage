@@ -1,10 +1,16 @@
 """Tests for auth migration: run_migrate_auth creates user, instance, seeds client, is idempotent."""
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestMigrateAuth:
+
+    @pytest.fixture(autouse=True)
+    def mock_oauth_keys(self):
+        """Prevent init_oauth_keys from writing to /data/oauth_rsa_key.pem in tests."""
+        with patch("switchboard.auth.oauth.init_oauth_keys", new=MagicMock()):
+            yield
 
     async def test_creates_owner_user(self, db):
         """migrate-auth creates user with provided email and name."""
