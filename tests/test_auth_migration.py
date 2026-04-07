@@ -6,6 +6,12 @@ from unittest.mock import patch, AsyncMock
 
 class TestMigrateAuth:
 
+    @pytest.fixture(autouse=True)
+    def mock_rsa_key(self):
+        """Prevent RSA key file writes to /data/ during tests."""
+        with patch("switchboard.auth.oauth._ensure_rsa_key"):
+            yield
+
     async def test_creates_owner_user(self, db):
         """migrate-auth creates user with provided email and name."""
         from switchboard.migrate import run_migrate_auth
