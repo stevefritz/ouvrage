@@ -407,14 +407,22 @@ class TestMaybeCreatePr:
 
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        self.mock_create_pr = AsyncMock(return_value={"url": "https://github.com/acme/widgets/pull/42", "number": 42})
-        self.mock_get_pat = AsyncMock(return_value="ghp_fake_token_123")
+        from switchboard.git.providers.base import RepoInfo, PRResult
+        from unittest.mock import MagicMock
+
+        self.mock_provider = MagicMock()
+        self.mock_provider.parse_repo_url = MagicMock(
+            return_value=RepoInfo(owner="acme", repo="widgets", hostname="github.com")
+        )
+        self.mock_provider.create_pr = AsyncMock(
+            return_value=PRResult(url="https://github.com/acme/widgets/pull/42", number=42)
+        )
+        self.mock_resolve = AsyncMock(return_value=(self.mock_provider, "ghp_fake_token_123"))
         self.mock_add_artifact = AsyncMock()
         self.mock_post_msg = AsyncMock()
 
         patches = [
-            patch("switchboard.git.operations.create_github_pr", self.mock_create_pr),
-            patch("switchboard.git.operations.get_github_pat", self.mock_get_pat),
+            patch("switchboard.git.operations.resolve_credential", self.mock_resolve),
             patch("switchboard.git.operations.db.add_artifact", self.mock_add_artifact),
             patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
         ]
@@ -425,7 +433,7 @@ class TestMaybeCreatePr:
             p.stop()
 
     async def test_pr_created_when_worktree_exists(self, db, sample_project):
-        """auto_pr task with worktree should create a PR via REST API."""
+        """auto_pr task with worktree should create a PR via provider.create_pr()."""
         from switchboard.git.operations import _maybe_create_pr
 
         task = await db.create_task(
@@ -438,11 +446,10 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-tail")
-        self.mock_create_pr.assert_awaited_once()
-        # Verify REST API was called with correct owner/repo parsed from SSH URL
-        call_kwargs = self.mock_create_pr.await_args.kwargs
-        assert call_kwargs["owner"] == "acme"
-        assert call_kwargs["repo"] == "widgets"
+        self.mock_provider.create_pr.assert_awaited_once()
+        # Verify provider was called with correct args
+        call_kwargs = self.mock_provider.create_pr.await_args.kwargs
+        assert call_kwargs["credential"] == "ghp_fake_token_123"
         assert call_kwargs["head"] == "pr-tail"
         assert call_kwargs["base"] == "main"
 
@@ -460,7 +467,7 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-no-wt")
-        self.mock_create_pr.assert_not_awaited()
+        self.mock_provider.create_pr.assert_not_awaited()
 
     async def test_pr_targets_task_base_branch_when_set(self, db, sample_project):
         """PR base must be task.base_branch, not project default_branch."""
@@ -477,8 +484,8 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-base-override")
-        self.mock_create_pr.assert_awaited_once()
-        call_kwargs = self.mock_create_pr.await_args.kwargs
+        self.mock_provider.create_pr.assert_awaited_once()
+        call_kwargs = self.mock_provider.create_pr.await_args.kwargs
         assert call_kwargs["base"] == "foreman-saas"
 
     async def test_pr_falls_back_to_default_branch_when_base_branch_null(self, db, sample_project):
@@ -496,8 +503,8 @@ class TestMaybeCreatePr:
         )
 
         await _maybe_create_pr("test-project/pr-default-branch")
-        self.mock_create_pr.assert_awaited_once()
-        call_kwargs = self.mock_create_pr.await_args.kwargs
+        self.mock_provider.create_pr.assert_awaited_once()
+        call_kwargs = self.mock_provider.create_pr.await_args.kwargs
         assert call_kwargs["base"] == "main"  # sample_project.default_branch
 
     async def test_auto_release_before_pr_causes_silent_skip(self, db, sample_project):
@@ -529,7 +536,7 @@ class TestMaybeCreatePr:
                     await _check_and_dispatch_dependents("test-project/pr-release-bug")
 
         # The PR should have been created
-        self.mock_create_pr.assert_awaited_once()
+        self.mock_provider.create_pr.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 import json
 import os
 import subprocess
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,7 +21,11 @@ class TestGitPush:
         self.worktree = str(tmp_path / "wt")
         os.makedirs(self.worktree)
         self.mock_run = AsyncMock()
-        self.mock_pat = AsyncMock(return_value="ghp_testtoken123")
+        self.mock_provider = MagicMock()
+        self.mock_provider.build_authenticated_url = MagicMock(
+            return_value="https://oauth2:ghp_testtoken123@github.com/org/repo.git"
+        )
+        self.mock_resolve = AsyncMock(return_value=(self.mock_provider, "ghp_testtoken123"))
         self.task = {
             "id": "proj/task1",
             "project_id": "proj",
@@ -35,7 +39,7 @@ class TestGitPush:
         }
         self.patches = [
             patch("switchboard.server.handlers.git_tools._run_as_worker", self.mock_run),
-            patch("switchboard.server.handlers.git_tools.get_github_pat", self.mock_pat),
+            patch("switchboard.server.handlers.git_tools.resolve_credential", self.mock_resolve),
             patch("switchboard.server.handlers.git_tools.db"),
         ]
         mocks = [p.start() for p in self.patches]
@@ -124,11 +128,11 @@ class TestGitPush:
         assert result["pushed"] is False
         assert result["error"] == "not_found"
 
-    async def test_push_no_pat(self):
-        """git_push returns error when no PAT is configured."""
+    async def test_push_no_credential(self):
+        """git_push returns error when no credential is configured."""
         from switchboard.server.handlers.git_tools import _handle_git_push
 
-        self.mock_pat.side_effect = ValueError("No PAT configured")
+        self.mock_resolve.side_effect = ValueError("No credential configured")
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),    # rev-parse
             (b"abc123 fix\n", b"", 0),   # log
@@ -137,7 +141,7 @@ class TestGitPush:
         result = await _handle_git_push({"task_id": "proj/task1"})
 
         assert result["pushed"] is False
-        assert result["error"] == "no_pat"
+        assert result["error"] == "no_credential"
 
     async def test_push_when_remote_branch_missing(self):
         """git_push pushes even when origin/branch doesn't exist yet."""
@@ -173,7 +177,11 @@ class TestGitFetch:
         self.bare_path = str(tmp_path / ".bare")
         os.makedirs(self.bare_path)
         self.mock_run = AsyncMock(return_value=(b"", b"", 0))
-        self.mock_pat = AsyncMock(return_value="ghp_testtoken123")
+        self.mock_provider = MagicMock()
+        self.mock_provider.build_authenticated_url = MagicMock(
+            return_value="https://oauth2:ghp_testtoken123@github.com/org/repo.git"
+        )
+        self.mock_resolve = AsyncMock(return_value=(self.mock_provider, "ghp_testtoken123"))
         self.task = {
             "id": "proj/task1",
             "project_id": "proj",
@@ -187,7 +195,7 @@ class TestGitFetch:
         }
         self.patches = [
             patch("switchboard.server.handlers.git_tools._run_as_worker", self.mock_run),
-            patch("switchboard.server.handlers.git_tools.get_github_pat", self.mock_pat),
+            patch("switchboard.server.handlers.git_tools.resolve_credential", self.mock_resolve),
             patch("switchboard.server.handlers.git_tools.db"),
         ]
         mocks = [p.start() for p in self.patches]
@@ -239,16 +247,16 @@ class TestGitFetch:
         assert result["fetched"] is False
         assert result["error"] == "not_found"
 
-    async def test_fetch_no_pat(self):
-        """git_fetch returns error when no PAT is configured."""
+    async def test_fetch_no_credential(self):
+        """git_fetch returns error when no credential is configured."""
         from switchboard.server.handlers.git_tools import _handle_git_fetch
 
-        self.mock_pat.side_effect = ValueError("No PAT configured")
+        self.mock_resolve.side_effect = ValueError("No credential configured")
 
         result = await _handle_git_fetch({"task_id": "proj/task1"})
 
         assert result["fetched"] is False
-        assert result["error"] == "no_pat"
+        assert result["error"] == "no_credential"
 
     async def test_fetch_failure(self):
         """git_fetch returns error when fetch command fails."""

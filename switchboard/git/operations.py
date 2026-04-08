@@ -9,6 +9,7 @@ import httpx
 
 import switchboard.db as db
 from switchboard.db.users import get_github_pat
+from switchboard.git.providers import resolve_credential
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger(__name__)
@@ -58,12 +59,12 @@ def _build_authenticated_url(pat: str, repo_url: str) -> str:
 
 
 async def _resolve_push_url(project_id: str) -> str:
-    """Resolve PAT and project repo URL into an authenticated HTTPS push URL."""
-    pat = await get_github_pat(project_id)
+    """Resolve credential and project repo URL into an authenticated HTTPS push URL."""
     project = await db.get_project(project_id)
     if not project:
         raise ValueError(f"Project {project_id} not found")
-    return _build_authenticated_url(pat, project["repo"])
+    provider, credential = await resolve_credential(project)
+    return provider.build_authenticated_url(project["repo"], credential)
 
 
 def _classify_push_error(stderr_text: str) -> str | None:
@@ -336,15 +337,15 @@ async def _maybe_create_pr(task_id: str) -> None:
     if not worktree or not branch:
         return
 
-    # Resolve PAT and parse owner/repo
+    # Resolve credential and parse repo info via provider interface
     try:
-        pat = await get_github_pat(task["project_id"])
-        owner, repo = parse_repo_url(project["repo"])
+        provider, credential = await resolve_credential(project)
+        repo_info = provider.parse_repo_url(project["repo"])
     except ValueError as e:
         log.warning(f"PR creation skipped for {task_id}: {e}")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
-            title="PR creation failed — no PAT configured",
+            title="PR creation failed — no credential configured",
             content=str(e),
         )
         return
@@ -361,12 +362,12 @@ async def _maybe_create_pr(task_id: str) -> None:
 
     log.info(f"Auto-creating PR for {task_id}: {branch} → {base}")
     try:
-        result = await create_github_pr(
-            pat=pat, owner=owner, repo=repo,
+        result = await provider.create_pr(
+            credential=credential, repo_info=repo_info,
             head=branch, base=base,
             title=title, body=body,
         )
-        pr_url = result["url"]
+        pr_url = result.url
         await db.add_artifact(task_id, "pr_url", pr_url)
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",

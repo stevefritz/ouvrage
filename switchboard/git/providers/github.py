@@ -10,6 +10,9 @@ from switchboard.git.providers.base import (
 
 _SSH_PATTERN = re.compile(r"^git@github\.com:([^/]+)/(.+?)(?:\.git)?$")
 _HTTPS_PATTERN = re.compile(r"^https?://github\.com/([^/]+)/(.+?)(?:\.git)?$")
+_PR_URL_RE = re.compile(
+    r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)"
+)
 
 
 class GitHubProvider(GitProvider):
@@ -133,3 +136,15 @@ class GitHubProvider(GitProvider):
                 }
             resp.raise_for_status()
             return {}
+
+    def parse_pr_url(self, pr_url: str) -> tuple[RepoInfo, int]:
+        """Parse a GitHub PR URL into (RepoInfo, pr_number).
+
+        Handles: https://github.com/{owner}/{repo}/pull/{number}
+        Raises ValueError if the URL doesn't match.
+        """
+        m = _PR_URL_RE.match(pr_url.strip())
+        if not m:
+            raise ValueError(f"Cannot parse GitHub PR URL: {pr_url!r}")
+        info = RepoInfo(owner=m.group("owner"), repo=m.group("repo"), hostname="github.com")
+        return info, int(m.group("number"))

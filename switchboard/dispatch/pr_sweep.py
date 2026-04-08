@@ -1,6 +1,6 @@
-"""switchboard.dispatch.pr_sweep — background GitHub PR status polling.
+"""switchboard.dispatch.pr_sweep — background PR status polling.
 
-Polls GitHub every 60s for all tasks that have an open PR (pr_url set but
+Polls provider API every 60s for all tasks that have an open PR (pr_url set but
 pr_status is not 'merged' or 'closed'). Updates task.pr_status when it changes,
 and handles the merge transition (post message, advance status to 'merged').
 """
@@ -9,16 +9,15 @@ import asyncio
 import logging
 import re
 
-import httpx
-
 import switchboard.db as db
-from switchboard.db.users import get_github_pat
+from switchboard.git.providers import resolve_credential
 
 log = logging.getLogger(__name__)
 
 # Matches https://github.com/{owner}/{repo}/pull/{number}
+# Kept for backward-compat use in _handle_pr_merged (PR number extraction only).
 _PR_URL_RE = re.compile(
-    r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)"
+    r"https?://[^/]+/[^/]+/[^/]+/pull[s]?/(?P<number>\d+)"
 )
 
 
@@ -27,37 +26,32 @@ def _parse_pr_url(pr_url: str) -> tuple[str, str, int]:
 
     Raises ValueError if the URL doesn't match the expected pattern.
     """
-    m = _PR_URL_RE.match(pr_url.strip())
+    import re as _re
+    _github_re = _re.compile(
+        r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)"
+    )
+    m = _github_re.match(pr_url.strip())
     if not m:
         raise ValueError(f"Cannot parse PR URL: {pr_url!r}")
     return m.group("owner"), m.group("repo"), int(m.group("number"))
 
 
 async def _check_pr_status(pr_url: str, project_id: str) -> str:
-    """Call the GitHub API and return 'open', 'merged', or 'closed'.
+    """Call the provider API and return 'open', 'merged', or 'closed'.
 
     Raises on HTTP errors or invalid URLs.
     """
-    owner, repo, pr_number = _parse_pr_url(pr_url)
-    pat = await get_github_pat(project_id)
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
 
-    api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github.v3+json",
-    }
+    provider, credential = await resolve_credential(project)
+    repo_info, pr_number = provider.parse_pr_url(pr_url)
+    status_dict = await provider.get_pr_status(credential, repo_info, pr_number)
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(api_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-    merged = data.get("merged", False)
-    state = data.get("state", "open")
-
-    if merged:
+    if status_dict.get("merged"):
         return "merged"
-    if state == "closed":
+    if status_dict.get("state") == "closed":
         return "closed"
     return "open"
 
@@ -71,7 +65,7 @@ async def _handle_pr_merged(task: dict) -> None:
     task_id = task["id"]
     pr_url = task.get("pr_url", "")
 
-    # Extract PR number for the message
+    # Extract PR number for the message (best-effort, no credential needed)
     pr_number = None
     try:
         _, _, pr_number = _parse_pr_url(pr_url)

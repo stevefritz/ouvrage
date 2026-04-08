@@ -9,6 +9,7 @@ from switchboard.dispatch.pr_sweep import (
     _handle_pr_merged,
     _pr_status_sweep,
 )
+from switchboard.git.providers.base import RepoInfo
 
 
 # ---------------------------------------------------------------------------
@@ -56,72 +57,79 @@ class TestParsePrUrl:
 # _check_pr_status
 # ---------------------------------------------------------------------------
 
-def _mock_http_response(status_code: int, json_data: dict):
-    mock_resp = MagicMock()
-    mock_resp.status_code = status_code
-    mock_resp.json.return_value = json_data
-    mock_resp.raise_for_status = MagicMock()
-    return mock_resp
+def _make_mock_provider(status_dict: dict):
+    """Build a mock provider + credential pair for patching resolve_credential."""
+    mock_provider = MagicMock()
+    mock_provider.parse_pr_url = MagicMock(
+        return_value=(RepoInfo(owner="acme", repo="widgets", hostname="github.com"), 42)
+    )
+    mock_provider.get_pr_status = AsyncMock(return_value=status_dict)
+    return mock_provider, "ghp_test"
 
 
-def _patch_httpx(response):
-    """Patch httpx.AsyncClient in pr_sweep to return a fixed response."""
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    return patch("switchboard.dispatch.pr_sweep.httpx.AsyncClient", return_value=mock_client)
+def _patch_resolve_credential(status_dict: dict, project_dict: dict | None = None):
+    """Patch resolve_credential and db.get_project for pr_sweep tests."""
+    mock_provider, credential = _make_mock_provider(status_dict)
+    project = project_dict or {"id": "test-proj", "repo": "https://github.com/acme/widgets.git"}
+    ctx = patch("switchboard.dispatch.pr_sweep.resolve_credential",
+                AsyncMock(return_value=(mock_provider, credential)))
+    db_ctx = patch("switchboard.dispatch.pr_sweep.db.get_project",
+                   AsyncMock(return_value=project))
+    return ctx, db_ctx, mock_provider
 
 
 class TestCheckPrStatus:
     @pytest.mark.asyncio
     async def test_open_pr(self):
-        resp = _mock_http_response(200, {"state": "open", "merged": False})
-        with _patch_httpx(resp):
-            with patch("switchboard.dispatch.pr_sweep.get_github_pat", AsyncMock(return_value="ghp_test")):
-                status = await _check_pr_status("https://github.com/acme/widgets/pull/1", "test-proj")
+        ctx, db_ctx, _ = _patch_resolve_credential({"state": "open", "merged": False})
+        with ctx, db_ctx:
+            status = await _check_pr_status("https://github.com/acme/widgets/pull/1", "test-proj")
         assert status == "open"
 
     @pytest.mark.asyncio
     async def test_merged_pr(self):
-        resp = _mock_http_response(200, {"state": "closed", "merged": True})
-        with _patch_httpx(resp):
-            with patch("switchboard.dispatch.pr_sweep.get_github_pat", AsyncMock(return_value="ghp_test")):
-                status = await _check_pr_status("https://github.com/acme/widgets/pull/2", "test-proj")
+        ctx, db_ctx, _ = _patch_resolve_credential({"state": "closed", "merged": True})
+        with ctx, db_ctx:
+            status = await _check_pr_status("https://github.com/acme/widgets/pull/2", "test-proj")
         assert status == "merged"
 
     @pytest.mark.asyncio
     async def test_closed_unmerged_pr(self):
-        resp = _mock_http_response(200, {"state": "closed", "merged": False})
-        with _patch_httpx(resp):
-            with patch("switchboard.dispatch.pr_sweep.get_github_pat", AsyncMock(return_value="ghp_test")):
-                status = await _check_pr_status("https://github.com/acme/widgets/pull/3", "test-proj")
+        ctx, db_ctx, _ = _patch_resolve_credential({"state": "closed", "merged": False})
+        with ctx, db_ctx:
+            status = await _check_pr_status("https://github.com/acme/widgets/pull/3", "test-proj")
         assert status == "closed"
 
     @pytest.mark.asyncio
     async def test_http_error_propagates(self):
-        resp = _mock_http_response(404, {})
-        resp.raise_for_status.side_effect = Exception("404 Not Found")
-        with _patch_httpx(resp):
-            with patch("switchboard.dispatch.pr_sweep.get_github_pat", AsyncMock(return_value="ghp_test")):
+        mock_provider = MagicMock()
+        mock_provider.parse_pr_url = MagicMock(
+            return_value=(RepoInfo(owner="acme", repo="widgets", hostname="github.com"), 99)
+        )
+        mock_provider.get_pr_status = AsyncMock(side_effect=Exception("404 Not Found"))
+        project = {"id": "test-proj", "repo": "https://github.com/acme/widgets.git"}
+        with patch("switchboard.dispatch.pr_sweep.resolve_credential",
+                   AsyncMock(return_value=(mock_provider, "ghp_test"))):
+            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+                       AsyncMock(return_value=project)):
                 with pytest.raises(Exception, match="404"):
                     await _check_pr_status("https://github.com/acme/widgets/pull/99", "test-proj")
 
     @pytest.mark.asyncio
-    async def test_uses_correct_api_url(self):
-        resp = _mock_http_response(200, {"state": "open", "merged": False})
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+    async def test_uses_provider_get_pr_status(self):
+        """_check_pr_status calls provider.get_pr_status with correct args."""
+        ctx, db_ctx, mock_provider = _patch_resolve_credential({"state": "open", "merged": False})
+        mock_provider.parse_pr_url = MagicMock(
+            return_value=(RepoInfo(owner="myorg", repo="myrepo", hostname="github.com"), 77)
+        )
+        with ctx, db_ctx:
+            await _check_pr_status("https://github.com/myorg/myrepo/pull/77", "test-proj")
 
-        with patch("switchboard.dispatch.pr_sweep.httpx.AsyncClient", return_value=mock_client):
-            with patch("switchboard.dispatch.pr_sweep.get_github_pat", AsyncMock(return_value="ghp_test")):
-                await _check_pr_status("https://github.com/myorg/myrepo/pull/77", "test-proj")
-
-        call_args = mock_client.get.call_args
-        assert call_args[0][0] == "https://api.github.com/repos/myorg/myrepo/pulls/77"
-        assert call_args[1]["headers"]["Authorization"] == "Bearer ghp_test"
+        mock_provider.get_pr_status.assert_called_once()
+        call_args = mock_provider.get_pr_status.call_args
+        assert call_args[0][1].owner == "myorg"
+        assert call_args[0][1].repo == "myrepo"
+        assert call_args[0][2] == 77
 
 
 # ---------------------------------------------------------------------------

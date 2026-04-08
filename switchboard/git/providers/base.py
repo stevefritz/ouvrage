@@ -64,3 +64,10 @@ class GitProvider(ABC):
         self, credential: str, repo_info: RepoInfo, pr_number: int,
     ) -> dict:
         """Get pull request status. Returns dict with state, mergeable, etc."""
+
+    @abstractmethod
+    def parse_pr_url(self, pr_url: str) -> tuple[RepoInfo, int]:
+        """Parse a provider PR URL into (RepoInfo, pr_number).
+
+        Raises ValueError if the URL doesn't match the expected format.
+        """
