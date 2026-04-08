@@ -576,7 +576,7 @@ class TestTestGitCredential:
         from switchboard.dashboard.api import handle_request
         from switchboard.crypto import encrypt_value
 
-        await db.create_credential("bitbucket", encrypt_value("alice:myapppassword"), "bitbucket.org")
+        await db.create_credential("bitbucket", encrypt_value("alice@example.com:myapitoken"), "bitbucket.org")
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/bitbucket/test", method="POST")
         resp = _Capture()
@@ -603,7 +603,7 @@ class TestTestGitCredential:
         assert resp.status == 200
         data = resp.json()
         assert data["ok"] is False
-        assert "username:app_password" in data["message"]
+        assert "email:api_token" in data["message"]
 
     async def test_invalid_provider_returns_400(self, db):
         from switchboard.dashboard.api import handle_request

@@ -1697,22 +1697,22 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                 return {"ok": ok, "username": username, "scopes": scopes, "message": scope_message}
 
             elif provider == "bitbucket":
-                username_part, _, password = credential.partition(":")
-                if not password:
+                email_part, _, token_part = credential.partition(":")
+                if not token_part:
                     return {"ok": False, "username": None, "scopes": None,
-                            "message": "Credential must be in username:app_password format"}
+                            "message": "Credential must be in email:api_token format"}
                 resp = await client.get(
                     "https://api.bitbucket.org/2.0/user",
-                    auth=(username_part, password),
+                    auth=(email_part, token_part),
                 )
                 if resp.status_code in (401, 403):
                     return {"ok": False, "username": None, "scopes": None,
-                            "message": "Authentication failed — token may be invalid or expired"}
+                            "message": "Authentication failed — API token may be invalid or expired"}
                 if resp.status_code == 200:
                     data = resp.json()
                     resolved = data.get("username") or data.get("account_id")
                     return {"ok": True, "username": resolved, "scopes": None,
-                            "message": f"Authenticated as {resolved}. Bitbucket app passwords do not support scope introspection — verify your app password has Repository Read/Write and Pull Request Write permissions."}
+                            "message": f"Authenticated as {resolved}. Verify your API token has read:repository:bitbucket, write:repository:bitbucket, and write:pullrequest:bitbucket scopes."}
                 return {"ok": False, "username": None, "scopes": None,
                         "message": f"Bitbucket returned {resp.status_code} — check credentials"}
 

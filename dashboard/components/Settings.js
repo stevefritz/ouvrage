@@ -139,11 +139,11 @@ const GIT_PROVIDER_CONFIG = {
         icon: '🪣',
         name: 'Bitbucket',
         defaultHostname: 'bitbucket.org',
-        credentialLabel: 'App Password',
-        credentialPlaceholder: 'username:xxxxxxxxxxxx',
-        scopeText: 'Permissions: Repositories (r/w), Pull requests (r/w). Format: username:app_password',
+        credentialLabel: 'API Token',
+        credentialPlaceholder: 'email@example.com:ATBBxxxxxxxxx',
+        scopeText: 'Required scopes: read:repository:bitbucket, write:repository:bitbucket, write:pullrequest:bitbucket. Format: email:api_token',
         createLinks: [
-            { label: 'Create app password', url: 'https://bitbucket.org/account/settings/app-passwords/' },
+            { label: 'Create API token', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
         ],
     },
 };
