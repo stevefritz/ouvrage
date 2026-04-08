@@ -5,12 +5,14 @@ from urllib.parse import urlparse
 
 from switchboard.git.providers.base import GitProvider, RepoInfo, PRResult, ValidationResult
 from switchboard.git.providers.github import GitHubProvider
+from switchboard.git.providers.gitlab import GitLabProvider
 
 log = logging.getLogger(__name__)
 
 # Provider registry — maps provider name to instance
 _PROVIDERS: dict[str, GitProvider] = {
     "github": GitHubProvider(),
+    "gitlab": GitLabProvider(),
 }
 
 # Hardcoded hostname → provider defaults (checked after DB credentials)
@@ -119,7 +121,7 @@ async def resolve_credential(project: dict) -> tuple[GitProvider, str]:
 
 __all__ = [
     "GitProvider", "RepoInfo", "PRResult", "ValidationResult",
-    "GitHubProvider",
+    "GitHubProvider", "GitLabProvider",
     "get_provider", "detect_provider", "resolve_credential",
     "_parse_hostname", "_DEFAULT_HOSTNAMES",
 ]
