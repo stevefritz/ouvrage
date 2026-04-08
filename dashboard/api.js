@@ -174,6 +174,15 @@ export const api = {
     testGithub: () => request('/settings/instance/test-github', { method: 'POST' }),
     regenerateOAuthSecret: () => request('/settings/instance/regenerate-oauth-secret', { method: 'POST' }),
 
+    // Git provider credentials (owner/admin only)
+    getGitCredentials: () => request('/settings/git-credentials'),
+    putGitCredential: (provider, data) => request(`/settings/git-credentials/${provider}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    }),
+    deleteGitCredential: (provider) => request(`/settings/git-credentials/${provider}`, { method: 'DELETE' }),
+    testGitCredential: (provider) => request(`/settings/git-credentials/${provider}/test`, { method: 'POST' }),
+
     // Files
     getFiles: () => request('/files'),
     renameFile: (id, filename) => request(`/files/${id}`, {

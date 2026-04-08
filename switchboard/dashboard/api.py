@@ -286,6 +286,19 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/settings/instance/regenerate-oauth-secret" and method == "POST":
             return await _handle_regenerate_oauth_secret(send, scope)
 
+        # Git credential settings (owner/admin only)
+        if path == "/dashboard/api/settings/git-credentials" and method == "GET":
+            return await _handle_get_git_credentials(send, scope)
+        if path.startswith("/dashboard/api/settings/git-credentials/"):
+            rest = path[len("/dashboard/api/settings/git-credentials/"):]
+            if rest.endswith("/test") and method == "POST":
+                provider = rest[:-len("/test")]
+                return await _handle_test_git_credential(send, scope, provider)
+            if method == "PUT":
+                return await _handle_put_git_credential(receive, send, scope, rest)
+            if method == "DELETE":
+                return await _handle_delete_git_credential(send, scope, rest)
+
         # User settings (each user sees their own)
         if path == "/dashboard/api/settings/user" and method == "GET":
             return await _handle_get_user_settings(scope, send)
@@ -1529,6 +1542,156 @@ async def _handle_regenerate_oauth_secret(send, scope):
             return await _error(send, "OAuth client not found", 404)
 
     await _json_response(send, {"client_id": "claude-mcp", "client_secret": new_secret})
+
+
+# ── Git credential settings ───────────────────────────────────────────────────
+
+_GIT_PROVIDERS = ("github", "gitlab", "bitbucket")
+_GIT_DEFAULT_HOSTNAMES = {
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+    "bitbucket": "bitbucket.org",
+}
+
+
+async def _handle_get_git_credentials(send, scope):
+    """GET /dashboard/api/settings/git-credentials — list all provider states."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    rows = await db.list_credentials()
+    by_provider = {r["provider"]: r for r in rows}
+
+    result = []
+    for provider in _GIT_PROVIDERS:
+        row = by_provider.get(provider)
+        default_host = _GIT_DEFAULT_HOSTNAMES[provider]
+        if row:
+            raw_cred = row["credential"]
+            decrypted = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
+            last4 = decrypted[-4:] if decrypted and len(decrypted) >= 4 else None
+            hostname = row["hostname"] or default_host
+            result.append({
+                "provider": provider,
+                "hostname": hostname,
+                "hostname_is_default": hostname == default_host,
+                "configured": True,
+                "credential_last4": last4,
+            })
+        else:
+            result.append({
+                "provider": provider,
+                "hostname": default_host,
+                "hostname_is_default": True,
+                "configured": False,
+                "credential_last4": None,
+            })
+
+    await _json_response(send, {"credentials": result})
+
+
+async def _handle_put_git_credential(receive, send, scope, provider):
+    """PUT /dashboard/api/settings/git-credentials/{provider} — save/update credential."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'. Must be one of: {', '.join(_GIT_PROVIDERS)}", 400)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    credential = (data.get("credential") or "").strip()
+    if not credential:
+        return await _error(send, "credential is required", 400)
+
+    hostname = (data.get("hostname") or "").strip() or _GIT_DEFAULT_HOSTNAMES[provider]
+    encrypted = encrypt_value(credential)
+
+    existing = await db.get_credential_by_provider(provider)
+    if existing:
+        await db.update_credential(existing["id"], credential=encrypted, hostname=hostname)
+    else:
+        await db.create_credential(provider, encrypted, hostname)
+
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_delete_git_credential(send, scope, provider):
+    """DELETE /dashboard/api/settings/git-credentials/{provider} — remove credential."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'", 400)
+
+    existing = await db.get_credential_by_provider(provider)
+    if not existing:
+        return await _error(send, f"No {provider} credential configured", 404)
+
+    await db.delete_credential(existing["id"])
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_test_git_credential(send, scope, provider):
+    """POST /dashboard/api/settings/git-credentials/{provider}/test — validate credential."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'", 400)
+
+    existing = await db.get_credential_by_provider(provider)
+    if not existing or not existing.get("credential"):
+        return await _json_response(send, {"valid": False, "error": f"No {provider} credential configured"})
+
+    raw_cred = existing["credential"]
+    credential = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
+    hostname = existing.get("hostname") or _GIT_DEFAULT_HOSTNAMES[provider]
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            if provider == "github":
+                resp = await client.get(
+                    f"https://{hostname}/api/v3/user" if hostname != "github.com" else "https://api.github.com/user",
+                    headers={"Authorization": f"Bearer {credential}"},
+                )
+                if resp.status_code == 200:
+                    return await _json_response(send, {"valid": True, "username": resp.json().get("login")})
+                return await _json_response(send, {"valid": False, "error": f"GitHub returned {resp.status_code}"})
+
+            elif provider == "gitlab":
+                resp = await client.get(
+                    f"https://{hostname}/api/v4/user",
+                    headers={"PRIVATE-TOKEN": credential},
+                )
+                if resp.status_code == 200:
+                    return await _json_response(send, {"valid": True, "username": resp.json().get("username")})
+                return await _json_response(send, {"valid": False, "error": f"GitLab returned {resp.status_code}"})
+
+            elif provider == "bitbucket":
+                username, _, password = credential.partition(":")
+                if not password:
+                    return await _json_response(send, {
+                        "valid": False,
+                        "error": "Credential must be username:app_password format",
+                    })
+                resp = await client.get(
+                    "https://api.bitbucket.org/2.0/user",
+                    auth=(username, password),
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    resolved = data.get("username") or data.get("account_id")
+                    return await _json_response(send, {"valid": True, "username": resolved})
+                return await _json_response(send, {"valid": False, "error": f"Bitbucket returned {resp.status_code}"})
+
+    except Exception as e:
+        return await _json_response(send, {"valid": False, "error": str(e)})
 
 
 # ── User settings ─────────────────────────────────────────────────────────────
