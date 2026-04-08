@@ -1,5 +1,133 @@
 # Switchboard — Developer Guide for CC Workers
 
+## NON-NEGOTIABLE CONTRACTS
+
+**1. ALL status changes go through `lifecycle.execute()`. Never call `db.update_task(status=...)` directly.**
+The `TaskLifecycle` class in `switchboard/dispatch/lifecycle.py` is the single owner of all task state
+transitions. Every status change — dispatch, complete, gate_pass, gate_fail, cancel, resume — must go
+through `lifecycle.execute(task_id, action)`. The engine functions in `dispatch/engine.py` are thin
+wrappers that call `lifecycle.execute()` internally.
+
+**2. `held` is a boolean flag on `ready` tasks, not a status value. Never set `status='held'`.**
+The `held` column is a boolean on the tasks table. A held task has `status='ready'` and `held=True`.
+The dashboard displays it as "held" via `_effective_ready_reason()`, but the actual status is `ready`.
+To hold/unhold a task, use `lifecycle.execute(task_id, "hold")` / `lifecycle.execute(task_id, "approve")`.
+
+**3. All git operations go through the provider interface. Never call GitHub-specific functions directly.**
+The provider abstraction in `switchboard/git/providers/` supports GitHub, GitLab, and Bitbucket.
+Use `resolve_credential()`, `provider.build_authenticated_url()`, `provider.create_pr()`,
+`provider.validate_access()`. Never import or call platform-specific functions directly.
+
+**4. No leaked threads in tests. Respect conftest.py patterns. All tests must complete within 30s.**
+`tests/conftest.py` has a `pytest_unconfigure` hook that detects leaked non-daemon threads and calls
+`os._exit()` to force termination. If your test leaks threads, the gate will report exit_code != 0
+with all tests passing — extremely hard to debug.
+
+## Dead code warnings — NEVER import or call these
+
+| Deleted function | Replacement |
+|-----------------|-------------|
+| `_build_authenticated_url()` | `provider.build_authenticated_url()` |
+| `create_github_pr()` | `provider.create_pr()` |
+| `_find_existing_pr()` | Handled internally by provider |
+| `_validate_github_pat_for_repo()` | `validate_project_access()` in `git/validation.py` |
+
+These functions no longer exist anywhere in the codebase. Importing them will cause `ImportError`.
+
+## Lifecycle state machine
+
+### The 6-state model
+
+| Status | Meaning |
+|--------|---------|
+| `ready` | Task can be dispatched. May also be `held`, `queued`, or `blocked` (display states). |
+| `working` | CC session is actively running. |
+| `validating` | Gate pipeline running (testing or reviewing). |
+| `stopped` | Paused — user action, timeout, error, or gate failure. |
+| `completed` | Finished — gates passed or manually closed. |
+| `cancelled` | Discarded before completion. |
+
+### Key transitions
+
+```
+ready + dispatch    → working     (CC session starts)
+ready + approve     → ready       (clears held flag, may auto-dispatch)
+working + complete  → validating  (enters gate pipeline)
+validating + gate_pass → completed
+validating + gate_fail → stopped
+stopped + resume    → working     (user resumes)
+stopped + start     → working     (user starts after reopen feedback)
+completed + reopen  → stopped     (user reopens for revisions)
+any + cancel        → cancelled
+```
+
+The full transition table is the `TRANSITIONS` dict in `switchboard/dispatch/lifecycle.py`.
+Look up `TRANSITIONS[(effective_state, action)]` to find valid actions for any state.
+
+### Display states vs actual states
+
+The `_effective_ready_reason()` function determines what the dashboard shows for `ready` tasks:
+- `held=True` → displays as "held"
+- In queue → displays as "queued"
+- Dependency unmet → displays as "blocked"
+
+Similarly, `validating` tasks show as "testing" or "reviewing" based on which gate is running.
+
+## Provider interface
+
+### Architecture
+
+```
+switchboard/git/providers/
+  base.py       — GitProvider abstract base class
+  __init__.py   — Provider registry, resolve_credential(), get_provider()
+  github.py     — GitHub implementation
+  gitlab.py     — GitLab implementation
+  bitbucket.py  — Bitbucket implementation
+```
+
+### Key functions
+
+- **`get_provider(repo_url)`** — Returns the correct `GitProvider` instance for a repo URL
+- **`resolve_credential(project)`** — Resolves credential for a project through the chain:
+  1. Project-level credential override
+  2. Instance-level credential from `git_credentials` table
+  3. Legacy fallback: `instance.github_pat_encrypted` (GitHub only)
+- **`provider.build_authenticated_url(repo_url, credential)`** — Returns HTTPS URL with embedded auth
+- **`provider.create_pr(credential, repo_info, head, base, title, body)`** — Creates a PR on the platform
+- **`provider.validate_access(credential, repo_info)`** — Tests if credential can access the repo
+- **`normalize_repo_url(url)`** — In `git/operations.py`. Provider-agnostic: converts any git URL format (SSH, HTTP, HTTPS, any host) to canonical `https://host/path.git`
+
+## Credential validation layers
+
+Three layers, running at different times:
+
+1. **Settings test** (informational) — User clicks "Test" in settings UI. Calls `provider.validate_access()`.
+   Non-blocking — just shows the user if their credential works.
+
+2. **Project validation** (post-create/update) — When a project is created or updated, `validate_project_access()`
+   runs automatically. Result stored on the project. Informational — doesn't block dispatch.
+
+3. **Dispatch pre-flight** (hard gate) — `lifecycle.execute()` calls `validate_project_access()` before
+   dispatching. If validation fails or warns, the task is held with reason "credential issue".
+   This is the only hard gate — it prevents launching a CC session that can't push.
+
+`validate_project_access()` lives in `switchboard/git/validation.py`.
+
+## Gate pipeline
+
+After a CC session completes (`working` → `validating`):
+
+1. **Test gate** — Runs `timeout 300 python3 -m pytest tests/ -v --tb=short -rFE` against the branch.
+   Failures auto-retry up to `max_test_retries` with failure output as feedback.
+2. **Review gate** — An Opus instance reviews the diff against the spec.
+   Failures auto-retry up to `max_review_retries` with review feedback injected.
+3. **PR/Merge** — If `auto_pr` is set, creates a PR via `provider.create_pr()`.
+   If `auto_merge` is set, merges automatically on gate pass.
+4. **Chain progression** — Dependent tasks auto-dispatch after gates pass.
+
+Gate logic is in `switchboard/dispatch/gates.py`.
+
 ## Dashboard
 
 The dashboard is Foreman. Entry point: `foreman.html` → `dashboard/foreman-app.js` → `dashboard/views/`.
@@ -64,7 +192,7 @@ If you need to see what's on main, use `git log origin/main` (read-only). Do not
 
 ## Running tests — READ THIS CAREFULLY
 
-This project has 900+ tests. Running them with `-v` produces massive truncated output.
+This project has 2700+ tests. Running them with `-v` produces massive truncated output.
 Follow this workflow or you WILL waste turns grepping through truncated output.
 
 ### The pattern: quiet first, targeted second
@@ -91,7 +219,7 @@ timeout 60 python3 -m pytest tests/test_lifecycle.py -k "resume" # keyword match
 ```
 
 ### NEVER do this
-- NEVER run `pytest -v` on the full suite — 900+ PASSED lines will be truncated
+- NEVER run `pytest -v` on the full suite — 2700+ PASSED lines will be truncated
 - NEVER run the full suite and pipe through `grep FAIL` repeatedly
 - NEVER re-run the same test command 3+ times without changing code between runs
 - If you catch yourself running pytest with different grep/tail combos, STOP — use `--last-failed`
@@ -120,10 +248,10 @@ switchboard/
     dispatch.py       — TOOL_HANDLERS dict mapping tool names → handler functions
     context.py        — Request context vars (user_id, is_token_auth, is_worker)
     handlers/         — MCP tool handler implementations, grouped by domain:
-      conversations.py, projects.py, tasks.py, components.py,
-      punchlist.py, ops.py, tokens.py, common.py
+      conversations.py, projects.py, tasks.py, ops.py, tokens.py,
+      common.py, files_handler.py, git_tools.py, search.py
   dispatch/
-    engine.py         — Task lifecycle: dispatch, resume, retry, cancel, close, approve
+    engine.py         — Thin wrappers around lifecycle.execute() (dispatch, resume, retry, cancel)
     lifecycle.py      — TaskLifecycle state machine — single owner of ALL status transitions
     internals.py      — Status-agnostic dispatch building blocks (worktree, prompt, SDK launch)
     gates.py          — Test gate, review gate, subtask execution
@@ -149,8 +277,15 @@ switchboard/
     sessions.py       — Session cookies, login/logout, rate limiting, Argon2id passwords
   git/
     worktree.py       — Worktree setup/cleanup (bare clone + per-task worktrees)
-    operations.py     — Branch ops, rebase, push, diff, merge, PR creation
+    operations.py     — Branch ops, push, diff, merge; normalize_repo_url()
     files.py          — File operations utilities
+    validation.py     — validate_project_access() — credential pre-flight checks
+    providers/        — Multi-platform git provider abstraction
+      base.py         — GitProvider abstract base class
+      __init__.py     — Provider registry, resolve_credential(), get_provider()
+      github.py       — GitHub implementation
+      gitlab.py       — GitLab implementation
+      bitbucket.py    — Bitbucket implementation
   embeddings/
     service.py        — OpenAI text-embedding-3-small, cosine similarity
     chunks.py         — Message chunking for semantic search
@@ -164,7 +299,7 @@ switchboard/
   dashboard/
     api.py            — REST API endpoints for the Foreman SPA
 dashboard/              — Foreman SPA (Preact/htm via CDN, no build step)
-tests/                  — Pytest suite (876+ tests, async, unit + integration)
+tests/                  — Pytest suite (2700+ tests, async, unit + integration)
 ```
 
 All code lives in the `switchboard/` package. No root-level Python shims.
@@ -217,8 +352,8 @@ These must never block the request path.
 
 ## Testing — THIS IS CRITICAL
 
-Every new function, endpoint, or behavior MUST have corresponding tests. Test count: **876+**.
-It should only go up, never down.
+Every new function, endpoint, or behavior MUST have corresponding tests.
+Test count should only go up, never down.
 
 ### Fixtures (defined in `conftest.py`)
 - `tmp_db` — Temporary SQLite DB with `SWITCHBOARD_DB` env var + Fernet encryption key
@@ -227,7 +362,7 @@ It should only go up, never down.
 - `sample_task` — Task in "working" status with 4 checklist items
 - `sample_conversation` — Conversation with 3 messages including pinned spec
 - `completed_chain` — 3-task dependency chain, all gate-passed
-- `mock_git` — Patches `_run_as_worker`, `setup_worktree`, `cleanup_worktree` as AsyncMock
+- `mock_git` — Patches git/subprocess ops: `_run_as_worker`, `setup_worktree`, `cleanup_worktree`, `_ensure_branch_pushed`, `setup_hook_config`, `validate_project_access`
 - `mock_sdk` — Patches `claude_agent_sdk` module with configurable mock agent
 
 ### Patterns
@@ -244,17 +379,19 @@ It should only go up, never down.
 ### Critical: mock ALL git and network operations
 
 Every test that touches dispatch, lifecycle, gates, or SDK code MUST mock:
-- `switchboard.git.worktree.setup_worktree` — creates real git worktrees
+- `switchboard.dispatch.engine._run_as_worker` — runs commands as worker user
+- `switchboard.dispatch.engine.setup_worktree` — creates real git worktrees
 - `switchboard.dispatch.internals.setup_hook_config` — writes .claude/settings.json
-- `switchboard.git.worktree.cleanup_worktree` — removes worktrees
+- `switchboard.dispatch.engine.cleanup_worktree` — removes worktrees
 - `switchboard.git.operations._ensure_branch_pushed` — does real `git push`
-- `switchboard.git.operations._maybe_create_pr` — calls GitHub API
-- `switchboard.git.operations._perform_auto_merge` — calls GitHub API
+- `switchboard.git.validation.validate_project_access` — calls provider API
 - `switchboard.dispatch.sdk_session._run_sdk_session` — launches real CC process
 
 Use the `mock_git` fixture from conftest.py, or patch individual functions.
 
-**If you skip a mock, the test will make a REAL call to GitHub.** Git will prompt for credentials, the test hangs, the gate times out, and exit_code=1 with zero visible failures. This is extremely hard to debug — the only symptom is "all tests pass but gate says failed."
+**If you skip a mock, the test will make a REAL call to a git provider.** Git will prompt for
+credentials, the test hangs, the gate times out, and exit_code=1 with zero visible failures.
+This is extremely hard to debug — the only symptom is "all tests pass but gate says failed."
 
 ## Auth model
 
@@ -278,42 +415,20 @@ Use the `mock_git` fixture from conftest.py, or patch individual functions.
 
 SQLite, single-file, async via aiosqlite. Schema in `switchboard/db/schema.py`.
 
-**Key tables:**
-- `users` — email (unique), password_hash, role, timezone, lockout tracking
-- `user_credentials` — Fernet-encrypted API keys (anthropic, github PAT, slack)
-- `sessions` — Session cookies with expiry + inactivity tracking
-- `oauth_clients`, `oauth_authorization_codes`, `oauth_tokens` — Full OAuth server state
-- `projects` — Git repos with test commands, env overrides, model config
-- `tasks` — Status, phase, branch, worktree, gate tracking, attempt counters, depends_on
-- `task_checklist` — Per-task checklist items
-- `components` — Feature groupings within projects, with own config inheritance
-- `punchlist` — Tracked items within components (claim/resolve lifecycle)
-- `conversations`, `messages` — Persistent threads; messages support cursor-based pagination
-- `message_chunks` — Chunked embeddings for semantic search
-- `instance` — Single-row instance config (plan tier, owner)
-- `push_subscriptions` — Web push endpoints
+**Key tables:** `users`, `user_credentials` (Fernet-encrypted), `sessions`, `oauth_*` (full OAuth server),
+`projects`, `tasks` (status, phase, gates, depends_on), `task_checklist`, `components`, `punchlist`,
+`conversations`/`messages` (cursor-based pagination), `message_chunks` (embeddings), `instance`, `push_subscriptions`.
 
-**FK patterns:** `created_by`, `dispatched_by`, `user_id` all reference `users(id)`.
+**FK patterns:** `created_by`, `dispatched_by`, `user_id` → `users(id)`.
 `task_id` → `tasks(id)`, `project_id` → `projects(id)`, `component_id` → `components(id)`.
+Schema in `switchboard/db/schema.py`.
 
 ## Environment variables
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `SWITCHBOARD_DB` | No (default: `./data/switchboard.db`) | SQLite database path |
-| `SWITCHBOARD_MASTER_KEY` | Yes (auto-generated) | Fernet encryption key for credentials |
-| `OAUTH_BASE_URL` | No | Base URL for OAuth endpoints |
-| `OAUTH_RSA_KEY_PATH` | No (default: `./data/oauth_rsa_key.pem`) | RSA key for signing JWTs |
-| `OAUTH_CLIENT_SECRET` | No (auto-seeded) | claude-mcp OAuth client secret |
-| `AUTH_ISSUER_URL` | No | External OAuth issuer (unset = self-issued) |
-| `AUTH_AUDIENCE` | No | JWT audience claim |
-| `AUTH_REQUIRED_SCOPES` | No | Comma-separated required scopes |
-| `WORKER_USER` | No (default: `switchboard`) | OS user for CC worker processes |
-| `SLACK_BOT_TOKEN` | No | Enables Slack notifications |
-| `SLACK_CHANNEL_ID` | No | Slack channel for task updates |
-| `VAPID_PRIVATE_KEY` | No | Web push signing key |
-| `VAPID_PUBLIC_KEY` | No | Web push public key |
-| `OPENAI_API_KEY` | No | Enables semantic search embeddings |
+All config from env vars. Key ones: `SWITCHBOARD_DB` (SQLite path), `SWITCHBOARD_MASTER_KEY` (Fernet key, required),
+`OAUTH_BASE_URL`, `OAUTH_RSA_KEY_PATH`, `WORKER_USER` (default: `switchboard`).
+Optional integrations: `SLACK_BOT_TOKEN`/`SLACK_CHANNEL_ID`, `VAPID_*` keys, `OPENAI_API_KEY` (embeddings).
+Full list in `switchboard/config/settings.py`.
 
 ## Dashboard
 
@@ -328,19 +443,9 @@ Do NOT add a build step, bundler, or node_modules. Keep it CDN-loaded ES modules
 
 ## Visual Verification (Dashboard Tasks)
 
-When working on dashboard UI, use the visual check tool to see what your changes look like:
-
-```bash
-python3 scripts/visual-check.py settings              # desktop settings
-python3 scripts/visual-check.py settings-mobile        # mobile settings
-python3 scripts/visual-check.py landing                # projects page
-```
-
-This renders the page with mock data via Playwright and saves a screenshot to /tmp/.
-Read the screenshot and compare to the reference image in fixtures/visual/.
-Iterate until your output matches the reference.
-
-Adding new pages: add an entry to scripts/visual-config.json and create mock fixtures.
+For dashboard UI work, use `python3 scripts/visual-check.py <page>` (e.g. `settings`, `settings-mobile`, `landing`).
+Renders via Playwright, saves screenshot to /tmp/. Compare to reference in `fixtures/visual/`.
+Config: `scripts/visual-config.json`.
 
 ## Things NOT to do
 
