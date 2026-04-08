@@ -1656,9 +1656,11 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                             "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions."}
 
             elif provider == "gitlab":
+                gl_headers = {"PRIVATE-TOKEN": credential}
+
                 resp = await client.get(
                     f"https://{hostname}/api/v4/user",
-                    headers={"PRIVATE-TOKEN": credential},
+                    headers=gl_headers,
                 )
                 if resp.status_code in (401, 403):
                     return {"ok": False, "username": None, "scopes": None,
@@ -1669,13 +1671,14 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
 
                 username = resp.json().get("username")
 
+                # Introspect scopes via token self endpoint
                 scopes = None
                 ok = True
                 scope_message = ""
                 try:
                     tok_resp = await client.get(
                         f"https://{hostname}/api/v4/personal_access_tokens/self",
-                        headers={"PRIVATE-TOKEN": credential},
+                        headers=gl_headers,
                     )
                     if tok_resp.status_code == 200:
                         tok_data = tok_resp.json()
@@ -1683,28 +1686,14 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                         has_api = "api" in scopes
                         if has_api:
                             scope_message = f"Authenticated as {username}. Required scopes present."
-                            ok = True
-                        elif scopes:
-                            # Scopes present but api not among them — insufficient for MR creation
-                            scope_message = (
-                                "Token is missing required scopes. "
-                                "Classic PAT requires 'api' scope. "
-                                "Fine-grained PAT requires Repository (read, write) + Merge Request (read, create)."
-                            )
-                            ok = False
                         else:
-                            # Empty scopes — likely fine-grained token; cannot fully introspect
-                            scope_message = (
-                                f"Authenticated as {username}. Scope introspection returned no scopes — "
-                                "token may be fine-grained. Ensure it has Repository (read, write) "
-                                "and Merge Request (read, create) permissions."
-                            )
-                            ok = True
+                            scope_message = f"Authenticated as {username}, but token is missing required scopes. Create a PAT with api and write_repository scopes."
+                            ok = False
                     else:
-                        scope_message = f"Authenticated as {username}. Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
+                        scope_message = f"Authenticated as {username}. Could not verify scopes — ensure token has api scope."
                         ok = True
                 except Exception:
-                    scope_message = f"Authenticated as {username}. Could not introspect token scopes. Auth confirmed."
+                    scope_message = f"Authenticated as {username}. Could not verify scopes — ensure token has api scope."
                     ok = True
 
                 return {"ok": ok, "username": username, "scopes": scopes, "message": scope_message}
