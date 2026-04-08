@@ -170,6 +170,24 @@ async def completed_chain(db, sample_project):
 # Mock fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _mock_credential_validation():
+    """Auto-mock validate_project_access for all tests to prevent dispatch/retry
+    from hitting real credential checks. Tests that need the real function should
+    patch it back with `_real_validate_project_access` (captured at module level)."""
+    with patch("switchboard.git.validation.validate_project_access", AsyncMock(return_value={
+        "status": "validated",
+        "message": "Credential validated",
+        "checked_at": "2024-01-01T00:00:00Z",
+        "detail": {"clone": True, "push": True, "pr": True},
+    })):
+        yield
+
+
+# Capture the real function at module level, before any autouse fixtures run.
+from switchboard.git.validation import validate_project_access as _real_validate_project_access
+
+
 @pytest.fixture
 def mock_git():
     """Mock all git/subprocess operations in dispatch engine and lifecycle.
@@ -183,6 +201,12 @@ def mock_git():
         "cleanup_worktree": AsyncMock(),
         "ensure_branch_pushed": AsyncMock(return_value=True),
         "setup_hook_config": AsyncMock(),
+        "validate_project_access": AsyncMock(return_value={
+            "status": "validated",
+            "message": "Credential validated",
+            "checked_at": "2024-01-01T00:00:00Z",
+            "detail": {"clone": True, "push": True, "pr": True},
+        }),
     }
 
     patches = [
@@ -191,6 +215,7 @@ def mock_git():
         patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
         patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
         patch("switchboard.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
+        patch("switchboard.git.validation.validate_project_access", mocks["validate_project_access"]),
     ]
     for p in patches:
         p.start()

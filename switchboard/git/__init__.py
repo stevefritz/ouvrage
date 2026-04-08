@@ -11,11 +11,8 @@ from switchboard.git.worktree import (
 from switchboard.git.operations import (
     resolve_branch_target,
     parse_repo_url,
-    create_github_pr,
-    _build_authenticated_url,
     _resolve_push_url,
     _classify_push_error,
-    _find_existing_pr,
     _git_fetch_and_rebase,
     _sync_branch_with_base,
     _ensure_branch_pushed,
@@ -44,11 +41,8 @@ __all__ = [
     # operations
     "resolve_branch_target",
     "parse_repo_url",
-    "create_github_pr",
-    "_build_authenticated_url",
     "_resolve_push_url",
     "_classify_push_error",
-    "_find_existing_pr",
     "_git_fetch_and_rebase",
     "_sync_branch_with_base",
     "_ensure_branch_pushed",

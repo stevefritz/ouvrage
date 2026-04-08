@@ -489,6 +489,14 @@ async def init_db():
         if "credential_override_last4" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN credential_override_last4 TEXT")
 
+        # Migrate projects: credential validation status fields
+        if "credential_status" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN credential_status TEXT")
+        if "credential_status_message" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN credential_status_message TEXT")
+        if "credential_checked_at" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN credential_checked_at TEXT")
+
         # Migrate git_credentials: add credential_last4 column
         gc_columns = await conn.execute_fetchall("PRAGMA table_info(git_credentials)")
         gc_col_names = [c["name"] for c in gc_columns]

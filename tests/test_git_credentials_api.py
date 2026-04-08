@@ -58,16 +58,42 @@ class _Capture:
         return json.loads(self.body)
 
 
-def _mock_httpx_response(status_code: int, json_data: dict):
+def _mock_httpx_response(status_code: int, json_data: dict, headers=None):
     mock_resp = MagicMock()
     mock_resp.status_code = status_code
     mock_resp.json.return_value = json_data
+    mock_resp.headers = headers or {}
     return mock_resp
 
 
-def _patch_httpx(status_code: int, json_data: dict):
+def _patch_httpx(status_code: int = 0, json_data: dict = None, headers=None, responses=None):
+    """Mock httpx.AsyncClient.
+
+    Simple: _patch_httpx(200, {...}) — all GET calls return same response.
+    Multi: _patch_httpx(responses=[resp1, resp2]) — sequential responses for multiple calls.
+    """
+    if responses:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=responses)
+    else:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=_mock_httpx_response(status_code, json_data or {}, headers))
+
+    class _FakeCtx:
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, *args):
+            return False
+
+    return patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
+
+
+def _patch_httpx_multi(responses):
+    """Patch httpx with a sequence of responses for multiple .get() calls."""
+    mock_resps = [_mock_httpx_response(r[0], r[1], r[2] if len(r) > 2 else None) for r in responses]
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=_mock_httpx_response(status_code, json_data))
+    mock_client.get = AsyncMock(side_effect=mock_resps)
 
     class _FakeCtx:
         async def __aenter__(self):
@@ -322,10 +348,10 @@ class TestTestGitCredential:
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is False
-        assert "No github credential" in data["error"]
+        assert data["ok"] is False
+        assert "No github credential" in data["message"]
 
-    async def test_github_valid_credential(self, db):
+    async def test_github_valid_credential_with_repo_scope(self, db):
         from switchboard.dashboard.api import handle_request
         from switchboard.crypto import encrypt_value
 
@@ -334,13 +360,34 @@ class TestTestGitCredential:
         scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
         resp = _Capture()
 
-        with _patch_httpx(200, {"login": "octocat"}):
+        with _patch_httpx(200, {"login": "octocat"}, headers={"X-OAuth-Scopes": "repo, read:org"}):
             await handle_request(scope, _make_receive(), resp)
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is True
+        assert data["ok"] is True
         assert data["username"] == "octocat"
+        assert "repo" in data["scopes"]
+
+    async def test_github_fine_grained_token(self, db):
+        """Fine-grained token has no X-OAuth-Scopes header."""
+        from switchboard.dashboard.api import handle_request
+        from switchboard.crypto import encrypt_value
+
+        await db.create_credential("github", encrypt_value("ghp_fine1234"), "github.com")
+
+        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
+        resp = _Capture()
+
+        with _patch_httpx(200, {"login": "octocat"}, headers={}):
+            await handle_request(scope, _make_receive(), resp)
+
+        assert resp.status == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["username"] == "octocat"
+        assert data["scopes"] is None
+        assert "Fine-grained" in data["message"]
 
     async def test_github_invalid_credential(self, db):
         from switchboard.dashboard.api import handle_request
@@ -356,8 +403,8 @@ class TestTestGitCredential:
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is False
-        assert "401" in data["error"]
+        assert data["ok"] is False
+        assert "401" in data["message"]
 
     async def test_gitlab_valid_credential(self, db):
         from switchboard.dashboard.api import handle_request
@@ -368,13 +415,18 @@ class TestTestGitCredential:
         scope = _make_scope("/dashboard/api/settings/git-credentials/gitlab/test", method="POST")
         resp = _Capture()
 
-        with _patch_httpx(200, {"username": "gitlabuser"}):
+        # First call: /api/v4/user → 200, second call: /personal_access_tokens/self → 200
+        with _patch_httpx(responses=[
+            _mock_httpx_response(200, {"username": "gitlabuser"}),
+            _mock_httpx_response(200, {"scopes": ["api", "read_repository"]}),
+        ]):
             await handle_request(scope, _make_receive(), resp)
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is True
+        assert data["ok"] is True
         assert data["username"] == "gitlabuser"
+        assert "api" in data["scopes"]
 
     async def test_bitbucket_valid_credential(self, db):
         from switchboard.dashboard.api import handle_request
@@ -390,7 +442,7 @@ class TestTestGitCredential:
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is True
+        assert data["ok"] is True
         assert data["username"] == "alice"
 
     async def test_bitbucket_missing_colon_in_credential(self, db):
@@ -406,8 +458,8 @@ class TestTestGitCredential:
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is False
-        assert "username:app_password" in data["error"]
+        assert data["ok"] is False
+        assert "username:app_password" in data["message"]
 
     async def test_invalid_provider_returns_400(self, db):
         from switchboard.dashboard.api import handle_request
@@ -436,10 +488,10 @@ class TestTestGitCredential:
         scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
         resp = _Capture()
 
-        with _patch_httpx(200, {"login": "testuser"}):
+        with _patch_httpx(200, {"login": "testuser"}, headers={"X-OAuth-Scopes": "repo"}):
             await handle_request(scope, _make_receive(), resp)
 
         assert resp.status == 200
         data = resp.json()
-        assert data["valid"] is True
+        assert data["ok"] is True
         assert data["username"] == "testuser"

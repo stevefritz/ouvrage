@@ -444,6 +444,24 @@ async def _handle_list_projects(send):
     await _json_response(send, projects)
 
 
+async def _run_dashboard_project_validation(project_id: str, project: dict) -> dict:
+    """Validate project credential access and store result. Returns updated project dict."""
+    from switchboard.git.validation import validate_project_access
+
+    try:
+        result = await validate_project_access(project)
+        updated = await db.update_project(
+            project_id,
+            credential_status=result["status"],
+            credential_status_message=result["message"],
+            credential_checked_at=result["checked_at"],
+        )
+        return updated
+    except Exception as e:
+        logger.warning("Credential validation failed for %s: %s", project_id, e)
+        return project
+
+
 async def _handle_create_project(receive, send, scope):
     body = await _read_body(receive)
     try:
@@ -525,6 +543,9 @@ async def _handle_create_project(receive, send, scope):
             credential_override=cred_encrypted,
             credential_override_last4=cred_last4,
         )
+        # Validate credential access synchronously so the response includes status
+        result = await _run_dashboard_project_validation(project_id, result)
+
         await _json_response(send, result, 201)
     except Exception as exc:
         logger.exception("Error creating project '%s'", project_id)
@@ -582,6 +603,12 @@ async def _handle_update_project(receive, send, project_id):
 
     try:
         result = await db.update_project(project_id, **fields)
+
+        # Re-validate credential if repo, provider, or credential changed
+        revalidate_keys = {"provider", "credential_override", "github_pat_override"}
+        if revalidate_keys & fields.keys():
+            result = await _run_dashboard_project_validation(project_id, result)
+
         await _json_response(send, result)
     except ValueError as exc:
         return await _error(send, str(exc), 404)
@@ -1639,7 +1666,7 @@ async def _handle_delete_git_credential(send, scope, provider):
 
 
 async def _handle_test_git_credential(send, scope, provider):
-    """POST /dashboard/api/settings/git-credentials/{provider}/test — validate credential."""
+    """POST /dashboard/api/settings/git-credentials/{provider}/test — validate credential with scope check."""
     user = scope.get("session_user") or {}
     if not _is_admin(user):
         return await _error(send, "Forbidden", 403)
@@ -1649,51 +1676,126 @@ async def _handle_test_git_credential(send, scope, provider):
 
     existing = await db.get_credential_by_provider(provider)
     if not existing or not existing.get("credential"):
-        return await _json_response(send, {"valid": False, "error": f"No {provider} credential configured"})
+        return await _json_response(send, {
+            "ok": False, "username": None, "scopes": None,
+            "message": f"No {provider} credential configured",
+        })
 
     raw_cred = existing["credential"]
     credential = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
     hostname = existing.get("hostname") or _GIT_DEFAULT_HOSTNAMES[provider]
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             if provider == "github":
+                api_base = f"https://{hostname}/api/v3" if hostname != "github.com" else "https://api.github.com"
                 resp = await client.get(
-                    f"https://{hostname}/api/v3/user" if hostname != "github.com" else "https://api.github.com/user",
+                    f"{api_base}/user",
                     headers={"Authorization": f"Bearer {credential}"},
                 )
-                if resp.status_code == 200:
-                    return await _json_response(send, {"valid": True, "username": resp.json().get("login")})
-                return await _json_response(send, {"valid": False, "error": f"GitHub returned {resp.status_code}"})
+                if resp.status_code != 200:
+                    return await _json_response(send, {
+                        "ok": False, "username": None, "scopes": None,
+                        "message": f"GitHub returned {resp.status_code} — token may be invalid or expired",
+                    })
+
+                username = resp.json().get("login")
+                # Check scopes from X-OAuth-Scopes header (classic PATs)
+                oauth_scopes_header = resp.headers.get("X-OAuth-Scopes", "")
+                if oauth_scopes_header:
+                    scopes = [s.strip() for s in oauth_scopes_header.split(",") if s.strip()]
+                    has_repo = "repo" in scopes
+                    message = (
+                        f"Authenticated as {username}. "
+                        + ("Token has `repo` scope — ready for Switchboard."
+                           if has_repo
+                           else "Token is missing `repo` scope — Switchboard needs `repo` for push and PR access.")
+                    )
+                    return await _json_response(send, {
+                        "ok": has_repo, "username": username,
+                        "scopes": scopes, "message": message,
+                    })
+                else:
+                    # Fine-grained token — no X-OAuth-Scopes header
+                    return await _json_response(send, {
+                        "ok": True, "username": username, "scopes": None,
+                        "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions.",
+                    })
 
             elif provider == "gitlab":
+                # Step 1: Auth check via /user
                 resp = await client.get(
                     f"https://{hostname}/api/v4/user",
                     headers={"PRIVATE-TOKEN": credential},
                 )
-                if resp.status_code == 200:
-                    return await _json_response(send, {"valid": True, "username": resp.json().get("username")})
-                return await _json_response(send, {"valid": False, "error": f"GitLab returned {resp.status_code}"})
+                if resp.status_code != 200:
+                    return await _json_response(send, {
+                        "ok": False, "username": None, "scopes": None,
+                        "message": f"GitLab returned {resp.status_code} — token may be invalid or expired",
+                    })
+
+                username = resp.json().get("username")
+
+                # Step 2: Scope introspection via /personal_access_tokens/self
+                scopes = None
+                scope_message = ""
+                try:
+                    tok_resp = await client.get(
+                        f"https://{hostname}/api/v4/personal_access_tokens/self",
+                        headers={"PRIVATE-TOKEN": credential},
+                    )
+                    if tok_resp.status_code == 200:
+                        tok_data = tok_resp.json()
+                        scopes = tok_data.get("scopes", [])
+                        has_api = "api" in scopes
+                        has_rw = "read_repository" in scopes and "write_repository" in scopes
+                        if has_api:
+                            scope_message = "Token has `api` scope — full access for Switchboard."
+                        elif has_rw:
+                            scope_message = "Token has `read_repository` + `write_repository` — sufficient for Switchboard."
+                        else:
+                            scope_message = f"Token scopes: {', '.join(scopes)}. Switchboard needs `api` or `read_repository` + `write_repository`."
+                        ok = has_api or has_rw
+                    else:
+                        scope_message = "Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
+                        ok = True
+                except Exception:
+                    scope_message = "Could not introspect token scopes. Auth confirmed."
+                    ok = True
+
+                return await _json_response(send, {
+                    "ok": ok, "username": username, "scopes": scopes,
+                    "message": f"Authenticated as {username}. {scope_message}",
+                })
 
             elif provider == "bitbucket":
-                username, _, password = credential.partition(":")
+                username_part, _, password = credential.partition(":")
                 if not password:
                     return await _json_response(send, {
-                        "valid": False,
-                        "error": "Credential must be username:app_password format",
+                        "ok": False, "username": None, "scopes": None,
+                        "message": "Credential must be in username:app_password format",
                     })
                 resp = await client.get(
                     "https://api.bitbucket.org/2.0/user",
-                    auth=(username, password),
+                    auth=(username_part, password),
                 )
                 if resp.status_code == 200:
                     data = resp.json()
                     resolved = data.get("username") or data.get("account_id")
-                    return await _json_response(send, {"valid": True, "username": resolved})
-                return await _json_response(send, {"valid": False, "error": f"Bitbucket returned {resp.status_code}"})
+                    return await _json_response(send, {
+                        "ok": True, "username": resolved, "scopes": None,
+                        "message": f"Authenticated as {resolved}. Bitbucket app passwords do not support scope introspection — verify your app password has Repository Read/Write and Pull Request Write permissions.",
+                    })
+                return await _json_response(send, {
+                    "ok": False, "username": None, "scopes": None,
+                    "message": f"Bitbucket returned {resp.status_code} — check credentials",
+                })
 
     except Exception as e:
-        return await _json_response(send, {"valid": False, "error": str(e)})
+        return await _json_response(send, {
+            "ok": False, "username": None, "scopes": None,
+            "message": f"Connection error: {e}",
+        })
 
 
 # ── User settings ─────────────────────────────────────────────────────────────

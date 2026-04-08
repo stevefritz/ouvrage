@@ -198,6 +198,38 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
 
     project = await db.get_project(task["project_id"])
 
+    # Pre-flight credential validation — hard gate
+    from switchboard.git.validation import validate_project_access
+    cred_result = await validate_project_access(project)
+    if cred_result["status"] in ("error", "warning"):
+        logger.warning("Credential pre-flight failed for %s: %s", task_id, cred_result["message"])
+        await db.update_task(task_id, status="held", held=True)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Held — credential issue",
+            content=(
+                f"Task held because credential validation failed:\n\n"
+                f"> {cred_result['message']}\n\n"
+                f"Fix the credential in Settings or on the project, then approve this task to retry."
+            ),
+        )
+        # Update project credential status
+        await db.update_project(
+            task["project_id"],
+            credential_status=cred_result["status"],
+            credential_status_message=cred_result["message"],
+            credential_checked_at=cred_result["checked_at"],
+        )
+        return
+
+    # Update project credential status on success
+    await db.update_project(
+        task["project_id"],
+        credential_status=cred_result["status"],
+        credential_status_message=cred_result["message"],
+        credential_checked_at=cred_result["checked_at"],
+    )
+
     try:
         # Setup worktree (writes hook config internally)
         worktree_path = await setup_task_worktree(project, task)
@@ -362,6 +394,23 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
         return
 
     project = await db.get_project(task["project_id"])
+
+    # Pre-flight credential validation — hard gate
+    from switchboard.git.validation import validate_project_access
+    cred_result = await validate_project_access(project)
+    if cred_result["status"] in ("error", "warning"):
+        logger.warning("Credential pre-flight failed for %s on retry: %s", task_id, cred_result["message"])
+        await db.update_task(task_id, status="held", held=True)
+        await db.post_task_message(
+            task_id=task_id, author="dispatcher", type="status",
+            title="Held — credential issue",
+            content=(
+                f"Task held because credential validation failed:\n\n"
+                f"> {cred_result['message']}\n\n"
+                f"Fix the credential in Settings or on the project, then approve this task to retry."
+            ),
+        )
+        return
 
     # Archive logs
     if project:

@@ -503,6 +503,30 @@ function SettingsTab({ project, projectId, onSaved }) {
             <div>
                 <div style=${sectionLabelStyle}>Git</div>
                 <${RepoUrlField} repo=${project.repo} />
+                ${project.credential_status ? html`
+                    <div style=${{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '8px 12px', marginBottom: '12px',
+                        background: project.credential_status === 'validated' ? colors.greenBg
+                            : project.credential_status === 'warning' ? (colors.yellowBg || '#332b00')
+                            : colors.redBg,
+                        border: '1px solid ' + (project.credential_status === 'validated' ? colors.green + '44'
+                            : project.credential_status === 'warning' ? colors.yellow + '44'
+                            : colors.red + '44'),
+                        borderRadius: layout.borderRadius.sm,
+                        fontSize: typography.size.sm,
+                    }}>
+                        <span style=${{
+                            width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+                            backgroundColor: project.credential_status === 'validated' ? colors.green
+                                : project.credential_status === 'warning' ? colors.yellow
+                                : colors.red,
+                        }} />
+                        <span style=${{ color: colors.textSecondary }}>
+                            ${project.credential_status_message || project.credential_status}
+                        </span>
+                    </div>
+                ` : null}
                 <${FormField} label="Default Branch">
                     <input
                         type="text"

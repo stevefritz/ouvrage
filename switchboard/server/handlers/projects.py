@@ -1,6 +1,5 @@
 """Project tool handlers."""
 
-import asyncio
 import logging
 import os
 import re
@@ -9,10 +8,8 @@ import shutil
 import switchboard.db as db
 import switchboard.dispatch as task_engine
 from switchboard.server.context import get_request_user_id
-from switchboard.git.operations import normalize_repo_url, _build_authenticated_url
-from switchboard.git.worktree import _run_as_worker
+from switchboard.git.operations import normalize_repo_url
 from switchboard.crypto import encrypt_value, is_fernet_token
-from switchboard.config.settings import SKIP_CREDENTIAL_CHECK
 
 log = logging.getLogger(__name__)
 
@@ -36,36 +33,22 @@ def _resolve_working_dir(repo: str, folder_name: str | None = None) -> str:
     return os.path.join(WORKTREE_BASE, name)
 
 
-async def _validate_github_pat_for_repo(repo: str) -> dict | None:
-    """Check that a GitHub PAT is configured and can access the given repo.
+async def _run_project_validation(project_id: str, project: dict) -> dict:
+    """Validate project credential access and store result. Returns updated project dict."""
+    from switchboard.git.validation import validate_project_access
 
-    Returns None if valid, or {"error": "..."} if not.
-    Runs git ls-remote without writing any files.
-    """
     try:
-        pat = await db.get_instance_github_pat()
-    except ValueError:
-        return {"error": "Add your GitHub PAT in Settings before creating projects."}
-
-    if not pat:
-        return {"error": "Add your GitHub PAT in Settings before creating projects."}
-
-    # Test PAT access to the repo using git ls-remote (read-only, no file writes)
-    auth_url = _build_authenticated_url(pat, repo)
-    try:
-        stdout, stderr, rc = await asyncio.wait_for(
-            _run_as_worker("git", "ls-remote", "--exit-code", auth_url, "HEAD"),
-            timeout=15.0,
+        result = await validate_project_access(project)
+        updated = await db.update_project(
+            project_id,
+            credential_status=result["status"],
+            credential_status_message=result["message"],
+            credential_checked_at=result["checked_at"],
         )
-    except asyncio.TimeoutError:
-        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
-    except Exception:
-        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
-
-    if rc != 0:
-        return {"error": "GitHub PAT cannot access this repo. Check your token's permissions."}
-
-    return None
+        return updated
+    except Exception as e:
+        log.warning("Credential validation failed for %s: %s", project_id, e)
+        return project
 
 
 async def _handle_create_project(arguments):
@@ -114,23 +97,6 @@ async def _handle_create_project(arguments):
         from switchboard.git.providers import detect_provider
         provider = await detect_provider(repo)
 
-    # 2a + 2b: validate PAT exists and can access the repo before creating any DB row.
-    # When SKIP_CREDENTIAL_CHECK=true, skip the PAT-exists check but still validate
-    # repo access if a PAT IS configured (don't bypass clone validation when a key is present).
-    if SKIP_CREDENTIAL_CHECK:
-        try:
-            instance_pat = await db.get_instance_github_pat()
-        except ValueError:
-            instance_pat = None
-        if instance_pat:
-            pat_error = await _validate_github_pat_for_repo(repo)
-            if pat_error:
-                return pat_error
-    else:
-        pat_error = await _validate_github_pat_for_repo(repo)
-        if pat_error:
-            return pat_error
-
     project_id = arguments["id"]
     result = await db.create_project(
         id=project_id,
@@ -157,6 +123,10 @@ async def _handle_create_project(arguments):
         credential_override=cred_encrypted,
         credential_override_last4=cred_last4,
     )
+
+    # Validate credential access synchronously so the response includes status
+    result = await _run_project_validation(project_id, result)
+
     return result
 
 
@@ -189,7 +159,14 @@ async def _handle_update_project(arguments):
         else:
             fields["credential_override"] = "" if cred == "" else None
             fields["credential_override_last4"] = None
-    return await db.update_project(project_id, **fields)
+    result = await db.update_project(project_id, **fields)
+
+    # Re-validate credential if repo, provider, or credential changed
+    revalidate_fields = {"repo", "provider", "credential_override", "github_pat_override"}
+    if revalidate_fields & fields.keys():
+        result = await _run_project_validation(project_id, result)
+
+    return result
 
 
 async def _handle_pause_project(arguments):

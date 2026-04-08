@@ -1,7 +1,7 @@
 """Tests for POST and PATCH /dashboard/api/projects endpoints."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -72,9 +72,10 @@ class TestPostProjects:
 
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
-        """Bypass PAT guard — these tests focus on project creation logic, not credentials."""
+        """Bypass credential validation — these tests focus on project creation logic, not credentials."""
         with patch("switchboard.db.get_instance_github_pat", return_value="ghp_test"):
-            with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", return_value=None):
+            with patch("switchboard.server.handlers.projects._run_project_validation",
+                       new=AsyncMock(side_effect=lambda pid, proj: proj)):
                 yield
 
     async def test_create_project_success(self, db):
@@ -229,9 +230,10 @@ class TestPatchProject:
 
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
-        """Bypass PAT guard — these tests focus on project patch logic, not credentials."""
+        """Bypass credential validation — these tests focus on project patch logic, not credentials."""
         with patch("switchboard.db.get_instance_github_pat", return_value="ghp_test"):
-            with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", return_value=None):
+            with patch("switchboard.server.handlers.projects._run_project_validation",
+                       new=AsyncMock(side_effect=lambda pid, proj: proj)):
                 yield
 
     async def _create_project(self, db):

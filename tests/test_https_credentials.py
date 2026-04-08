@@ -12,12 +12,12 @@ from switchboard.git.operations import normalize_repo_url
 # ---------------------------------------------------------------------------
 
 class TestNormalizeRepoUrl:
-    """normalize_repo_url must always return canonical https://github.com/owner/repo.git"""
+    """normalize_repo_url must return canonical HTTPS format for any provider."""
 
-    def test_ssh_with_git_suffix(self):
+    def test_github_ssh_with_git_suffix(self):
         assert normalize_repo_url("git@github.com:acme/widgets.git") == "https://github.com/acme/widgets.git"
 
-    def test_ssh_without_git_suffix(self):
+    def test_github_ssh_without_git_suffix(self):
         assert normalize_repo_url("git@github.com:acme/widgets") == "https://github.com/acme/widgets.git"
 
     def test_https_passthrough_with_suffix(self):
@@ -26,7 +26,7 @@ class TestNormalizeRepoUrl:
     def test_https_passthrough_without_suffix(self):
         assert normalize_repo_url("https://github.com/acme/widgets") == "https://github.com/acme/widgets.git"
 
-    def test_http_scheme(self):
+    def test_http_scheme_upgraded(self):
         assert normalize_repo_url("http://github.com/acme/widgets") == "https://github.com/acme/widgets.git"
 
     def test_hyphens_preserved(self):
@@ -43,13 +43,24 @@ class TestNormalizeRepoUrl:
         result = normalize_repo_url("git@github.com:org/repo.git")
         assert result.startswith("https://")
 
-    def test_invalid_url_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse"):
-            normalize_repo_url("not-a-url")
+    def test_gitlab_ssh_normalized(self):
+        assert normalize_repo_url("git@gitlab.com:acme/widgets.git") == "https://gitlab.com/acme/widgets.git"
 
-    def test_gitlab_url_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse"):
-            normalize_repo_url("git@gitlab.com:acme/widgets.git")
+    def test_gitlab_ssh_nested_groups(self):
+        assert normalize_repo_url("git@gitlab.com:group/subgroup/project.git") == "https://gitlab.com/group/subgroup/project.git"
+
+    def test_bitbucket_ssh_normalized(self):
+        assert normalize_repo_url("git@bitbucket.org:workspace/repo.git") == "https://bitbucket.org/workspace/repo.git"
+
+    def test_self_hosted_ssh(self):
+        assert normalize_repo_url("git@gl.example.com:team/backend.git") == "https://gl.example.com/team/backend.git"
+
+    def test_https_trailing_slash_stripped(self):
+        assert normalize_repo_url("https://gitlab.com/group/repo/") == "https://gitlab.com/group/repo.git"
+
+    def test_unknown_format_passthrough(self):
+        result = normalize_repo_url("not-a-url")
+        assert result == "not-a-url"
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +84,7 @@ class TestCreateProjectNormalizesUrl:
             patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)),
             patch("switchboard.server.handlers.projects.get_request_user_id", return_value=1),
             patch("os.path.realpath", side_effect=lambda p: p),
-            patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)),
-            patch("switchboard.server.handlers.projects.SKIP_CREDENTIAL_CHECK", False),
+            patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)),
             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"),
         ]
         for p in self.patches:
@@ -134,8 +144,12 @@ class TestUpdateProjectNormalizesUrl:
             self.updated_fields = fields
             return {"id": project_id, **fields}
 
+        async def mock_validation(project_id, project):
+            return project
+
         self.patches = [
             patch("switchboard.server.handlers.projects.db.update_project", side_effect=mock_update_project),
+            patch("switchboard.server.handlers.projects._run_project_validation", side_effect=mock_validation),
         ]
         for p in self.patches:
             p.start()

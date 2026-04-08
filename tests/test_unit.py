@@ -2333,9 +2333,9 @@ class TestProjectCreateValidation:
 
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
-        """Bypass PAT guard so tests focus on config-field validation logic."""
-        with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                   return_value=None):
+        """Bypass credential validation so tests focus on config-field validation logic."""
+        with patch("switchboard.server.handlers.projects._run_project_validation",
+                   new=AsyncMock(side_effect=lambda pid, proj: proj)):
             yield
 
     async def test_missing_all_required_fields_returns_error(self, db):

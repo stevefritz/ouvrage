@@ -103,6 +103,10 @@ class TestRecoverWithResume:
             patch("switchboard.dispatch.engine.run_setup_command", self.mock_run_setup),
             patch("switchboard.dispatch.engine._run_sdk_session", self.mock_run_sdk),
             patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("switchboard.git.validation.validate_project_access", AsyncMock(return_value={
+                "status": "validated", "message": "OK", "checked_at": "2024-01-01T00:00:00Z",
+                "detail": {"clone": True, "push": True, "pr": True},
+            })),
             self.mock_verify,
         ]
         for p in patches:

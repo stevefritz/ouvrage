@@ -112,8 +112,8 @@ class TestCreateProjectLimitEnforcement:
                    side_effect=lambda r: r), \
              patch("switchboard.server.handlers.projects.get_request_user_id",
                    return_value=None), \
-             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                   new=AsyncMock(return_value=None)), \
+             patch("switchboard.server.handlers.projects._run_project_validation",
+                   new=AsyncMock(side_effect=lambda pid, proj: proj)), \
              patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
             yield
 
