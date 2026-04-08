@@ -141,7 +141,7 @@ const GIT_PROVIDER_CONFIG = {
         defaultHostname: 'bitbucket.org',
         credentialLabel: 'API Token',
         credentialPlaceholder: 'email@example.com:ATBBxxxxxxxxx',
-        scopeText: 'Required scopes: read:repository:bitbucket, write:repository:bitbucket, write:pullrequest:bitbucket. Format: email:api_token',
+        scopeText: 'Required scopes: read:repository:bitbucket, write:repository:bitbucket, read:pullrequest:bitbucket, write:pullrequest:bitbucket, read:user:bitbucket. Format: email:api_token',
         createLinks: [
             { label: 'Create API token', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
         ],

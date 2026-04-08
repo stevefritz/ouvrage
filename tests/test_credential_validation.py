@@ -478,8 +478,8 @@ class TestSettingsTestEndpoint:
         assert "missing required scopes" in body["message"]
         assert "api" in body["message"]
 
-    async def test_bitbucket_auth_success(self, db):
-        """Bitbucket auth success → ok=True with API token scope guidance."""
+    async def test_bitbucket_no_scopes_header(self, db):
+        """Bitbucket auth success with no x-oauth-scopes header → ok=True, scopes=None, fallback message."""
         from switchboard.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
@@ -487,6 +487,7 @@ class TestSettingsTestEndpoint:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"username": "bbuser"}
+        mock_resp.headers.get.return_value = ""
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
@@ -503,7 +504,77 @@ class TestSettingsTestEndpoint:
         assert body["ok"] is True
         assert body["scopes"] is None
         assert "Authenticated as bbuser" in body["message"]
-        assert "read:repository:bitbucket" in body["message"]
+        assert "Verify" in body["message"]
+
+    async def test_bitbucket_all_scopes_present(self, db):
+        """Bitbucket auth success with all required scopes → ok=True, all scopes listed, success message."""
+        from switchboard.dashboard.api import _handle_test_git_credential
+
+        await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
+
+        all_scopes = "read:repository:bitbucket, write:repository:bitbucket, read:pullrequest:bitbucket, write:pullrequest:bitbucket, read:user:bitbucket"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"username": "bbuser"}
+        mock_resp.headers.get.return_value = all_scopes
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        send = _Capture()
+        scope = _make_scope()
+
+        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+            await _handle_test_git_credential(send, scope, "bitbucket")
+
+        body = send.json()
+        assert body["ok"] is True
+        assert isinstance(body["scopes"], list)
+        assert len(body["scopes"]) == 5
+        assert "read:repository:bitbucket" in body["scopes"]
+        assert "read:user:bitbucket" in body["scopes"]
+        assert "missing_scopes" not in body
+        assert "Authenticated as bbuser" in body["message"]
+        assert "All required scopes present" in body["message"]
+
+    async def test_bitbucket_missing_scopes(self, db):
+        """Bitbucket auth success but missing some scopes → ok=True, missing_scopes listed in response."""
+        from switchboard.dashboard.api import _handle_test_git_credential
+
+        await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
+
+        partial_scopes = "read:repository:bitbucket, write:repository:bitbucket"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"username": "bbuser"}
+        mock_resp.headers.get.return_value = partial_scopes
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        send = _Capture()
+        scope = _make_scope()
+
+        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+            await _handle_test_git_credential(send, scope, "bitbucket")
+
+        body = send.json()
+        assert body["ok"] is True
+        assert isinstance(body["scopes"], list)
+        assert "read:repository:bitbucket" in body["scopes"]
+        assert "missing_scopes" in body
+        assert "read:pullrequest:bitbucket" in body["missing_scopes"]
+        assert "write:pullrequest:bitbucket" in body["missing_scopes"]
+        assert "read:user:bitbucket" in body["missing_scopes"]
+        assert "Authenticated as bbuser" in body["message"]
+        assert "missing scopes" in body["message"]
+        assert "Add these when creating your API token" in body["message"]
 
     async def test_no_credential_configured(self, db):
         """No credential configured → ok=False with message."""
