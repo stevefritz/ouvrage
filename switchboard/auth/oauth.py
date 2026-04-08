@@ -73,6 +73,7 @@ def _ensure_rsa_key():
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption(),
             ))
+        os.chmod(key_path, 0o600)
         logger.info("Generated new RSA key at %s", key_path)
 
     # Build public JWK for JWKS endpoint
@@ -725,9 +726,6 @@ async def seed_default_client():
         await db.commit()
 
         if not OAUTH_CLIENT_SECRET:
-            logger.info(
-                "Seeded claude-mcp client with auto-generated secret: %s",
-                client_secret,
-            )
+            logger.info("Seeded claude-mcp client with auto-generated secret")
         else:
             logger.info("Seeded claude-mcp client with configured secret")

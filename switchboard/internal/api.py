@@ -11,6 +11,7 @@ Only active when AUTH_MODE=saas. All routes return 404 in local mode.
 
 import json
 import logging
+import secrets
 from datetime import datetime, timezone
 
 import switchboard.db as db
@@ -66,7 +67,7 @@ def _check_auth(scope) -> bool:
             auth_str = value.decode("utf-8", errors="replace")
             if auth_str.lower().startswith("bearer "):
                 token = auth_str[7:].strip()
-                return token == INTERNAL_API_TOKEN
+                return secrets.compare_digest(token, INTERNAL_API_TOKEN)
     return False
 
 
