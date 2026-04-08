@@ -313,13 +313,17 @@ async def _update_usage(task_id: str, result) -> None:
     task = await db.get_task(task_id)
     input_tokens = 0
     output_tokens = 0
+    cache_read = 0
+    cache_creation = 0
 
     if result.usage:
         # Claude Max usage format includes cache token breakdowns
+        cache_read = result.usage.get("cache_read_input_tokens", 0)
+        cache_creation = result.usage.get("cache_creation_input_tokens", 0)
         input_tokens = (
             result.usage.get("input_tokens", 0)
-            + result.usage.get("cache_creation_input_tokens", 0)
-            + result.usage.get("cache_read_input_tokens", 0)
+            + cache_creation
+            + cache_read
         )
         output_tokens = result.usage.get("output_tokens", 0)
 
@@ -330,6 +334,8 @@ async def _update_usage(task_id: str, result) -> None:
         total_input_tokens=(task.get("total_input_tokens") or 0) + input_tokens,
         total_output_tokens=(task.get("total_output_tokens") or 0) + output_tokens,
         total_cost_usd=(task.get("total_cost_usd") or 0.0) + cost,
+        total_cache_read_tokens=(task.get("total_cache_read_tokens") or 0) + cache_read,
+        total_cache_creation_tokens=(task.get("total_cache_creation_tokens") or 0) + cache_creation,
     )
 
 

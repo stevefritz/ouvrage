@@ -1649,8 +1649,9 @@ function DetailsDrawer({ task }) {
                     ${row('Dispatches', task.dispatch_count)}
                     ${row('Current Attempt', task.current_attempt)}
                     ${row('Cost', `$${(task.total_cost_usd || 0).toFixed(2)}`)}
-                    ${row('Tokens In', `${((task.total_input_tokens || 0) / 1000).toFixed(0)}K`)}
-                    ${row('Tokens Out', `${((task.total_output_tokens || 0) / 1000).toFixed(1)}K`)}
+                    ${row('Tokens Sent', `${((task.total_input_tokens || 0) / 1000).toFixed(0)}K`)}
+                    ${row('Tokens Received', `${((task.total_output_tokens || 0) / 1000).toFixed(1)}K`)}
+                    ${row('Cache Hit', `${task.cache_hit_pct != null ? task.cache_hit_pct : 0}%`)}
                     ${row('Phase', task.phase)}
                     ${task.resolved_config?.test_command ? html`
                         <div style=${{

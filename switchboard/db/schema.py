@@ -89,6 +89,8 @@ async def init_db():
                 total_input_tokens INTEGER DEFAULT 0,
                 total_output_tokens INTEGER DEFAULT 0,
                 total_cost_usd REAL DEFAULT 0.0,
+                total_cache_read_tokens INTEGER DEFAULT 0,
+                total_cache_creation_tokens INTEGER DEFAULT 0,
                 dispatch_count INTEGER DEFAULT 0,
                 last_activity TIMESTAMP,
                 created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -408,6 +410,11 @@ async def init_db():
         # embed-task-goals: vector embedding of task goal for semantic search
         if "embedding" not in task_col_names:
             await conn.execute("ALTER TABLE tasks ADD COLUMN embedding BLOB")
+        # cache-token-tracking: separate columns for cache token breakdown
+        if "total_cache_read_tokens" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN total_cache_read_tokens INTEGER DEFAULT 0")
+        if "total_cache_creation_tokens" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN total_cache_creation_tokens INTEGER DEFAULT 0")
 
         # Migrate users table: add rate-limiting fields if missing
         user_columns = await conn.execute_fetchall("PRAGMA table_info(users)")

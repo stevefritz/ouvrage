@@ -773,6 +773,11 @@ async def _handle_get_task(send, task_id):
     except Exception:
         logger.debug("Failed to get project default_branch for task %s", task_id, exc_info=True)
 
+    # Compute cache hit percentage
+    total_input = task.get("total_input_tokens") or 0
+    cache_read = task.get("total_cache_read_tokens") or 0
+    task["cache_hit_pct"] = round((cache_read / total_input * 100), 1) if total_input > 0 else 0
+
     await _json_response(send, task)
 
 
