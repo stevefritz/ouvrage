@@ -226,26 +226,28 @@ class TestLegacyForemanRedirect:
 class TestLocalhostBypass:
 
     async def test_localhost_bypasses_foreman_auth(self, db):
-        """127.0.0.1 skips session check on /dashboard/."""
+        """127.0.0.1 does NOT skip session check on /dashboard/ (bypass scoped to /mcp/worker)."""
         status, _, body, _ = await _call_middleware(
             "/dashboard/", client=("127.0.0.1", 5000)
         )
-        assert status == 200
-        assert body == b"OK"
+        # Localhost bypass is restricted to /mcp/worker, /proxy/anthropic, /health.
+        # /dashboard/ requires a valid session → redirect to login.
+        assert status == 302
 
     async def test_localhost_ipv6_bypasses_foreman_auth(self, db):
         status, _, body, _ = await _call_middleware(
             "/dashboard/", client=("::1", 5000)
         )
-        assert status == 200
+        # Same as IPv4: bypass restricted, /dashboard/ requires session → 302.
+        assert status == 302
 
     async def test_localhost_bypasses_dashboard_api_auth(self, db):
-        """127.0.0.1 skips session check on /dashboard/api/."""
+        """127.0.0.1 does NOT skip session check on /dashboard/api/ (bypass scoped to /mcp/worker)."""
         status, _, body, _ = await _call_middleware(
             "/dashboard/api/tasks", client=("127.0.0.1", 5000)
         )
-        assert status == 200
-        assert body == b"OK"
+        # /dashboard/api/* requires a valid session → 401 authentication_required.
+        assert status == 401
 
 
 # ── Legacy /foreman redirect ──────────────────────────────────────────────
