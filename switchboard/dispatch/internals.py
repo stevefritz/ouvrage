@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 from pathlib import Path
 
 import switchboard.db as db
@@ -148,10 +149,14 @@ async def setup_hook_config(worktree_path: str) -> None:
         }
     }
 
-    os.makedirs(settings_dir, exist_ok=True)
-    with open(settings_path, "w") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
+    # Write as worker user — the worktree is owned by the worker, and .claude/
+    # from the repo checkout is not group-writable.
+    from switchboard.git.worktree import _run_as_worker
+    await _run_as_worker("mkdir", "-p", settings_dir)
+    settings_json = json.dumps(settings, indent=2)
+    await _run_as_worker(
+        "sh", "-c", f"cat > {shlex.quote(settings_path)} << 'HOOKEOF'\n{settings_json}\nHOOKEOF"
+    )
 
     log.debug(f"Wrote hook config to {settings_path}")
 
