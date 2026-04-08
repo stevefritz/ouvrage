@@ -819,7 +819,7 @@ FILES_TOOLS = [
     Tool(
         name="add_project_file",
         description=(
-            "Persist a file and attach it to a project. Pass the absolute path to a file. "
+            "Persist a file and attach it to a project. Pass the absolute path to a file within your worktree. "
             "The file is copied to permanent storage and linked to the project — it will appear in the project's "
             "Files section as a persistent reference doc. Worker endpoint only."
         ),
@@ -830,16 +830,20 @@ FILES_TOOLS = [
                     "type": "string",
                     "description": "The project ID to attach the file to.",
                 },
+                "task_id": {
+                    "type": "string",
+                    "description": "The current task ID. Required for workers — used to validate the source path is within your worktree.",
+                },
                 "source_path": {
                     "type": "string",
-                    "description": "Absolute path to the file to persist.",
+                    "description": "Absolute path to the file within your worktree.",
                 },
                 "filename": {
                     "type": "string",
                     "description": "Display name for the file. Defaults to the source file's basename.",
                 },
             },
-            "required": ["project_id", "source_path"],
+            "required": ["project_id", "task_id", "source_path"],
         },
     ),
     Tool(

@@ -101,7 +101,7 @@ async def _is_token_revoked(jti: str) -> bool:
             return bool(rows and rows[0]["revoked"])
     except Exception as e:
         logger.warning(f"Revocation check failed (jti={jti!r}): {e}")
-        return False  # Fail open — JWT was still cryptographically valid
+        return True  # Fail closed — DB error means we cannot confirm token is valid
 
 
 # ── Remote JWKS cache ──────────────────────────────────────────────────────
@@ -345,12 +345,19 @@ def auth_middleware(inner_app):
         if scope["type"] != "http":
             return await inner_app(scope, receive, send)
 
-        # Bypass all auth for localhost connections (CC subprocesses on the same host)
+        path = scope.get("path", "")
+
+        # Bypass auth for localhost connections on worker/proxy paths only.
+        # /mcp/worker — CC workers access this without JWT (trust-based).
+        # /proxy/anthropic — Anthropic API proxy accessed by workers.
+        # /health — health checks from local monitoring.
+        # NOTE: /mcp (full user endpoint) is NOT in this allowlist by design.
         client = scope.get("client")
         if client and client[0] in ("127.0.0.1", "::1"):
-            return await inner_app(scope, receive, send)
-
-        path = scope.get("path", "")
+            if (path == "/mcp/worker" or
+                    path.startswith("/proxy/anthropic") or
+                    path == "/health"):
+                return await inner_app(scope, receive, send)
 
         # Serve protected resource metadata (unauthenticated)
         if path == "/.well-known/oauth-protected-resource":

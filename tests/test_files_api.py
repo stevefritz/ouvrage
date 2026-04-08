@@ -1465,13 +1465,25 @@ class TestAddProjectFile:
             lambda: True,
         )
 
-    async def test_successful_add_project_file(self, db, sample_project, tmp_path):
+    @pytest.fixture
+    async def worker_task(self, db, sample_project, tmp_path):
+        """A task with worktree_path set to tmp_path for upload validation."""
+        task = await db.create_task(
+            id="test-project/file-upload-task",
+            project_id="test-project",
+            goal="File upload test",
+        )
+        await db.update_task(task["id"], worktree_path=str(tmp_path))
+        return task
+
+    async def test_successful_add_project_file(self, db, sample_project, worker_task, tmp_path):
         from switchboard.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "readme.md"
         src.write_bytes(b"# Project README")
 
         result = await _handle_add_project_file({
             "project_id": sample_project["id"],
+            "task_id": worker_task["id"],
             "source_path": str(src),
         })
 
@@ -1485,13 +1497,14 @@ class TestAddProjectFile:
         assert record["task_id"] is None
         assert record["uploaded_by"] is None
 
-    async def test_custom_filename(self, db, sample_project, tmp_path):
+    async def test_custom_filename(self, db, sample_project, worker_task, tmp_path):
         from switchboard.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "output.json"
         src.write_bytes(b"{}")
 
         result = await _handle_add_project_file({
             "project_id": sample_project["id"],
+            "task_id": worker_task["id"],
             "source_path": str(src),
             "filename": "project-data.json",
         })
@@ -1499,7 +1512,7 @@ class TestAddProjectFile:
         assert result["filename"] == "project-data.json"
         assert Path(result["stored_path"]).name == "project-data.json"
 
-    async def test_project_not_found_raises(self, db, tmp_path):
+    async def test_project_not_found_raises(self, db, sample_project, worker_task, tmp_path):
         from switchboard.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "test.txt"
         src.write_bytes(b"data")
@@ -1507,10 +1520,11 @@ class TestAddProjectFile:
         with pytest.raises(ValueError, match="not found"):
             await _handle_add_project_file({
                 "project_id": "nonexistent-project",
+                "task_id": worker_task["id"],
                 "source_path": str(src),
             })
 
-    async def test_bad_extension_rejected(self, db, sample_project, tmp_path):
+    async def test_bad_extension_rejected(self, db, sample_project, worker_task, tmp_path):
         from switchboard.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "script.sh"
         src.write_bytes(b"#!/bin/bash")
@@ -1518,6 +1532,7 @@ class TestAddProjectFile:
         with pytest.raises(ValueError, match="not allowed"):
             await _handle_add_project_file({
                 "project_id": sample_project["id"],
+                "task_id": worker_task["id"],
                 "source_path": str(src),
             })
 
@@ -1533,6 +1548,7 @@ class TestAddProjectFile:
         with pytest.raises(ValueError, match="worker endpoint"):
             await _handle_add_project_file({
                 "project_id": sample_project["id"],
+                "task_id": "test-project/some-task",
                 "source_path": str(src),
             })
 

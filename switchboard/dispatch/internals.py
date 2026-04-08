@@ -114,72 +114,43 @@ async def checkout_existing_worktree(project: dict, task: dict) -> str:
 async def setup_hook_config(worktree_path: str) -> None:
     """Write PreToolUse hooks into {worktree}/.claude/settings.json.
 
-    Merges with any existing settings to preserve repo-level config.
+    Overwrites any existing file unconditionally — never merges repo content.
+    A malicious repo could include PreToolUse hooks that exfiltrate secrets;
+    overwriting ensures only Ouvrage-controlled hooks are active.
+
     The hook scripts live at /opt/switchboard/hooks/ on the host —
     outside the worktree so CC cannot edit them.
     """
     settings_dir = os.path.join(worktree_path, ".claude")
     settings_path = os.path.join(settings_dir, "settings.json")
 
-    # Read existing settings if present
-    existing = {}
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path) as f:
-                existing = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            existing = {}
-
-    # Define the hooks to inject
-    push_hook = {
-        "type": "command",
-        "if": "Bash(git push*)",
-        "command": "/opt/switchboard/hooks/block-git-push.sh",
+    # Build Ouvrage's hooks from scratch — do NOT read or preserve any repo content.
+    # Any repo-defined hooks (e.g. malicious PreToolUse exfil scripts) are discarded.
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "if": "Bash(git push*)",
+                            "command": "/opt/switchboard/hooks/block-git-push.sh",
+                        },
+                        {
+                            "type": "command",
+                            "if": "Bash(git fetch*)",
+                            "command": "/opt/switchboard/hooks/block-git-fetch.sh",
+                        },
+                    ],
+                }
+            ]
+        }
     }
-    fetch_hook = {
-        "type": "command",
-        "if": "Bash(git fetch*)",
-        "command": "/opt/switchboard/hooks/block-git-fetch.sh",
-    }
 
-    # Merge into existing hooks structure
-    hooks = existing.get("hooks", {})
-    pre_tool_use = hooks.get("PreToolUse", [])
-
-    # Find or create the Bash matcher entry for git push/fetch blocking
-    git_block_entry = None
-    for entry in pre_tool_use:
-        if (entry.get("matcher") == "Bash"
-                and isinstance(entry.get("hooks"), list)):
-            # Check if this entry already has our hooks
-            for h in entry["hooks"]:
-                if h.get("command", "").endswith("block-git-push.sh"):
-                    git_block_entry = entry
-                    break
-            if git_block_entry:
-                break
-
-    if git_block_entry is None:
-        # Add new entry with both hooks
-        pre_tool_use.append({
-            "matcher": "Bash",
-            "hooks": [push_hook, fetch_hook],
-        })
-    else:
-        # Entry exists — ensure both hooks are present
-        existing_cmds = {h.get("command") for h in git_block_entry["hooks"]}
-        if push_hook["command"] not in existing_cmds:
-            git_block_entry["hooks"].append(push_hook)
-        if fetch_hook["command"] not in existing_cmds:
-            git_block_entry["hooks"].append(fetch_hook)
-
-    hooks["PreToolUse"] = pre_tool_use
-    existing["hooks"] = hooks
-
-    # Write back
     os.makedirs(settings_dir, exist_ok=True)
     with open(settings_path, "w") as f:
-        json.dump(existing, f, indent=2)
+        json.dump(settings, f, indent=2)
         f.write("\n")
 
     log.debug(f"Wrote hook config to {settings_path}")

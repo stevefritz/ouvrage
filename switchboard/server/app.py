@@ -16,6 +16,7 @@ from switchboard.auth import sessions as session_server
 from switchboard.auth import sso as sso_server
 from switchboard.dashboard import api as dashboard_api
 from switchboard.internal import api as internal_api
+from switchboard.server.proxy import handle_anthropic_proxy
 import switchboard.db as db
 import switchboard.dispatch as tasks
 
@@ -392,6 +393,22 @@ async def _backfill_vec_tables() -> None:
         log.error("vec0 backfill failed: %s", e)
 
 
+async def _cleanup_expired_sessions() -> None:
+    """Periodically delete expired sessions from the database (runs every hour)."""
+    from switchboard.db.connection import get_db as _get_db
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            async with _get_db() as conn:
+                await conn.execute(
+                    "DELETE FROM sessions WHERE expires_at < datetime('now')"
+                )
+                await conn.commit()
+            log.debug("Expired session cleanup complete")
+        except Exception as e:
+            log.warning("Expired session cleanup failed: %s", e)
+
+
 async def _backfill_message_chunks() -> None:
     """Background task: chunk and embed existing long messages that haven't been chunked yet."""
     total = 0
@@ -474,6 +491,8 @@ async def main():
                 asyncio.create_task(_backfill_task_goals())
                 # Poll GitHub for PR status changes every 60s
                 asyncio.create_task(tasks._pr_status_sweep())
+                # Periodically clean up expired sessions
+                asyncio.create_task(_cleanup_expired_sessions())
                 message = await receive()
                 if message["type"] == "lifespan.shutdown":
                     # Mark all working tasks for recovery before event loop dies
@@ -521,6 +540,8 @@ async def main():
             await session_server.handle_logout(scope, receive, send)
         elif path == "/auth/sso" and method == "GET":
             await sso_server.handle_sso(scope, receive, send)
+        elif path.startswith("/proxy/anthropic/"):
+            await handle_anthropic_proxy(scope, receive, send)
         elif path.startswith("/internal/"):
             await internal_api.handle_request(scope, receive, send)
         elif path == "/oauth/authorize" and method == "GET":

@@ -47,14 +47,14 @@ class TestSetupHookConfig:
         assert "/opt/switchboard/hooks/block-git-fetch.sh" in hook_cmds
 
     async def test_merges_with_existing_settings(self, tmp_path):
-        """setup_hook_config preserves existing settings and adds hooks."""
+        """setup_hook_config overwrites existing settings — repo hooks are discarded."""
         from switchboard.dispatch.internals import setup_hook_config
 
         worktree = str(tmp_path / "wt")
         claude_dir = os.path.join(worktree, ".claude")
         os.makedirs(claude_dir)
 
-        # Write existing settings
+        # Write existing settings with repo-defined hooks and other keys
         existing = {
             "includeCoAuthoredBy": False,
             "hooks": {
@@ -76,20 +76,21 @@ class TestSetupHookConfig:
         with open(os.path.join(claude_dir, "settings.json")) as f:
             settings = json.load(f)
 
-        # Existing setting preserved
-        assert settings["includeCoAuthoredBy"] is False
+        # Existing settings are discarded — overwrite, not merge
+        assert "includeCoAuthoredBy" not in settings
 
-        # Existing hook preserved, new hooks added as separate entry
+        # Only Ouvrage hooks present — existing repo hook is gone
         hooks = settings["hooks"]["PreToolUse"]
-        assert len(hooks) == 2  # original entry + new entry
+        assert len(hooks) == 1
+        assert hooks[0]["matcher"] == "Bash"
 
-        # The existing hook entry is untouched
-        assert hooks[0]["hooks"][0]["command"] == "existing-hook.sh"
+        # Existing repo hook is not present
+        all_cmds = [h["command"] for h in hooks[0]["hooks"]]
+        assert "existing-hook.sh" not in all_cmds
 
-        # New entry has both blocking hooks
-        new_cmds = [h["command"] for h in hooks[1]["hooks"]]
-        assert "/opt/switchboard/hooks/block-git-push.sh" in new_cmds
-        assert "/opt/switchboard/hooks/block-git-fetch.sh" in new_cmds
+        # Ouvrage blocking hooks are present
+        assert "/opt/switchboard/hooks/block-git-push.sh" in all_cmds
+        assert "/opt/switchboard/hooks/block-git-fetch.sh" in all_cmds
 
     async def test_idempotent_called_twice(self, tmp_path):
         """Calling setup_hook_config twice does not duplicate hooks."""
