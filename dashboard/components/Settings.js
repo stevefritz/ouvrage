@@ -1266,8 +1266,25 @@ export function Settings() {
         </div>`;
     }
 
+    const handleLogout = useCallback(() => {
+        fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+            .then(() => { location.href = '/'; });
+    }, []);
+
     return html`
         <div style=${{ padding: '24px', maxWidth: '800px' }}>
+
+            <div style=${{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                <button onclick=${handleLogout} style=${{
+                    background: 'none',
+                    border: `1px solid ${colors.border}`,
+                    color: colors.textSecondary,
+                    fontSize: '12px',
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                }}>Logout</button>
+            </div>
 
             ${userError && html`
                 <div style=${{ fontSize: '13px', color: colors.red, marginBottom: '16px' }}>
