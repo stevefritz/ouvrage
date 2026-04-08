@@ -573,6 +573,15 @@ async def dispatch_task(
         if comp and comp.get("paused"):
             raise ValueError(f"Component '{component_id}' is paused. Resume it before dispatching tasks.")
 
+    # Validate git credential is available before dispatch
+    from switchboard.config.settings import SKIP_CREDENTIAL_CHECK
+    if not SKIP_CREDENTIAL_CHECK:
+        try:
+            from switchboard.git.providers import resolve_credential
+            await resolve_credential(project)
+        except ValueError as e:
+            raise ValueError(str(e))
+
     # Resolve config: task param → project default → system default.
     # Applied before create_task so the DB stores the resolved values; gate logic
     # reads task fields directly (e.g. task.get("auto_test")) and must find them set.

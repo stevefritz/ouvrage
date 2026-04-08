@@ -158,6 +158,16 @@ from switchboard.db.users import (
     get_instance_github_pat,
 )
 
+# Git credentials
+from switchboard.db.git_credentials import (
+    create_credential,
+    get_credential_by_provider,
+    get_credential_by_hostname,
+    list_credentials,
+    update_credential,
+    delete_credential,
+)
+
 # Files
 from switchboard.db.files import (
     create_file,
@@ -247,6 +257,9 @@ __all__ = [
     "create_api_token", "validate_api_token", "revoke_api_token", "list_api_tokens",
     "get_github_pat", "get_anthropic_key",
     "set_instance_github_pat", "get_instance_github_pat",
+    # git credentials
+    "create_credential", "get_credential_by_provider", "get_credential_by_hostname",
+    "list_credentials", "update_credential", "delete_credential",
     # instance config
     "get_instance_config", "set_instance_config", "get_concurrency_limit", "get_max_projects",
     # audit

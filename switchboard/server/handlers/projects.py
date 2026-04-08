@@ -103,8 +103,15 @@ async def _handle_create_project(arguments):
     if missing:
         return {"error": f"Missing required config fields: {', '.join(missing)}. All config must be explicitly set at project creation."}
 
-    pat_raw = arguments.get("github_pat_override")
-    pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
+    # credential_override takes priority over deprecated github_pat_override
+    cred_raw = arguments.get("credential_override") or arguments.get("github_pat_override")
+    cred_encrypted = encrypt_value(cred_raw) if cred_raw and not is_fernet_token(cred_raw) else cred_raw or None
+
+    # Auto-detect provider from URL if not specified
+    provider = arguments.get("provider")
+    if not provider:
+        from switchboard.git.providers import detect_provider
+        provider = await detect_provider(repo)
 
     # 2a + 2b: validate PAT exists and can access the repo before creating any DB row.
     # When SKIP_CREDENTIAL_CHECK=true, skip the PAT-exists check but still validate
@@ -144,7 +151,9 @@ async def _handle_create_project(arguments):
         auto_merge=arguments.get("auto_merge"),
         state_definitions=arguments.get("state_definitions"),
         created_by=get_request_user_id(),
-        github_pat_override=pat_encrypted,
+        github_pat_override=cred_encrypted,
+        provider=provider,
+        credential_override=cred_encrypted,
     )
     return result
 
@@ -169,6 +178,13 @@ async def _handle_update_project(arguments):
             fields["github_pat_override"] = encrypt_value(pat) if not is_fernet_token(pat) else pat
         else:  # empty string or null → clear (db.update_project treats empty string as NULL)
             fields["github_pat_override"] = "" if pat == "" else None
+    # credential_override follows same pattern
+    if "credential_override" in fields:
+        cred = fields["credential_override"]
+        if cred:
+            fields["credential_override"] = encrypt_value(cred) if not is_fernet_token(cred) else cred
+        else:
+            fields["credential_override"] = "" if cred == "" else None
     return await db.update_project(project_id, **fields)
 
 

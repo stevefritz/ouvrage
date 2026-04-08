@@ -218,7 +218,16 @@ PROJECT_TOOLS = [
                 },
                 "github_pat_override": {
                     "type": "string",
-                    "description": "Optional project-specific GitHub PAT. Encrypted at rest. Use for repos in different orgs or requiring a separate token. If not set, falls back to instance-level PAT.",
+                    "description": "Deprecated — use credential_override instead. Optional project-specific GitHub PAT. Encrypted at rest.",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["github", "gitlab", "bitbucket"],
+                    "description": "Git hosting provider. Auto-detected from repo URL if omitted.",
+                },
+                "credential_override": {
+                    "type": "string",
+                    "description": "Optional project-specific credential (PAT/token). Encrypted at rest. Overrides the instance-level credential for this project's provider.",
                 },
             },
             "required": ["id", "repo"],
@@ -258,7 +267,9 @@ PROJECT_TOOLS = [
                 "auto_pr": {"type": ["boolean", "null"], "description": "Project-level default for auto_pr"},
                 "auto_merge": {"type": ["boolean", "null"], "description": "Project-level default for auto_merge"},
                 "state_definitions": {"type": ["object", "null"], "description": "Custom state definitions for dashboard rendering"},
-                "github_pat_override": {"type": ["string", "null"], "description": "Project-specific GitHub PAT. Pass a new value to encrypt and store. Pass empty string or null to clear (falls back to instance PAT)."},
+                "github_pat_override": {"type": ["string", "null"], "description": "Deprecated — use credential_override. Project-specific GitHub PAT."},
+                "provider": {"type": ["string", "null"], "enum": ["github", "gitlab", "bitbucket", None], "description": "Git hosting provider"},
+                "credential_override": {"type": ["string", "null"], "description": "Project-specific credential. Pass a new value to encrypt and store. Pass empty string or null to clear."},
             },
             "required": ["id"],
         },

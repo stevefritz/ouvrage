@@ -265,6 +265,14 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS git_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                credential TEXT NOT NULL,
+                hostname TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
         """)
 
         # Migrate messages table: add task_id column if missing
@@ -471,6 +479,12 @@ async def init_db():
         # Migrate projects: add display_name for human-readable project title
         if "display_name" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN display_name TEXT")
+
+        # Migrate projects: add provider and credential_override for multi-provider support
+        if "provider" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN provider TEXT")
+        if "credential_override" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN credential_override TEXT")
 
         # Migrate instance: add github_pat_encrypted column
         instance_columns = await conn.execute_fetchall("PRAGMA table_info(instance)")
@@ -811,6 +825,37 @@ async def init_db():
                         _logging.getLogger(__name__).info(
                             "Migrated GitHub PAT from user credentials to instance level."
                         )
+
+        # Auto-migrate instance.github_pat_encrypted → git_credentials row
+        # If the instance has a GitHub PAT but no git_credentials row for github, create one.
+        if _os.environ.get("SWITCHBOARD_MASTER_KEY"):
+            inst_rows_gc = await conn.execute_fetchall(
+                "SELECT github_pat_encrypted FROM instance WHERE id = 1"
+            )
+            if inst_rows_gc and inst_rows_gc[0]["github_pat_encrypted"]:
+                existing_gc = await conn.execute_fetchall(
+                    "SELECT id FROM git_credentials WHERE provider = 'github' LIMIT 1"
+                )
+                if not existing_gc:
+                    await conn.execute(
+                        """INSERT INTO git_credentials (provider, credential, hostname, created_at)
+                           VALUES ('github', ?, 'github.com', ?)""",
+                        (inst_rows_gc[0]["github_pat_encrypted"], now_iso()),
+                    )
+                    import logging as _logging_gc
+                    _logging_gc.getLogger(__name__).info(
+                        "Migrated instance GitHub PAT to git_credentials table."
+                    )
+
+            # Auto-migrate project github_pat_override → credential_override
+            proj_migrate_rows = await conn.execute_fetchall(
+                "SELECT id, github_pat_override FROM projects WHERE github_pat_override IS NOT NULL AND credential_override IS NULL"
+            )
+            for row in proj_migrate_rows:
+                await conn.execute(
+                    "UPDATE projects SET credential_override = ? WHERE id = ?",
+                    (row["github_pat_override"], row["id"]),
+                )
 
         # Migrate task_attempts: backfill from existing tasks with session_id
         attempts_table = await conn.execute_fetchall(
