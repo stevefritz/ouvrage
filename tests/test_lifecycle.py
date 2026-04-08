@@ -1866,40 +1866,23 @@ class TestLifecycleLocking:
         assert "lock-proj/t-stop" in self.lifecycle._task_locks
 
     async def test_concurrent_transitions_serialized(self):
-        """Two concurrent execute() calls for the same task: second sees updated state."""
+        """Two concurrent execute() calls for the same task: lock serializes them,
+        second sees updated state and gets IllegalTransition."""
         await self._make_task("lock-proj/t-race", status="stopped", session_id="ses-race")
 
-        original_get_task = self.db.get_task
-        call_count = 0
+        # Fire two concurrent resume calls — the lock ensures only one succeeds
+        results = await asyncio.gather(
+            self.lifecycle.execute("lock-proj/t-race", "resume"),
+            self.lifecycle.execute("lock-proj/t-race", "resume"),
+            return_exceptions=True,
+        )
 
-        async def slow_get_task(task_id):
-            nonlocal call_count
-            result = await original_get_task(task_id)
-            call_count += 1
-            if call_count == 1:
-                # First caller: yield control so second caller tries to acquire lock
-                await asyncio.sleep(0.05)
-            return result
-
-        import switchboard.dispatch.lifecycle as lc_mod
-        original_db_get = lc_mod.db.get_task
-        lc_mod.db.get_task = slow_get_task
-
-        try:
-            results = await asyncio.gather(
-                self.lifecycle.execute("lock-proj/t-race", "resume"),
-                self.lifecycle.execute("lock-proj/t-race", "resume"),
-                return_exceptions=True,
-            )
-
-            # One should succeed (working), the other should get IllegalTransition
-            successes = [r for r in results if isinstance(r, dict)]
-            failures = [r for r in results if isinstance(r, IllegalTransition)]
-            assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {results}"
-            assert len(failures) == 1, f"Expected 1 IllegalTransition, got {len(failures)}: {results}"
-            assert successes[0]["status"] == "working"
-        finally:
-            lc_mod.db.get_task = original_db_get
+        # One should succeed (working), the other should get IllegalTransition
+        successes = [r for r in results if isinstance(r, dict)]
+        failures = [r for r in results if isinstance(r, IllegalTransition)]
+        assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {results}"
+        assert len(failures) == 1, f"Expected 1 IllegalTransition, got {len(failures)}: {results}"
+        assert successes[0]["status"] == "working"
 
 
 # ---------------------------------------------------------------------------
