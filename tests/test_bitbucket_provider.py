@@ -99,27 +99,36 @@ class TestBitbucketBuildAuthenticatedUrl:
     def test_basic(self):
         url = self.provider.build_authenticated_url(
             "https://bitbucket.org/acme/widgets.git",
-            "myuser:myapppassword",
+            "user@example.com:myapitoken",
         )
-        assert url == "https://myuser:myapppassword@bitbucket.org/acme/widgets.git"
+        assert url == "https://x-bitbucket-api-token-auth:myapitoken@bitbucket.org/acme/widgets.git"
 
     def test_from_ssh_url(self):
         url = self.provider.build_authenticated_url(
             "git@bitbucket.org:acme/widgets.git",
-            "myuser:myapppassword",
+            "user@example.com:myapitoken",
         )
-        assert url == "https://myuser:myapppassword@bitbucket.org/acme/widgets.git"
+        assert url == "https://x-bitbucket-api-token-auth:myapitoken@bitbucket.org/acme/widgets.git"
 
-    def test_password_with_colon(self):
-        """Only split on first colon — password may contain colons."""
+    def test_token_with_colon(self):
+        """Only split on first colon — email may contain no colons but token might."""
         url = self.provider.build_authenticated_url(
             "https://bitbucket.org/acme/widgets.git",
-            "myuser:pass:with:colons",
+            "user@example.com:token:with:colons",
         )
-        assert url == "https://myuser:pass:with:colons@bitbucket.org/acme/widgets.git"
+        assert url == "https://x-bitbucket-api-token-auth:token:with:colons@bitbucket.org/acme/widgets.git"
+
+    def test_email_not_in_url(self):
+        """Atlassian email must NOT appear in the authenticated URL."""
+        url = self.provider.build_authenticated_url(
+            "https://bitbucket.org/acme/widgets.git",
+            "secret@corp.com:myapitoken",
+        )
+        assert "secret@corp.com" not in url
+        assert "x-bitbucket-api-token-auth" in url
 
     def test_missing_colon_raises(self):
-        with pytest.raises(ValueError, match="username:app_password"):
+        with pytest.raises(ValueError, match="email:api_token"):
             self.provider.build_authenticated_url(
                 "https://bitbucket.org/acme/widgets.git",
                 "nocolon",
@@ -136,7 +145,7 @@ class TestBitbucketValidateAccess:
         from switchboard.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
-        self.credential = "myuser:myapppassword"
+        self.credential = "user@example.com:myapitoken"
 
     async def test_valid_credential(self):
         user_resp = _make_response(200, {"username": "myuser", "account_id": "abc123"})
@@ -150,7 +159,7 @@ class TestBitbucketValidateAccess:
         assert result.username == "myuser"
         assert result.error is None
 
-    async def test_invalid_app_password(self):
+    async def test_invalid_api_token(self):
         user_resp = _make_response(401, {"type": "error", "error": {"message": "Unauthorized"}})
         mock_client = _make_async_client(get_responses=[user_resp])
 
@@ -205,7 +214,7 @@ class TestBitbucketValidateAccess:
     async def test_missing_colon_in_credential(self):
         result = await self.provider.validate_access("nocolon", self.repo_info)
         assert result.valid is False
-        assert "username:app_password" in result.error
+        assert "email:api_token" in result.error
 
     async def test_network_error(self):
         mock_client = _make_async_client(get_responses=[Exception("Connection refused")])
@@ -228,6 +237,19 @@ class TestBitbucketValidateAccess:
         assert result.valid is True
         assert result.username == "abc123"
 
+    async def test_api_called_with_email_not_username(self):
+        """REST API auth uses email (not username slug) as the Basic auth username."""
+        user_resp = _make_response(200, {"username": "bbslug"})
+        repo_resp = _make_response(200, {"full_name": "acme/widgets"})
+        mock_client = _make_async_client(get_responses=[user_resp, repo_resp])
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await self.provider.validate_access("user@atlassian.com:mytoken", self.repo_info)
+
+        # First call to GET /user must use email as the username in Basic auth
+        call_kwargs = mock_client.get.call_args_list[0]
+        assert call_kwargs.kwargs["auth"] == ("user@atlassian.com", "mytoken")
+
 
 # ---------------------------------------------------------------------------
 # create_pr
@@ -239,7 +261,7 @@ class TestBitbucketCreatePR:
         from switchboard.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
-        self.credential = "myuser:myapppassword"
+        self.credential = "user@example.com:myapitoken"
 
     async def test_create_pr_success(self):
         pr_data = {
@@ -321,6 +343,18 @@ class TestBitbucketCreatePR:
                     head="feature", base="main", title="PR",
                 )
 
+    async def test_create_pr_forbidden_scope_message(self):
+        """403 error message references API token scope, not app password."""
+        resp = _make_response(403, {"type": "error"})
+        mock_client = _make_async_client(post_responses=[resp])
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(ValueError, match="write:pullrequest:bitbucket"):
+                await self.provider.create_pr(
+                    self.credential, self.repo_info,
+                    head="feature", base="main", title="PR",
+                )
+
     async def test_create_pr_duplicate_no_existing_raises(self):
         """400 duplicate but listing returns empty — raise descriptive error."""
         error_resp = _make_response(400, {
@@ -353,7 +387,7 @@ class TestBitbucketGetPrStatus:
         from switchboard.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
-        self.credential = "myuser:myapppassword"
+        self.credential = "user@example.com:myapitoken"
 
     async def test_open_state(self):
         resp = _make_response(200, {"id": 1, "state": "OPEN"})

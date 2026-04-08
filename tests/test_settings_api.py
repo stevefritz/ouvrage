@@ -442,6 +442,67 @@ class TestGetUserSettings:
         assert data["notifications"]["task_completed"] is True
 
 
+class TestGetUserSettingsGitCredential:
+    """GET /dashboard/api/settings/user — git_credential field reflects any provider in git_credentials table."""
+
+    async def test_git_credential_not_configured_by_default(self, db):
+        """With no git credentials in the table, git_credential.configured is False."""
+        from switchboard.dashboard.api import handle_request
+
+        owner = await db.get_user_by_email("owner@localhost")
+        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
+                            email="owner@localhost")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        data = resp.json()
+        assert "git_credential" in data
+        assert data["git_credential"]["configured"] is False
+
+    async def test_git_credential_configured_when_github_set(self, db):
+        """After adding a GitHub credential, git_credential.configured is True."""
+        from switchboard.dashboard.api import handle_request
+
+        await db.create_credential(
+            provider="github",
+            credential="encrypted-fake",
+            hostname="github.com",
+            credential_last4="1234",
+        )
+
+        owner = await db.get_user_by_email("owner@localhost")
+        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
+                            email="owner@localhost")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        data = resp.json()
+        assert data["git_credential"]["configured"] is True
+
+    async def test_git_credential_configured_for_non_github_provider(self, db):
+        """A GitLab or Bitbucket credential also satisfies git_credential.configured."""
+        from switchboard.dashboard.api import handle_request
+
+        await db.create_credential(
+            provider="gitlab",
+            credential="encrypted-fake-gitlab",
+            hostname="gitlab.com",
+            credential_last4="abcd",
+        )
+
+        owner = await db.get_user_by_email("owner@localhost")
+        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
+                            email="owner@localhost")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        data = resp.json()
+        assert data["git_credential"]["configured"] is True
+
+
 class TestPatchUserSettings:
 
     async def test_update_name(self, db):

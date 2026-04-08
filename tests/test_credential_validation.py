@@ -364,7 +364,7 @@ class TestSettingsTestEndpoint:
         assert body["ok"] is True
         assert body["username"] == "octocat"
         assert "repo" in body["scopes"]
-        assert "repo" in body["message"].lower()
+        assert "Required scopes present" in body["message"]
 
     async def test_github_classic_pat_missing_repo_scope(self, db):
         """GitHub classic PAT without repo scope → ok=False."""
@@ -475,13 +475,14 @@ class TestSettingsTestEndpoint:
 
         body = send.json()
         assert body["ok"] is False
-        assert "read_user" in body["message"]
+        assert "missing required scopes" in body["message"]
+        assert "api" in body["message"]
 
     async def test_bitbucket_auth_success(self, db):
-        """Bitbucket auth success → ok=True with scope note."""
+        """Bitbucket auth success → ok=True with API token scope guidance."""
         from switchboard.dashboard.api import _handle_test_git_credential
 
-        await db.create_credential("bitbucket", "bbuser:app_pwd", "bitbucket.org")
+        await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -501,7 +502,8 @@ class TestSettingsTestEndpoint:
         body = send.json()
         assert body["ok"] is True
         assert body["scopes"] is None
-        assert "introspection" in body["message"].lower()
+        assert "Authenticated as bbuser" in body["message"]
+        assert "read:repository:bitbucket" in body["message"]
 
     async def test_no_credential_configured(self, db):
         """No credential configured → ok=False with message."""

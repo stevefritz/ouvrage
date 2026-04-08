@@ -44,8 +44,8 @@ function ForemanApp() {
             const skip = data?.anthropic?.skip_credential_check;
             if (skip) return;
             const anthropicMissing = !data?.anthropic?.configured;
-            const githubMissing = !data?.github?.configured;
-            if (anthropicMissing || githubMissing) {
+            const gitMissing = !data?.git_credential?.configured;
+            if (anthropicMissing || gitMissing) {
                 navigate('/settings');
             }
         }).catch(() => {

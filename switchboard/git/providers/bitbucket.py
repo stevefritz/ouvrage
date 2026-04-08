@@ -1,8 +1,10 @@
 """Bitbucket Cloud provider implementation.
 
-App passwords use basic auth with the Atlassian account username (not email).
-The credential format is 'username:app_password' — the username is the Bitbucket
-account slug (resolved from GET /2.0/user during validation and stored by caller).
+API tokens use Basic auth with the Atlassian account email (not the Bitbucket
+username slug). The credential format is 'email:api_token'.
+
+For git over HTTPS, the sentinel username 'x-bitbucket-api-token-auth' is used
+so the Atlassian email is never embedded in clone/push URLs.
 """
 
 import re
@@ -24,20 +26,23 @@ _PR_URL_RE = re.compile(
 
 _API_BASE = "https://api.bitbucket.org/2.0"
 
+# Sentinel username for git-over-HTTPS with API tokens (no email in URL)
+_GIT_AUTH_USERNAME = "x-bitbucket-api-token-auth"
+
 
 def _basic_auth(credential: str) -> tuple[str, str]:
-    """Split 'username:app_password' credential into (username, password).
+    """Split 'email:api_token' credential into (email, token).
 
     Raises ValueError if no colon is present.
     """
     if ":" not in credential:
         raise ValueError(
-            "Bitbucket credential must be in 'username:app_password' format. "
-            "The username is your Bitbucket account username (not email). "
-            "Run validate_access first to confirm the correct username."
+            "Bitbucket credential must be in 'email:api_token' format. "
+            "Use your Atlassian account email and an API token created at "
+            "https://id.atlassian.com/manage-profile/security/api-tokens"
         )
-    username, _, password = credential.partition(":")
-    return username, password
+    email, _, token = credential.partition(":")
+    return email, token
 
 
 class BitbucketProvider(GitProvider):
@@ -69,22 +74,24 @@ class BitbucketProvider(GitProvider):
         raise ValueError(f"Cannot parse Bitbucket workspace/repo from URL: {url}")
 
     def build_authenticated_url(self, repo_url: str, credential: str) -> str:
-        """Build HTTPS push URL with username:app_password embedded.
+        """Build HTTPS push URL using the API token sentinel username.
 
-        The credential must be in 'username:app_password' format.
+        The credential must be in 'email:api_token' format.
+        The Atlassian email is NOT embedded in the URL — the sentinel username
+        'x-bitbucket-api-token-auth' is used instead, as documented by Atlassian.
         """
         info = self.parse_repo_url(repo_url)
-        username, password = _basic_auth(credential)
-        return f"https://{username}:{password}@bitbucket.org/{info.owner}/{info.repo}.git"
+        _email, token = _basic_auth(credential)
+        return f"https://{_GIT_AUTH_USERNAME}:{token}@bitbucket.org/{info.owner}/{info.repo}.git"
 
     async def validate_access(self, credential: str, repo_info: RepoInfo) -> ValidationResult:
-        """Validate app password can access the repo via Bitbucket API.
+        """Validate API token can access the repo via Bitbucket API.
 
-        Calls GET /2.0/user to resolve username, then checks repository access.
-        The credential must be in 'username:app_password' format.
+        Calls GET /2.0/user to resolve the Bitbucket username, then checks
+        repository access. The credential must be in 'email:api_token' format.
         """
         try:
-            username, password = _basic_auth(credential)
+            email, token = _basic_auth(credential)
         except ValueError as e:
             return ValidationResult(valid=False, error=str(e))
 
@@ -93,17 +100,17 @@ class BitbucketProvider(GitProvider):
                 # Resolve actual account username from the API
                 user_resp = await client.get(
                     f"{_API_BASE}/user",
-                    auth=(username, password),
+                    auth=(email, token),
                 )
                 if user_resp.status_code == 401:
                     return ValidationResult(
                         valid=False,
-                        error="App password is invalid or revoked",
+                        error="API token is invalid or revoked",
                     )
                 if user_resp.status_code == 403:
                     return ValidationResult(
                         valid=False,
-                        error="App password lacks required permissions",
+                        error="API token lacks required permissions",
                     )
                 if user_resp.status_code != 200:
                     return ValidationResult(
@@ -116,17 +123,17 @@ class BitbucketProvider(GitProvider):
                 # Check repository access
                 repo_resp = await client.get(
                     f"{_API_BASE}/repositories/{repo_info.owner}/{repo_info.repo}",
-                    auth=(username, password),
+                    auth=(email, token),
                 )
                 if repo_resp.status_code == 404:
                     return ValidationResult(
                         valid=False,
-                        error="Repository not found or app password lacks access",
+                        error="Repository not found or API token lacks access",
                     )
                 if repo_resp.status_code in (401, 403):
                     return ValidationResult(
                         valid=False,
-                        error="App password lacks read access to this repository",
+                        error="API token lacks read access to this repository",
                     )
                 if repo_resp.status_code != 200:
                     return ValidationResult(
@@ -150,12 +157,12 @@ class BitbucketProvider(GitProvider):
 
         Handles the case where a PR already exists for the source branch.
         """
-        username, password = _basic_auth(credential)
+        email, token = _basic_auth(credential)
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{_API_BASE}/repositories/{repo_info.owner}/{repo_info.repo}/pullrequests",
-                auth=(username, password),
+                auth=(email, token),
                 json={
                     "title": title,
                     "description": body,
@@ -174,7 +181,7 @@ class BitbucketProvider(GitProvider):
                 error_msg = str(error_body).lower()
                 if "already" in error_msg or "duplicate" in error_msg:
                     return await self._find_existing_pr(
-                        client, repo_info.owner, repo_info.repo, head, username, password,
+                        client, repo_info.owner, repo_info.repo, head, email, token,
                     )
                 raise ValueError(f"PR creation failed: {error_body}")
 
@@ -184,8 +191,8 @@ class BitbucketProvider(GitProvider):
                 )
             if resp.status_code == 403:
                 raise ValueError(
-                    "App password lacks permission to create pull requests. "
-                    "Ensure it has the 'Pull Requests: Write' scope."
+                    "API token lacks permission to create pull requests. "
+                    "Ensure the token has the 'write:pullrequest:bitbucket' scope."
                 )
 
             resp.raise_for_status()
@@ -197,13 +204,13 @@ class BitbucketProvider(GitProvider):
         workspace: str,
         repo: str,
         source_branch: str,
-        username: str,
-        password: str,
+        email: str,
+        token: str,
     ) -> PRResult:
         """Find an existing open PR for the given source branch."""
         resp = await client.get(
             f"{_API_BASE}/repositories/{workspace}/{repo}/pullrequests",
-            auth=(username, password),
+            auth=(email, token),
             params={"q": f'source.branch.name="{source_branch}" AND state="OPEN"'},
         )
         if resp.status_code == 200:
@@ -223,13 +230,13 @@ class BitbucketProvider(GitProvider):
 
         Bitbucket states: OPEN, MERGED, DECLINED, SUPERSEDED
         """
-        username, password = _basic_auth(credential)
+        email, token = _basic_auth(credential)
 
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{_API_BASE}/repositories/{repo_info.owner}/{repo_info.repo}"
                 f"/pullrequests/{pr_number}",
-                auth=(username, password),
+                auth=(email, token),
             )
             if resp.status_code == 200:
                 data = resp.json()

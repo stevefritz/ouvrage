@@ -77,7 +77,10 @@ const TIMEZONES = [
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const color = type === 'success' ? colors.green : type === 'info' ? colors.blue : colors.red;
+    const color = type === 'success' ? colors.green
+                : type === 'warning' ? colors.yellow
+                : type === 'info' ? colors.blue
+                : colors.red;
     return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
 }
 
@@ -136,11 +139,11 @@ const GIT_PROVIDER_CONFIG = {
         icon: '🪣',
         name: 'Bitbucket',
         defaultHostname: 'bitbucket.org',
-        credentialLabel: 'App Password',
-        credentialPlaceholder: 'username:xxxxxxxxxxxx',
-        scopeText: 'Permissions: Repositories (r/w), Pull requests (r/w). Format: username:app_password',
+        credentialLabel: 'API Token',
+        credentialPlaceholder: 'email@example.com:ATBBxxxxxxxxx',
+        scopeText: 'Required scopes: read:repository:bitbucket, write:repository:bitbucket, write:pullrequest:bitbucket. Format: email:api_token',
         createLinks: [
-            { label: 'Create app password', url: 'https://bitbucket.org/account/settings/app-passwords/' },
+            { label: 'Create API token', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
         ],
     },
 };
@@ -154,19 +157,27 @@ function GitProviderCard({ cred, onSaved }) {
     const [removing, setRemoving] = useState(false);
     const [feedback, setFeedback] = useState(null);
     const [editing, setEditing] = useState(!cred.configured);
+    const [authWarning, setAuthWarning] = useState(false);
 
     const handleSave = useCallback(async () => {
         if (!credential.trim()) return;
         setSaving(true);
         setFeedback(null);
         try {
-            await api.putGitCredential(cred.provider, {
+            const result = await api.putGitCredential(cred.provider, {
                 credential: credential.trim(),
                 hostname: hostname.trim() || cfg.defaultHostname,
             });
             setCredential('');
             setEditing(false);
-            setFeedback({ type: 'success', message: `${cfg.name} credential saved` });
+            if (result.warning) {
+                setAuthWarning(true);
+                setFeedback({ type: 'warning', message: result.warning });
+            } else {
+                setAuthWarning(false);
+                const extra = result.username ? ` — authenticated as ${result.username}` : '';
+                setFeedback({ type: 'success', message: `${cfg.name} credential saved${extra}` });
+            }
             if (onSaved) onSaved();
         } catch (e) {
             setFeedback({ type: 'error', message: e.message });
@@ -180,10 +191,10 @@ function GitProviderCard({ cred, onSaved }) {
         setFeedback(null);
         try {
             const result = await api.testGitCredential(cred.provider);
-            if (result.valid) {
-                setFeedback({ type: 'success', message: `Connected as ${result.username || '(unknown)'}` });
+            if (result.ok) {
+                setFeedback({ type: 'success', message: result.message || `Connected as ${result.username || '(unknown)'}` });
             } else {
-                setFeedback({ type: 'error', message: result.error || 'Connection failed' });
+                setFeedback({ type: 'error', message: result.message || 'Connection failed' });
             }
         } catch (e) {
             setFeedback({ type: 'error', message: e.message });
@@ -228,7 +239,7 @@ function GitProviderCard({ cred, onSaved }) {
                         `}
                     </label>
                     <input type="text"
-                        style=${{ ...styles.input, color: isNonDefault ? '#f59e0b' : undefined }}
+                        style=${{ ...styles.input, color: isNonDefault ? '#f59e0b' : colors.text }}
                         value=${hostname}
                         onInput=${(e) => setHostname(e.target.value)}
                         placeholder=${cfg.defaultHostname} />
@@ -302,6 +313,7 @@ function GitProviderCard({ cred, onSaved }) {
                 icon=${cfg.icon}
                 name=${displayName}
                 connected=${cred.configured}
+                warning=${authWarning}
                 statusText=${statusText}
                 maskedValue=${maskedValue}
                 onUpdate=${editing ? undefined : () => { setHostname(cred.hostname || cfg.defaultHostname); setEditing(true); }}
@@ -354,7 +366,7 @@ function GitProvidersSection({ onSaved }) {
     `;
 
     return html`
-        <div>
+        <div id="instance-git-credentials">
             <div style=${{ fontSize: '11px', color: colors.textTertiary, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '8px' }}>
                 Instance Git Credentials
             </div>
@@ -378,13 +390,19 @@ function GitProvidersSection({ onSaved }) {
 
 const DOCS_URL = 'https://ouvrage.build/docs/getting-started';
 
-function SetupBanner({ anthropic, github }) {
-    if (!anthropic || !github) return null;
+function SetupBanner({ anthropic, git_credential }) {
+    if (!anthropic || !git_credential) return null;
     if (anthropic.skip_credential_check) return null;
 
     const anthropicDone = anthropic.configured;
-    const githubDone = github.configured;
-    if (anthropicDone && githubDone) return null;
+    const gitDone = git_credential.configured;
+    if (anthropicDone && gitDone) return null;
+
+    const scrollToGitCredentials = (e) => {
+        e.preventDefault();
+        const el = document.getElementById('instance-git-credentials');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
 
     return html`
         <div style=${{
@@ -412,16 +430,20 @@ function SetupBanner({ anthropic, github }) {
                     </span>
                 </div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: colors.text }}>
-                    <span style=${{ color: githubDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
-                        ${githubDone ? '✓' : '☐'}
+                    <span style=${{ color: gitDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
+                        ${gitDone ? '✓' : '☐'}
                     </span>
-                    <span style=${{ color: githubDone ? colors.textSecondary : colors.text }}>
-                        GitHub Personal Access Token${githubDone ? ' — configured' : ' — required to connect your repos'}
+                    <span style=${{ color: gitDone ? colors.textSecondary : colors.text }}>
+                        Git credential${gitDone ? ' — configured' : ' — required to connect your repos'}
                     </span>
                 </div>
             </div>
             <div style=${{ fontSize: '12px', color: colors.textTertiary }}>
-                Set these up below, then you're ready to go.
+                <a href="#instance-git-credentials"
+                    onClick=${scrollToGitCredentials}
+                    style=${{ color: colors.accent, textDecoration: 'none' }}>
+                    Set these up below
+                </a>, then you're ready to go.
             </div>
         </div>
     `;
@@ -1257,7 +1279,7 @@ export function Settings() {
             ${userSettings && html`
                 <${SetupBanner}
                     anthropic=${userSettings.anthropic}
-                    github=${userSettings.github}
+                    git_credential=${userSettings.git_credential}
                 />
             `}
 
