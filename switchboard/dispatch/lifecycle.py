@@ -332,6 +332,9 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     if updates:
         await db.update_task(task_id, **updates)
 
+    # Update last_activity so stall checker doesn't misidentify as orphan
+    await db.update_task(task_id, last_activity=db.now_iso())
+
     project = await db.get_project(task["project_id"])
 
     # Post resume message
@@ -392,6 +395,9 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
         from switchboard.dispatch.gates import _resume_gate_pipeline
         await _resume_gate_pipeline(task_id, reason="retry")
         return
+
+    # Update last_activity so stall checker doesn't misidentify as orphan
+    await db.update_task(task_id, last_activity=db.now_iso())
 
     project = await db.get_project(task["project_id"])
 
@@ -1372,7 +1378,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="stopped",
         reason="recovery_pending",
         user_action=False,
-        side_effects=[_drain_queue_effect, _finalize_attempt],
+        side_effects=[_stop_cc_session, _drain_queue_effect, _finalize_attempt],
     ),
     ("stopped", "recover_park"): TransitionDef(
         to_state="stopped",
@@ -1544,6 +1550,23 @@ class TaskLifecycle:
     db.update_task(status=...) directly once migration is complete.
     """
 
+    # Terminal states where we can safely discard the per-task lock
+    _TERMINAL_STATES = frozenset({"completed", "cancelled"})
+
+    def __init__(self) -> None:
+        self._task_locks: dict[str, asyncio.Lock] = {}
+        # Map task_id → asyncio.Task that holds the lock, enabling reentrant
+        # calls from side effects (e.g. approve → dispatch on same task)
+        self._lock_owners: dict[str, asyncio.Task] = {}
+
+    def _get_lock(self, task_id: str) -> asyncio.Lock:
+        """Return the per-task lock, creating one if needed."""
+        lock = self._task_locks.get(task_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._task_locks[task_id] = lock
+        return lock
+
     async def execute(self, task_id: str, action: str, **context: Any) -> dict:
         """Execute a state transition.
 
@@ -1560,6 +1583,28 @@ class TaskLifecycle:
             ValueError: If task not found.
             IllegalTransition: If the transition is not valid.
         """
+        # Reentrant: if the current asyncio Task already holds this lock
+        # (e.g. approve side effect calling dispatch on same task), skip it
+        current_task = asyncio.current_task()
+        already_held = self._lock_owners.get(task_id) is current_task
+        if not already_held:
+            lock = self._get_lock(task_id)
+            await lock.acquire()
+            self._lock_owners[task_id] = current_task
+        try:
+            return await self._execute_inner(task_id, action, **context)
+        finally:
+            if not already_held:
+                self._lock_owners.pop(task_id, None)
+                lock.release()
+                # Cleanup lock for terminal states to prevent unbounded growth
+                # Re-read from DB since side effects may have changed the state
+                final_task = await db.get_task(task_id)
+                if final_task and final_task.get("status") in self._TERMINAL_STATES:
+                    self._task_locks.pop(task_id, None)
+
+    async def _execute_inner(self, task_id: str, action: str, **context: Any) -> dict:
+        """Inner execute logic, called with lock already held."""
         # 1. Read task from DB
         task = await db.get_task(task_id)
         if not task:
@@ -1633,6 +1678,7 @@ class TaskLifecycle:
 
         # 9. Re-read task in case side effects changed status (e.g. retry launch failure → needs-review)
         final_task = await db.get_task(task_id)
+
         return final_task or updated_task
 
     async def get_available_actions(self, task_id: str) -> list[dict]:
