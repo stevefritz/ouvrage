@@ -77,7 +77,10 @@ const TIMEZONES = [
 
 function FeedbackBanner({ message, type = 'success' }) {
     if (!message) return null;
-    const color = type === 'success' ? colors.green : type === 'info' ? colors.blue : colors.red;
+    const color = type === 'success' ? colors.green
+                : type === 'warning' ? colors.yellow
+                : type === 'info' ? colors.blue
+                : colors.red;
     return html`<div style=${{ fontSize: '12px', color, marginTop: '8px' }}>${message}</div>`;
 }
 
@@ -154,19 +157,27 @@ function GitProviderCard({ cred, onSaved }) {
     const [removing, setRemoving] = useState(false);
     const [feedback, setFeedback] = useState(null);
     const [editing, setEditing] = useState(!cred.configured);
+    const [authWarning, setAuthWarning] = useState(false);
 
     const handleSave = useCallback(async () => {
         if (!credential.trim()) return;
         setSaving(true);
         setFeedback(null);
         try {
-            await api.putGitCredential(cred.provider, {
+            const result = await api.putGitCredential(cred.provider, {
                 credential: credential.trim(),
                 hostname: hostname.trim() || cfg.defaultHostname,
             });
             setCredential('');
             setEditing(false);
-            setFeedback({ type: 'success', message: `${cfg.name} credential saved` });
+            if (result.warning) {
+                setAuthWarning(true);
+                setFeedback({ type: 'warning', message: result.warning });
+            } else {
+                setAuthWarning(false);
+                const extra = result.username ? ` — authenticated as ${result.username}` : '';
+                setFeedback({ type: 'success', message: `${cfg.name} credential saved${extra}` });
+            }
             if (onSaved) onSaved();
         } catch (e) {
             setFeedback({ type: 'error', message: e.message });
@@ -180,10 +191,10 @@ function GitProviderCard({ cred, onSaved }) {
         setFeedback(null);
         try {
             const result = await api.testGitCredential(cred.provider);
-            if (result.valid) {
-                setFeedback({ type: 'success', message: `Connected as ${result.username || '(unknown)'}` });
+            if (result.ok) {
+                setFeedback({ type: 'success', message: result.message || `Connected as ${result.username || '(unknown)'}` });
             } else {
-                setFeedback({ type: 'error', message: result.error || 'Connection failed' });
+                setFeedback({ type: 'error', message: result.message || 'Connection failed' });
             }
         } catch (e) {
             setFeedback({ type: 'error', message: e.message });
@@ -302,6 +313,7 @@ function GitProviderCard({ cred, onSaved }) {
                 icon=${cfg.icon}
                 name=${displayName}
                 connected=${cred.configured}
+                warning=${authWarning}
                 statusText=${statusText}
                 maskedValue=${maskedValue}
                 onUpdate=${editing ? undefined : () => { setHostname(cred.hostname || cfg.defaultHostname); setEditing(true); }}

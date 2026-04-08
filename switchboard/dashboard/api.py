@@ -1624,6 +1624,108 @@ async def _handle_get_git_credentials(send, scope):
     await _json_response(send, {"credentials": result})
 
 
+async def _check_credential_auth(provider: str, credential: str, hostname: str) -> dict:
+    """Run auth check for a provider credential. Returns {ok, username, scopes, message}."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if provider == "github":
+                api_base = f"https://{hostname}/api/v3" if hostname != "github.com" else "https://api.github.com"
+                resp = await client.get(
+                    f"{api_base}/user",
+                    headers={"Authorization": f"Bearer {credential}"},
+                )
+                if resp.status_code in (401, 403):
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": "Authentication failed — token may be invalid or expired"}
+                if resp.status_code != 200:
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": f"GitHub returned {resp.status_code}"}
+
+                username = resp.json().get("login")
+                oauth_scopes_header = resp.headers.get("X-OAuth-Scopes", "")
+                if oauth_scopes_header:
+                    scopes = [s.strip() for s in oauth_scopes_header.split(",") if s.strip()]
+                    has_repo = "repo" in scopes
+                    if has_repo:
+                        message = f"Authenticated as {username}. Required scopes present."
+                    else:
+                        message = "Authenticated but token is missing 'repo' scope. Ouvrage requires full repository access."
+                    return {"ok": has_repo, "username": username, "scopes": scopes, "message": message}
+                else:
+                    return {"ok": True, "username": username, "scopes": None,
+                            "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions."}
+
+            elif provider == "gitlab":
+                resp = await client.get(
+                    f"https://{hostname}/api/v4/user",
+                    headers={"PRIVATE-TOKEN": credential},
+                )
+                if resp.status_code in (401, 403):
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": "Authentication failed — token may be invalid or expired"}
+                if resp.status_code != 200:
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": f"GitLab returned {resp.status_code}"}
+
+                username = resp.json().get("username")
+
+                scopes = None
+                ok = True
+                scope_message = ""
+                try:
+                    tok_resp = await client.get(
+                        f"https://{hostname}/api/v4/personal_access_tokens/self",
+                        headers={"PRIVATE-TOKEN": credential},
+                    )
+                    if tok_resp.status_code == 200:
+                        tok_data = tok_resp.json()
+                        scopes = tok_data.get("scopes", [])
+                        has_api = "api" in scopes
+                        has_rw = "read_repository" in scopes and "write_repository" in scopes
+                        if has_api or has_rw:
+                            scope_message = f"Authenticated as {username}. Required scopes present."
+                        else:
+                            scope_message = "Authenticated but token is missing required scopes. Need 'api' or 'read_repository + write_repository'."
+                        ok = has_api or has_rw
+                    else:
+                        scope_message = f"Authenticated as {username}. Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
+                        ok = True
+                except Exception:
+                    scope_message = f"Authenticated as {username}. Could not introspect token scopes. Auth confirmed."
+                    ok = True
+
+                return {"ok": ok, "username": username, "scopes": scopes, "message": scope_message}
+
+            elif provider == "bitbucket":
+                username_part, _, password = credential.partition(":")
+                if not password:
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": "Credential must be in username:app_password format"}
+                resp = await client.get(
+                    "https://api.bitbucket.org/2.0/user",
+                    auth=(username_part, password),
+                )
+                if resp.status_code in (401, 403):
+                    return {"ok": False, "username": None, "scopes": None,
+                            "message": "Authentication failed — token may be invalid or expired"}
+                if resp.status_code == 200:
+                    data = resp.json()
+                    resolved = data.get("username") or data.get("account_id")
+                    return {"ok": True, "username": resolved, "scopes": None,
+                            "message": f"Authenticated as {resolved}. Bitbucket app passwords do not support scope introspection — verify your app password has Repository Read/Write and Pull Request Write permissions."}
+                return {"ok": False, "username": None, "scopes": None,
+                        "message": f"Bitbucket returned {resp.status_code} — check credentials"}
+
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException):
+        return {"ok": False, "username": None, "scopes": None,
+                "message": f"Could not reach {provider} — check hostname and connectivity"}
+    except Exception as e:
+        return {"ok": False, "username": None, "scopes": None,
+                "message": f"Connection error: {e}"}
+
+    return {"ok": False, "username": None, "scopes": None, "message": "Unknown provider"}
+
+
 async def _handle_put_git_credential(receive, send, scope, provider):
     """PUT /dashboard/api/settings/git-credentials/{provider} — save/update credential."""
     user = scope.get("session_user") or {}
@@ -1650,7 +1752,18 @@ async def _handle_put_git_credential(receive, send, scope, provider):
     else:
         await db.create_credential(provider, encrypted, hostname, credential_last4=credential_last4)
 
-    await _json_response(send, {"ok": True})
+    # Run auth check after saving — non-blocking, save always succeeds
+    auth = await _check_credential_auth(provider, credential, hostname)
+    if not auth["ok"]:
+        return await _json_response(send, {
+            "ok": True,
+            "warning": "Token saved but authentication failed — check that it's correct",
+        })
+    return await _json_response(send, {
+        "ok": True,
+        "username": auth["username"],
+        "scopes": auth["scopes"],
+    })
 
 
 async def _handle_delete_git_credential(send, scope, provider):
@@ -1690,117 +1803,8 @@ async def _handle_test_git_credential(send, scope, provider):
     credential = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
     hostname = existing.get("hostname") or _GIT_DEFAULT_HOSTNAMES[provider]
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            if provider == "github":
-                api_base = f"https://{hostname}/api/v3" if hostname != "github.com" else "https://api.github.com"
-                resp = await client.get(
-                    f"{api_base}/user",
-                    headers={"Authorization": f"Bearer {credential}"},
-                )
-                if resp.status_code != 200:
-                    return await _json_response(send, {
-                        "ok": False, "username": None, "scopes": None,
-                        "message": f"GitHub returned {resp.status_code} — token may be invalid or expired",
-                    })
-
-                username = resp.json().get("login")
-                # Check scopes from X-OAuth-Scopes header (classic PATs)
-                oauth_scopes_header = resp.headers.get("X-OAuth-Scopes", "")
-                if oauth_scopes_header:
-                    scopes = [s.strip() for s in oauth_scopes_header.split(",") if s.strip()]
-                    has_repo = "repo" in scopes
-                    message = (
-                        f"Authenticated as {username}. "
-                        + ("Token has `repo` scope — ready for Switchboard."
-                           if has_repo
-                           else "Token is missing `repo` scope — Switchboard needs `repo` for push and PR access.")
-                    )
-                    return await _json_response(send, {
-                        "ok": has_repo, "username": username,
-                        "scopes": scopes, "message": message,
-                    })
-                else:
-                    # Fine-grained token — no X-OAuth-Scopes header
-                    return await _json_response(send, {
-                        "ok": True, "username": username, "scopes": None,
-                        "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions.",
-                    })
-
-            elif provider == "gitlab":
-                # Step 1: Auth check via /user
-                resp = await client.get(
-                    f"https://{hostname}/api/v4/user",
-                    headers={"PRIVATE-TOKEN": credential},
-                )
-                if resp.status_code != 200:
-                    return await _json_response(send, {
-                        "ok": False, "username": None, "scopes": None,
-                        "message": f"GitLab returned {resp.status_code} — token may be invalid or expired",
-                    })
-
-                username = resp.json().get("username")
-
-                # Step 2: Scope introspection via /personal_access_tokens/self
-                scopes = None
-                scope_message = ""
-                try:
-                    tok_resp = await client.get(
-                        f"https://{hostname}/api/v4/personal_access_tokens/self",
-                        headers={"PRIVATE-TOKEN": credential},
-                    )
-                    if tok_resp.status_code == 200:
-                        tok_data = tok_resp.json()
-                        scopes = tok_data.get("scopes", [])
-                        has_api = "api" in scopes
-                        has_rw = "read_repository" in scopes and "write_repository" in scopes
-                        if has_api:
-                            scope_message = "Token has `api` scope — full access for Switchboard."
-                        elif has_rw:
-                            scope_message = "Token has `read_repository` + `write_repository` — sufficient for Switchboard."
-                        else:
-                            scope_message = f"Token scopes: {', '.join(scopes)}. Switchboard needs `api` or `read_repository` + `write_repository`."
-                        ok = has_api or has_rw
-                    else:
-                        scope_message = "Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
-                        ok = True
-                except Exception:
-                    scope_message = "Could not introspect token scopes. Auth confirmed."
-                    ok = True
-
-                return await _json_response(send, {
-                    "ok": ok, "username": username, "scopes": scopes,
-                    "message": f"Authenticated as {username}. {scope_message}",
-                })
-
-            elif provider == "bitbucket":
-                username_part, _, password = credential.partition(":")
-                if not password:
-                    return await _json_response(send, {
-                        "ok": False, "username": None, "scopes": None,
-                        "message": "Credential must be in username:app_password format",
-                    })
-                resp = await client.get(
-                    "https://api.bitbucket.org/2.0/user",
-                    auth=(username_part, password),
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    resolved = data.get("username") or data.get("account_id")
-                    return await _json_response(send, {
-                        "ok": True, "username": resolved, "scopes": None,
-                        "message": f"Authenticated as {resolved}. Bitbucket app passwords do not support scope introspection — verify your app password has Repository Read/Write and Pull Request Write permissions.",
-                    })
-                return await _json_response(send, {
-                    "ok": False, "username": None, "scopes": None,
-                    "message": f"Bitbucket returned {resp.status_code} — check credentials",
-                })
-
-    except Exception as e:
-        return await _json_response(send, {
-            "ok": False, "username": None, "scopes": None,
-            "message": f"Connection error: {e}",
-        })
+    result = await _check_credential_auth(provider, credential, hostname)
+    return await _json_response(send, result)
 
 
 # ── User settings ─────────────────────────────────────────────────────────────

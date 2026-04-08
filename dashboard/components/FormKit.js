@@ -240,11 +240,11 @@ export function FormRow({ children }) {
  *   onTest      — click handler for Test button (omit to hide button)
  *   children    — expanded edit slot, rendered below the row when present
  */
-export function CredentialCard({ icon, name, connected, statusText, maskedValue, onUpdate, onTest, children }) {
+export function CredentialCard({ icon, name, connected, warning, statusText, maskedValue, onUpdate, onTest, children }) {
     const [hoverUpdate, setHoverUpdate] = useState(false);
     const [hoverTest, setHoverTest] = useState(false);
 
-    const dotColor = connected ? colors.green : colors.red;
+    const dotColor = warning ? colors.yellow : connected ? colors.green : colors.red;
 
     const cardStyle = {
         ...styles.card,
