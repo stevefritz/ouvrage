@@ -8,7 +8,8 @@
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
         "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
         "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
-        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json",
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
       },
       "reference": "fixtures/visual/ref-settings.png",
       "wait_ms": 1500
@@ -31,7 +32,8 @@
         "/dashboard/api/settings/instance": "fixtures/visual/settings-instance.json",
         "/dashboard/api/settings/user": "fixtures/visual/settings-user.json",
         "/dashboard/api/settings/tokens": "fixtures/visual/settings-tokens.json",
-        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json"
+        "/dashboard/api/runtime-info": "fixtures/visual/runtime-info.json",
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
       },
       "reference": "fixtures/visual/ref-settings-mobile.png",
       "wait_ms": 1500
@@ -104,13 +106,17 @@
     "project-create": {
       "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1200 },
-      "mocks": {},
+      "mocks": {
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
+      },
       "wait_ms": 1000
     },
     "project-create-optional": {
       "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1800 },
-      "mocks": {},
+      "mocks": {
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
+      },
       "wait_ms": 1000,
       "click": ["button:has-text('OPTIONAL')"]
     },

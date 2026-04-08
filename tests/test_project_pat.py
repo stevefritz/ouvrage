@@ -254,7 +254,7 @@ class TestMcpCreateProjectPat:
 
         with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
              patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)):
+             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await _handle_create_project({
                 "id": "mcp-enc-proj",
                 "repo": "https://github.com/org/repo.git",
@@ -283,7 +283,7 @@ class TestMcpCreateProjectPat:
 
         with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
              patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)):
+             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await _handle_create_project({
                 "id": "mcp-nopat-proj",
                 "repo": "https://github.com/org/repo.git",
@@ -370,7 +370,7 @@ class TestDashboardCreateProjectPat:
 
         with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
              patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)):
+             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -392,7 +392,7 @@ class TestDashboardCreateProjectPat:
 
         with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
              patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", AsyncMock(return_value=None)):
+             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201

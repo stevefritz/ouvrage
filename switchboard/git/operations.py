@@ -5,10 +5,8 @@ import logging
 import os
 import re
 
-import httpx
-
 import switchboard.db as db
-from switchboard.db.users import get_github_pat
+from switchboard.git.providers import resolve_credential
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger(__name__)
@@ -41,29 +39,57 @@ def parse_repo_url(url: str) -> tuple[str, str]:
 
 
 def normalize_repo_url(url: str) -> str:
-    """Normalize any GitHub repo URL to canonical HTTPS format.
+    """Normalize any git repo URL to canonical HTTPS format with .git suffix.
 
-    git@github.com:owner/repo.git  → https://github.com/owner/repo.git
-    git@github.com:owner/repo      → https://github.com/owner/repo.git
-    https://github.com/owner/repo  → https://github.com/owner/repo.git
+    Provider-agnostic — works for GitHub, GitLab, Bitbucket, self-hosted, etc.
+
+    SSH to HTTPS:
+        git@github.com:org/repo.git   → https://github.com/org/repo.git
+        git@gitlab.com:group/proj.git → https://gitlab.com/group/proj.git
+        git@host:team/app             → https://host/team/app.git
+
+    HTTPS cleanup:
+        http://host/path              → https://host/path.git
+        https://host/path/            → https://host/path.git
+        https://host/path.git         → https://host/path.git (no change)
     """
-    owner, repo = parse_repo_url(url)
-    return f"https://github.com/{owner}/{repo}.git"
+    url = url.strip()
 
+    # SSH format: git@{host}:{path}[.git]
+    if url.startswith("git@"):
+        # git@host:path → https://host/path
+        rest = url[4:]  # strip "git@"
+        host, _, path = rest.partition(":")
+        if not path:
+            return url  # malformed — return as-is
+        path = path.rstrip("/")
+        if not path.endswith(".git"):
+            path += ".git"
+        return f"https://{host}/{path}"
 
-def _build_authenticated_url(pat: str, repo_url: str) -> str:
-    """Build an HTTPS push URL with PAT embedded. Never store this — use at call time only."""
-    owner, repo = parse_repo_url(repo_url)
-    return f"https://oauth2:{pat}@github.com/{owner}/{repo}.git"
+    # HTTPS/HTTP format
+    if url.startswith("http://") or url.startswith("https://"):
+        # Upgrade http to https
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+        # Strip trailing slashes from path
+        url = url.rstrip("/")
+        # Ensure .git suffix
+        if not url.endswith(".git"):
+            url += ".git"
+        return url
+
+    # Unknown format — return as-is
+    return url
 
 
 async def _resolve_push_url(project_id: str) -> str:
-    """Resolve PAT and project repo URL into an authenticated HTTPS push URL."""
-    pat = await get_github_pat(project_id)
+    """Resolve credential and project repo URL into an authenticated HTTPS push URL."""
     project = await db.get_project(project_id)
     if not project:
         raise ValueError(f"Project {project_id} not found")
-    return _build_authenticated_url(pat, project["repo"])
+    provider, credential = await resolve_credential(project)
+    return provider.build_authenticated_url(project["repo"], credential)
 
 
 def _classify_push_error(stderr_text: str) -> str | None:
@@ -78,63 +104,6 @@ def _classify_push_error(stderr_text: str) -> str | None:
     if "could not resolve host" in s or "unable to access" in s:
         return "Could not reach GitHub. Will retry."
     return None
-
-
-# ---------------------------------------------------------------------------
-# GitHub REST API — PR creation
-# ---------------------------------------------------------------------------
-
-async def create_github_pr(
-    pat: str, owner: str, repo: str, head: str, base: str,
-    title: str, body: str = "",
-) -> dict:
-    """Create a GitHub PR via REST API. Returns {url, number}.
-
-    Handles 422 "already exists" by finding the existing PR.
-    """
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-    }
-    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-        resp = await client.post(
-            f"https://api.github.com/repos/{owner}/{repo}/pulls",
-            json={"title": title, "head": head, "base": base, "body": body},
-        )
-
-        if resp.status_code == 201:
-            data = resp.json()
-            return {"url": data["html_url"], "number": data["number"]}
-
-        if resp.status_code == 422:
-            errors = resp.json()
-            if "already exists" in str(errors).lower():
-                return await _find_existing_pr(client, owner, repo, head)
-            raise ValueError(f"PR creation failed: {errors}")
-
-        if resp.status_code == 404:
-            raise ValueError(f"Repository not found: {owner}/{repo}")
-        if resp.status_code == 403:
-            raise ValueError(f"PAT lacks permission to create PRs. Ensure it has `repo` scope.")
-
-        resp.raise_for_status()
-        return {}  # unreachable, but satisfies type checker
-
-
-async def _find_existing_pr(
-    client: httpx.AsyncClient, owner: str, repo: str, head: str,
-) -> dict:
-    """Find an existing open PR for the given head branch."""
-    resp = await client.get(
-        f"https://api.github.com/repos/{owner}/{repo}/pulls",
-        params={"head": f"{owner}:{head}", "state": "open"},
-    )
-
-    if resp.status_code == 200:
-        prs = resp.json()
-        if prs:
-            return {"url": prs[0]["html_url"], "number": prs[0]["number"]}
-    raise ValueError(f"PR already exists for {head} but could not find it")
 
 
 async def resolve_branch_target(task: dict) -> str:
@@ -336,15 +305,15 @@ async def _maybe_create_pr(task_id: str) -> None:
     if not worktree or not branch:
         return
 
-    # Resolve PAT and parse owner/repo
+    # Resolve credential and parse repo info via provider interface
     try:
-        pat = await get_github_pat(task["project_id"])
-        owner, repo = parse_repo_url(project["repo"])
+        provider, credential = await resolve_credential(project)
+        repo_info = provider.parse_repo_url(project["repo"])
     except ValueError as e:
         log.warning(f"PR creation skipped for {task_id}: {e}")
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
-            title="PR creation failed — no PAT configured",
+            title="PR creation failed — no credential configured",
             content=str(e),
         )
         return
@@ -361,12 +330,12 @@ async def _maybe_create_pr(task_id: str) -> None:
 
     log.info(f"Auto-creating PR for {task_id}: {branch} → {base}")
     try:
-        result = await create_github_pr(
-            pat=pat, owner=owner, repo=repo,
+        result = await provider.create_pr(
+            credential=credential, repo_info=repo_info,
             head=branch, base=base,
             title=title, body=body,
         )
-        pr_url = result["url"]
+        pr_url = result.url
         await db.add_artifact(task_id, "pr_url", pr_url)
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",

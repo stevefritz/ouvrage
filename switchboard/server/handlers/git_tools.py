@@ -9,8 +9,7 @@ import logging
 import os
 
 import switchboard.db as db
-from switchboard.db.users import get_github_pat
-from switchboard.git.operations import _build_authenticated_url, parse_repo_url
+from switchboard.git.providers import resolve_credential
 from switchboard.git.worktree import _run_as_worker
 
 log = logging.getLogger("switchboard.server")
@@ -65,17 +64,17 @@ async def _handle_git_push(arguments: dict) -> dict:
         commit_lines = stdout.decode().strip().splitlines()
         num_commits = len(commit_lines)
 
-    # Resolve PAT and build authenticated URL
-    try:
-        pat = await get_github_pat(task["project_id"])
-    except ValueError as e:
-        return {"pushed": False, "error": "no_pat", "message": str(e)}
-
     project = await db.get_project(task["project_id"])
     if not project:
         return {"pushed": False, "error": "no_project", "message": f"Project '{task['project_id']}' not found"}
 
-    auth_url = _build_authenticated_url(pat, project["repo"])
+    # Resolve credential and build authenticated URL via provider interface
+    try:
+        provider, credential = await resolve_credential(project)
+    except ValueError as e:
+        return {"pushed": False, "error": "no_credential", "message": str(e)}
+
+    auth_url = provider.build_authenticated_url(project["repo"], credential)
 
     # Push
     _, stderr, rc = await _run_as_worker(
@@ -140,13 +139,13 @@ async def _handle_git_fetch(arguments: dict) -> dict:
     # Resolve bare repo path
     bare_path = os.path.join(project["working_dir"], ".bare")
 
-    # Resolve PAT and build authenticated URL
+    # Resolve credential and build authenticated URL via provider interface
     try:
-        pat = await get_github_pat(task["project_id"])
+        provider, credential = await resolve_credential(project)
     except ValueError as e:
-        return {"fetched": False, "error": "no_pat", "message": str(e)}
+        return {"fetched": False, "error": "no_credential", "message": str(e)}
 
-    auth_url = _build_authenticated_url(pat, project["repo"])
+    auth_url = provider.build_authenticated_url(project["repo"], credential)
 
     if ref:
         # Fetch specific branch into bare repo

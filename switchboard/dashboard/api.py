@@ -286,6 +286,19 @@ async def handle_request(scope, receive, send):
         if path == "/dashboard/api/settings/instance/regenerate-oauth-secret" and method == "POST":
             return await _handle_regenerate_oauth_secret(send, scope)
 
+        # Git credential settings (owner/admin only)
+        if path == "/dashboard/api/settings/git-credentials" and method == "GET":
+            return await _handle_get_git_credentials(send, scope)
+        if path.startswith("/dashboard/api/settings/git-credentials/"):
+            rest = path[len("/dashboard/api/settings/git-credentials/"):]
+            if rest.endswith("/test") and method == "POST":
+                provider = rest[:-len("/test")]
+                return await _handle_test_git_credential(send, scope, provider)
+            if method == "PUT":
+                return await _handle_put_git_credential(receive, send, scope, rest)
+            if method == "DELETE":
+                return await _handle_delete_git_credential(send, scope, rest)
+
         # User settings (each user sees their own)
         if path == "/dashboard/api/settings/user" and method == "GET":
             return await _handle_get_user_settings(scope, send)
@@ -431,6 +444,24 @@ async def _handle_list_projects(send):
     await _json_response(send, projects)
 
 
+async def _run_dashboard_project_validation(project_id: str, project: dict) -> dict:
+    """Validate project credential access and store result. Returns updated project dict."""
+    from switchboard.git.validation import validate_project_access
+
+    try:
+        result = await validate_project_access(project)
+        updated = await db.update_project(
+            project_id,
+            credential_status=result["status"],
+            credential_status_message=result["message"],
+            credential_checked_at=result["checked_at"],
+        )
+        return updated
+    except Exception as e:
+        logger.warning("Credential validation failed for %s: %s", project_id, e)
+        return project
+
+
 async def _handle_create_project(receive, send, scope):
     body = await _read_body(receive)
     try:
@@ -483,21 +514,11 @@ async def _handle_create_project(receive, send, scope):
     if missing:
         return await _error(send, f"Missing required config fields: {', '.join(missing)}", 400)
 
-    # 2a: Validate GitHub PAT is configured before creating the project row
     try:
-        await db.get_instance_github_pat()
-    except ValueError:
-        return await _error(send, "Add your GitHub PAT in Settings before creating projects.", 400)
-
-    # 2b: Validate PAT can access the repo (git ls-remote, no file writes)
-    from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-    pat_error = await _validate_github_pat_for_repo(repo)
-    if pat_error:
-        return await _error(send, pat_error["error"], 400)
-
-    try:
-        pat_raw = data.get("github_pat_override")
-        pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
+        # credential_override takes priority over legacy github_pat_override
+        cred_raw = data.get("credential_override") or data.get("github_pat_override")
+        cred_last4 = cred_raw[-4:] if cred_raw and len(cred_raw) >= 4 else None
+        cred_encrypted = encrypt_value(cred_raw) if cred_raw and not is_fernet_token(cred_raw) else cred_raw or None
 
         result = await db.create_project(
             id=project_id,
@@ -518,8 +539,13 @@ async def _handle_create_project(receive, send, scope):
             auto_pr=data.get("auto_pr"),
             auto_merge=data.get("auto_merge"),
             created_by=get_request_user_id(),
-            github_pat_override=pat_encrypted,
+            provider=data.get("provider") or None,
+            credential_override=cred_encrypted,
+            credential_override_last4=cred_last4,
         )
+        # Validate credential access synchronously so the response includes status
+        result = await _run_dashboard_project_validation(project_id, result)
+
         await _json_response(send, result, 201)
     except Exception as exc:
         logger.exception("Error creating project '%s'", project_id)
@@ -532,6 +558,9 @@ async def _handle_get_project(send, project_id):
         return await _error(send, f"Project '{project_id}' not found", 404)
     task_list = await db.list_tasks(project_id=project_id)
     project["tasks"] = task_list
+    # Strip encrypted credential values — frontend only needs last4
+    project.pop("credential_override", None)
+    project.pop("github_pat_override", None)
     await _json_response(send, project)
 
 
@@ -547,7 +576,7 @@ async def _handle_update_project(receive, send, project_id):
         "display_name", "default_branch", "setup_command", "teardown_command", "test_command",
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
-        "state_definitions", "github_pat_override",
+        "state_definitions", "github_pat_override", "provider", "credential_override",
     }
     fields = {k: v for k, v in data.items() if k in ALLOWED}
     if not fields:
@@ -563,8 +592,23 @@ async def _handle_update_project(receive, send, project_id):
         else:  # empty string or null → clear
             fields["github_pat_override"] = "" if pat == "" else None
 
+    if "credential_override" in fields:
+        cred = fields["credential_override"]
+        if cred:  # non-empty → encrypt
+            fields["credential_override_last4"] = cred[-4:] if len(cred) >= 4 else cred
+            fields["credential_override"] = encrypt_value(cred) if not is_fernet_token(cred) else cred
+        else:  # empty string or null → clear
+            fields["credential_override"] = "" if cred == "" else None
+            fields["credential_override_last4"] = None
+
     try:
         result = await db.update_project(project_id, **fields)
+
+        # Re-validate credential if repo, provider, or credential changed
+        revalidate_keys = {"provider", "credential_override", "github_pat_override"}
+        if revalidate_keys & fields.keys():
+            result = await _run_dashboard_project_validation(project_id, result)
+
         await _json_response(send, result)
     except ValueError as exc:
         return await _error(send, str(exc), 404)
@@ -1529,6 +1573,229 @@ async def _handle_regenerate_oauth_secret(send, scope):
             return await _error(send, "OAuth client not found", 404)
 
     await _json_response(send, {"client_id": "claude-mcp", "client_secret": new_secret})
+
+
+# ── Git credential settings ───────────────────────────────────────────────────
+
+_GIT_PROVIDERS = ("github", "gitlab", "bitbucket")
+_GIT_DEFAULT_HOSTNAMES = {
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+    "bitbucket": "bitbucket.org",
+}
+
+
+async def _handle_get_git_credentials(send, scope):
+    """GET /dashboard/api/settings/git-credentials — list all provider states."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    rows = await db.list_credentials()
+    by_provider = {r["provider"]: r for r in rows}
+
+    result = []
+    for provider in _GIT_PROVIDERS:
+        row = by_provider.get(provider)
+        default_host = _GIT_DEFAULT_HOSTNAMES[provider]
+        if row:
+            hostname = row["hostname"] or default_host
+            result.append({
+                "provider": provider,
+                "hostname": hostname,
+                "hostname_is_default": hostname == default_host,
+                "configured": True,
+                "credential_last4": row.get("credential_last4"),
+            })
+        else:
+            result.append({
+                "provider": provider,
+                "hostname": default_host,
+                "hostname_is_default": True,
+                "configured": False,
+                "credential_last4": None,
+            })
+
+    await _json_response(send, {"credentials": result})
+
+
+async def _handle_put_git_credential(receive, send, scope, provider):
+    """PUT /dashboard/api/settings/git-credentials/{provider} — save/update credential."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'. Must be one of: {', '.join(_GIT_PROVIDERS)}", 400)
+
+    body = await _read_body(receive)
+    data = json.loads(body) if body else {}
+
+    credential = (data.get("credential") or "").strip()
+    if not credential:
+        return await _error(send, "credential is required", 400)
+
+    hostname = (data.get("hostname") or "").strip() or _GIT_DEFAULT_HOSTNAMES[provider]
+    credential_last4 = credential[-4:] if len(credential) >= 4 else credential
+    encrypted = encrypt_value(credential)
+
+    existing = await db.get_credential_by_provider(provider)
+    if existing:
+        await db.update_credential(existing["id"], credential=encrypted, hostname=hostname, credential_last4=credential_last4)
+    else:
+        await db.create_credential(provider, encrypted, hostname, credential_last4=credential_last4)
+
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_delete_git_credential(send, scope, provider):
+    """DELETE /dashboard/api/settings/git-credentials/{provider} — remove credential."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'", 400)
+
+    existing = await db.get_credential_by_provider(provider)
+    if not existing:
+        return await _error(send, f"No {provider} credential configured", 404)
+
+    await db.delete_credential(existing["id"])
+    await _json_response(send, {"ok": True})
+
+
+async def _handle_test_git_credential(send, scope, provider):
+    """POST /dashboard/api/settings/git-credentials/{provider}/test — validate credential with scope check."""
+    user = scope.get("session_user") or {}
+    if not _is_admin(user):
+        return await _error(send, "Forbidden", 403)
+
+    if provider not in _GIT_PROVIDERS:
+        return await _error(send, f"Unknown provider '{provider}'", 400)
+
+    existing = await db.get_credential_by_provider(provider)
+    if not existing or not existing.get("credential"):
+        return await _json_response(send, {
+            "ok": False, "username": None, "scopes": None,
+            "message": f"No {provider} credential configured",
+        })
+
+    raw_cred = existing["credential"]
+    credential = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
+    hostname = existing.get("hostname") or _GIT_DEFAULT_HOSTNAMES[provider]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if provider == "github":
+                api_base = f"https://{hostname}/api/v3" if hostname != "github.com" else "https://api.github.com"
+                resp = await client.get(
+                    f"{api_base}/user",
+                    headers={"Authorization": f"Bearer {credential}"},
+                )
+                if resp.status_code != 200:
+                    return await _json_response(send, {
+                        "ok": False, "username": None, "scopes": None,
+                        "message": f"GitHub returned {resp.status_code} — token may be invalid or expired",
+                    })
+
+                username = resp.json().get("login")
+                # Check scopes from X-OAuth-Scopes header (classic PATs)
+                oauth_scopes_header = resp.headers.get("X-OAuth-Scopes", "")
+                if oauth_scopes_header:
+                    scopes = [s.strip() for s in oauth_scopes_header.split(",") if s.strip()]
+                    has_repo = "repo" in scopes
+                    message = (
+                        f"Authenticated as {username}. "
+                        + ("Token has `repo` scope — ready for Switchboard."
+                           if has_repo
+                           else "Token is missing `repo` scope — Switchboard needs `repo` for push and PR access.")
+                    )
+                    return await _json_response(send, {
+                        "ok": has_repo, "username": username,
+                        "scopes": scopes, "message": message,
+                    })
+                else:
+                    # Fine-grained token — no X-OAuth-Scopes header
+                    return await _json_response(send, {
+                        "ok": True, "username": username, "scopes": None,
+                        "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions.",
+                    })
+
+            elif provider == "gitlab":
+                # Step 1: Auth check via /user
+                resp = await client.get(
+                    f"https://{hostname}/api/v4/user",
+                    headers={"PRIVATE-TOKEN": credential},
+                )
+                if resp.status_code != 200:
+                    return await _json_response(send, {
+                        "ok": False, "username": None, "scopes": None,
+                        "message": f"GitLab returned {resp.status_code} — token may be invalid or expired",
+                    })
+
+                username = resp.json().get("username")
+
+                # Step 2: Scope introspection via /personal_access_tokens/self
+                scopes = None
+                scope_message = ""
+                try:
+                    tok_resp = await client.get(
+                        f"https://{hostname}/api/v4/personal_access_tokens/self",
+                        headers={"PRIVATE-TOKEN": credential},
+                    )
+                    if tok_resp.status_code == 200:
+                        tok_data = tok_resp.json()
+                        scopes = tok_data.get("scopes", [])
+                        has_api = "api" in scopes
+                        has_rw = "read_repository" in scopes and "write_repository" in scopes
+                        if has_api:
+                            scope_message = "Token has `api` scope — full access for Switchboard."
+                        elif has_rw:
+                            scope_message = "Token has `read_repository` + `write_repository` — sufficient for Switchboard."
+                        else:
+                            scope_message = f"Token scopes: {', '.join(scopes)}. Switchboard needs `api` or `read_repository` + `write_repository`."
+                        ok = has_api or has_rw
+                    else:
+                        scope_message = "Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
+                        ok = True
+                except Exception:
+                    scope_message = "Could not introspect token scopes. Auth confirmed."
+                    ok = True
+
+                return await _json_response(send, {
+                    "ok": ok, "username": username, "scopes": scopes,
+                    "message": f"Authenticated as {username}. {scope_message}",
+                })
+
+            elif provider == "bitbucket":
+                username_part, _, password = credential.partition(":")
+                if not password:
+                    return await _json_response(send, {
+                        "ok": False, "username": None, "scopes": None,
+                        "message": "Credential must be in username:app_password format",
+                    })
+                resp = await client.get(
+                    "https://api.bitbucket.org/2.0/user",
+                    auth=(username_part, password),
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    resolved = data.get("username") or data.get("account_id")
+                    return await _json_response(send, {
+                        "ok": True, "username": resolved, "scopes": None,
+                        "message": f"Authenticated as {resolved}. Bitbucket app passwords do not support scope introspection — verify your app password has Repository Read/Write and Pull Request Write permissions.",
+                    })
+                return await _json_response(send, {
+                    "ok": False, "username": None, "scopes": None,
+                    "message": f"Bitbucket returned {resp.status_code} — check credentials",
+                })
+
+    except Exception as e:
+        return await _json_response(send, {
+            "ok": False, "username": None, "scopes": None,
+            "message": f"Connection error: {e}",
+        })
 
 
 # ── User settings ─────────────────────────────────────────────────────────────

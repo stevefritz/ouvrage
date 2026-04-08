@@ -1,14 +1,11 @@
-"""Tests for GitHub PAT integration — URL parsing, HTTPS push, REST API PR creation."""
+"""Tests for GitHub PAT integration — URL parsing, HTTPS push, push error classification."""
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from switchboard.git.operations import (
     parse_repo_url,
-    _build_authenticated_url,
     _classify_push_error,
-    create_github_pr,
-    _find_existing_pr,
 )
 
 
@@ -50,28 +47,6 @@ class TestParseRepoUrl:
 
 
 # ---------------------------------------------------------------------------
-# _build_authenticated_url
-# ---------------------------------------------------------------------------
-
-class TestBuildAuthenticatedUrl:
-    """Authenticated URL must embed PAT and parse owner/repo correctly."""
-
-    def test_from_ssh_url(self):
-        url = _build_authenticated_url("ghp_abc123", "git@github.com:acme/widgets.git")
-        assert url == "https://oauth2:ghp_abc123@github.com/acme/widgets.git"
-
-    def test_from_https_url(self):
-        url = _build_authenticated_url("ghp_abc123", "https://github.com/acme/widgets.git")
-        assert url == "https://oauth2:ghp_abc123@github.com/acme/widgets.git"
-
-    def test_pat_not_leaked_in_repr(self):
-        """PAT should be in the URL string but we verify it's constructed correctly."""
-        url = _build_authenticated_url("ghp_secret", "git@github.com:org/repo.git")
-        assert "ghp_secret" in url
-        assert url.startswith("https://")
-
-
-# ---------------------------------------------------------------------------
 # _classify_push_error
 # ---------------------------------------------------------------------------
 
@@ -96,125 +71,6 @@ class TestClassifyPushError:
 
     def test_unknown_error(self):
         assert _classify_push_error("some random error") is None
-
-
-# ---------------------------------------------------------------------------
-# create_github_pr — REST API
-# ---------------------------------------------------------------------------
-
-class TestCreateGithubPr:
-    """REST API PR creation with httpx."""
-
-    @pytest.mark.asyncio
-    async def test_201_created(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 201
-        mock_resp.json.return_value = {
-            "html_url": "https://github.com/acme/widgets/pull/42",
-            "number": 42,
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("switchboard.git.operations.httpx.AsyncClient", return_value=mock_client):
-            result = await create_github_pr(
-                pat="ghp_test", owner="acme", repo="widgets",
-                head="feature-branch", base="main",
-                title="Add feature", body="## Summary\n- stuff",
-            )
-
-        assert result["url"] == "https://github.com/acme/widgets/pull/42"
-        assert result["number"] == 42
-
-    @pytest.mark.asyncio
-    async def test_422_already_exists_finds_existing(self):
-        mock_create_resp = MagicMock()
-        mock_create_resp.status_code = 422
-        mock_create_resp.json.return_value = {
-            "message": "Validation Failed",
-            "errors": [{"message": "A pull request already exists for acme:feature-branch."}],
-        }
-
-        mock_list_resp = MagicMock()
-        mock_list_resp.status_code = 200
-        mock_list_resp.json.return_value = [{
-            "html_url": "https://github.com/acme/widgets/pull/41",
-            "number": 41,
-        }]
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_create_resp
-        mock_client.get.return_value = mock_list_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("switchboard.git.operations.httpx.AsyncClient", return_value=mock_client):
-            result = await create_github_pr(
-                pat="ghp_test", owner="acme", repo="widgets",
-                head="feature-branch", base="main",
-                title="Add feature",
-            )
-
-        assert result["url"] == "https://github.com/acme/widgets/pull/41"
-        assert result["number"] == 41
-
-    @pytest.mark.asyncio
-    async def test_404_raises_not_found(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("switchboard.git.operations.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ValueError, match="not found"):
-                await create_github_pr(
-                    pat="ghp_test", owner="acme", repo="widgets",
-                    head="feature", base="main", title="t",
-                )
-
-    @pytest.mark.asyncio
-    async def test_403_raises_permission(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("switchboard.git.operations.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ValueError, match="repo.*scope"):
-                await create_github_pr(
-                    pat="ghp_test", owner="acme", repo="widgets",
-                    head="feature", base="main", title="t",
-                )
-
-    @pytest.mark.asyncio
-    async def test_422_non_duplicate_raises(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 422
-        mock_resp.json.return_value = {
-            "message": "Validation Failed",
-            "errors": [{"message": "head must be a valid ref"}],
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("switchboard.git.operations.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ValueError, match="PR creation failed"):
-                await create_github_pr(
-                    pat="ghp_test", owner="acme", repo="widgets",
-                    head="feature", base="main", title="t",
-                )
 
 
 # ---------------------------------------------------------------------------

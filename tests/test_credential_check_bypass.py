@@ -144,55 +144,79 @@ _BASE_PROJECT_ARGS = {
 }
 
 
-class TestCreateProjectSkipCredentialCheck:
-    """SKIP_CREDENTIAL_CHECK=true lets create_project proceed without a PAT."""
+class TestCreateProjectPostValidation:
+    """Project creation always succeeds; credential validation runs post-create (non-blocking)."""
 
-    async def test_skip_true_no_pat_creates_project(self, db):
-        """SKIP_CREDENTIAL_CHECK=true + no PAT → project created without error."""
+    async def test_no_credential_still_creates_project(self, db):
+        """No credential configured → project created, credential_status stored as warning."""
         from switchboard.server.handlers import projects as proj_module
 
-        with patch.object(proj_module, "SKIP_CREDENTIAL_CHECK", True):
-            with patch("switchboard.server.handlers.projects.db.get_instance_github_pat",
-                       side_effect=ValueError("No PAT configured")):
-                with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
-                    result = await proj_module._handle_create_project(_BASE_PROJECT_ARGS)
+        async def mock_validation(project_id, project):
+            # Simulate warning status from missing credential
+            updated = await db.update_project(
+                project_id,
+                credential_status="warning",
+                credential_status_message="No credential configured",
+                credential_checked_at="2024-01-01T00:00:00Z",
+            )
+            return updated
+
+        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("switchboard.server.handlers.projects._run_project_validation",
+                   side_effect=mock_validation):
+            result = await proj_module._handle_create_project(_BASE_PROJECT_ARGS)
 
         assert "error" not in result
         project = await db.get_project("bypass-project")
         assert project is not None
+        assert project["credential_status"] == "warning"
 
-    async def test_skip_true_with_pat_still_validates_clone(self, db):
-        """SKIP_CREDENTIAL_CHECK=true but PAT IS configured → clone validation still runs."""
+    async def test_validation_error_does_not_block_creation(self, db):
+        """Validation failure → project still created, status stored."""
         from switchboard.server.handlers import projects as proj_module
 
-        with patch.object(proj_module, "SKIP_CREDENTIAL_CHECK", True):
-            with patch("switchboard.server.handlers.projects.db.get_instance_github_pat",
-                       return_value="ghp_sometoken"):
-                # Make ls-remote fail to verify clone validation still fires
-                with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                           return_value={"error": "GitHub PAT cannot access this repo. Check your token's permissions."}):
-                    result = await proj_module._handle_create_project(_BASE_PROJECT_ARGS)
+        async def mock_validation(project_id, project):
+            # Simulate error status
+            updated = await db.update_project(
+                project_id,
+                credential_status="error",
+                credential_status_message="Token lacks repo scope",
+                credential_checked_at="2024-01-01T00:00:00Z",
+            )
+            return updated
 
-        assert "error" in result
-        assert "access" in result["error"].lower() or "permissions" in result["error"].lower()
+        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("switchboard.server.handlers.projects._run_project_validation",
+                   side_effect=mock_validation):
+            result = await proj_module._handle_create_project({**_BASE_PROJECT_ARGS, "id": "err-project"})
 
-        project = await db.get_project("bypass-project")
-        assert project is None
+        assert "error" not in result
+        project = await db.get_project("err-project")
+        assert project is not None
+        assert project["credential_status"] == "error"
 
-    async def test_skip_false_no_pat_blocked(self, db):
-        """SKIP_CREDENTIAL_CHECK=false → PAT-absent error still fires (regression guard)."""
+    async def test_valid_credential_stores_validated_status(self, db):
+        """Valid credential → project created with validated status."""
         from switchboard.server.handlers import projects as proj_module
 
-        with patch.object(proj_module, "SKIP_CREDENTIAL_CHECK", False):
-            with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                       return_value={"error": "Add your GitHub PAT in Settings before creating projects."}):
-                result = await proj_module._handle_create_project(_BASE_PROJECT_ARGS)
+        async def mock_validation(project_id, project):
+            updated = await db.update_project(
+                project_id,
+                credential_status="validated",
+                credential_status_message="Credential validated",
+                credential_checked_at="2024-01-01T00:00:00Z",
+            )
+            return updated
 
-        assert "error" in result
-        assert "GitHub PAT" in result["error"]
+        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("switchboard.server.handlers.projects._run_project_validation",
+                   side_effect=mock_validation):
+            result = await proj_module._handle_create_project({**_BASE_PROJECT_ARGS, "id": "valid-project"})
 
-        project = await db.get_project("bypass-project")
-        assert project is None
+        assert "error" not in result
+        project = await db.get_project("valid-project")
+        assert project is not None
+        assert project["credential_status"] == "validated"
 
 
 # ── Settings API: skip_credential_check flag ─────────────────────────────────

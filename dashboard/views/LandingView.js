@@ -127,12 +127,19 @@ function ProjectCard({ project, tasks }) {
         gap: '8px',
     };
 
+    // Credential status indicator color
+    const credStatus = project.credential_status;
+    const credDotColor = credStatus === 'validated' ? colors.green
+        : credStatus === 'warning' ? colors.yellow
+        : credStatus === 'error' ? colors.red
+        : colors.textTertiary;
+
     const dotStyle = {
         width: '8px',
         height: '8px',
         borderRadius: '50%',
         flexShrink: 0,
-        backgroundColor: hasAttention ? colors.yellow : (runningCount > 0 ? colors.green : colors.textTertiary),
+        backgroundColor: hasAttention ? colors.yellow : (runningCount > 0 ? colors.green : credDotColor),
     };
 
     const nameStyle = {

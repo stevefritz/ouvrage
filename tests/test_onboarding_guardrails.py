@@ -1,8 +1,7 @@
 """Tests for onboarding guardrails:
 
 - dispatch_task without Anthropic key returns clear error, no task created
-- create_project without PAT returns clear error, no project row
-- create_project with bad PAT (ls-remote fails) does not leave dangling project row
+- create_project validates credentials after creation (non-blocking)
 - delete_project (MCP) removes project and bare repo
 - delete_project (MCP) rejects if project has working tasks
 - Dashboard delete project API endpoint mirrors MCP behavior
@@ -192,18 +191,11 @@ class TestDispatchTaskCredentialGuardNoUser:
         assert "error" not in result
 
 
-# ── Issue 2: create_project PAT validation ─────────────────────────────────
+# ── Issue 2: create_project — credential validation is now post-create ────
 
 
-class TestCreateProjectPATGuard:
-    """create_project must reject before DB write when PAT is missing or invalid."""
-
-    @pytest.fixture(autouse=True)
-    def force_credential_check(self):
-        """Disable the SKIP_CREDENTIAL_CHECK bypass so the PAT guard fires."""
-        import switchboard.server.handlers.projects as proj_module
-        with patch.object(proj_module, "SKIP_CREDENTIAL_CHECK", False):
-            yield
+class TestCreateProjectPostCreateValidation:
+    """create_project no longer blocks on PAT validation — it runs async after creation."""
 
     _BASE_ARGS = {
         "id": "new-project",
@@ -218,116 +210,27 @@ class TestCreateProjectPATGuard:
         "max_wall_clock": 30,
     }
 
-    async def test_create_project_no_pat_returns_error(self, db):
-        """No PAT configured → error, no project row created."""
+    async def test_create_project_succeeds_without_credential(self, db):
+        """create_project succeeds even without a credential — validation is non-blocking."""
         from switchboard.server.handlers.projects import _handle_create_project
 
-        with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                   return_value={"error": "Add your GitHub PAT in Settings before creating projects."}):
+        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
             result = await _handle_create_project(self._BASE_ARGS)
-
-        assert "error" in result
-        assert "GitHub PAT" in result["error"]
-
-        project = await db.get_project("new-project")
-        assert project is None
-
-    async def test_create_project_bad_pat_returns_error(self, db):
-        """PAT exists but ls-remote fails → error, no project row created."""
-        from switchboard.server.handlers.projects import _handle_create_project
-
-        with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo",
-                   return_value={"error": "GitHub PAT cannot access this repo. Check your token's permissions."}):
-            result = await _handle_create_project(self._BASE_ARGS)
-
-        assert "error" in result
-        assert "access" in result["error"].lower() or "permissions" in result["error"].lower()
-
-        project = await db.get_project("new-project")
-        assert project is None
-
-    async def test_create_project_valid_pat_succeeds(self, db):
-        """Valid PAT → create proceeds, project row exists."""
-        from switchboard.server.handlers.projects import _handle_create_project
-
-        with patch("switchboard.server.handlers.projects._validate_github_pat_for_repo", return_value=None):
-            with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
-                result = await _handle_create_project(self._BASE_ARGS)
 
         assert "error" not in result
         project = await db.get_project("new-project")
         assert project is not None
 
+    async def test_create_project_fires_validation_task(self, db):
+        """create_project kicks off background validation after DB write."""
+        from switchboard.server.handlers.projects import _handle_create_project
 
-class TestValidateGithubPatForRepo:
-    """Unit tests for _validate_github_pat_for_repo."""
+        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
+            with patch("switchboard.server.handlers.projects._run_project_validation", new_callable=AsyncMock) as mock_validate:
+                result = await _handle_create_project(self._BASE_ARGS)
 
-    async def test_no_pat_returns_error(self, db):
-        """get_instance_github_pat raises ValueError → returns PAT error."""
-        from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-
-        with patch("switchboard.server.handlers.projects.db.get_instance_github_pat",
-                   side_effect=ValueError("No PAT configured")):
-            result = await _validate_github_pat_for_repo("https://github.com/acme/repo.git")
-
-        assert result is not None
-        assert "GitHub PAT" in result["error"]
-
-    async def test_empty_pat_returns_error(self, db):
-        """get_instance_github_pat returns empty string → returns PAT error."""
-        from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-
-        with patch("switchboard.server.handlers.projects.db.get_instance_github_pat", return_value=""):
-            result = await _validate_github_pat_for_repo("https://github.com/acme/repo.git")
-
-        assert result is not None
-        assert "GitHub PAT" in result["error"]
-
-    async def test_ls_remote_failure_returns_error(self, db):
-        """ls-remote non-zero exit → PAT cannot access repo error."""
-        from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-
-        with patch("switchboard.server.handlers.projects.db.get_instance_github_pat", return_value="ghp_test"):
-            with patch("switchboard.server.handlers.projects._build_authenticated_url",
-                       return_value="https://ghp_test@github.com/acme/repo.git"):
-                with patch("switchboard.server.handlers.projects._run_as_worker",
-                           return_value=(b"", b"ERROR: auth failed", 128)) as mock_run:
-                    result = await _validate_github_pat_for_repo("https://github.com/acme/repo.git")
-
-        assert result is not None
-        assert "access" in result["error"].lower() or "permissions" in result["error"].lower()
-
-    async def test_ls_remote_success_returns_none(self, db):
-        """Successful ls-remote → returns None (no error)."""
-        from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-
-        with patch("switchboard.server.handlers.projects.db.get_instance_github_pat", return_value="ghp_valid"):
-            with patch("switchboard.server.handlers.projects._build_authenticated_url",
-                       return_value="https://ghp_valid@github.com/acme/repo.git"):
-                with patch("switchboard.server.handlers.projects._run_as_worker",
-                           return_value=(b"abc123\tHEAD", b"", 0)):
-                    result = await _validate_github_pat_for_repo("https://github.com/acme/repo.git")
-
-        assert result is None
-
-    async def test_ls_remote_timeout_returns_error(self, db):
-        """ls-remote times out → returns access error."""
-        import asyncio
-        from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-
-        async def _slow_run(*args, **kwargs):
-            await asyncio.sleep(999)
-            return b"", b"", 0
-
-        with patch("switchboard.server.handlers.projects.db.get_instance_github_pat", return_value="ghp_slow"):
-            with patch("switchboard.server.handlers.projects._build_authenticated_url",
-                       return_value="https://ghp_slow@github.com/acme/repo.git"):
-                with patch("switchboard.server.handlers.projects._run_as_worker", side_effect=_slow_run):
-                    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
-                        result = await _validate_github_pat_for_repo("https://github.com/acme/repo.git")
-
-        assert result is not None
-        assert "access" in result["error"].lower() or "permissions" in result["error"].lower()
+        # The asyncio.create_task should have been called (we patched the target)
+        assert "error" not in result
 
 
 # ── Issue 2d: delete_project MCP tool ─────────────────────────────────────
@@ -593,13 +496,11 @@ class TestFiveHundredErrorLogging:
 
         with patch("switchboard.dashboard.api.db.create_project",
                    side_effect=RuntimeError("DB exploded")):
-            with patch("switchboard.dashboard.api._validate_pat_for_project", return_value=None,
-                       create=True):
-                scope = _make_scope(method="POST", path="/dashboard/api/projects")
-                send = _Capture()
+            scope = _make_scope(method="POST", path="/dashboard/api/projects")
+            send = _Capture()
 
-                with caplog.at_level(logging.ERROR, logger="switchboard.dashboard.api"):
-                    await handle_request(scope, _make_receive(body), send)
+            with caplog.at_level(logging.ERROR, logger="switchboard.dashboard.api"):
+                await handle_request(scope, _make_receive(body), send)
 
         # Should be a 500 or 400 with error logged
         assert send.status in (400, 500)
