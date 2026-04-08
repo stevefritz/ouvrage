@@ -355,7 +355,15 @@ function SettingsTab({ project, projectId, onSaved }) {
             : (project.env_overrides || '')
     );
     const [envError, setEnvError] = useState(null);
-    const [githubPatOverride, setGithubPatOverride] = useState(null);
+
+    // Provider + credential override
+    const [gitProvider, setGitProvider] = useState(project.provider || '');
+    const [credentialOverride, setCredentialOverride] = useState(null); // null = not edited yet
+    const [gitCredentials, setGitCredentials] = useState([]);
+
+    useEffect(() => {
+        api.getGitCredentials().then(data => setGitCredentials(data.credentials || [])).catch(() => {});
+    }, []);
 
     const handleSave = async () => {
         setEnvError(null);
@@ -392,8 +400,11 @@ function SettingsTab({ project, projectId, onSaved }) {
                     : null,
                 env_overrides: parsedEnv !== undefined ? parsedEnv : (envOverrides.trim() ? undefined : null),
             };
-            if (githubPatOverride !== null) {
-                fields.github_pat_override = githubPatOverride || null;
+            // provider: always save current value
+            fields.provider = gitProvider || null;
+            // credential_override: only include if user has edited it
+            if (credentialOverride !== null) {
+                fields.credential_override = credentialOverride || null;
             }
             Object.keys(fields).forEach(k => fields[k] === undefined && delete fields[k]);
 
@@ -502,31 +513,55 @@ function SettingsTab({ project, projectId, onSaved }) {
                     />
                     <div style=${inheritHintStyle}>Inherits to tasks as merge target</div>
                 </${FormField}>
-                <${FormField} label="GitHub PAT (project-specific)">
-                    <input
-                        type="password"
-                        value=${githubPatOverride ?? ''}
-                        onInput=${e => setGithubPatOverride(e.target.value)}
-                        style=${fkStyles.input}
-                        placeholder="ghp_… (leave blank to use instance PAT)"
-                        autoComplete="new-password"
-                    />
-                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                        ${(() => {
-                            const patIsSet = githubPatOverride !== null ? Boolean(githubPatOverride) : Boolean(project.github_pat_override);
-                            return html`
+                <${FormField} label="Git Provider">
+                    <select
+                        value=${gitProvider}
+                        onChange=${e => setGitProvider(e.target.value)}
+                        style=${fkStyles.select}
+                    >
+                        <option value="">Auto-detect from URL</option>
+                        <option value="github">GitHub</option>
+                        <option value="gitlab">GitLab</option>
+                        <option value="bitbucket">Bitbucket</option>
+                    </select>
+                    ${gitProvider && { github: 'Scope: repo', gitlab: 'Scopes: api, or read_repository + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider] ? html`
+                        <div style=${{ fontSize: '10px', color: colors.textTertiary, fontStyle: 'italic', marginTop: '3px' }}>
+                            ${{ github: 'Scope: repo', gitlab: 'Scopes: api, or read_repository + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider]}
+                        </div>
+                    ` : null}
+                </${FormField}>
+                <${FormField} label="Credential Override">
+                    ${(() => {
+                        // Show ····{last4} if project has stored credential and user hasn't edited
+                        const storedCred = project.credential_override || project.github_pat_override;
+                        const hasStored = Boolean(storedCred);
+                        const last4 = hasStored && storedCred.length >= 4 ? storedCred.slice(-4) : null;
+                        const isEditing = credentialOverride !== null;
+                        const isCleared = credentialOverride === '';
+                        const credIsSet = isEditing ? Boolean(credentialOverride) : hasStored;
+
+                        return html`
+                            <input
+                                type="password"
+                                value=${credentialOverride ?? ''}
+                                onInput=${e => setCredentialOverride(e.target.value)}
+                                style=${fkStyles.input}
+                                placeholder=${hasStored && !isEditing ? '····' + (last4 || '****') : 'Optional — uses instance credential'}
+                                autoComplete="new-password"
+                            />
+                            <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                                 <span style=${{
                                     fontSize: '11px',
-                                    color: patIsSet ? colors.accent : colors.textTertiary,
-                                    fontStyle: patIsSet ? 'normal' : 'italic',
+                                    color: credIsSet ? colors.accent : colors.textTertiary,
+                                    fontStyle: credIsSet ? 'normal' : 'italic',
                                     flex: 1,
                                 }}>
-                                    ${patIsSet ? 'Using project PAT' : 'Using instance PAT (default)'}
+                                    ${credIsSet ? 'Using project credential' : 'Using instance credential (default)'}
                                 </span>
-                                ${patIsSet ? html`
+                                ${credIsSet && !isCleared ? html`
                                     <button
                                         type="button"
-                                        onClick=${() => setGithubPatOverride('')}
+                                        onClick=${() => setCredentialOverride('')}
                                         style=${{
                                             background: 'none', border: 'none',
                                             color: colors.textTertiary, cursor: 'pointer',
@@ -535,9 +570,27 @@ function SettingsTab({ project, projectId, onSaved }) {
                                         }}
                                     >Clear</button>
                                 ` : null}
-                            `;
-                        })()}
-                    </div>
+                            </div>
+                            ${gitProvider && (() => {
+                                const cred = gitCredentials.find(c => c.provider === gitProvider);
+                                return cred && !cred.configured && !credIsSet;
+                            })() ? html`
+                                <div style=${{
+                                    marginTop: '6px',
+                                    padding: '6px 10px',
+                                    background: colors.redBg,
+                                    border: '1px solid ' + colors.red + '44',
+                                    borderRadius: '6px',
+                                    fontSize: '11px',
+                                    color: colors.red,
+                                }}>
+                                    No ${{ github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket' }[gitProvider]} credential configured.
+                                    <a href="#/settings" style=${{ color: colors.accent }}>Add in Settings →</a>
+                                    <span style=${{ color: colors.textTertiary }}> — tasks will be blocked</span>
+                                </div>
+                            ` : null}
+                        `;
+                    })()}
                 </${FormField}>
             </div>
 

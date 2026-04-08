@@ -496,21 +496,10 @@ async def _handle_create_project(receive, send, scope):
     if missing:
         return await _error(send, f"Missing required config fields: {', '.join(missing)}", 400)
 
-    # 2a: Validate GitHub PAT is configured before creating the project row
     try:
-        await db.get_instance_github_pat()
-    except ValueError:
-        return await _error(send, "Add your GitHub PAT in Settings before creating projects.", 400)
-
-    # 2b: Validate PAT can access the repo (git ls-remote, no file writes)
-    from switchboard.server.handlers.projects import _validate_github_pat_for_repo
-    pat_error = await _validate_github_pat_for_repo(repo)
-    if pat_error:
-        return await _error(send, pat_error["error"], 400)
-
-    try:
-        pat_raw = data.get("github_pat_override")
-        pat_encrypted = encrypt_value(pat_raw) if pat_raw and not is_fernet_token(pat_raw) else pat_raw or None
+        # credential_override takes priority over legacy github_pat_override
+        cred_raw = data.get("credential_override") or data.get("github_pat_override")
+        cred_encrypted = encrypt_value(cred_raw) if cred_raw and not is_fernet_token(cred_raw) else cred_raw or None
 
         result = await db.create_project(
             id=project_id,
@@ -531,7 +520,8 @@ async def _handle_create_project(receive, send, scope):
             auto_pr=data.get("auto_pr"),
             auto_merge=data.get("auto_merge"),
             created_by=get_request_user_id(),
-            github_pat_override=pat_encrypted,
+            provider=data.get("provider") or None,
+            credential_override=cred_encrypted,
         )
         await _json_response(send, result, 201)
     except Exception as exc:
@@ -560,7 +550,7 @@ async def _handle_update_project(receive, send, project_id):
         "display_name", "default_branch", "setup_command", "teardown_command", "test_command",
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
-        "state_definitions", "github_pat_override",
+        "state_definitions", "github_pat_override", "provider", "credential_override",
     }
     fields = {k: v for k, v in data.items() if k in ALLOWED}
     if not fields:
@@ -575,6 +565,13 @@ async def _handle_update_project(receive, send, project_id):
             fields["github_pat_override"] = encrypt_value(pat) if not is_fernet_token(pat) else pat
         else:  # empty string or null → clear
             fields["github_pat_override"] = "" if pat == "" else None
+
+    if "credential_override" in fields:
+        cred = fields["credential_override"]
+        if cred:  # non-empty → encrypt
+            fields["credential_override"] = encrypt_value(cred) if not is_fernet_token(cred) else cred
+        else:  # empty string or null → clear
+            fields["credential_override"] = "" if cred == "" else None
 
     try:
         result = await db.update_project(project_id, **fields)

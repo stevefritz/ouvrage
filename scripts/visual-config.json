@@ -106,13 +106,17 @@
     "project-create": {
       "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1200 },
-      "mocks": {},
+      "mocks": {
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
+      },
       "wait_ms": 1000
     },
     "project-create-optional": {
       "url": "/dashboard#/project/new",
       "viewport": { "width": 1280, "height": 1800 },
-      "mocks": {},
+      "mocks": {
+        "/dashboard/api/settings/git-credentials": "fixtures/visual/settings-git-credentials.json"
+      },
       "wait_ms": 1000,
       "click": ["button:has-text('OPTIONAL')"]
     },

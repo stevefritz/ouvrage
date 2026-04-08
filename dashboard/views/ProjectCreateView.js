@@ -2,7 +2,7 @@
 // All config fields are required (no silent fallthrough to system defaults).
 
 import { h } from 'https://esm.sh/preact@10.25.4';
-import { useState, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useEffect, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout } from '../tokens.js';
 import { navigate } from '../router.js';
@@ -181,6 +181,157 @@ function validate(state) {
 }
 
 // ---------------------------------------------------------------------------
+// Provider info helpers
+// ---------------------------------------------------------------------------
+
+const PROVIDER_LABELS = {
+    github: 'GitHub',
+    gitlab: 'GitLab',
+    bitbucket: 'Bitbucket',
+};
+
+const PROVIDER_SCOPE_HELP = {
+    github: 'Scope: repo',
+    gitlab: 'Scopes: api, or read_repository + write_repository',
+    bitbucket: 'App password: repository:read, repository:write',
+};
+
+// ---------------------------------------------------------------------------
+// ProviderCredentialRow — Git Provider dropdown + Credential Override input
+// ---------------------------------------------------------------------------
+
+function ProviderCredentialRow({
+    gitProvider, setGitProvider,
+    credentialOverride, setCredentialOverride,
+    gitCredentials,
+    providerAutoDetected, providerDetectHostname, urlHasUnknownHost,
+    inputBase, selectStyle, typography, colors, layout,
+}) {
+    const selectedCred = gitCredentials.find(c => c.provider === gitProvider);
+    const missingCredential = gitProvider && selectedCred && !selectedCred.configured && !credentialOverride.trim();
+
+    return html`
+        <div>
+            <div style=${{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '12px', alignItems: 'start' }}>
+                <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                    <label style=${{
+                        display: 'flex', alignItems: 'center',
+                        marginBottom: '6px',
+                        fontSize: typography.size.sm,
+                        fontWeight: typography.weight.medium,
+                        color: colors.textSecondary,
+                    }}>
+                        Git Provider
+                        <span style=${{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginLeft: '5px', cursor: 'default', verticalAlign: 'middle' }} class="help-icon-wrap">
+                            <span class="help-icon-trigger" style=${{
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                width: '14px', height: '14px', borderRadius: '50%',
+                                border: '1px solid ' + colors.textTertiary,
+                                color: colors.textTertiary, fontSize: '10px', lineHeight: 1,
+                                fontFamily: typography.fontBody, flexShrink: 0,
+                            }}>?</span>
+                            <span class="help-icon-tooltip" style=${{
+                                position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%',
+                                transform: 'translateX(-50%)', background: colors.surfaceActive,
+                                border: '1px solid ' + colors.border, borderRadius: layout.borderRadius.md,
+                                padding: '7px 10px', fontSize: typography.size.xs, color: colors.textSecondary,
+                                whiteSpace: 'pre-wrap', maxWidth: '260px', width: 'max-content',
+                                lineHeight: 1.5, zIndex: 100, pointerEvents: 'none', display: 'none',
+                            }}>Auto-filled from URL. Always overridable. Used to route git operations.</span>
+                        </span>
+                    </label>
+                    <select
+                        value=${gitProvider}
+                        onChange=${e => setGitProvider(e.target.value)}
+                        style=${selectStyle}
+                    >
+                        <option value="">Select provider…</option>
+                        <option value="github">GitHub</option>
+                        <option value="gitlab">GitLab</option>
+                        <option value="bitbucket">Bitbucket</option>
+                    </select>
+                    ${providerAutoDetected ? html`
+                        <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                            auto-detected from ${providerDetectHostname}
+                        </div>
+                    ` : null}
+                </div>
+                <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                    <label style=${{
+                        display: 'flex', alignItems: 'center',
+                        marginBottom: '6px',
+                        fontSize: typography.size.sm,
+                        fontWeight: typography.weight.medium,
+                        color: colors.textSecondary,
+                    }}>
+                        Credential Override
+                        <span style=${{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginLeft: '5px', cursor: 'default', verticalAlign: 'middle' }} class="help-icon-wrap">
+                            <span class="help-icon-trigger" style=${{
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                width: '14px', height: '14px', borderRadius: '50%',
+                                border: '1px solid ' + colors.textTertiary,
+                                color: colors.textTertiary, fontSize: '10px', lineHeight: 1,
+                                fontFamily: typography.fontBody, flexShrink: 0,
+                            }}>?</span>
+                            <span class="help-icon-tooltip" style=${{
+                                position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%',
+                                transform: 'translateX(-50%)', background: colors.surfaceActive,
+                                border: '1px solid ' + colors.border, borderRadius: layout.borderRadius.md,
+                                padding: '7px 10px', fontSize: typography.size.xs, color: colors.textSecondary,
+                                whiteSpace: 'pre-wrap', maxWidth: '260px', width: 'max-content',
+                                lineHeight: 1.5, zIndex: 100, pointerEvents: 'none', display: 'none',
+                            }}>Optional — uses instance ${gitProvider ? PROVIDER_LABELS[gitProvider] : 'git'} credential if not set. Use for repos needing a different token.</span>
+                        </span>
+                    </label>
+                    <input
+                        type="password"
+                        value=${credentialOverride}
+                        onInput=${e => setCredentialOverride(e.target.value)}
+                        style=${inputBase}
+                        placeholder=${gitProvider === 'github' ? 'ghp_… or github_pat_…' : gitProvider === 'gitlab' ? 'glpat-…' : gitProvider === 'bitbucket' ? 'username:app_password' : 'Optional — uses instance credential'}
+                        autocomplete="new-password"
+                    />
+                    ${gitProvider && PROVIDER_SCOPE_HELP[gitProvider] ? html`
+                        <div style=${{ fontSize: typography.size.xs, color: colors.textTertiary, marginTop: '4px' }}>
+                            ${PROVIDER_SCOPE_HELP[gitProvider]}
+                        </div>
+                    ` : null}
+                </div>
+            </div>
+
+            ${urlHasUnknownHost ? html`
+                <div style=${{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    background: '#f59e0b18',
+                    border: '1px solid #f59e0b44',
+                    borderRadius: layout.borderRadius.md,
+                    fontSize: typography.size.xs,
+                    color: '#f59e0b',
+                }}>
+                    Could not detect provider from URL. Select one below.
+                </div>
+            ` : null}
+
+            ${missingCredential ? html`
+                <div style=${{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    background: colors.redBg,
+                    border: '1px solid ' + colors.red + '44',
+                    borderRadius: layout.borderRadius.md,
+                    fontSize: typography.size.xs,
+                    color: colors.red,
+                }}>
+                    No ${PROVIDER_LABELS[gitProvider]} credential configured. <a href="#/settings" style=${{ color: colors.accent }}>Add in Settings →</a>
+                    <span style=${{ color: colors.textTertiary }}> — tasks will be blocked</span>
+                </div>
+            ` : null}
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
 // ProjectCreateView
 // ---------------------------------------------------------------------------
 
@@ -207,7 +358,51 @@ export function ProjectCreateView() {
     const [teardownCommand, setTeardownCommand] = useState('');
     const [ignorePatterns, setIgnorePatterns] = useState('');
     const [envOverrides, setEnvOverrides] = useState([]);
-    const [githubPatOverride, setGithubPatOverride] = useState('');
+
+    // Provider + credential
+    const [gitProvider, setGitProvider] = useState('');
+    const [credentialOverride, setCredentialOverride] = useState('');
+    const [gitCredentials, setGitCredentials] = useState([]); // [{provider, hostname, configured}]
+    const [providerAutoDetected, setProviderAutoDetected] = useState(false);
+    const [providerDetectHostname, setProviderDetectHostname] = useState('');
+    const [urlHasUnknownHost, setUrlHasUnknownHost] = useState(false);
+
+    // Load instance git credentials to build hostname→provider registry
+    useEffect(() => {
+        api.getGitCredentials().then(data => {
+            setGitCredentials(data.credentials || []);
+        }).catch(() => {});
+    }, []);
+
+    // Auto-detect provider from URL on change
+    const handleRepoChange = (url) => {
+        setRepo(url);
+        setProviderAutoDetected(false);
+        setProviderDetectHostname('');
+        setUrlHasUnknownHost(false);
+        if (!url.trim()) return;
+        let hostname = '';
+        try {
+            const u = new URL(url.trim());
+            hostname = u.hostname;
+        } catch (_) {
+            // SSH: git@github.com:org/repo.git
+            const m = url.match(/^git@([^:]+):/);
+            if (m) hostname = m[1];
+        }
+        if (!hostname) return;
+        // Look up hostname in known credentials
+        const match = gitCredentials.find(c => c.hostname === hostname);
+        if (match) {
+            setGitProvider(match.provider);
+            setProviderAutoDetected(true);
+            setProviderDetectHostname(hostname);
+            setUrlHasUnknownHost(false);
+        } else {
+            setUrlHasUnknownHost(true);
+            setProviderDetectHostname(hostname);
+        }
+    };
 
     // Form state
     const [submitting, setSubmitting] = useState(false);
@@ -268,7 +463,8 @@ export function ProjectCreateView() {
             if (testCommand.trim()) payload.test_command = testCommand.trim();
             if (setupCommand.trim()) payload.setup_command = setupCommand.trim();
             if (teardownCommand.trim()) payload.teardown_command = teardownCommand.trim();
-            if (githubPatOverride.trim()) payload.github_pat_override = githubPatOverride.trim();
+            if (gitProvider) payload.provider = gitProvider;
+            if (credentialOverride.trim()) payload.credential_override = credentialOverride.trim();
             if (ignorePatterns.trim()) {
                 payload.review_ignore_patterns = ignorePatterns.split(',').map(p => p.trim()).filter(Boolean);
             }
@@ -541,7 +737,7 @@ export function ProjectCreateView() {
                             class="foreman-input-mono"
                             type="text"
                             value=${repo}
-                            onInput=${e => setRepo(e.target.value)}
+                            onInput=${e => handleRepoChange(e.target.value)}
                             style=${fieldErrors.repo ? inputMonoError : inputMono}
                             placeholder="https://github.com/org/repo.git"
                             spellcheck="false"
@@ -549,6 +745,23 @@ export function ProjectCreateView() {
                         />
                     </div>
                 </div>
+
+                <!-- Row 1b: Git Provider + Credential Override -->
+                ${html`<${ProviderCredentialRow}
+                    gitProvider=${gitProvider}
+                    setGitProvider=${setGitProvider}
+                    credentialOverride=${credentialOverride}
+                    setCredentialOverride=${setCredentialOverride}
+                    gitCredentials=${gitCredentials}
+                    providerAutoDetected=${providerAutoDetected}
+                    providerDetectHostname=${providerDetectHostname}
+                    urlHasUnknownHost=${urlHasUnknownHost}
+                    inputBase=${inputBase}
+                    selectStyle=${selectStyle}
+                    typography=${typography}
+                    colors=${colors}
+                    layout=${layout}
+                />`}
 
                 <!-- Row 2: Default Branch (full width) -->
                 <div style=${fieldStyle}>
@@ -811,18 +1024,6 @@ export function ProjectCreateView() {
                                     Environment variables written to .env.testing in each worktree. For test suite config (e.g. APP_ENV=testing, DB_CONNECTION=sqlite).
                                 </div>
                             </div>
-                            <div style=${fieldStyle}>
-                                <${FieldLabel} label="GitHub PAT (project-specific)" helpText="Optional. Uses instance PAT if not set. Use this for repos that need a different token (different org, client repo, SaaS isolation)." />
-                                <input
-                                    type="password"
-                                    value=${githubPatOverride}
-                                    onInput=${e => setGithubPatOverride(e.target.value)}
-                                    style=${inputBase}
-                                    placeholder="ghp_…"
-                                    autocomplete="new-password"
-                                />
-                            </div>
-
                             <!-- Advanced subsection -->
                             <div>
                                 <button
