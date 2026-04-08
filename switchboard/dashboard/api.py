@@ -1711,8 +1711,27 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                 if resp.status_code == 200:
                     data = resp.json()
                     resolved = data.get("username") or data.get("account_id")
+
+                    scopes_header = resp.headers.get("x-oauth-scopes", "")
+                    if scopes_header:
+                        scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+                        required = {
+                            "read:repository:bitbucket",
+                            "write:repository:bitbucket",
+                            "read:pullrequest:bitbucket",
+                            "write:pullrequest:bitbucket",
+                            "read:user:bitbucket",
+                        }
+                        missing = sorted(required - set(scopes))
+                        if not missing:
+                            return {"ok": True, "username": resolved, "scopes": scopes,
+                                    "message": f"Authenticated as {resolved}. All required scopes present."}
+                        missing_str = ", ".join(missing)
+                        return {"ok": True, "username": resolved, "scopes": scopes,
+                                "missing_scopes": missing,
+                                "message": f"Authenticated as {resolved} but missing scopes: {missing_str}. Add these when creating your API token."}
                     return {"ok": True, "username": resolved, "scopes": None,
-                            "message": f"Authenticated as {resolved}. Verify your API token has read:repository:bitbucket, write:repository:bitbucket, and write:pullrequest:bitbucket scopes."}
+                            "message": f"Authenticated as {resolved}. Verify your API token has the required scopes."}
                 return {"ok": False, "username": None, "scopes": None,
                         "message": f"Bitbucket returned {resp.status_code} — check credentials"}
 
