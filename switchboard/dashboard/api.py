@@ -1681,12 +1681,25 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                         tok_data = tok_resp.json()
                         scopes = tok_data.get("scopes", [])
                         has_api = "api" in scopes
-                        has_rw = "read_repository" in scopes and "write_repository" in scopes
-                        if has_api or has_rw:
+                        if has_api:
                             scope_message = f"Authenticated as {username}. Required scopes present."
+                            ok = True
+                        elif scopes:
+                            # Scopes present but api not among them — insufficient for MR creation
+                            scope_message = (
+                                "Token is missing required scopes. "
+                                "Classic PAT requires 'api' scope. "
+                                "Fine-grained PAT requires Repository (read, write) + Merge Request (read, create)."
+                            )
+                            ok = False
                         else:
-                            scope_message = "Authenticated but token is missing required scopes. Need 'api' or 'read_repository + write_repository'."
-                        ok = has_api or has_rw
+                            # Empty scopes — likely fine-grained token; cannot fully introspect
+                            scope_message = (
+                                f"Authenticated as {username}. Scope introspection returned no scopes — "
+                                "token may be fine-grained. Ensure it has Repository (read, write) "
+                                "and Merge Request (read, create) permissions."
+                            )
+                            ok = True
                     else:
                         scope_message = f"Authenticated as {username}. Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
                         ok = True

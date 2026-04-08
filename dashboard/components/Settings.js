@@ -130,7 +130,7 @@ const GIT_PROVIDER_CONFIG = {
         defaultHostname: 'gitlab.com',
         credentialLabel: 'Personal Access Token',
         credentialPlaceholder: 'glpat-xxxxxxxxxxxx',
-        scopeText: 'Scopes: api or read_repository + write_repository.',
+        scopeText: 'Classic PAT: api scope (required for MR creation). Fine-grained PAT: Repository (read, write) + Merge Request (read, create).',
         createLinks: [
             { label: 'Create token', url: 'https://gitlab.com/-/user_settings/personal_access_tokens' },
         ],
