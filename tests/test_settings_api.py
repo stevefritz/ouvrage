@@ -87,6 +87,16 @@ def _patch_httpx(status_code: int, json_data: dict):
 
 class TestGetInstanceSettings:
 
+    @pytest.fixture(autouse=True)
+    async def reset_oauth_keys(self, tmp_path, monkeypatch):
+        import switchboard.auth.oauth as _oauth
+        monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
+        yield
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
+
     async def test_owner_gets_full_response(self, db):
         from switchboard.dashboard.api import handle_request
 
@@ -283,6 +293,16 @@ class TestTestGithub:
 
 
 class TestRegenerateOAuthSecret:
+
+    @pytest.fixture(autouse=True)
+    async def reset_oauth_keys(self, tmp_path, monkeypatch):
+        import switchboard.auth.oauth as _oauth
+        monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
+        yield
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
 
     async def test_owner_gets_new_secret(self, db):
         from switchboard.dashboard.api import handle_request
