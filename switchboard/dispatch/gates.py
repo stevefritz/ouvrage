@@ -211,24 +211,29 @@ async def _run_subtask(
             pass
 
     if not _worker_has_oauth:
-        api_key = None
+        # Resolve which user's API key the proxy should decrypt.
+        # The key itself is NOT passed to the worker — the proxy injects it.
+        proxy_user_id = None
         task_record = await db.get_task(task_id)
         dispatched_by_id = task_record.get("dispatched_by") if task_record else None
         if dispatched_by_id:
             try:
-                api_key = await db.get_anthropic_key(int(dispatched_by_id))
+                await db.get_anthropic_key(int(dispatched_by_id))
+                proxy_user_id = int(dispatched_by_id)
             except (ValueError, TypeError):
                 pass
-        if not api_key:
+        if proxy_user_id is None:
             try:
                 instance = await db.get_instance()
                 owner_id = instance.get("owner_user_id") if instance else None
                 if owner_id:
-                    api_key = await db.get_anthropic_key(int(owner_id))
+                    await db.get_anthropic_key(int(owner_id))
+                    proxy_user_id = int(owner_id)
             except (ValueError, TypeError):
                 pass
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
+        if proxy_user_id is not None:
+            port = os.environ.get("SWITCHBOARD_PORT", "8100")
+            env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}/proxy/anthropic/{proxy_user_id}"
 
     options = ClaudeAgentOptions(
         user=WORKER_USER,
