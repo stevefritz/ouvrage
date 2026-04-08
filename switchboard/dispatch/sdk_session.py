@@ -630,6 +630,7 @@ async def _run_sdk_session(
         if proxy_user_id is not None:
             port = os.environ.get("SWITCHBOARD_PORT", "8100")
             env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}/proxy/anthropic/{proxy_user_id}"
+            env["ANTHROPIC_AUTH_TOKEN"] = "proxy"  # CC checks for presence; proxy injects the real key
         else:
             log.warning("No Anthropic API key resolved for task %s", task_id)
 

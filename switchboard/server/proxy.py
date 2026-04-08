@@ -24,6 +24,7 @@ _STRIP_HEADERS = frozenset({
     b"host",
     b"x-api-key",
     b"authorization",
+    b"accept-encoding",  # prevent compressed responses that break streaming
 })
 
 
@@ -100,6 +101,20 @@ async def handle_anthropic_proxy(scope, receive, send) -> None:
 
     upstream_path = "/" + parts[1] if len(parts) > 1 else "/"
 
+    # ── Health check ─────────────────────────────────────────────────
+    # CC sends HEAD to ANTHROPIC_BASE_URL to validate the endpoint.
+    # Bare path (no /v1/... suffix) → return 200 without forwarding.
+    if upstream_path == "/":
+        api_key = await _resolve_api_key(user_id)
+        status = 200 if api_key else 502
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [[b"content-type", b"application/json"]],
+        })
+        await send({"type": "http.response.body", "body": b'{"ok":true}' if api_key else b'{"error":"no api key"}'})
+        return
+
     # ── Resolve API key ──────────────────────────────────────────────
     api_key = await _resolve_api_key(user_id)
     if not api_key:
@@ -135,6 +150,10 @@ async def handle_anthropic_proxy(scope, receive, send) -> None:
     body = await _read_body(receive)
 
     # ── Forward to Anthropic with streaming response ─────────────────
+    # Force identity encoding so Anthropic returns uncompressed responses.
+    # The SDK expects plaintext JSON from ANTHROPIC_BASE_URL.
+    upstream_headers["accept-encoding"] = "identity"
+
     async with httpx.AsyncClient() as client_http:
         try:
             async with client_http.stream(
@@ -144,12 +163,13 @@ async def handle_anthropic_proxy(scope, receive, send) -> None:
                 content=body,
                 timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
             ) as upstream_resp:
-                # Build response headers, stripping hop-by-hop headers
+                # Build response headers, stripping hop-by-hop and encoding headers
                 resp_headers = []
                 for name, value in upstream_resp.headers.multi_items():
                     lower_name = name.lower()
                     if lower_name in (
                         "transfer-encoding", "connection", "keep-alive",
+                        "content-encoding",
                     ):
                         continue
                     resp_headers.append([
@@ -163,8 +183,8 @@ async def handle_anthropic_proxy(scope, receive, send) -> None:
                     "headers": resp_headers,
                 })
 
-                # Stream body chunks as they arrive
-                async for chunk in upstream_resp.aiter_bytes():
+                # Stream body chunks as they arrive (raw, uncompressed)
+                async for chunk in upstream_resp.aiter_raw():
                     await send({
                         "type": "http.response.body",
                         "body": chunk,

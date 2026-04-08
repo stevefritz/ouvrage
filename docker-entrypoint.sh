@@ -6,6 +6,11 @@ set -euo pipefail
 chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
 
+# --- Worker git identity ---
+# CC workers need a git author for commits. Set globally for the worker user.
+gosu switchboard git config --global user.email "worker@ouvrage.dev"
+gosu switchboard git config --global user.name "Ouvrage Worker"
+
 # --- Uploads directory ---
 # Lives in /work so CC workers can read uploaded files directly.
 # Owned by service user (writes), group-readable by worker (reads).
