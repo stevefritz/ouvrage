@@ -203,22 +203,24 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
     cred_result = await validate_project_access(project)
     if cred_result["status"] in ("error", "warning"):
         logger.warning("Credential pre-flight failed for %s: %s", task_id, cred_result["message"])
-        await db.update_task(task_id, status="held", held=True)
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Held — credential issue",
-            content=(
-                f"Task held because credential validation failed:\n\n"
-                f"> {cred_result['message']}\n\n"
-                f"Fix the credential in Settings or on the project, then approve this task to retry."
-            ),
-        )
-        # Update project credential status
+        # Update project credential status before transitioning
         await db.update_project(
             task["project_id"],
             credential_status=cred_result["status"],
             credential_status_message=cred_result["message"],
             credential_checked_at=cred_result["checked_at"],
+        )
+        # Transition through lifecycle — reentrant lock allows nested execute
+        await lifecycle.execute(
+            task_id, "error",
+            reason="credential_failed",
+            error_message=cred_result["message"],
+            error_title="Pre-flight failed — credential issue",
+            error_content=(
+                f"Task stopped because credential validation failed:\n\n"
+                f"> {cred_result['message']}\n\n"
+                f"Fix the credential in Settings or on the project, then retry this task."
+            ),
         )
         return
 
@@ -406,14 +408,16 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
     cred_result = await validate_project_access(project)
     if cred_result["status"] in ("error", "warning"):
         logger.warning("Credential pre-flight failed for %s on retry: %s", task_id, cred_result["message"])
-        await db.update_task(task_id, status="held", held=True)
-        await db.post_task_message(
-            task_id=task_id, author="dispatcher", type="status",
-            title="Held — credential issue",
-            content=(
-                f"Task held because credential validation failed:\n\n"
+        # Transition through lifecycle — reentrant lock allows nested execute
+        await lifecycle.execute(
+            task_id, "error",
+            reason="credential_failed",
+            error_message=cred_result["message"],
+            error_title="Pre-flight failed — credential issue",
+            error_content=(
+                f"Task stopped because credential validation failed:\n\n"
                 f"> {cred_result['message']}\n\n"
-                f"Fix the credential in Settings or on the project, then approve this task to retry."
+                f"Fix the credential in Settings or on the project, then retry this task."
             ),
         )
         return
@@ -1095,12 +1099,18 @@ def _gate_fail_reason(task: dict, **ctx: Any) -> str | None:
     return ctx.get("reason", "gate_failed")
 
 
+def _error_reason(task: dict, **ctx: Any) -> str | None:
+    """Reason for error comes from context — allows credential_failed etc."""
+    return ctx.get("reason", "dispatch_error")
+
+
 OUTCOME_DEFINITIONS = {
     # Lifecycle reasons (stored in task_attempts.outcome)
     "gate_passed": {"label": "completed", "color": "#22c55e"},
     "gate_skipped": {"label": "completed", "color": "#22c55e"},
     "paused_by_user": {"label": "stopped", "color": "#6b7280"},
     "dispatch_error": {"label": "failed", "color": "#ef4444"},
+    "credential_failed": {"label": "pre-flight failed", "color": "#ef4444"},
     "wall_clock_timeout": {"label": "timeout", "color": "#ef4444"},
     "rate_limited": {"label": "rate-limited", "color": "#eab308"},
     "turns_exhausted": {"label": "turns exhausted", "color": "#eab308"},
@@ -1332,7 +1342,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
     ),
     ("working", "error"): TransitionDef(
         to_state="stopped",
-        reason="dispatch_error",
+        reason=_error_reason,
         label="Error",
         user_action=False,
         side_effects=[_on_error, _finalize_attempt],
@@ -1465,6 +1475,7 @@ STATE_LABELS: dict[tuple[str, str | None], dict[str, Any]] = {
     ("stopped", "max_review_retries"): {"label": "Review Failed", "color": "#ef4444", "pulse": False},
     ("stopped", "review_stalled"): {"label": "Review Stalled", "color": "#ef4444", "pulse": False},
     ("stopped", "dispatch_error"): {"label": "Error", "color": "#ef4444", "pulse": False},
+    ("stopped", "credential_failed"): {"label": "Pre-flight Failed", "color": "#ef4444", "pulse": False},
     ("stopped", "worktree_missing"): {"label": "Worktree Missing", "color": "#ef4444", "pulse": False},
     ("stopped", "push_failed"): {"label": "Push Failed", "color": "#ef4444", "pulse": False},
     ("stopped", "awaiting_feedback"): {"label": "Awaiting Feedback", "color": "#f59e0b", "pulse": False},

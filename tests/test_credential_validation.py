@@ -199,14 +199,14 @@ class TestProjectCredentialStatusFields:
 
 
 class TestDispatchPreflightGate:
-    """Dispatch must hold tasks when credential validation fails."""
+    """Dispatch must stop tasks (via lifecycle) when credential validation fails."""
 
     @pytest.fixture(autouse=True)
     def _patches(self, mock_git):
         """Patch git and SDK operations to avoid real calls."""
 
-    async def test_dispatch_holds_task_on_missing_credential(self, db, sample_project):
-        """Missing credential → task held, not failed."""
+    async def test_dispatch_stops_task_on_missing_credential(self, db, sample_project):
+        """Missing credential → task stopped with reason=credential_failed."""
         from switchboard.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
@@ -226,17 +226,17 @@ class TestDispatchPreflightGate:
             await _dispatch_launch_session(task)
 
         updated = await db.get_task("test-project/preflight-missing")
-        assert updated["status"] == "held"
-        assert updated["held"] == 1
+        assert updated["status"] == "stopped"
+        assert updated["reason"] == "credential_failed"
 
-        # Should have posted a message
+        # Should have posted a message about the credential issue
         messages_result = await db.read_task_messages("test-project/preflight-missing")
         messages = messages_result.get("messages", []) if isinstance(messages_result, dict) else messages_result
-        held_msgs = [m for m in messages if "credential" in (m.get("content") or "").lower()]
-        assert len(held_msgs) > 0
+        cred_msgs = [m for m in messages if "credential" in (m.get("content") or "").lower()]
+        assert len(cred_msgs) > 0
 
-    async def test_dispatch_holds_task_on_invalid_credential(self, db, sample_project):
-        """Invalid credential → task held with actionable error."""
+    async def test_dispatch_stops_task_on_invalid_credential(self, db, sample_project):
+        """Invalid credential → task stopped with reason=credential_failed."""
         from switchboard.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
@@ -256,10 +256,11 @@ class TestDispatchPreflightGate:
             await _dispatch_launch_session(task)
 
         updated = await db.get_task("test-project/preflight-invalid")
-        assert updated["status"] == "held"
+        assert updated["status"] == "stopped"
+        assert updated["reason"] == "credential_failed"
 
     async def test_dispatch_proceeds_on_valid_credential(self, db, sample_project):
-        """Valid credential → dispatch proceeds past pre-flight (not held)."""
+        """Valid credential → dispatch proceeds past pre-flight (not stopped)."""
         from switchboard.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
@@ -278,11 +279,11 @@ class TestDispatchPreflightGate:
         with patch("switchboard.git.validation.validate_project_access", mock_validate):
             await _dispatch_launch_session(task)
 
-        # Task should not be held — pre-flight passed
+        # Task should not be stopped — pre-flight passed
         updated = await db.get_task("test-project/preflight-valid")
-        assert updated["status"] != "held"
+        assert updated["status"] != "stopped"
 
-    async def test_retry_holds_task_on_missing_credential(self, db, sample_project):
+    async def test_retry_stops_task_on_missing_credential(self, db, sample_project):
         """Retry path also gates on credential validation."""
         from switchboard.dispatch.lifecycle import _retry_launch_session
 
@@ -303,7 +304,73 @@ class TestDispatchPreflightGate:
             await _retry_launch_session(task)
 
         updated = await db.get_task("test-project/retry-preflight")
-        assert updated["status"] == "held"
+        assert updated["status"] == "stopped"
+        assert updated["reason"] == "credential_failed"
+
+    async def test_credential_failed_cancel_works(self, db, sample_project):
+        """From stopped/credential_failed, cancel transitions to cancelled."""
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        task = await db.create_task(
+            id="test-project/preflight-cancel",
+            project_id="test-project",
+            goal="Test cancel from credential_failed",
+        )
+        await db.update_task(task["id"], status="stopped", reason="credential_failed")
+
+        result = await lifecycle.execute("test-project/preflight-cancel", "cancel")
+        assert result["status"] == "cancelled"
+
+    async def test_credential_failed_retry_works(self, db, sample_project):
+        """From stopped/credential_failed, retry transitions to working."""
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        task = await db.create_task(
+            id="test-project/preflight-retry",
+            project_id="test-project",
+            goal="Test retry from credential_failed",
+        )
+        await db.update_task(task["id"], status="stopped", reason="credential_failed")
+
+        mock_validate = AsyncMock(return_value={
+            "status": "validated",
+            "message": "Credential validated",
+            "checked_at": "2026-01-01T00:00:00Z",
+        })
+
+        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+            result = await lifecycle.execute("test-project/preflight-retry", "retry")
+        assert result["status"] == "working"
+
+    async def test_credential_failed_state_label(self, db, sample_project):
+        """State label for credential_failed shows 'Pre-flight Failed' in red."""
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        task = await db.create_task(
+            id="test-project/preflight-label",
+            project_id="test-project",
+            goal="Test state label",
+        )
+        await db.update_task(task["id"], status="stopped", reason="credential_failed")
+
+        label_info = await lifecycle.get_state_label("test-project/preflight-label")
+        assert label_info["label"] == "Pre-flight Failed"
+        assert label_info["color"] == "#ef4444"
+        assert label_info["state"] == "stopped"
+        assert label_info["reason"] == "credential_failed"
+
+    async def test_credential_failed_needs_attention(self, db, sample_project):
+        """Tasks with status=stopped appear in needs-attention filter."""
+        task = await db.create_task(
+            id="test-project/preflight-attention",
+            project_id="test-project",
+            goal="Test needs attention",
+        )
+        await db.update_task(task["id"], status="stopped", reason="credential_failed")
+
+        updated = await db.get_task("test-project/preflight-attention")
+        # Dashboard filters on status == "stopped" for needs-attention
+        assert updated["status"] == "stopped"
 
 
 # ── Layer 1: Settings test endpoint ───────────────────────────────────────
