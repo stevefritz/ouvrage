@@ -271,6 +271,7 @@ async def init_db():
                 provider TEXT NOT NULL,
                 credential TEXT NOT NULL,
                 hostname TEXT NOT NULL,
+                credential_last4 TEXT,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
         """)
@@ -485,6 +486,14 @@ async def init_db():
             await conn.execute("ALTER TABLE projects ADD COLUMN provider TEXT")
         if "credential_override" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN credential_override TEXT")
+        if "credential_override_last4" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN credential_override_last4 TEXT")
+
+        # Migrate git_credentials: add credential_last4 column
+        gc_columns = await conn.execute_fetchall("PRAGMA table_info(git_credentials)")
+        gc_col_names = [c["name"] for c in gc_columns]
+        if "credential_last4" not in gc_col_names:
+            await conn.execute("ALTER TABLE git_credentials ADD COLUMN credential_last4 TEXT")
 
         # Migrate instance: add github_pat_encrypted column
         instance_columns = await conn.execute_fetchall("PRAGMA table_info(instance)")
@@ -837,10 +846,14 @@ async def init_db():
                     "SELECT id FROM git_credentials WHERE provider = 'github' LIMIT 1"
                 )
                 if not existing_gc:
+                    # Compute last4 from the PAT for display
+                    _migrating_pat = inst_rows_gc[0]["github_pat_encrypted"]
+                    _pat_raw = decrypt_value(_migrating_pat) if is_fernet_token(_migrating_pat) else _migrating_pat
+                    _pat_last4 = _pat_raw[-4:] if _pat_raw and len(_pat_raw) >= 4 else None
                     await conn.execute(
-                        """INSERT INTO git_credentials (provider, credential, hostname, created_at)
-                           VALUES ('github', ?, 'github.com', ?)""",
-                        (inst_rows_gc[0]["github_pat_encrypted"], now_iso()),
+                        """INSERT INTO git_credentials (provider, credential, hostname, credential_last4, created_at)
+                           VALUES ('github', ?, 'github.com', ?, ?)""",
+                        (_migrating_pat, _pat_last4, now_iso()),
                     )
                     import logging as _logging_gc
                     _logging_gc.getLogger(__name__).info(
@@ -856,6 +869,36 @@ async def init_db():
                     "UPDATE projects SET credential_override = ? WHERE id = ?",
                     (row["github_pat_override"], row["id"]),
                 )
+
+            # Backfill credential_last4 for git_credentials rows that don't have it yet
+            gc_backfill = await conn.execute_fetchall(
+                "SELECT id, credential FROM git_credentials WHERE credential_last4 IS NULL AND credential IS NOT NULL"
+            )
+            for row in gc_backfill:
+                raw = row["credential"]
+                if is_fernet_token(raw):
+                    raw = decrypt_value(raw)
+                last4 = raw[-4:] if raw and len(raw) >= 4 else None
+                if last4:
+                    await conn.execute(
+                        "UPDATE git_credentials SET credential_last4 = ? WHERE id = ?",
+                        (last4, row["id"]),
+                    )
+
+            # Backfill credential_override_last4 for projects that have credential_override set
+            proj_last4_rows = await conn.execute_fetchall(
+                "SELECT id, credential_override FROM projects WHERE credential_override IS NOT NULL AND credential_override != '' AND credential_override_last4 IS NULL"
+            )
+            for row in proj_last4_rows:
+                raw = row["credential_override"]
+                if is_fernet_token(raw):
+                    raw = decrypt_value(raw)
+                last4 = raw[-4:] if raw and len(raw) >= 4 else None
+                if last4:
+                    await conn.execute(
+                        "UPDATE projects SET credential_override_last4 = ? WHERE id = ?",
+                        (last4, row["id"]),
+                    )
 
         # Migrate task_attempts: backfill from existing tasks with session_id
         attempts_table = await conn.execute_fetchall(

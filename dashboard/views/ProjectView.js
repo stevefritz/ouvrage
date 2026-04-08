@@ -533,9 +533,8 @@ function SettingsTab({ project, projectId, onSaved }) {
                 <${FormField} label="Credential Override">
                     ${(() => {
                         // Show ····{last4} if project has stored credential and user hasn't edited
-                        const storedCred = project.credential_override || project.github_pat_override;
-                        const hasStored = Boolean(storedCred);
-                        const last4 = hasStored && storedCred.length >= 4 ? storedCred.slice(-4) : null;
+                        const last4 = project.credential_override_last4 || null;
+                        const hasStored = Boolean(last4);
                         const isEditing = credentialOverride !== null;
                         const isCleared = credentialOverride === '';
                         const credIsSet = isEditing ? Boolean(credentialOverride) : hasStored;

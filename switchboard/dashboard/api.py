@@ -499,6 +499,7 @@ async def _handle_create_project(receive, send, scope):
     try:
         # credential_override takes priority over legacy github_pat_override
         cred_raw = data.get("credential_override") or data.get("github_pat_override")
+        cred_last4 = cred_raw[-4:] if cred_raw and len(cred_raw) >= 4 else None
         cred_encrypted = encrypt_value(cred_raw) if cred_raw and not is_fernet_token(cred_raw) else cred_raw or None
 
         result = await db.create_project(
@@ -522,6 +523,7 @@ async def _handle_create_project(receive, send, scope):
             created_by=get_request_user_id(),
             provider=data.get("provider") or None,
             credential_override=cred_encrypted,
+            credential_override_last4=cred_last4,
         )
         await _json_response(send, result, 201)
     except Exception as exc:
@@ -535,6 +537,9 @@ async def _handle_get_project(send, project_id):
         return await _error(send, f"Project '{project_id}' not found", 404)
     task_list = await db.list_tasks(project_id=project_id)
     project["tasks"] = task_list
+    # Strip encrypted credential values — frontend only needs last4
+    project.pop("credential_override", None)
+    project.pop("github_pat_override", None)
     await _json_response(send, project)
 
 
@@ -569,9 +574,11 @@ async def _handle_update_project(receive, send, project_id):
     if "credential_override" in fields:
         cred = fields["credential_override"]
         if cred:  # non-empty → encrypt
+            fields["credential_override_last4"] = cred[-4:] if len(cred) >= 4 else cred
             fields["credential_override"] = encrypt_value(cred) if not is_fernet_token(cred) else cred
         else:  # empty string or null → clear
             fields["credential_override"] = "" if cred == "" else None
+            fields["credential_override_last4"] = None
 
     try:
         result = await db.update_project(project_id, **fields)
@@ -1565,16 +1572,13 @@ async def _handle_get_git_credentials(send, scope):
         row = by_provider.get(provider)
         default_host = _GIT_DEFAULT_HOSTNAMES[provider]
         if row:
-            raw_cred = row["credential"]
-            decrypted = decrypt_value(raw_cred) if is_fernet_token(raw_cred) else raw_cred
-            last4 = decrypted[-4:] if decrypted and len(decrypted) >= 4 else None
             hostname = row["hostname"] or default_host
             result.append({
                 "provider": provider,
                 "hostname": hostname,
                 "hostname_is_default": hostname == default_host,
                 "configured": True,
-                "credential_last4": last4,
+                "credential_last4": row.get("credential_last4"),
             })
         else:
             result.append({
@@ -1605,13 +1609,14 @@ async def _handle_put_git_credential(receive, send, scope, provider):
         return await _error(send, "credential is required", 400)
 
     hostname = (data.get("hostname") or "").strip() or _GIT_DEFAULT_HOSTNAMES[provider]
+    credential_last4 = credential[-4:] if len(credential) >= 4 else credential
     encrypted = encrypt_value(credential)
 
     existing = await db.get_credential_by_provider(provider)
     if existing:
-        await db.update_credential(existing["id"], credential=encrypted, hostname=hostname)
+        await db.update_credential(existing["id"], credential=encrypted, hostname=hostname, credential_last4=credential_last4)
     else:
-        await db.create_credential(provider, encrypted, hostname)
+        await db.create_credential(provider, encrypted, hostname, credential_last4=credential_last4)
 
     await _json_response(send, {"ok": True})
 

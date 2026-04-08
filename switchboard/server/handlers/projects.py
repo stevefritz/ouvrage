@@ -105,6 +105,7 @@ async def _handle_create_project(arguments):
 
     # credential_override takes priority over deprecated github_pat_override
     cred_raw = arguments.get("credential_override") or arguments.get("github_pat_override")
+    cred_last4 = cred_raw[-4:] if cred_raw and len(cred_raw) >= 4 else None
     cred_encrypted = encrypt_value(cred_raw) if cred_raw and not is_fernet_token(cred_raw) else cred_raw or None
 
     # Auto-detect provider from URL if not specified
@@ -154,6 +155,7 @@ async def _handle_create_project(arguments):
         github_pat_override=cred_encrypted,
         provider=provider,
         credential_override=cred_encrypted,
+        credential_override_last4=cred_last4,
     )
     return result
 
@@ -182,9 +184,11 @@ async def _handle_update_project(arguments):
     if "credential_override" in fields:
         cred = fields["credential_override"]
         if cred:
+            fields["credential_override_last4"] = cred[-4:] if len(cred) >= 4 else cred
             fields["credential_override"] = encrypt_value(cred) if not is_fernet_token(cred) else cred
         else:
             fields["credential_override"] = "" if cred == "" else None
+            fields["credential_override_last4"] = None
     return await db.update_project(project_id, **fields)
 
 

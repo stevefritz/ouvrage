@@ -22,6 +22,7 @@ async def create_project(
     github_pat_override: str | None = None,
     provider: str | None = None,
     credential_override: str | None = None,
+    credential_override_last4: str | None = None,
 ) -> dict:
     # credential_override takes priority; github_pat_override is a deprecated alias
     effective_credential = credential_override or github_pat_override
@@ -36,13 +37,13 @@ async def create_project(
                 test_command, env_overrides, max_turns, max_wall_clock, claude_md_path, model,
                 state_definitions, review_model, review_ignore_patterns,
                 auto_test, auto_review, auto_pr, auto_merge, created_by, created_at,
-                github_pat_override, provider, credential_override)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                github_pat_override, provider, credential_override, credential_override_last4)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, repo, default_branch, working_dir, setup_command, teardown_command,
              test_command, env_json, max_turns, max_wall_clock, claude_md_path, model,
              state_json, review_model, rip_json,
              auto_test, auto_review, auto_pr, auto_merge, created_by, ts,
-             effective_credential, provider, effective_credential),
+             effective_credential, provider, effective_credential, credential_override_last4),
         )
         await db.commit()
         return {
@@ -59,6 +60,7 @@ async def create_project(
             "github_pat_override": effective_credential,
             "provider": provider,
             "credential_override": effective_credential,
+            "credential_override_last4": credential_override_last4,
         }
 
 
@@ -98,6 +100,9 @@ async def update_project(project_id: str, **fields) -> dict:
             fields["github_pat_override"] = None
         if "credential_override" in fields and fields["credential_override"] == "":
             fields["credential_override"] = None
+            # Clear last4 when clearing credential
+            if "credential_override_last4" not in fields:
+                fields["credential_override_last4"] = None
         # Keep github_pat_override and credential_override in sync
         if "credential_override" in fields and "github_pat_override" not in fields:
             fields["github_pat_override"] = fields["credential_override"]

@@ -117,7 +117,7 @@ class TestGetGitCredentials:
     async def test_shows_configured_provider_last4(self, db):
         from switchboard.dashboard.api import handle_request
 
-        await db.create_credential("github", "ghp_abcdefghij1234", "github.com")
+        await db.create_credential("github", "ghp_abcdefghij1234", "github.com", credential_last4="1234")
 
         scope = _make_scope("/dashboard/api/settings/git-credentials")
         resp = _Capture()
@@ -133,7 +133,7 @@ class TestGetGitCredentials:
         from switchboard.crypto import encrypt_value
 
         encrypted = encrypt_value("ghp_abcdefghij5678")
-        await db.create_credential("github", encrypted, "github.com")
+        await db.create_credential("github", encrypted, "github.com", credential_last4="5678")
 
         scope = _make_scope("/dashboard/api/settings/git-credentials")
         resp = _Capture()

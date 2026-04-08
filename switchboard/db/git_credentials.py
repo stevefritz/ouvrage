@@ -6,6 +6,7 @@ from switchboard.db._helpers import now_iso
 
 async def create_credential(
     provider: str, credential: str, hostname: str | None = None,
+    credential_last4: str | None = None,
 ) -> dict:
     """Create a git credential. Credential should already be encrypted."""
     # Default hostnames per provider
@@ -20,9 +21,9 @@ async def create_credential(
     ts = now_iso()
     async with get_db() as db:
         cursor = await db.execute(
-            """INSERT INTO git_credentials (provider, credential, hostname, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (provider, credential, hostname, ts),
+            """INSERT INTO git_credentials (provider, credential, hostname, credential_last4, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (provider, credential, hostname, credential_last4, ts),
         )
         await db.commit()
         return {
@@ -30,6 +31,7 @@ async def create_credential(
             "provider": provider,
             "credential": credential,
             "hostname": hostname,
+            "credential_last4": credential_last4,
             "created_at": ts,
         }
 
@@ -65,7 +67,7 @@ async def list_credentials() -> list[dict]:
 
 async def update_credential(credential_id: int, **fields) -> dict:
     """Update a git credential."""
-    allowed = {"provider", "credential", "hostname"}
+    allowed = {"provider", "credential", "hostname", "credential_last4"}
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"Unknown credential fields: {unknown}")
