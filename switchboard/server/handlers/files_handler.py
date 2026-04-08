@@ -162,21 +162,37 @@ async def _handle_add_task_file(arguments: dict) -> dict:
 
 
 async def _handle_add_project_file(arguments: dict) -> dict:
+    # Worker calls must supply task_id so we can validate the source path is
+    # within the task's worktree. This prevents a worker from uploading
+    # arbitrary system files (e.g. /etc/passwd) by exploiting project scope.
+    # Future hardening: non-worker callers (dashboard) should validate against
+    # a user-owned upload directory instead.
     if not get_request_is_worker():
         raise ValueError("add_project_file is only available on the worker endpoint")
 
     project_id = arguments.get("project_id")
     source_path = arguments.get("source_path")
     filename = arguments.get("filename")
+    task_id = arguments.get("task_id")
 
     if not project_id:
         raise ValueError("project_id is required")
     if not source_path:
         raise ValueError("source_path is required")
+    if not task_id:
+        raise ValueError("task_id is required for worker calls")
 
     project = await db.get_project(project_id)
     if not project:
         raise ValueError(f"Project '{project_id}' not found")
+
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+
+    worktree_path = task.get("worktree_path")
+    if not worktree_path:
+        raise ValueError("Task has no worktree_path — cannot validate source path")
 
     src = Path(source_path)
     if not src.exists():
@@ -184,9 +200,17 @@ async def _handle_add_project_file(arguments: dict) -> dict:
     if not src.is_file():
         raise ValueError(f"Source path is not a file: {source_path}")
 
+    # Resolve real paths — prevent directory traversal outside the worktree
+    real_src = src.resolve()
+    real_worktree = Path(worktree_path).resolve()
+    try:
+        real_src.relative_to(real_worktree)
+    except ValueError:
+        raise ValueError("Source path must be within the worktree")
+
     # Default filename from source basename
     if not filename:
-        filename = src.resolve().name
+        filename = real_src.name
     filename = Path(filename).name
     if not filename:
         raise ValueError("Invalid filename")
@@ -195,7 +219,7 @@ async def _handle_add_project_file(arguments: dict) -> dict:
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"File type .{ext} not allowed")
 
-    size_bytes = src.stat().st_size
+    size_bytes = real_src.stat().st_size
     if size_bytes > MAX_FILE_SIZE:
         raise ValueError("File exceeds 10MB limit")
 
@@ -203,7 +227,7 @@ async def _handle_add_project_file(arguments: dict) -> dict:
     dest_dir = _uploads_dir() / file_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename
-    shutil.copy2(str(src), str(dest))
+    shutil.copy2(str(real_src), str(dest))
 
     mime_type = MIME_TYPES.get(ext)
     record = await db.create_file(
