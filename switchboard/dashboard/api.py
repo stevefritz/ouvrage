@@ -1825,13 +1825,9 @@ async def _handle_get_user_settings(scope, send):
     }
     notif_prefs = creds.get("notification_preferences") or {}
 
-    # GitHub PAT status (instance-level credential)
-    github_pat_configured = False
-    try:
-        await db.get_instance_github_pat()
-        github_pat_configured = True
-    except (ValueError, Exception):
-        pass
+    # Git credential status — any provider configured in git_credentials table
+    git_credentials = await db.list_credentials()
+    git_credential_configured = len(git_credentials) > 0
 
     await _json_response(send, {
         "profile": {
@@ -1841,7 +1837,7 @@ async def _handle_get_user_settings(scope, send):
             "role": full_user.get("role"),
         },
         "anthropic": anthropic_info,
-        "github": {"configured": github_pat_configured},
+        "git_credential": {"configured": git_credential_configured},
         "notifications": notif_prefs,
     })
 

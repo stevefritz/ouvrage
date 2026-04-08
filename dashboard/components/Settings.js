@@ -228,7 +228,7 @@ function GitProviderCard({ cred, onSaved }) {
                         `}
                     </label>
                     <input type="text"
-                        style=${{ ...styles.input, color: isNonDefault ? '#f59e0b' : undefined }}
+                        style=${{ ...styles.input, color: isNonDefault ? '#f59e0b' : colors.text }}
                         value=${hostname}
                         onInput=${(e) => setHostname(e.target.value)}
                         placeholder=${cfg.defaultHostname} />
@@ -354,7 +354,7 @@ function GitProvidersSection({ onSaved }) {
     `;
 
     return html`
-        <div>
+        <div id="instance-git-credentials">
             <div style=${{ fontSize: '11px', color: colors.textTertiary, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '8px' }}>
                 Instance Git Credentials
             </div>
@@ -378,13 +378,19 @@ function GitProvidersSection({ onSaved }) {
 
 const DOCS_URL = 'https://ouvrage.build/docs/getting-started';
 
-function SetupBanner({ anthropic, github }) {
-    if (!anthropic || !github) return null;
+function SetupBanner({ anthropic, git_credential }) {
+    if (!anthropic || !git_credential) return null;
     if (anthropic.skip_credential_check) return null;
 
     const anthropicDone = anthropic.configured;
-    const githubDone = github.configured;
-    if (anthropicDone && githubDone) return null;
+    const gitDone = git_credential.configured;
+    if (anthropicDone && gitDone) return null;
+
+    const scrollToGitCredentials = (e) => {
+        e.preventDefault();
+        const el = document.getElementById('instance-git-credentials');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
 
     return html`
         <div style=${{
@@ -412,16 +418,20 @@ function SetupBanner({ anthropic, github }) {
                     </span>
                 </div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: colors.text }}>
-                    <span style=${{ color: githubDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
-                        ${githubDone ? '✓' : '☐'}
+                    <span style=${{ color: gitDone ? colors.green : colors.textTertiary, fontSize: '14px' }}>
+                        ${gitDone ? '✓' : '☐'}
                     </span>
-                    <span style=${{ color: githubDone ? colors.textSecondary : colors.text }}>
-                        GitHub Personal Access Token${githubDone ? ' — configured' : ' — required to connect your repos'}
+                    <span style=${{ color: gitDone ? colors.textSecondary : colors.text }}>
+                        Git credential${gitDone ? ' — configured' : ' — required to connect your repos'}
                     </span>
                 </div>
             </div>
             <div style=${{ fontSize: '12px', color: colors.textTertiary }}>
-                Set these up below, then you're ready to go.
+                <a href="#instance-git-credentials"
+                    onClick=${scrollToGitCredentials}
+                    style=${{ color: colors.accent, textDecoration: 'none' }}>
+                    Set these up below
+                </a>, then you're ready to go.
             </div>
         </div>
     `;
@@ -1257,7 +1267,7 @@ export function Settings() {
             ${userSettings && html`
                 <${SetupBanner}
                     anthropic=${userSettings.anthropic}
-                    github=${userSettings.github}
+                    git_credential=${userSettings.git_credential}
                 />
             `}
 
