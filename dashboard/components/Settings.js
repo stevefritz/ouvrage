@@ -1338,7 +1338,7 @@ export function Settings() {
                         profile=${userSettings.profile}
                         onSaved=${loadUserSettings}
                     />
-                    <${ChangePasswordCard} />
+                    ${userSettings.profile.has_password && html`<${ChangePasswordCard} />`}
                 `}
             </div>
 

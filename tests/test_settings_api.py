@@ -441,6 +441,40 @@ class TestGetUserSettings:
         data = resp.json()
         assert data["notifications"]["task_completed"] is True
 
+    async def test_has_password_false_when_no_password_hash(self, db):
+        """SSO/SaaS users with no local password_hash get has_password=false."""
+        from switchboard.dashboard.api import handle_request
+
+        # owner@localhost is created without a password hash
+        owner = await db.get_user_by_email("owner@localhost")
+        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
+                            email="owner@localhost")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        data = resp.json()
+        assert data["profile"]["has_password"] is False
+
+    async def test_has_password_true_when_password_hash_set(self, db):
+        """Standalone users with a local password get has_password=true."""
+        from argon2 import PasswordHasher
+        from switchboard.dashboard.api import handle_request
+
+        ph = PasswordHasher()
+        user = await db.create_user(
+            email="local@test.com", name="Local User", role="member",
+            password_hash=ph.hash("mypassword"),
+        )
+        scope = _make_scope("/dashboard/api/settings/user", user_id=user["id"],
+                            email="local@test.com")
+        resp = _Capture()
+
+        await handle_request(scope, _make_receive(), resp)
+
+        data = resp.json()
+        assert data["profile"]["has_password"] is True
+
 
 class TestGetUserSettingsGitCredential:
     """GET /dashboard/api/settings/user — git_credential field reflects any provider in git_credentials table."""
@@ -713,3 +747,22 @@ class TestChangePassword:
         await handle_request(scope, _make_receive({"current_password": "only_one"}), resp)
 
         assert resp.status == 400
+
+    async def test_no_password_hash_returns_400(self, db):
+        """SSO/SaaS users with no local password get a clear 400 error, not a crash."""
+        from switchboard.dashboard.api import handle_request
+
+        # owner@localhost has no password_hash — simulates SSO user
+        owner = await db.get_user_by_email("owner@localhost")
+        scope = _make_scope("/dashboard/api/settings/user/change-password", method="POST",
+                            user_id=owner["id"], email="owner@localhost")
+        resp = _Capture()
+
+        await handle_request(
+            scope,
+            _make_receive({"current_password": "anything", "new_password": "newpass123"}),
+            resp,
+        )
+
+        assert resp.status == 400
+        assert "password" in resp.json().get("error", "").lower()
