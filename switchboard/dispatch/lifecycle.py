@@ -332,6 +332,9 @@ async def _resume_launch_session(task: dict, **ctx: Any) -> None:
     if updates:
         await db.update_task(task_id, **updates)
 
+    # Update last_activity so stall checker doesn't misidentify as orphan
+    await db.update_task(task_id, last_activity=db.now_iso())
+
     project = await db.get_project(task["project_id"])
 
     # Post resume message
@@ -392,6 +395,9 @@ async def _retry_launch_session(task: dict, **ctx: Any) -> None:
         from switchboard.dispatch.gates import _resume_gate_pipeline
         await _resume_gate_pipeline(task_id, reason="retry")
         return
+
+    # Update last_activity so stall checker doesn't misidentify as orphan
+    await db.update_task(task_id, last_activity=db.now_iso())
 
     project = await db.get_project(task["project_id"])
 
@@ -1372,7 +1378,7 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         to_state="stopped",
         reason="recovery_pending",
         user_action=False,
-        side_effects=[_drain_queue_effect, _finalize_attempt],
+        side_effects=[_stop_cc_session, _drain_queue_effect, _finalize_attempt],
     ),
     ("stopped", "recover_park"): TransitionDef(
         to_state="stopped",
@@ -1544,6 +1550,20 @@ class TaskLifecycle:
     db.update_task(status=...) directly once migration is complete.
     """
 
+    # Terminal states where we can safely discard the per-task lock
+    _TERMINAL_STATES = frozenset({"completed", "cancelled"})
+
+    def __init__(self) -> None:
+        self._task_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, task_id: str) -> asyncio.Lock:
+        """Return the per-task lock, creating one if needed."""
+        lock = self._task_locks.get(task_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._task_locks[task_id] = lock
+        return lock
+
     async def execute(self, task_id: str, action: str, **context: Any) -> dict:
         """Execute a state transition.
 
@@ -1560,80 +1580,87 @@ class TaskLifecycle:
             ValueError: If task not found.
             IllegalTransition: If the transition is not valid.
         """
-        # 1. Read task from DB
-        task = await db.get_task(task_id)
-        if not task:
-            raise ValueError(f"Task '{task_id}' not found")
+        async with self._get_lock(task_id):
+            # 1. Read task from DB
+            task = await db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task '{task_id}' not found")
 
-        # 2. Map to effective state
-        effective = self._effective_state(task)
+            # 2. Map to effective state
+            effective = self._effective_state(task)
 
-        # 3. Look up transition
-        key = (effective, action)
-        tdef = TRANSITIONS.get(key)
+            # 3. Look up transition
+            key = (effective, action)
+            tdef = TRANSITIONS.get(key)
 
-        if tdef is None:
-            # Collect available actions for error message
-            available = [
-                a for (s, a) in TRANSITIONS if s == effective
-            ]
-            raise IllegalTransition(
-                current_state=effective,
-                action=action,
-                task_id=task_id,
-                available=available,
-            )
-
-        # 4. Run preconditions (each can raise)
-        for precond in tdef.preconditions:
-            await precond(task, **context)
-
-        # 5. Resolve target state and reason
-        new_state, reason = tdef.resolve_target(task, **context)
-
-        # 6. Update DB
-        update_fields: dict[str, Any] = {"status": new_state}
-        if reason is not None:
-            update_fields["reason"] = reason
-        elif new_state != task.get("status"):
-            # Clear reason when transitioning to a new state without explicit reason
-            update_fields["reason"] = None
-
-        previous_status = task["status"]
-        updated_task = await db.update_task(task_id, **update_fields)
-
-        # 7. Write audit log
-        await write_audit_log(
-            task_id=task_id,
-            action=action,
-            triggered_by=context.get("triggered_by", "lifecycle"),
-            source_detail=context.get("source_detail"),
-            previous_status=previous_status,
-            new_status=new_state,
-        )
-
-        logger.info(
-            "Task %s: %s -> %s (action=%s, reason=%s)",
-            task_id, effective, new_state, action, reason,
-        )
-
-        # 8. Fire side effects (non-blocking errors logged, not raised)
-        context["_previous_status"] = previous_status
-        context["reason"] = reason
-        # Expose pre-transition gate state for reopen side effects
-        context["_saved_gate_status"] = task.get("gate_status")
-        context["_saved_gate_passed_at"] = task.get("gate_passed_at")
-        for effect in tdef.side_effects:
-            try:
-                await effect(updated_task, **context)
-            except Exception:
-                logger.exception(
-                    "Side effect failed for task %s action %s", task_id, action,
+            if tdef is None:
+                # Collect available actions for error message
+                available = [
+                    a for (s, a) in TRANSITIONS if s == effective
+                ]
+                raise IllegalTransition(
+                    current_state=effective,
+                    action=action,
+                    task_id=task_id,
+                    available=available,
                 )
 
-        # 9. Re-read task in case side effects changed status (e.g. retry launch failure → needs-review)
-        final_task = await db.get_task(task_id)
-        return final_task or updated_task
+            # 4. Run preconditions (each can raise)
+            for precond in tdef.preconditions:
+                await precond(task, **context)
+
+            # 5. Resolve target state and reason
+            new_state, reason = tdef.resolve_target(task, **context)
+
+            # 6. Update DB
+            update_fields: dict[str, Any] = {"status": new_state}
+            if reason is not None:
+                update_fields["reason"] = reason
+            elif new_state != task.get("status"):
+                # Clear reason when transitioning to a new state without explicit reason
+                update_fields["reason"] = None
+
+            previous_status = task["status"]
+            updated_task = await db.update_task(task_id, **update_fields)
+
+            # 7. Write audit log
+            await write_audit_log(
+                task_id=task_id,
+                action=action,
+                triggered_by=context.get("triggered_by", "lifecycle"),
+                source_detail=context.get("source_detail"),
+                previous_status=previous_status,
+                new_status=new_state,
+            )
+
+            logger.info(
+                "Task %s: %s -> %s (action=%s, reason=%s)",
+                task_id, effective, new_state, action, reason,
+            )
+
+            # 8. Fire side effects (non-blocking errors logged, not raised)
+            context["_previous_status"] = previous_status
+            context["reason"] = reason
+            # Expose pre-transition gate state for reopen side effects
+            context["_saved_gate_status"] = task.get("gate_status")
+            context["_saved_gate_passed_at"] = task.get("gate_passed_at")
+            for effect in tdef.side_effects:
+                try:
+                    await effect(updated_task, **context)
+                except Exception:
+                    logger.exception(
+                        "Side effect failed for task %s action %s", task_id, action,
+                    )
+
+            # 9. Re-read task in case side effects changed status (e.g. retry launch failure → needs-review)
+            final_task = await db.get_task(task_id)
+
+            # 10. Cleanup lock for terminal states to prevent unbounded growth
+            final_status = (final_task or updated_task).get("status")
+            if final_status in self._TERMINAL_STATES:
+                self._task_locks.pop(task_id, None)
+
+            return final_task or updated_task
 
     async def get_available_actions(self, task_id: str) -> list[dict]:
         """Return valid user-facing actions for the task's current state.

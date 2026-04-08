@@ -1807,3 +1807,172 @@ class TestDashboardActionsEndpoint:
         direct = await lifecycle.get_state_label("api-act-proj/t1")
         assert data["state"]["label"] == direct["label"]
         assert data["state"]["color"] == direct["color"]
+
+
+# ---------------------------------------------------------------------------
+# Per-task locking tests
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleLocking:
+    """Tests for the per-task asyncio.Lock on lifecycle.execute()."""
+
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db, mock_git, mock_sdk):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        await db.create_project(
+            id="lock-proj",
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp/lock-test",
+        )
+
+    async def _make_task(self, task_id, status="ready", **extra):
+        await self.db.create_task(id=task_id, project_id="lock-proj", goal="test")
+        updates = {}
+        if status != "ready":
+            updates["status"] = status
+        updates.update(extra)
+        if updates:
+            await self.db.update_task(task_id, **updates)
+
+    def test_get_lock_same_task(self):
+        """Same task_id returns the same lock object."""
+        lock1 = self.lifecycle._get_lock("task-a")
+        lock2 = self.lifecycle._get_lock("task-a")
+        assert lock1 is lock2
+
+    def test_get_lock_different_tasks(self):
+        """Different task_ids return different lock objects."""
+        lock1 = self.lifecycle._get_lock("task-a")
+        lock2 = self.lifecycle._get_lock("task-b")
+        assert lock1 is not lock2
+
+    async def test_lock_cleanup_on_terminal_state(self):
+        """Lock is removed after task reaches a terminal state (cancelled)."""
+        await self._make_task("lock-proj/t-cancel")
+        # Pre-create the lock
+        self.lifecycle._get_lock("lock-proj/t-cancel")
+        assert "lock-proj/t-cancel" in self.lifecycle._task_locks
+
+        await self.lifecycle.execute("lock-proj/t-cancel", "cancel")
+        assert "lock-proj/t-cancel" not in self.lifecycle._task_locks
+
+    async def test_lock_retained_for_non_terminal_state(self):
+        """Lock is NOT removed when task transitions to a non-terminal state (stopped)."""
+        await self._make_task("lock-proj/t-stop", status="working")
+        self.lifecycle._get_lock("lock-proj/t-stop")
+        await self.lifecycle.execute("lock-proj/t-stop", "stop")
+        assert "lock-proj/t-stop" in self.lifecycle._task_locks
+
+    async def test_concurrent_transitions_serialized(self):
+        """Two concurrent execute() calls for the same task: second sees updated state."""
+        await self._make_task("lock-proj/t-race", status="stopped", session_id="ses-race")
+
+        original_get_task = self.db.get_task
+        call_count = 0
+
+        async def slow_get_task(task_id):
+            nonlocal call_count
+            result = await original_get_task(task_id)
+            call_count += 1
+            if call_count == 1:
+                # First caller: yield control so second caller tries to acquire lock
+                await asyncio.sleep(0.05)
+            return result
+
+        import switchboard.dispatch.lifecycle as lc_mod
+        original_db_get = lc_mod.db.get_task
+        lc_mod.db.get_task = slow_get_task
+
+        try:
+            results = await asyncio.gather(
+                self.lifecycle.execute("lock-proj/t-race", "resume"),
+                self.lifecycle.execute("lock-proj/t-race", "resume"),
+                return_exceptions=True,
+            )
+
+            # One should succeed (working), the other should get IllegalTransition
+            successes = [r for r in results if isinstance(r, dict)]
+            failures = [r for r in results if isinstance(r, IllegalTransition)]
+            assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {results}"
+            assert len(failures) == 1, f"Expected 1 IllegalTransition, got {len(failures)}: {results}"
+            assert successes[0]["status"] == "working"
+        finally:
+            lc_mod.db.get_task = original_db_get
+
+
+# ---------------------------------------------------------------------------
+# Transition table inspection tests
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionTableFixes:
+    """Verify the transition table has the expected side effects."""
+
+    def test_recover_park_includes_stop_cc_session(self):
+        """recover_park from working state must stop the CC session."""
+        from switchboard.dispatch.lifecycle import _stop_cc_session
+        tdef = TRANSITIONS[("working", "recover_park")]
+        assert _stop_cc_session in tdef.side_effects, (
+            "recover_park must include _stop_cc_session to kill the running session"
+        )
+
+    def test_recover_park_stop_session_is_first(self):
+        """_stop_cc_session should run before other side effects in recover_park."""
+        from switchboard.dispatch.lifecycle import _stop_cc_session
+        tdef = TRANSITIONS[("working", "recover_park")]
+        assert tdef.side_effects[0] is _stop_cc_session, (
+            "_stop_cc_session should be the first side effect in recover_park"
+        )
+
+
+# ---------------------------------------------------------------------------
+# last_activity update tests
+# ---------------------------------------------------------------------------
+
+
+class TestLastActivityOnSessionLaunch:
+    """Verify that session-launching side effects update last_activity."""
+
+    @pytest.fixture(autouse=True)
+    async def _setup(self, db, mock_git, mock_sdk):
+        self.db = db
+        self.lifecycle = TaskLifecycle()
+        await db.create_project(
+            id="la-proj",
+            repo="https://github.com/test/repo.git",
+            working_dir="/tmp/la-test",
+        )
+
+    async def test_resume_updates_last_activity(self):
+        """Resuming a stopped task updates last_activity before launching."""
+        task = await self.db.create_task(
+            id="la-proj/t-resume", project_id="la-proj", goal="test",
+        )
+        # Set to stopped with a stale last_activity and a session_id (required for resume)
+        await self.db.update_task("la-proj/t-resume",
+            status="stopped", last_activity="2020-01-01T00:00:00Z",
+            session_id="ses-resume",
+        )
+
+        await self.lifecycle.execute("la-proj/t-resume", "resume")
+        task = await self.db.get_task("la-proj/t-resume")
+        assert task["last_activity"] > "2025-01-01T00:00:00Z", (
+            "last_activity should be updated to a recent timestamp on resume"
+        )
+
+    async def test_retry_updates_last_activity(self):
+        """Retrying a stopped task updates last_activity before launching."""
+        task = await self.db.create_task(
+            id="la-proj/t-retry", project_id="la-proj", goal="test",
+        )
+        await self.db.update_task("la-proj/t-retry",
+            status="stopped", last_activity="2020-01-01T00:00:00Z",
+        )
+
+        await self.lifecycle.execute("la-proj/t-retry", "retry")
+        task = await self.db.get_task("la-proj/t-retry")
+        assert task["last_activity"] > "2025-01-01T00:00:00Z", (
+            "last_activity should be updated to a recent timestamp on retry"
+        )
