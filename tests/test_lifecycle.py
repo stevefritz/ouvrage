@@ -905,8 +905,8 @@ class TestTransitionTableCompleteness:
 
     def test_transition_count(self):
         """Verify we have the expected number of transitions from the design."""
-        # 16 user + 9 system + 7 recovery = 32, plus ("ready", "approve") = 37
-        assert len(TRANSITIONS) == 37
+        # 16 user + 9 system + 7 recovery = 32, plus ("ready", "approve") = 37, plus ("working", "escalate") = 38
+        assert len(TRANSITIONS) == 38
 
     def test_all_user_actions_have_labels(self):
         """User-facing actions should have labels for dashboard buttons."""
