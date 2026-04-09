@@ -19,6 +19,7 @@ def pytest_unconfigure(config):
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
             t.join(timeout=5)
+        _os._exit(_pytest_exit_status)
 
 
 import pytest
