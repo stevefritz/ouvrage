@@ -605,3 +605,79 @@ class TestOAuthLoginRedirect:
         assert status == 302
         assert "code=" in location
         assert location.startswith("https://claude.ai/oauth/callback")
+
+
+# ── Auth middleware routing (unique coverage from test_dashboard_auth.py) ──────
+
+async def _call_middleware(path, cookie=None, client=("10.0.0.1", 12345), query_string=b""):
+    """Call auth_middleware and return (status, headers_dict, body_bytes)."""
+    from switchboard.auth.middleware import auth_middleware
+
+    headers = []
+    if cookie:
+        headers.append((b"cookie", cookie.encode()))
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "query_string": query_string,
+        "headers": headers,
+        "client": client,
+    }
+
+    status = None
+    resp_headers = {}
+    body = b""
+
+    async def inner_app(s, r, snd):
+        await snd({"type": "http.response.start", "status": 200, "headers": []})
+        await snd({"type": "http.response.body", "body": b"OK"})
+
+    app = auth_middleware(inner_app)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        nonlocal status, body
+        if message["type"] == "http.response.start":
+            status = message["status"]
+            for k, v in message.get("headers", []):
+                key = k.decode() if isinstance(k, bytes) else k
+                val = v.decode() if isinstance(v, bytes) else v
+                resp_headers[key.lower()] = val
+        elif message["type"] == "http.response.body":
+            body += message.get("body", b"")
+
+    await app(scope, receive, send)
+    return status, resp_headers, body
+
+
+class TestAuthMiddlewareBehavior:
+
+    async def test_dashboard_api_401_is_json(self, db):
+        """401 from /dashboard/api must be JSON, not HTML."""
+        import json
+        _, _, body = await _call_middleware("/dashboard/api/tasks")
+        data = json.loads(body)
+        assert "error" in data
+        assert data["error"] == "authentication_required"
+
+    async def test_dashboard_static_passes_without_session(self, db):
+        """Static assets (file extension) pass through without auth."""
+        status, _, body = await _call_middleware("/dashboard/app.js")
+        assert status == 200
+        assert body == b"OK"
+
+    async def test_foreman_legacy_redirects_to_dashboard(self, db):
+        """/foreman paths redirect to /dashboard."""
+        status, headers, _ = await _call_middleware("/foreman")
+        assert status == 302
+        assert headers["location"] == "/dashboard"
+
+    async def test_localhost_does_not_bypass_dashboard_api(self, db):
+        """Localhost bypass is scoped to /mcp/worker — /dashboard/api still requires session."""
+        status, _, _ = await _call_middleware(
+            "/dashboard/api/tasks", client=("127.0.0.1", 5000)
+        )
+        assert status == 401

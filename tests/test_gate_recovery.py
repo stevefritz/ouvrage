@@ -952,3 +952,439 @@ class TestRetryTaskGateReentry:
                             await retry_task("test-project/gate-task-1")
 
         self.mock_resume_pipeline.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Merged from test_gate_pipeline_audit.py
+# ---------------------------------------------------------------------------
+
+async def _audit_make_task(
+    db,
+    task_id="test-project/audit-task-1",
+    status="pending-validation",
+    gate_status=None,
+    gate_retries=0,
+    auto_test=True,
+    auto_review=True,
+    worktree_path="/tmp/fake-worktree",
+    pushed_at=None,
+    gate_passed_at=None,
+    **kwargs,
+):
+    """Create a task for pipeline-audit tests (status defaults to pending-validation)."""
+    task = await db.create_task(
+        id=task_id,
+        project_id="test-project",
+        goal="Gate pipeline audit test",
+        auto_test=auto_test,
+        auto_review=auto_review,
+    )
+    await db.update_task(
+        task_id,
+        status=status,
+        gate_status=gate_status,
+        gate_retries=gate_retries,
+        worktree_path=worktree_path,
+        pushed_at=pushed_at,
+        gate_passed_at=gate_passed_at,
+        **kwargs,
+    )
+    return await db.get_task(task_id)
+
+
+class TestTestToReviewTransition:
+    """The _running_gates fix: _dispatch_review must not be blocked when called
+    from within _run_test_gate_inner (which holds _running_gates)."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        _running_gates.clear()
+        yield
+        _running_gates.clear()
+
+    async def test_dispatch_review_works_when_running_gates_held(self, db, sample_project):
+        """_dispatch_review proceeds even when task_id is in _running_gates."""
+        from switchboard.dispatch.gates import _dispatch_review
+
+        _running_gates.add("test-project/audit-task-1")
+        await _audit_make_task(db, gate_status="test-passed")
+
+        inner_called = []
+
+        async def _fake_inner(tid, proj, task):
+            inner_called.append(tid)
+
+        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+            await _dispatch_review("test-project/audit-task-1", sample_project, {})
+
+        assert inner_called == ["test-project/audit-task-1"]
+
+    async def test_dispatch_review_adds_to_running_gates_for_liveness(self, db, sample_project):
+        """_dispatch_review still adds to _running_gates for background monitor liveness."""
+        from switchboard.dispatch.gates import _dispatch_review
+
+        await _audit_make_task(db, gate_status="test-passed")
+
+        captured_in_gates = []
+
+        async def _fake_inner(tid, proj, task):
+            captured_in_gates.append(tid in _running_gates)
+
+        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+            await _dispatch_review("test-project/audit-task-1", sample_project, {})
+
+        assert captured_in_gates == [True]
+
+    async def test_dispatch_review_blocks_duplicate_via_gate_status(self, db, sample_project):
+        """If gate_status is already 'reviewing', _dispatch_review skips."""
+        from switchboard.dispatch.gates import _dispatch_review
+
+        await _audit_make_task(db, gate_status="reviewing")
+
+        inner_called = []
+
+        async def _fake_inner(tid, proj, task):
+            inner_called.append(tid)
+
+        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+            await _dispatch_review("test-project/audit-task-1", sample_project, {})
+
+        assert inner_called == []
+
+
+class TestReviewingRecoveryDetail:
+    """Recovery resets gate_status to test-passed before dispatching review
+    so the duplicate guard (gate_status==reviewing) doesn't block it."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        _running_gates.clear()
+
+        _real_exists = os.path.exists
+
+        def _fake_exists(p):
+            if p == "/tmp/fake-worktree":
+                return True
+            return _real_exists(p)
+
+        self.mock_dispatch_review = AsyncMock()
+
+        patches = [
+            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("switchboard.dispatch.gates.notify", AsyncMock()),
+            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+        _running_gates.clear()
+
+    async def test_reviewing_recovery_resets_gate_status_before_dispatch(self, db, sample_project):
+        """Recovery resets gate_status to test-passed so _dispatch_review's duplicate
+        guard doesn't block it."""
+        from switchboard.dispatch.gates import _resume_gate_pipeline
+
+        await _audit_make_task(db, gate_status="reviewing")
+
+        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
+            await _resume_gate_pipeline("test-project/audit-task-1", reason="startup recovery")
+        await asyncio.sleep(0)
+
+        self.mock_dispatch_review.assert_called_once()
+        call_args = self.mock_dispatch_review.call_args
+        task_arg = call_args[0][2]
+        assert task_arg["gate_status"] == "test-passed"
+
+
+class TestRejectionStatesNotReenteredByRetry:
+    """retry_task with rejection gate states must launch CC, not re-enter gates."""
+
+    async def test_review_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
+        """review-failed → retry_task launches fresh CC session."""
+        await _audit_make_task(db, status="completed", gate_status="review-failed", gate_retries=1)
+
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from switchboard.dispatch.engine import retry_task
+            await retry_task("test-project/audit-task-1")
+
+        mock_resume_pipeline.assert_not_called()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
+
+    async def test_test_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
+        """test-failed → retry_task launches fresh CC session."""
+        await _audit_make_task(db, status="completed", gate_status="test-failed", gate_retries=1)
+
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from switchboard.dispatch.engine import retry_task
+            await retry_task("test-project/audit-task-1")
+
+        mock_resume_pipeline.assert_not_called()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
+
+    async def test_needs_review_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
+        """needs-review → retry_task launches fresh CC session."""
+        await _audit_make_task(db, status="completed", gate_status="needs-review", gate_retries=2)
+
+        mock_resume_pipeline = AsyncMock()
+        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from switchboard.dispatch.engine import retry_task
+            await retry_task("test-project/audit-task-1")
+
+        mock_resume_pipeline.assert_not_called()
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["status"] == "working"
+
+    async def test_retry_task_clears_gate_state_for_fresh_run(self, db, sample_project, mock_git, mock_sdk):
+        """retry_task resets gate_status and gate_retries for fresh CC run."""
+        await _audit_make_task(db, status="completed", gate_status="review-failed", gate_retries=2)
+
+        from switchboard.dispatch.engine import retry_task
+        await retry_task("test-project/audit-task-1")
+
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["gate_status"] is None
+        assert task["gate_retries"] == 0
+
+
+class TestMissingWorktreeGuard:
+    """Recovery must not re-enter gate pipeline when worktree is missing."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        _running_gates.clear()
+        patches = [
+            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("switchboard.dispatch.gates.notify", AsyncMock()),
+        ]
+        for p in patches:
+            p.start()
+        yield
+        for p in patches:
+            p.stop()
+        _running_gates.clear()
+
+    async def test_missing_worktree_sets_needs_review(self, db, sample_project):
+        """worktree_path is None → recovery sets gate_status=needs-review."""
+        from switchboard.dispatch.gates import _resume_gate_pipeline
+
+        await _audit_make_task(db, gate_status="testing", worktree_path=None)
+
+        result = await _resume_gate_pipeline("test-project/audit-task-1", reason="test")
+
+        assert result is False
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["gate_status"] == "needs-review"
+
+    async def test_nonexistent_worktree_sets_needs_review(self, db, sample_project):
+        """Worktree path set but directory doesn't exist → needs-review."""
+        from switchboard.dispatch.gates import _resume_gate_pipeline
+
+        await _audit_make_task(db, gate_status="testing",
+                               worktree_path="/tmp/nonexistent-worktree-xyz-999")
+
+        result = await _resume_gate_pipeline("test-project/audit-task-1", reason="test")
+
+        assert result is False
+        task = await db.get_task("test-project/audit-task-1")
+        assert task["gate_status"] == "needs-review"
+
+    async def test_worktree_guard_posts_message(self, db, sample_project):
+        """Missing worktree posts a status message."""
+        from switchboard.dispatch.gates import _resume_gate_pipeline
+
+        await _audit_make_task(db, gate_status="reviewing", worktree_path=None)
+
+        await _resume_gate_pipeline("test-project/audit-task-1", reason="background monitor")
+
+        thread = await db.read_task_messages("test-project/audit-task-1")
+        messages = thread.get("messages", [])
+        worktree_msgs = [m for m in messages if "worktree" in (m.get("title") or "").lower()]
+        assert len(worktree_msgs) >= 1
+
+
+class TestRunTestGateDuplicateGuard:
+    """_run_test_gate skips if task_id already in _running_gates."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        _running_gates.clear()
+        yield
+        _running_gates.clear()
+
+    async def test_run_test_gate_duplicate_guard(self, db, sample_project):
+        """_run_test_gate skips inner function if task already in _running_gates."""
+        from switchboard.dispatch.gates import _run_test_gate
+
+        _running_gates.add("test-project/audit-task-1")
+        inner_called = []
+
+        async def _fake_inner(*args):
+            inner_called.append(True)
+
+        with patch("switchboard.dispatch.gates._run_test_gate_inner", _fake_inner):
+            await _run_test_gate("test-project/audit-task-1", {}, {})
+
+        assert inner_called == []
+
+
+# ---------------------------------------------------------------------------
+# Merged from test_gate_reentry_fix.py (unique routing tests)
+# ---------------------------------------------------------------------------
+
+async def _make_reentry_task(db, gate_status, gate_retries=0):
+    """Create a completed task for re-entry routing tests."""
+    task = await db.create_task(
+        id="test-project/reentry-task",
+        project_id="test-project",
+        goal="Gate re-entry fix test",
+    )
+    await db.update_task(
+        "test-project/reentry-task",
+        status="completed",
+        gate_status=gate_status,
+        gate_retries=gate_retries,
+        worktree_path="/tmp/fake-worktree",
+        pushed_at=db.now_iso(),
+    )
+    return await db.get_task("test-project/reentry-task")
+
+
+class TestRetryTaskGateRouting:
+    """retry_task with interrupted gate states (testing/reviewing) re-enters the gate
+    pipeline rather than launching a fresh CC session."""
+
+    async def test_testing_calls_run_test_gate_not_cc(self, db, sample_project):
+        """retry_task with gate_status=testing re-runs test gate (not CC)."""
+        await _make_reentry_task(db, "testing")
+
+        mock_test_gate = AsyncMock()
+        mock_dispatch = AsyncMock()
+        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
+             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            from switchboard.dispatch.engine import retry_task
+            await retry_task("test-project/reentry-task")
+
+        await asyncio.sleep(0)
+        mock_test_gate.assert_called_once()
+        task_id_arg = mock_test_gate.call_args[0][0]
+        assert task_id_arg == "test-project/reentry-task"
+        mock_dispatch.assert_not_called()
+
+    async def test_reviewing_calls_dispatch_review_not_cc(self, db, sample_project):
+        """retry_task with gate_status=reviewing re-dispatches review (not CC)."""
+        await _make_reentry_task(db, "reviewing")
+
+        mock_dispatch_review = AsyncMock()
+        mock_dispatch = AsyncMock()
+        with patch("switchboard.dispatch.gates._dispatch_review", mock_dispatch_review), \
+             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
+            from switchboard.dispatch.engine import retry_task
+            await retry_task("test-project/reentry-task")
+
+        await asyncio.sleep(0)
+        mock_dispatch_review.assert_called_once()
+        task_id_arg = mock_dispatch_review.call_args[0][0]
+        assert task_id_arg == "test-project/reentry-task"
+        mock_dispatch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Merged from test_gate_status_reset.py
+# ---------------------------------------------------------------------------
+
+class TestRetryResetsGateStatus:
+    """retry_task must reset gate_status and gate_retries on new attempt."""
+
+    async def test_retry_resets_gate_status(self, db, sample_project):
+        """gate_status must be null after retry_task starts a new attempt."""
+        from switchboard.dispatch.engine import retry_task
+
+        task = await db.create_task(
+            id="test-project/retry-gate-reset",
+            project_id="test-project",
+            goal="Test retry resets gate_status",
+        )
+        await db.update_task(task["id"], status="failed", gate_status="test-failed", gate_retries=2)
+
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+                await retry_task(task["id"])
+
+        updated = await db.get_task(task["id"])
+        assert updated["gate_status"] is None
+
+    async def test_retry_resets_gate_retries(self, db, sample_project):
+        """gate_retries must be 0 after retry_task starts a new attempt."""
+        from switchboard.dispatch.engine import retry_task
+
+        task = await db.create_task(
+            id="test-project/retry-gate-retries-reset",
+            project_id="test-project",
+            goal="Test retry resets gate_retries",
+        )
+        await db.update_task(task["id"], status="failed", gate_status="test-failed", gate_retries=2)
+
+        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+                await retry_task(task["id"])
+
+        updated = await db.get_task(task["id"])
+        assert updated["gate_retries"] == 0
+
+
+class TestResumePreservesGateStatus:
+    """resume_task must PRESERVE gate_status and gate_retries (not clear them)."""
+
+    async def test_resume_preserves_gate_status(self, db, sample_project):
+        """gate_status is preserved (not cleared) after resume_task."""
+        from switchboard.dispatch.engine import resume_task
+
+        task = await db.create_task(
+            id="test-project/resume-gate-reset",
+            project_id="test-project",
+            goal="Test resume preserves gate_status",
+        )
+        await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
+
+        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+            await resume_task(task["id"])
+
+        updated = await db.get_task(task["id"])
+        assert updated["gate_status"] == "test-failed"
+
+    async def test_resume_preserves_gate_retries(self, db, sample_project):
+        """gate_retries is preserved (not cleared) after resume_task."""
+        from switchboard.dispatch.engine import resume_task
+
+        task = await db.create_task(
+            id="test-project/resume-gate-retries-reset",
+            project_id="test-project",
+            goal="Test resume preserves gate_retries",
+        )
+        await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
+
+        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
+             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
+             patch("switchboard.dispatch.engine._write_dispatch_log"), \
+             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+            await resume_task(task["id"])
+
+        updated = await db.get_task(task["id"])
+        assert updated["gate_retries"] == 1
