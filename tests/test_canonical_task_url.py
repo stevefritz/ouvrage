@@ -126,6 +126,7 @@ class TestDispatchTaskUrl:
     @pytest.fixture(autouse=True)
     def _patches(self, mock_git, monkeypatch):
         monkeypatch.setattr("switchboard.server.handlers.tasks.SKIP_CREDENTIAL_CHECK", True)
+        monkeypatch.setattr("switchboard.config.settings.SKIP_CREDENTIAL_CHECK", True)
 
     async def test_dispatch_includes_url(self, db, sample_project):
         _set_base_url(BASE_URL)
