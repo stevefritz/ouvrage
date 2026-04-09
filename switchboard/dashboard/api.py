@@ -573,7 +573,7 @@ async def _handle_update_project(receive, send, project_id):
         return await _error(send, "Invalid JSON body", 400)
 
     ALLOWED = {
-        "display_name", "default_branch", "setup_command", "teardown_command", "test_command",
+        "display_name", "default_branch", "repo", "setup_command", "teardown_command", "test_command",
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
         "state_definitions", "github_pat_override", "provider", "credential_override",
@@ -584,6 +584,9 @@ async def _handle_update_project(receive, send, project_id):
         if not project:
             return await _error(send, f"Project '{project_id}' not found", 404)
         return await _json_response(send, project)
+
+    if "repo" in fields and fields["repo"]:
+        fields["repo"] = normalize_repo_url(fields["repo"])
 
     if "github_pat_override" in fields:
         pat = fields["github_pat_override"]
@@ -605,7 +608,7 @@ async def _handle_update_project(receive, send, project_id):
         result = await db.update_project(project_id, **fields)
 
         # Re-validate credential if repo, provider, or credential changed
-        revalidate_keys = {"provider", "credential_override", "github_pat_override"}
+        revalidate_keys = {"repo", "provider", "credential_override", "github_pat_override"}
         if revalidate_keys & fields.keys():
             result = await _run_dashboard_project_validation(project_id, result)
 
@@ -1656,9 +1659,11 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                             "message": f"Authenticated as {username}. Fine-grained token detected — scope introspection not available. Verify the token has repository read/write permissions."}
 
             elif provider == "gitlab":
+                gl_headers = {"PRIVATE-TOKEN": credential}
+
                 resp = await client.get(
                     f"https://{hostname}/api/v4/user",
-                    headers={"PRIVATE-TOKEN": credential},
+                    headers=gl_headers,
                 )
                 if resp.status_code in (401, 403):
                     return {"ok": False, "username": None, "scopes": None,
@@ -1669,13 +1674,14 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
 
                 username = resp.json().get("username")
 
+                # Introspect scopes via token self endpoint
                 scopes = None
                 ok = True
                 scope_message = ""
                 try:
                     tok_resp = await client.get(
                         f"https://{hostname}/api/v4/personal_access_tokens/self",
-                        headers={"PRIVATE-TOKEN": credential},
+                        headers=gl_headers,
                     )
                     if tok_resp.status_code == 200:
                         tok_data = tok_resp.json()
@@ -1683,28 +1689,14 @@ async def _check_credential_auth(provider: str, credential: str, hostname: str) 
                         has_api = "api" in scopes
                         if has_api:
                             scope_message = f"Authenticated as {username}. Required scopes present."
-                            ok = True
-                        elif scopes:
-                            # Scopes present but api not among them — insufficient for MR creation
-                            scope_message = (
-                                "Token is missing required scopes. "
-                                "Classic PAT requires 'api' scope. "
-                                "Fine-grained PAT requires Repository (read, write) + Merge Request (read, create)."
-                            )
-                            ok = False
                         else:
-                            # Empty scopes — likely fine-grained token; cannot fully introspect
-                            scope_message = (
-                                f"Authenticated as {username}. Scope introspection returned no scopes — "
-                                "token may be fine-grained. Ensure it has Repository (read, write) "
-                                "and Merge Request (read, create) permissions."
-                            )
-                            ok = True
+                            scope_message = f"Authenticated as {username}, but token is missing required scopes. Create a PAT with api and write_repository scopes."
+                            ok = False
                     else:
-                        scope_message = f"Authenticated as {username}. Could not introspect token scopes (endpoint returned non-200). Auth confirmed."
+                        scope_message = f"Authenticated as {username}. Could not verify scopes — ensure token has api scope."
                         ok = True
                 except Exception:
-                    scope_message = f"Authenticated as {username}. Could not introspect token scopes. Auth confirmed."
+                    scope_message = f"Authenticated as {username}. Could not verify scopes — ensure token has api scope."
                     ok = True
 
                 return {"ok": ok, "username": username, "scopes": scopes, "message": scope_message}
@@ -1844,10 +1836,11 @@ async def _handle_test_git_credential(send, scope, provider):
 async def _handle_get_user_settings(scope, send):
     user = scope.get("session_user") or {}
     user_id = user.get("id")
+    user_email = user.get("email")
     if not user_id:
         return await _error(send, "Not authenticated", 401)
 
-    full_user = await db.get_user(user_id)
+    full_user = await db.get_user_by_email_with_auth(user_email)
     if not full_user:
         return await _error(send, "User not found", 404)
 
@@ -1871,6 +1864,7 @@ async def _handle_get_user_settings(scope, send):
             "email": full_user.get("email"),
             "timezone": full_user.get("timezone"),
             "role": full_user.get("role"),
+            "has_password": bool(full_user.get("password_hash")),
         },
         "anthropic": anthropic_info,
         "git_credential": {"configured": git_credential_configured},

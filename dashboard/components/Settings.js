@@ -130,7 +130,7 @@ const GIT_PROVIDER_CONFIG = {
         defaultHostname: 'gitlab.com',
         credentialLabel: 'Personal Access Token',
         credentialPlaceholder: 'glpat-xxxxxxxxxxxx',
-        scopeText: 'Classic PAT: api scope (required for MR creation). Fine-grained PAT: Repository (read, write) + Merge Request (read, create).',
+        scopeText: 'Personal Access Token with api and write_repository scopes.',
         createLinks: [
             { label: 'Create token', url: 'https://gitlab.com/-/user_settings/personal_access_tokens' },
         ],
@@ -1266,8 +1266,25 @@ export function Settings() {
         </div>`;
     }
 
+    const handleLogout = useCallback(() => {
+        fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+            .then(() => { location.href = '/'; });
+    }, []);
+
     return html`
         <div style=${{ padding: '24px', maxWidth: '800px' }}>
+
+            <div style=${{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                <button onclick=${handleLogout} style=${{
+                    background: 'none',
+                    border: `1px solid ${colors.border}`,
+                    color: colors.textSecondary,
+                    fontSize: '12px',
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                }}>Logout</button>
+            </div>
 
             ${userError && html`
                 <div style=${{ fontSize: '13px', color: colors.red, marginBottom: '16px' }}>
@@ -1338,7 +1355,7 @@ export function Settings() {
                         profile=${userSettings.profile}
                         onSaved=${loadUserSettings}
                     />
-                    <${ChangePasswordCard} />
+                    ${userSettings.profile.has_password && html`<${ChangePasswordCard} />`}
                 `}
             </div>
 

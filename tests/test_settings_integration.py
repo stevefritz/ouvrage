@@ -331,6 +331,16 @@ class TestChangePasswordWorkflow:
 class TestRegenerateOAuthWorkflow:
     """Test: regenerate secret → read instance settings → verify new secret is different."""
 
+    @pytest.fixture(autouse=True)
+    async def reset_oauth_keys(self, tmp_path, monkeypatch):
+        import switchboard.auth.oauth as _oauth
+        monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
+        yield
+        _oauth._rsa_private_key = None
+        _oauth._rsa_public_jwk = None
+
     async def test_regenerate_then_read_shows_new_secret(self, db):
         from switchboard.auth.oauth import init_oauth_keys, seed_default_client
         from switchboard.dashboard.api import handle_request
