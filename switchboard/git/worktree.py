@@ -354,8 +354,15 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
 
     # Delete branch
     branch = task.get("branch")
+    _TERMINAL_STATES = {"completed", "cancelled"}
+    task_status = task.get("status")
     if branch and os.path.exists(bare_path):
-        flag = "-D" if force_delete_branch else "-d"
+        if task_status in _TERMINAL_STATES or force_delete_branch:
+            # Terminal task: force-delete local branch to free customer code from disk.
+            # Also force-delete for explicit close action (force_delete_branch=True).
+            flag = "-D"
+        else:
+            flag = "-d"
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", bare_path, "branch", flag, branch,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -363,5 +370,7 @@ async def cleanup_worktree(project: dict, task: dict, force_delete_branch: bool 
         stdout, stderr = await proc.communicate()
         if proc.returncode == 0:
             log.debug(f"Deleted branch: {branch}")
+        elif task_status in _TERMINAL_STATES:
+            log.warning(f"Branch delete skipped for terminal task (already gone or not found): {branch}")
         else:
             log.debug(f"Branch delete skipped (not merged or not found): {branch}")

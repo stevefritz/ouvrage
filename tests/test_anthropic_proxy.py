@@ -99,10 +99,10 @@ def _mock_httpx_stream(captured_request, status_code=200, response_headers=None,
         resp.headers = MagicMock()
         resp.headers.multi_items = MagicMock(return_value=response_headers)
 
-        async def aiter_bytes():
+        async def aiter_raw():
             for chunk in response_chunks:
                 yield chunk
-        resp.aiter_bytes = aiter_bytes
+        resp.aiter_raw = aiter_raw
 
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
