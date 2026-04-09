@@ -11,14 +11,15 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_unconfigure(config):
-    """Warn about leaked non-daemon threads and daemonize them so pytest exits cleanly."""
+    """Warn about leaked non-daemon threads and force-exit to unblock process."""
     alive = [t for t in threading.enumerate()
              if t.is_alive() and t is not threading.main_thread() and not t.daemon]
     if alive:
-        print(f"\n⚠️  {len(alive)} non-daemon threads leaked (forced to daemon so pytest can exit):")
+        print(f"\n⚠️  {len(alive)} non-daemon threads leaked (forcing exit so pytest can terminate):")
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
-            t.daemon = True
+        # Python 3.13+ disallows setting daemon on active threads; use os._exit instead
+        _os._exit(_pytest_exit_status)
 
 
 import pytest
