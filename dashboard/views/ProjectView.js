@@ -178,61 +178,6 @@ function TaskPanel({ taskId, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// RepoUrlField — read-only repo URL display with copy button
-// ---------------------------------------------------------------------------
-
-function RepoUrlField({ repo }) {
-    const [copied, setCopied] = useState(false);
-
-    if (!repo) return null;
-
-    const handleCopy = async () => {
-        try {
-            await navigator.clipboard.writeText(repo);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-        } catch (_) {}
-    };
-
-    return html`
-        <${FormField} label="Repository">
-            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style=${{
-                    flex: 1,
-                    fontFamily: typography.fontMono,
-                    fontSize: typography.size.sm,
-                    color: colors.textSecondary,
-                    background: colors.bg,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: layout.borderRadius.sm,
-                    padding: '6px 10px',
-                    wordBreak: 'break-all',
-                    lineHeight: '1.4',
-                    display: 'block',
-                }}>${repo}</span>
-                <button
-                    type="button"
-                    onClick=${handleCopy}
-                    title="Copy repository URL"
-                    style=${{
-                        flexShrink: 0,
-                        padding: '6px 10px',
-                        borderRadius: layout.borderRadius.sm,
-                        background: copied ? colors.greenBg : colors.surfaceHover,
-                        border: `1px solid ${copied ? colors.green + '44' : colors.border}`,
-                        color: copied ? colors.green : colors.textTertiary,
-                        cursor: 'pointer',
-                        fontSize: typography.size.xs,
-                        fontFamily: typography.fontBody,
-                        transition: 'color 0.15s, background 0.15s, border-color 0.15s',
-                        whiteSpace: 'nowrap',
-                    }}
-                >${copied ? 'Copied!' : 'Copy'}</button>
-            </div>
-        </${FormField}>
-    `;
-}
-
 // ---------------------------------------------------------------------------
 // DangerZone — delete project confirmation
 // ---------------------------------------------------------------------------
@@ -332,6 +277,7 @@ function SettingsTab({ project, projectId, onSaved }) {
     const [saveSuccess, setSaveSuccess] = useState(false);
 
     const [displayName, setDisplayName] = useState(project.display_name || '');
+    const [repoUrl, setRepoUrl] = useState(project.repo || '');
     const [defaultBranch, setDefaultBranch] = useState(project.default_branch || 'main');
     const [model, setModel] = useState(project.model || '');
     const [reviewModel, setReviewModel] = useState(project.review_model || '');
@@ -383,6 +329,7 @@ function SettingsTab({ project, projectId, onSaved }) {
         try {
             const fields = {
                 display_name: displayName.trim() || null,
+                repo: repoUrl.trim() || undefined,
                 default_branch: defaultBranch.trim() || 'main',
                 model: model || null,
                 review_model: reviewModel || null,
@@ -502,7 +449,15 @@ function SettingsTab({ project, projectId, onSaved }) {
             <!-- Git section -->
             <div>
                 <div style=${sectionLabelStyle}>Git</div>
-                <${RepoUrlField} repo=${project.repo} />
+                <${FormField} label="Repository URL">
+                    <input
+                        type="text"
+                        value=${repoUrl}
+                        onInput=${e => setRepoUrl(e.target.value)}
+                        style=${{ ...fkStyles.input, fontFamily: typography.fontMono, fontSize: typography.size.sm }}
+                        placeholder="https://github.com/org/repo.git"
+                    />
+                </${FormField}>
                 ${project.credential_status ? html`
                     <div style=${{
                         display: 'flex', alignItems: 'center', gap: '8px',
@@ -548,9 +503,9 @@ function SettingsTab({ project, projectId, onSaved }) {
                         <option value="gitlab">GitLab</option>
                         <option value="bitbucket">Bitbucket</option>
                     </select>
-                    ${gitProvider && { github: 'Scope: repo', gitlab: 'Scopes: api, or read_repository + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider] ? html`
+                    ${gitProvider && { github: 'Scope: repo', gitlab: 'Scopes: api + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider] ? html`
                         <div style=${{ fontSize: '10px', color: colors.textTertiary, fontStyle: 'italic', marginTop: '3px' }}>
-                            ${{ github: 'Scope: repo', gitlab: 'Scopes: api, or read_repository + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider]}
+                            ${{ github: 'Scope: repo', gitlab: 'Scopes: api + write_repository', bitbucket: 'App password: repository:read, repository:write' }[gitProvider]}
                         </div>
                     ` : null}
                 </${FormField}>

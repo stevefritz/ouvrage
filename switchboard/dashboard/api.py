@@ -573,7 +573,7 @@ async def _handle_update_project(receive, send, project_id):
         return await _error(send, "Invalid JSON body", 400)
 
     ALLOWED = {
-        "display_name", "default_branch", "setup_command", "teardown_command", "test_command",
+        "display_name", "default_branch", "repo", "setup_command", "teardown_command", "test_command",
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
         "state_definitions", "github_pat_override", "provider", "credential_override",
@@ -584,6 +584,9 @@ async def _handle_update_project(receive, send, project_id):
         if not project:
             return await _error(send, f"Project '{project_id}' not found", 404)
         return await _json_response(send, project)
+
+    if "repo" in fields and fields["repo"]:
+        fields["repo"] = normalize_repo_url(fields["repo"])
 
     if "github_pat_override" in fields:
         pat = fields["github_pat_override"]
@@ -605,7 +608,7 @@ async def _handle_update_project(receive, send, project_id):
         result = await db.update_project(project_id, **fields)
 
         # Re-validate credential if repo, provider, or credential changed
-        revalidate_keys = {"provider", "credential_override", "github_pat_override"}
+        revalidate_keys = {"repo", "provider", "credential_override", "github_pat_override"}
         if revalidate_keys & fields.keys():
             result = await _run_dashboard_project_validation(project_id, result)
 

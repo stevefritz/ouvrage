@@ -192,7 +192,7 @@ const PROVIDER_LABELS = {
 
 const PROVIDER_SCOPE_HELP = {
     github: 'Scope: repo',
-    gitlab: 'Scopes: api, or read_repository + write_repository',
+    gitlab: 'Scopes: api + write_repository',
     bitbucket: 'App password: repository:read, repository:write',
 };
 
