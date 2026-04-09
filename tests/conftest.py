@@ -11,15 +11,14 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_unconfigure(config):
-    """Warn about leaked non-daemon threads. Join with timeout so pytest exits cleanly."""
+    """Warn about leaked non-daemon threads and daemonize them so pytest exits cleanly."""
     alive = [t for t in threading.enumerate()
              if t.is_alive() and t is not threading.main_thread() and not t.daemon]
     if alive:
-        print(f"\n⚠️  {len(alive)} non-daemon threads leaked — joining with 5s timeout:")
+        print(f"\n⚠️  {len(alive)} non-daemon threads leaked (forced to daemon so pytest can exit):")
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
-            t.join(timeout=5)
-        _os._exit(_pytest_exit_status)
+            t.daemon = True
 
 
 import pytest
