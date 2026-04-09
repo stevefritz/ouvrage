@@ -678,6 +678,8 @@ async def _handle_search_task_messages(arguments):
 
 async def _handle_escalate(arguments: dict) -> dict:
     """Worker-only: flag a task for human review and post an escalation message."""
+    from switchboard.dispatch.lifecycle import lifecycle
+
     task_id = arguments["task_id"]
     reason = arguments["reason"]
 
@@ -685,25 +687,15 @@ async def _handle_escalate(arguments: dict) -> dict:
     if not task:
         return {"error": f"Task '{task_id}' not found"}
 
-    prev_status = task.get("status")
-    await db.update_task(task_id, status="needs-review")
-    await db.write_audit_log(
-        task_id=task_id, action="escalated",
+    await lifecycle.execute(
+        task_id, "escalate",
         triggered_by="cc-worker",
         source_detail="escalate tool (worker cannot resolve)",
-        previous_status=prev_status, new_status="needs-review",
+        escalation_reason=reason,
     )
-    await db.post_task_message(
-        task_id=task_id,
-        author="cc-worker",
-        type="escalation",
-        title="Worker escalated — human review needed",
-        content=reason,
-    )
-    await notify.task_needs_review(task_id=task_id, reason=f"Worker escalated: {reason[:200]}")
     return {
         "task_id": task_id,
-        "status": "needs-review",
+        "status": "stopped",
         "escalated": True,
         "reason": reason,
     }

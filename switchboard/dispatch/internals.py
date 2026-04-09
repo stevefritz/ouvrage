@@ -135,12 +135,10 @@ async def setup_hook_config(worktree_path: str) -> None:
                     "hooks": [
                         {
                             "type": "command",
-                            "if": "Bash(git push*)",
                             "command": "/opt/switchboard/hooks/block-git-push.sh",
                         },
                         {
                             "type": "command",
-                            "if": "Bash(git fetch*)",
                             "command": "/opt/switchboard/hooks/block-git-fetch.sh",
                         },
                     ],

@@ -649,6 +649,7 @@ async def _run_sdk_session(
             "append": prompt if not is_resume else "",
         },
         mcp_servers=mcp_servers,
+        disallowed_tools=["mcp__claude_ai_*"],
         debug_stderr=stderr_log,
         extra_args={"replay-user-messages": None},
         can_use_tool=_gh_cli_guard,
