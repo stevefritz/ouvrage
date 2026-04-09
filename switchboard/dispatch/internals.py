@@ -383,7 +383,24 @@ async def check_and_queue_if_full(task_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 6. collect_review_feedback
+# 6. is_over_project_limit
+# ---------------------------------------------------------------------------
+
+async def is_over_project_limit() -> tuple[bool, int, int]:
+    """Check whether the instance has more projects than max_projects allows.
+
+    Returns (over_limit, projects_count, max_projects).
+    max_projects == 0 means unlimited — always returns over_limit=False.
+    """
+    projects_count = await db.count_projects()
+    max_projects = await db.get_max_projects()
+    if max_projects == 0:
+        return False, projects_count, max_projects
+    return projects_count > max_projects, projects_count, max_projects
+
+
+# ---------------------------------------------------------------------------
+# 7. collect_review_feedback
 # ---------------------------------------------------------------------------
 
 async def collect_review_feedback(task_id: str) -> list[dict] | None:

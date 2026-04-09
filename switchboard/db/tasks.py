@@ -408,6 +408,30 @@ async def get_queued_tasks() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+async def get_project_limit_blocked_tasks() -> list[dict]:
+    """Return ready tasks NOT in the concurrency queue and not held.
+
+    These are tasks blocked by project limit (no queued_at, held=0).
+    Excludes tasks whose depends_on parent hasn't gate-passed yet.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT t.* FROM tasks t
+               WHERE t.status = 'ready'
+                 AND t.queued_at IS NULL
+                 AND t.held = 0
+                 AND (
+                   t.depends_on IS NULL
+                   OR EXISTS (
+                     SELECT 1 FROM tasks p
+                     WHERE p.id = t.depends_on AND p.gate_passed_at IS NOT NULL
+                   )
+                 )
+               ORDER BY t.created_at ASC"""
+        )
+        return [dict(r) for r in rows]
+
+
 async def post_task_message(
     task_id: str, author: str, content: str,
     type: str | None = None, title: str | None = None, pinned: bool = False,

@@ -190,6 +190,19 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
 
     task_id = task["id"]
 
+    # Project limit check — hard block (higher priority than concurrency)
+    from switchboard.dispatch.internals import is_over_project_limit
+    over_limit, projects_count, max_projects_val = await is_over_project_limit()
+    if over_limit:
+        # Revert to ready without setting queued_at — project-limit-blocked tasks
+        # are NOT drained on concurrency slot opening (only on limit increase).
+        await db.update_task(task_id, status="ready")
+        logger.info(
+            "Task %s blocked by project limit (%d/%d projects)",
+            task_id, projects_count, max_projects_val,
+        )
+        return
+
     # Concurrency check — may queue instead
     if await check_and_queue_if_full(task_id):
         # Task was queued — revert status back to ready
