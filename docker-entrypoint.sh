@@ -6,12 +6,6 @@ set -euo pipefail
 chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
 
-# --- Worker git identity ---
-# CC workers need a git author for commits. Set globally for the worker user.
-# Skip if .gitconfig is read-only (bind-mounted by host).
-gosu switchboard git config --global user.email "worker@ouvrage.dev" 2>/dev/null || true
-gosu switchboard git config --global user.name "Ouvrage Worker" 2>/dev/null || true
-
 # --- Temp directory ---
 # TMPDIR=/work/.tmp redirects all app temp files (pytest, CC sessions) to the
 # work volume instead of /tmp. tmpreaper runs hourly to clean files older than 2h.

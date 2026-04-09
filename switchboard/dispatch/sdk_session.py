@@ -551,6 +551,64 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# Git author resolution
+# ---------------------------------------------------------------------------
+
+async def _resolve_git_author(task_id: str) -> dict:
+    """Resolve GIT_AUTHOR/COMMITTER env vars for the task owner.
+
+    Fallback chain:
+      1. dispatched_by user's name/email
+      2. created_by user's name/email
+      3. Instance owner's name/email
+      4. "Ouvrage Bot <bot@ouvrage.build>"
+
+    Returns a dict with GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL,
+    GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL.
+    """
+    name = None
+    email = None
+
+    task = await db.get_task(task_id)
+    if task:
+        for field in ("dispatched_by", "created_by"):
+            user_id = task.get(field)
+            if user_id is not None:
+                try:
+                    user = await db.get_user(int(user_id))
+                    if user and user.get("name") and user.get("email"):
+                        name = user["name"]
+                        email = user["email"]
+                        break
+                except (ValueError, TypeError):
+                    pass
+
+    if not name or not email:
+        try:
+            instance = await db.get_instance()
+            owner_id = instance.get("owner_user_id") if instance else None
+            if owner_id:
+                owner = await db.get_user(int(owner_id))
+                if owner and owner.get("name") and owner.get("email"):
+                    name = owner["name"]
+                    email = owner["email"]
+        except Exception:
+            pass
+
+    if not name:
+        name = "Ouvrage Bot"
+    if not email:
+        email = "bot@ouvrage.build"
+
+    return {
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Agent SDK Dispatch
 # ---------------------------------------------------------------------------
 
@@ -591,6 +649,9 @@ async def _run_sdk_session(
     # When SKIP_CREDENTIAL_CHECK is set and the worker has OAuth credentials,
     # prefer the CC subscription (don't inject API key into env).
     env = {"HOME": worker_home}
+
+    # Inject git author identity so commits are attributed to the task owner.
+    env.update(await _resolve_git_author(task_id))
     _worker_has_oauth = False
     if SKIP_CREDENTIAL_CHECK:
         try:
