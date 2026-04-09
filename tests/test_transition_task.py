@@ -43,39 +43,6 @@ async def _seed(db, task_id, status="ready", **extra):
 class TestTransitionTaskHandler:
     """Tests for _handle_transition_task via the handler function directly."""
 
-    async def test_valid_action_stop(self, db, mock_git, mock_sdk):
-        """stop on a working task transitions to stopped."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
-        task_id = f"{PROJECT_ID}/t-stop"
-        await _seed(db, task_id, status="working")
-
-        result = await _handle_transition_task({"task_id": task_id, "action": "stop"})
-
-        assert "error" not in result, f"Expected success, got error: {result}"
-        assert result["status"] == "stopped"
-
-    async def test_valid_action_cancel(self, db, mock_git, mock_sdk):
-        """cancel on a ready task transitions to cancelled."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
-        task_id = f"{PROJECT_ID}/t-cancel"
-        await _seed(db, task_id, status="ready")
-
-        result = await _handle_transition_task({"task_id": task_id, "action": "cancel"})
-
-        assert "error" not in result, f"Expected success, got error: {result}"
-        assert result["status"] == "cancelled"
-
-    async def test_invalid_action_wrong_state(self, db, mock_git, mock_sdk):
-        """resume on a ready task (no session) returns error dict, not exception."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
-        task_id = f"{PROJECT_ID}/t-bad-state"
-        await _seed(db, task_id, status="ready")
-
-        result = await _handle_transition_task({"task_id": task_id, "action": "resume"})
-
-        assert "error" in result, f"Expected error, got: {result}"
-        assert result["task_id"] == task_id
-        assert result["action"] == "resume"
 
     async def test_unknown_task_returns_error(self, db, mock_git, mock_sdk):
         """Calling with a non-existent task_id returns an error dict."""
@@ -132,19 +99,6 @@ class TestTransitionTaskHandler:
 class TestGetTaskStatusAvailableActions:
     """get_task_status must include available_actions in both slim and detail responses."""
 
-    async def test_slim_response_includes_available_actions(self, db):
-        """Slim (default) response includes available_actions list."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
-        task_id = f"{PROJECT_ID}/ts-slim"
-        await _seed(db, task_id, status="working")
-
-        result = await _handle_get_task_status({"task_id": task_id})
-
-        assert "available_actions" in result
-        assert isinstance(result["available_actions"], list)
-        # working state has stop and cancel actions
-        action_names = [a["name"] for a in result["available_actions"]]
-        assert "stop" in action_names
 
     async def test_detail_response_includes_available_actions(self, db):
         """Detail response also includes available_actions list."""

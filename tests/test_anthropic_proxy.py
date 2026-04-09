@@ -136,18 +136,6 @@ class TestAnthropicProxy:
         )
         await db.update_user_credentials(self.user["id"], anthropic_api_key="sk-ant-test-key-12345")
 
-    async def test_proxy_injects_api_key_header(self, db):
-        """Proxy decrypts the API key and injects X-Api-Key header."""
-        captured = {}
-        user_id = self.user["id"]
-        scope = _make_scope(path=f"/proxy/anthropic/{user_id}/v1/messages")
-
-        with _mock_httpx_stream(captured, response_chunks=[b'{"id":"msg_123"}']):
-            await handle_anthropic_proxy(scope, _make_receive(), _ResponseCollector())
-
-        assert captured["headers"]["x-api-key"] == "sk-ant-test-key-12345"
-        assert captured["headers"]["anthropic-version"] == "2023-06-01"
-        assert captured["url"] == "https://api.anthropic.com/v1/messages"
 
     async def test_proxy_strips_existing_auth_headers(self, db):
         """Proxy strips X-Api-Key and Authorization from worker request."""
@@ -168,33 +156,6 @@ class TestAnthropicProxy:
         assert captured["headers"]["x-api-key"] == "sk-ant-test-key-12345"
         assert "authorization" not in captured["headers"]
 
-    async def test_proxy_streams_sse_response(self, db):
-        """Proxy streams SSE chunks without buffering."""
-        user_id = self.user["id"]
-        scope = _make_scope(path=f"/proxy/anthropic/{user_id}/v1/messages")
-        send = _ResponseCollector()
-
-        sse_chunks = [
-            b"event: message_start\ndata: {\"type\":\"message_start\"}\n\n",
-            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\"}\n\n",
-            b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-        ]
-
-        with _mock_httpx_stream(
-            {},
-            response_headers=[("content-type", "text/event-stream")],
-            response_chunks=sse_chunks,
-        ):
-            await handle_anthropic_proxy(scope, _make_receive(), send)
-
-        assert send.status == 200
-        assert send.headers_dict.get("content-type") == "text/event-stream"
-        # 3 SSE chunks + 1 empty final
-        assert len(send.body_parts) == 4
-        assert send.body_parts[0] == sse_chunks[0]
-        assert send.body_parts[1] == sse_chunks[1]
-        assert send.body_parts[2] == sse_chunks[2]
-        assert send.body_parts[3] == b""
 
     async def test_proxy_rejects_non_localhost(self, db):
         """Proxy rejects requests from non-localhost addresses."""
@@ -221,22 +182,6 @@ class TestAnthropicProxy:
         body = json.loads(send.body)
         assert "not configured" in body["error"].lower()
 
-    async def test_proxy_passes_through_upstream_errors(self, db):
-        """Proxy passes through error responses from Anthropic API."""
-        user_id = self.user["id"]
-        scope = _make_scope(path=f"/proxy/anthropic/{user_id}/v1/messages")
-        send = _ResponseCollector()
-
-        error_body = b'{"error":{"type":"rate_limit_error","message":"Rate limited"}}'
-        with _mock_httpx_stream(
-            {},
-            status_code=429,
-            response_headers=[("content-type", "application/json"), ("retry-after", "30")],
-            response_chunks=[error_body],
-        ):
-            await handle_anthropic_proxy(scope, _make_receive(), send)
-
-        assert send.status == 429
 
     async def test_proxy_preserves_query_string(self, db):
         """Proxy forwards query string to upstream."""

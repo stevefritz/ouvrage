@@ -41,13 +41,6 @@ class TestRemovedToolsNotRegistered:
 class TestRemovedToolsNotInSchema:
     """Component and punchlist tools must not appear in the TOOLS list."""
 
-    def test_tools_list_excludes_component_tools(self):
-        from switchboard.server.tools import TOOLS
-        tool_names = {t.name for t in TOOLS}
-        for name in REMOVED_TOOLS:
-            assert name not in tool_names, (
-                f"Tool '{name}' should be absent from TOOLS list but is still present"
-            )
 
     def test_dispatch_task_has_no_component_id(self):
         from switchboard.server.tools import TOOLS

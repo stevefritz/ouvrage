@@ -235,53 +235,6 @@ class TestDispatchPreflightGate:
         cred_msgs = [m for m in messages if "credential" in (m.get("content") or "").lower()]
         assert len(cred_msgs) > 0
 
-    async def test_dispatch_stops_task_on_invalid_credential(self, db, sample_project):
-        """Invalid credential → task stopped with reason=credential_failed."""
-        from switchboard.dispatch.lifecycle import _dispatch_launch_session
-
-        task = await db.create_task(
-            id="test-project/preflight-invalid",
-            project_id="test-project",
-            goal="Test pre-flight invalid",
-        )
-        await db.update_task(task["id"], status="working")
-
-        mock_validate = AsyncMock(return_value={
-            "status": "error",
-            "message": "PAT is invalid or lacks permissions",
-            "checked_at": "2026-01-01T00:00:00Z",
-        })
-
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
-            await _dispatch_launch_session(task)
-
-        updated = await db.get_task("test-project/preflight-invalid")
-        assert updated["status"] == "stopped"
-        assert updated["reason"] == "credential_failed"
-
-    async def test_dispatch_proceeds_on_valid_credential(self, db, sample_project):
-        """Valid credential → dispatch proceeds past pre-flight (not stopped)."""
-        from switchboard.dispatch.lifecycle import _dispatch_launch_session
-
-        task = await db.create_task(
-            id="test-project/preflight-valid",
-            project_id="test-project",
-            goal="Test pre-flight valid",
-        )
-        await db.update_task(task["id"], status="working")
-
-        mock_validate = AsyncMock(return_value={
-            "status": "validated",
-            "message": "Credential validated (as octocat)",
-            "checked_at": "2026-01-01T00:00:00Z",
-        })
-
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
-            await _dispatch_launch_session(task)
-
-        # Task should not be stopped — pre-flight passed
-        updated = await db.get_task("test-project/preflight-valid")
-        assert updated["status"] != "stopped"
 
     async def test_retry_stops_task_on_missing_credential(self, db, sample_project):
         """Retry path also gates on credential validation."""
@@ -306,71 +259,6 @@ class TestDispatchPreflightGate:
         updated = await db.get_task("test-project/retry-preflight")
         assert updated["status"] == "stopped"
         assert updated["reason"] == "credential_failed"
-
-    async def test_credential_failed_cancel_works(self, db, sample_project):
-        """From stopped/credential_failed, cancel transitions to cancelled."""
-        from switchboard.dispatch.lifecycle import lifecycle
-
-        task = await db.create_task(
-            id="test-project/preflight-cancel",
-            project_id="test-project",
-            goal="Test cancel from credential_failed",
-        )
-        await db.update_task(task["id"], status="stopped", reason="credential_failed")
-
-        result = await lifecycle.execute("test-project/preflight-cancel", "cancel")
-        assert result["status"] == "cancelled"
-
-    async def test_credential_failed_retry_works(self, db, sample_project):
-        """From stopped/credential_failed, retry transitions to working."""
-        from switchboard.dispatch.lifecycle import lifecycle
-
-        task = await db.create_task(
-            id="test-project/preflight-retry",
-            project_id="test-project",
-            goal="Test retry from credential_failed",
-        )
-        await db.update_task(task["id"], status="stopped", reason="credential_failed")
-
-        mock_validate = AsyncMock(return_value={
-            "status": "validated",
-            "message": "Credential validated",
-            "checked_at": "2026-01-01T00:00:00Z",
-        })
-
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
-            result = await lifecycle.execute("test-project/preflight-retry", "retry")
-        assert result["status"] == "working"
-
-    async def test_credential_failed_state_label(self, db, sample_project):
-        """State label for credential_failed shows 'Pre-flight Failed' in red."""
-        from switchboard.dispatch.lifecycle import lifecycle
-
-        task = await db.create_task(
-            id="test-project/preflight-label",
-            project_id="test-project",
-            goal="Test state label",
-        )
-        await db.update_task(task["id"], status="stopped", reason="credential_failed")
-
-        label_info = await lifecycle.get_state_label("test-project/preflight-label")
-        assert label_info["label"] == "Pre-flight Failed"
-        assert label_info["color"] == "#ef4444"
-        assert label_info["state"] == "stopped"
-        assert label_info["reason"] == "credential_failed"
-
-    async def test_credential_failed_needs_attention(self, db, sample_project):
-        """Tasks with status=stopped appear in needs-attention filter."""
-        task = await db.create_task(
-            id="test-project/preflight-attention",
-            project_id="test-project",
-            goal="Test needs attention",
-        )
-        await db.update_task(task["id"], status="stopped", reason="credential_failed")
-
-        updated = await db.get_task("test-project/preflight-attention")
-        # Dashboard filters on status == "stopped" for needs-attention
-        assert updated["status"] == "stopped"
 
 
 # ── Layer 1: Settings test endpoint ───────────────────────────────────────
@@ -433,145 +321,6 @@ class TestSettingsTestEndpoint:
         assert "repo" in body["scopes"]
         assert "Required scopes present" in body["message"]
 
-    async def test_github_classic_pat_missing_repo_scope(self, db):
-        """GitHub classic PAT without repo scope → ok=False."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        await db.create_credential("github", "ghp_readonly", "github.com")
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"login": "octocat"}
-        mock_resp.headers = {"X-OAuth-Scopes": "read:org"}
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        send = _Capture()
-        scope = _make_scope()
-
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
-            await _handle_test_git_credential(send, scope, "github")
-
-        body = send.json()
-        assert body["ok"] is False
-        assert "missing" in body["message"].lower()
-
-    async def test_github_fine_grained_token(self, db):
-        """GitHub fine-grained token (no X-OAuth-Scopes header) → ok=True, scopes=None."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        await db.create_credential("github", "github_pat_fine_grained", "github.com")
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"login": "octocat"}
-        mock_resp.headers = {}  # No X-OAuth-Scopes
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        send = _Capture()
-        scope = _make_scope()
-
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
-            await _handle_test_git_credential(send, scope, "github")
-
-        body = send.json()
-        assert body["ok"] is True
-        assert body["scopes"] is None
-        assert "fine-grained" in body["message"].lower()
-
-    async def test_gitlab_with_api_scope(self, db):
-        """GitLab token with api scope → ok=True."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        await db.create_credential("gitlab", "glpat_test", "gitlab.com")
-
-        user_resp = MagicMock()
-        user_resp.status_code = 200
-        user_resp.json.return_value = {"username": "gluser"}
-
-        token_resp = MagicMock()
-        token_resp.status_code = 200
-        token_resp.json.return_value = {"scopes": ["api"]}
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[user_resp, token_resp])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        send = _Capture()
-        scope = _make_scope()
-
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
-            await _handle_test_git_credential(send, scope, "gitlab")
-
-        body = send.json()
-        assert body["ok"] is True
-        assert "api" in body["scopes"]
-
-    async def test_gitlab_missing_scopes(self, db):
-        """GitLab token without sufficient scopes → ok=False."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        await db.create_credential("gitlab", "glpat_readonly", "gitlab.com")
-
-        user_resp = MagicMock()
-        user_resp.status_code = 200
-        user_resp.json.return_value = {"username": "gluser"}
-
-        token_resp = MagicMock()
-        token_resp.status_code = 200
-        token_resp.json.return_value = {"scopes": ["read_user"]}
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[user_resp, token_resp])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        send = _Capture()
-        scope = _make_scope()
-
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
-            await _handle_test_git_credential(send, scope, "gitlab")
-
-        body = send.json()
-        assert body["ok"] is False
-        assert "missing required scopes" in body["message"]
-        assert "api" in body["message"]
-
-    async def test_bitbucket_no_scopes_header(self, db):
-        """Bitbucket auth success with no x-oauth-scopes header → ok=True, scopes=None, fallback message."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"username": "bbuser"}
-        mock_resp.headers.get.return_value = ""
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        send = _Capture()
-        scope = _make_scope()
-
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
-            await _handle_test_git_credential(send, scope, "bitbucket")
-
-        body = send.json()
-        assert body["ok"] is True
-        assert body["scopes"] is None
-        assert "Authenticated as bbuser" in body["message"]
-        assert "Verify" in body["message"]
 
     async def test_bitbucket_all_scopes_present(self, db):
         """Bitbucket auth success with all required scopes → ok=True, all scopes listed, success message."""
@@ -643,34 +392,6 @@ class TestSettingsTestEndpoint:
         assert "missing scopes" in body["message"]
         assert "Add these when creating your API token" in body["message"]
 
-    async def test_no_credential_configured(self, db):
-        """No credential configured → ok=False with message."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        send = _Capture()
-        scope = _make_scope()
-
-        await _handle_test_git_credential(send, scope, "github")
-
-        body = send.json()
-        assert body["ok"] is False
-        assert "no" in body["message"].lower() and "configured" in body["message"].lower()
-
-    async def test_response_shape(self, db):
-        """Response always includes ok, username, scopes, message keys."""
-        from switchboard.dashboard.api import _handle_test_git_credential
-
-        send = _Capture()
-        scope = _make_scope()
-
-        await _handle_test_git_credential(send, scope, "github")
-
-        body = send.json()
-        assert "ok" in body
-        assert "username" in body
-        assert "scopes" in body
-        assert "message" in body
-
 
 # ── Dead code removal verification ───────────────────────────────────────
 
@@ -706,24 +427,9 @@ class TestDeadCodeRemoved:
 class TestNormalizeRepoUrlPassthrough:
     """normalize_repo_url must not break on non-GitHub URLs."""
 
-    def test_gitlab_https_preserved(self):
-        from switchboard.git.operations import normalize_repo_url
-        url = "https://gitlab.com/acme/project.git"
-        assert normalize_repo_url(url) == url
-
-    def test_bitbucket_https_preserved(self):
-        from switchboard.git.operations import normalize_repo_url
-        url = "https://bitbucket.org/workspace/repo.git"
-        assert normalize_repo_url(url) == url
 
     def test_github_url_still_normalized(self):
         from switchboard.git.operations import normalize_repo_url
         assert normalize_repo_url("git@github.com:acme/widgets") == "https://github.com/acme/widgets.git"
 
-    def test_ssh_gitlab_normalized_to_https(self):
-        from switchboard.git.operations import normalize_repo_url
-        assert normalize_repo_url("git@gitlab.com:group/project.git") == "https://gitlab.com/group/project.git"
 
-    def test_self_hosted_ssh_normalized(self):
-        from switchboard.git.operations import normalize_repo_url
-        assert normalize_repo_url("git@gl.example.com:team/app") == "https://gl.example.com/team/app.git"

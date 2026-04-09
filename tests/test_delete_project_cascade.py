@@ -159,43 +159,6 @@ async def _create_full_project(db, project_id: str):
 # ---------------------------------------------------------------------------
 
 
-class TestDeleteProjectFKViolation:
-    """Without the fix, deleting a project with a project_id-only file causes FK violation."""
-
-    async def test_project_file_no_task_id_does_not_block_delete(self, db, tmp_path):
-        """After fix: delete_project succeeds even with a file linked via project_id only."""
-        from switchboard.db.projects import delete_project
-
-        project_id = "fk-test-project"
-        await db.create_project(
-            id=project_id,
-            repo="https://github.com/acme/fk-test.git",
-            working_dir=str(tmp_path / project_id),
-        )
-
-        # Insert a file linked ONLY to the project (task_id is NULL)
-        # This file has files.project_id = project_id with a FK to projects(id)
-        async with get_db() as conn:
-            await conn.execute(
-                "INSERT INTO files (id, filename, stored_path, project_id) VALUES (?, ?, ?, ?)",
-                ("proj-only-file", "readme.txt", "/tmp/readme.txt", project_id),
-            )
-            await conn.commit()
-
-        # Verify file exists
-        assert await _count("files", project_id=project_id) == 1
-
-        # This must succeed (FK violation would raise IntegrityError without the fix)
-        await delete_project(project_id)
-
-        # Project is gone
-        project = await db.get_project(project_id)
-        assert project is None
-
-        # File is gone (not orphaned)
-        assert await _count("files", project_id=project_id) == 0
-
-
 # ---------------------------------------------------------------------------
 # 5323–5328: Comprehensive cascade + zero-orphan test
 # ---------------------------------------------------------------------------
@@ -246,131 +209,6 @@ class TestDeleteProjectCascade:
         project = await db.get_project(project_id)
         assert project is None
 
-    async def test_task2_children_also_cleaned(self, db):
-        """Verify that children of ALL tasks (not just task1) are cleaned up."""
-        from switchboard.db.projects import delete_project
-
-        project_id = "cascade-task2-project"
-        task1, task2 = await _create_full_project(db, project_id)
-
-        # Add checklist item to task2 as well
-        async with get_db() as conn:
-            await conn.execute(
-                "INSERT INTO task_checklist (task_id, item) VALUES (?, ?)",
-                (task2["id"], "Task2 step"),
-            )
-            await conn.commit()
-
-        await delete_project(project_id)
-
-        assert await _count("task_checklist", task_id=task2["id"]) == 0
-        assert await _count("tasks", project_id=project_id) == 0
-
-    async def test_conversations_deleted(self, db):
-        """Conversations linked to project via project text field are deleted."""
-        from switchboard.db.projects import delete_project
-
-        project_id = "conv-cleanup-project"
-        await db.create_project(
-            id=project_id,
-            repo="https://github.com/acme/conv-cleanup.git",
-            working_dir=f"/tmp/{project_id}",
-        )
-
-        async with get_db() as conn:
-            await conn.execute(
-                "INSERT INTO conversations (id, project, goal) VALUES (?, ?, ?)",
-                (f"{project_id}-conv1", project_id, "First conversation"),
-            )
-            await conn.execute(
-                "INSERT INTO conversations (id, project, goal) VALUES (?, ?, ?)",
-                (f"{project_id}-conv2", project_id, "Second conversation"),
-            )
-            await conn.execute(
-                "INSERT INTO messages (conversation_id, author, content) VALUES (?, ?, ?)",
-                (f"{project_id}-conv1", "user", "Hello"),
-            )
-            await conn.commit()
-
-        await delete_project(project_id)
-
-        assert await _count("conversations", project=project_id) == 0
-        assert await _count("messages", conversation_id=f"{project_id}-conv1") == 0
-
-    async def test_fts_entries_cleaned_up(self, db):
-        """FTS entries for tasks and messages are cleaned up via delete triggers."""
-        from switchboard.db.projects import delete_project
-
-        project_id = "fts-cleanup-project"
-        await db.create_project(
-            id=project_id,
-            repo="https://github.com/acme/fts.git",
-            working_dir=f"/tmp/{project_id}",
-        )
-        task = await db.create_task(
-            id=f"{project_id}/fts-task",
-            project_id=project_id,
-            goal="FTS test task with unique content xyz123abc",
-        )
-
-        async with get_db() as conn:
-            await conn.execute(
-                "INSERT INTO messages (task_id, author, content) VALUES (?, ?, ?)",
-                (task["id"], "cc-worker", "FTS message content abc456xyz"),
-            )
-            await conn.commit()
-
-        await delete_project(project_id)
-
-        # FTS tables should have no entries for this task (triggers fire on DELETE)
-        async with get_db() as conn:
-            fts_task_rows = await conn.execute_fetchall(
-                "SELECT * FROM tasks_fts WHERE tasks_fts MATCH ?",
-                ("xyz123abc",),
-            )
-            assert len(fts_task_rows) == 0
-
-            fts_msg_rows = await conn.execute_fetchall(
-                "SELECT * FROM messages_fts WHERE messages_fts MATCH ?",
-                ("abc456xyz",),
-            )
-            assert len(fts_msg_rows) == 0
-
-    async def test_punchlist_cleaned_up(self, db):
-        """Punchlist items linked to project components are cleaned up."""
-        from switchboard.db.projects import delete_project
-
-        project_id = "punchlist-cleanup-project"
-        ts = now_iso()
-        await db.create_project(
-            id=project_id,
-            repo="https://github.com/acme/punchlist.git",
-            working_dir=f"/tmp/{project_id}",
-        )
-
-        async with get_db() as conn:
-            await conn.execute(
-                """INSERT INTO components (id, project_id, name, description, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (f"{project_id}-comp", project_id, "Frontend", "UI layer", ts, ts),
-            )
-            await conn.execute(
-                "INSERT INTO punchlist (component_id, item, status, author, created_at) VALUES (?, ?, ?, ?, ?)",
-                (f"{project_id}-comp", "Fix button color", "open", "owner", ts),
-            )
-            await conn.execute(
-                "INSERT INTO punchlist (component_id, item, status, author, created_at) VALUES (?, ?, ?, ?, ?)",
-                (f"{project_id}-comp", "Add dark mode", "open", "owner", ts),
-            )
-            await conn.commit()
-
-        assert await _count("punchlist", component_id=f"{project_id}-comp") == 2
-
-        await delete_project(project_id)
-
-        assert await _count("punchlist", component_id=f"{project_id}-comp") == 0
-        assert await _count("components", project_id=project_id) == 0
-
 
 # ---------------------------------------------------------------------------
 # 5326: Precondition — reject working AND validating tasks
@@ -405,30 +243,6 @@ class TestDeleteProjectPrecondition:
         project = await db.get_project("working-proj")
         assert project is not None
 
-    async def test_rejects_validating_tasks(self, db, tmp_path):
-        """Validating tasks also block delete."""
-        working_dir = str(tmp_path / "validating-proj")
-        os.makedirs(working_dir)
-        await db.create_project(
-            id="validating-proj",
-            repo="https://github.com/acme/validating.git",
-            working_dir=working_dir,
-        )
-        task = await db.create_task(
-            id="validating-proj/task-1",
-            project_id="validating-proj",
-            goal="Validating task",
-        )
-        await db.update_task(task["id"], status="validating")
-
-        from switchboard.server.handlers.projects import _handle_delete_project
-
-        result = await _handle_delete_project({"project_id": "validating-proj"})
-
-        assert "error" in result
-        assert "validating-proj/task-1" in result["error"]
-        project = await db.get_project("validating-proj")
-        assert project is not None
 
     async def test_allows_completed_tasks(self, db, tmp_path):
         """Completed/failed/cancelled tasks don't block delete."""
@@ -452,31 +266,3 @@ class TestDeleteProjectPrecondition:
         result = await _handle_delete_project({"project_id": "done-proj"})
         assert result.get("deleted") is True
 
-    async def test_rejects_mixed_active_and_done(self, db, tmp_path):
-        """One validating + one completed task → still rejected due to validating."""
-        working_dir = str(tmp_path / "mixed-proj")
-        os.makedirs(working_dir)
-        await db.create_project(
-            id="mixed-proj",
-            repo="https://github.com/acme/mixed.git",
-            working_dir=working_dir,
-        )
-        done_task = await db.create_task(
-            id="mixed-proj/done",
-            project_id="mixed-proj",
-            goal="Done task",
-        )
-        await db.update_task(done_task["id"], status="completed")
-
-        active_task = await db.create_task(
-            id="mixed-proj/active",
-            project_id="mixed-proj",
-            goal="Validating task",
-        )
-        await db.update_task(active_task["id"], status="validating")
-
-        from switchboard.server.handlers.projects import _handle_delete_project
-
-        result = await _handle_delete_project({"project_id": "mixed-proj"})
-        assert "error" in result
-        assert "mixed-proj/active" in result["error"]

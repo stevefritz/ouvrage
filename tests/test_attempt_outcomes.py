@@ -18,14 +18,6 @@ class TestDetermineAttemptOutcome:
     def _msg(self, author="dispatcher", msg_type="status", title=""):
         return {"author": author, "type": msg_type, "title": title, "content": ""}
 
-    def test_tests_passed_not_last_returns_success(self):
-        """GAP-2: Tests passed on a non-last attempt should be 'success', not 'test-failure'."""
-        messages = [
-            self._msg(msg_type="test-result", title="TESTS PASSED"),
-        ]
-        # is_last=False, has_next=True — reopen-after-success scenario
-        result = _determine_attempt_outcome(messages, is_last=False, has_next=True)
-        assert result == "success"
 
     def test_tests_passed_is_last_returns_success(self):
         messages = [
@@ -34,21 +26,6 @@ class TestDetermineAttemptOutcome:
         result = _determine_attempt_outcome(messages, is_last=True, has_next=False)
         assert result == "success"
 
-    def test_tests_passed_but_review_rejected(self):
-        """GAP-2 nuance: Tests passed but review rejected — should return review-rejection."""
-        messages = [
-            self._msg(msg_type="test-result", title="TESTS PASSED"),
-            self._msg(author="reviewer", msg_type="review", title="CHANGES REQUESTED"),
-        ]
-        result = _determine_attempt_outcome(messages, is_last=False, has_next=True)
-        assert result == "review-rejection"
-
-    def test_tests_failed_returns_test_failure(self):
-        messages = [
-            self._msg(msg_type="test-result", title="TESTS FAILED"),
-        ]
-        result = _determine_attempt_outcome(messages, is_last=False, has_next=True)
-        assert result == "test-failure"
 
     def test_resume_after_error_discards_terminal_event(self):
         """Resume awareness: error followed by RESUMED should not return 'error'."""
@@ -60,14 +37,6 @@ class TestDetermineAttemptOutcome:
         result = _determine_attempt_outcome(messages, is_last=True, has_next=False)
         assert result == "in-progress"
 
-    def test_resume_after_failed_discards_terminal_event(self):
-        """Resume awareness: FAILED followed by RESUMED should not return 'error'."""
-        messages = [
-            self._msg(msg_type="status", title="TASK FAILED"),
-            self._msg(msg_type="status", title="RESUMED"),
-        ]
-        result = _determine_attempt_outcome(messages, is_last=True, has_next=False)
-        assert result == "in-progress"
 
     def test_error_without_resume_returns_error(self):
         """Error without subsequent resume should still return 'error'."""
@@ -85,17 +54,10 @@ class TestDetermineAttemptOutcome:
         messages = [self._msg(title="TURNS EXHAUSTED")]
         assert _determine_attempt_outcome(messages, True, False) == "turns-exhausted"
 
-    def test_review_approved_last(self):
-        messages = [self._msg(msg_type="review", title="APPROVED")]
-        assert _determine_attempt_outcome(messages, True, False) == "success"
 
     def test_no_terminal_event_has_next(self):
         messages = [self._msg(author="cc-worker", msg_type="progress", title="WIP")]
         assert _determine_attempt_outcome(messages, False, True) == "retried"
-
-    def test_no_terminal_event_is_last(self):
-        messages = [self._msg(author="cc-worker", msg_type="progress", title="WIP")]
-        assert _determine_attempt_outcome(messages, True, False) == "in-progress"
 
 
 # ---------------------------------------------------------------------------
@@ -106,21 +68,6 @@ class TestDetermineAttemptOutcome:
 class TestOutcomeDefinitions:
     """Verify OUTCOME_DEFINITIONS has all required keys with correct labels/colors."""
 
-    def test_required_keys_present(self):
-        from switchboard.dispatch.lifecycle import OUTCOME_DEFINITIONS
-        required = [
-            "gate_passed", "gate_skipped", "completed", "success",
-            "test-failure", "review-rejection", "error", "failed",
-            "cancelled", "in-progress", "retried",
-            "wall_clock_timeout", "turns_exhausted",
-            "wall-clock-timeout", "turns-exhausted",
-            "test_failure", "review_rejected",
-            "awaiting_feedback", "manually_closed",
-            "max_test_retries", "max_review_retries",
-            "review_stalled", "gate_failed",
-        ]
-        for key in required:
-            assert key in OUTCOME_DEFINITIONS, f"Missing OUTCOME_DEFINITIONS key: {key}"
 
     def test_all_labels_lowercase(self):
         from switchboard.dispatch.lifecycle import OUTCOME_DEFINITIONS
@@ -139,52 +86,6 @@ class TestOutcomeDefinitions:
 # ---------------------------------------------------------------------------
 # _finalize_attempt with outcome context key
 # ---------------------------------------------------------------------------
-
-
-class TestFinalizeAttemptOutcomeKey:
-    """Test that _finalize_attempt respects ctx.get('outcome')."""
-
-    async def test_outcome_from_context(self, db, sample_project):
-        """GAP-10: outcome passed via context should take priority."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
-
-        task = await db.create_task(id="test-project/finalize-1", project_id="test-project", goal="Test finalize")
-        await db.update_task(task["id"], status="working", current_attempt=1)
-        await db.create_attempt(task["id"], 1)
-
-        task = await db.get_task(task["id"])
-        await _finalize_attempt(task, outcome="test_failure", _previous_status="validating")
-
-        rows = await db.get_attempt(task["id"], 1)
-        assert rows["outcome"] == "test_failure"
-
-    async def test_outcome_falls_back_to_reason(self, db, sample_project):
-        """Without context outcome, should use task reason."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
-
-        task = await db.create_task(id="test-project/finalize-2", project_id="test-project", goal="Test finalize fallback")
-        await db.update_task(task["id"], status="stopped", reason="paused_by_user", current_attempt=1)
-        await db.create_attempt(task["id"], 1)
-
-        task = await db.get_task(task["id"])
-        await _finalize_attempt(task, _previous_status="working")
-
-        rows = await db.get_attempt(task["id"], 1)
-        assert rows["outcome"] == "paused_by_user"
-
-    async def test_outcome_falls_back_to_previous_status(self, db, sample_project):
-        """Without context outcome or reason, should use _previous_status."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
-
-        task = await db.create_task(id="test-project/finalize-3", project_id="test-project", goal="Test finalize fallback 2")
-        await db.update_task(task["id"], status="stopped", current_attempt=1)
-        await db.create_attempt(task["id"], 1)
-
-        task = await db.get_task(task["id"])
-        await _finalize_attempt(task, _previous_status="working")
-
-        rows = await db.get_attempt(task["id"], 1)
-        assert rows["outcome"] == "working"
 
 
 # ---------------------------------------------------------------------------

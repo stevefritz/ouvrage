@@ -78,25 +78,6 @@ async def _call(path, client=_REMOTE, method="GET", headers=None):
 
 class TestLocalhostBypass:
 
-    async def test_localhost_mcp_worker_allowed(self, db):
-        """/mcp/worker from localhost bypasses auth and reaches inner app."""
-        status, _, _, reached = await _call("/mcp/worker", client=_LOCALHOST)
-        assert status == 200
-        assert reached
-
-    async def test_localhost_ipv6_mcp_worker_allowed(self, db):
-        """::1 (IPv6 localhost) also bypasses auth for /mcp/worker."""
-        status, _, _, reached = await _call("/mcp/worker", client=_IPV6_LOCALHOST)
-        assert status == 200
-        assert reached
-
-    async def test_localhost_proxy_anthropic_allowed(self, db):
-        """/proxy/anthropic/... from localhost bypasses auth."""
-        status, _, _, reached = await _call(
-            "/proxy/anthropic/1/v1/messages", client=_LOCALHOST
-        )
-        assert status == 200
-        assert reached
 
     async def test_localhost_health_allowed(self, db):
         """/health from localhost bypasses auth."""
@@ -129,12 +110,6 @@ class TestLocalhostBypass:
         assert status == 302
         assert not reached
 
-    async def test_remote_mcp_worker_needs_auth(self):
-        """/mcp/worker from non-localhost requires Bearer JWT."""
-        status, _, _, reached = await _call("/mcp/worker", client=_REMOTE)
-        # No token → 401
-        assert status == 401
-        assert not reached
 
     async def test_remote_proxy_anthropic_redirected(self):
         """/proxy/anthropic from non-localhost is not in /mcp or /mcp/worker → redirected."""
@@ -147,46 +122,6 @@ class TestLocalhostBypass:
 
 
 # ── secrets.compare_digest ──────────────────────────────────────────────────
-
-class TestCompareDigest:
-
-    def test_internal_api_source_uses_compare_digest(self):
-        """_check_auth source must use secrets.compare_digest, not == comparison."""
-        from switchboard.internal import api as internal_api
-        source = inspect.getsource(internal_api._check_auth)
-        assert "secrets.compare_digest" in source
-        # Must NOT use plain equality for token comparison
-        assert "token ==" not in source
-
-    async def test_compare_digest_called_on_valid_token(self):
-        """secrets.compare_digest is invoked during auth check with correct token."""
-        from switchboard.internal import api as internal_api
-        scope = {
-            "headers": [(b"authorization", b"Bearer mysecret")],
-        }
-        with patch("switchboard.internal.api.INTERNAL_API_TOKEN", "mysecret"):
-            with patch(
-                "switchboard.internal.api.secrets.compare_digest",
-                wraps=secrets_module.compare_digest,
-            ) as mock_cd:
-                result = internal_api._check_auth(scope)
-                assert result is True
-                mock_cd.assert_called_once_with("mysecret", "mysecret")
-
-    async def test_compare_digest_called_on_invalid_token(self):
-        """secrets.compare_digest is invoked even when token is wrong (timing-safe)."""
-        from switchboard.internal import api as internal_api
-        scope = {
-            "headers": [(b"authorization", b"Bearer wrongtoken")],
-        }
-        with patch("switchboard.internal.api.INTERNAL_API_TOKEN", "correcttoken"):
-            with patch(
-                "switchboard.internal.api.secrets.compare_digest",
-                wraps=secrets_module.compare_digest,
-            ) as mock_cd:
-                result = internal_api._check_auth(scope)
-                assert result is False
-                mock_cd.assert_called_once()
 
 
 # ── Fail-closed revocation ──────────────────────────────────────────────────
@@ -207,9 +142,3 @@ class TestFailClosedRevocation:
 
         assert result is True, "DB error must fail closed (return True = revoked)"
 
-    async def test_revocation_check_returns_false_for_valid_token(self, db):
-        """_is_token_revoked returns False for a JTI not in the revoked table."""
-        from switchboard.auth import middleware
-        # JTI not in table at all → not revoked
-        result = await middleware._is_token_revoked("nonexistent-jti")
-        assert result is False

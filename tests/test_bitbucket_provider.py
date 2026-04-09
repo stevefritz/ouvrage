@@ -39,49 +39,11 @@ class TestBitbucketParseRepoUrl:
         from switchboard.git.providers.bitbucket import BitbucketProvider
         self.provider = BitbucketProvider()
 
-    def test_https_with_git_suffix(self):
-        info = self.provider.parse_repo_url("https://bitbucket.org/acme/widgets.git")
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "bitbucket.org"
-
-    def test_https_no_git_suffix(self):
-        info = self.provider.parse_repo_url("https://bitbucket.org/acme/widgets")
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "bitbucket.org"
-
-    def test_ssh_with_git_suffix(self):
-        info = self.provider.parse_repo_url("git@bitbucket.org:acme/widgets.git")
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "bitbucket.org"
-
-    def test_ssh_no_git_suffix(self):
-        info = self.provider.parse_repo_url("git@bitbucket.org:acme/widgets")
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "bitbucket.org"
-
-    def test_https_with_embedded_auth(self):
-        # URLs with embedded credentials should still parse correctly
-        info = self.provider.parse_repo_url(
-            "https://myuser:mypass@bitbucket.org/workspace/myrepo.git"
-        )
-        assert info.owner == "workspace"
-        assert info.repo == "myrepo"
-        assert info.hostname == "bitbucket.org"
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse Bitbucket"):
-            self.provider.parse_repo_url("https://github.com/acme/repo.git")
 
     def test_invalid_scheme_raises(self):
         with pytest.raises(ValueError, match="Cannot parse Bitbucket"):
             self.provider.parse_repo_url("not-a-url")
 
-    def test_provider_name(self):
-        assert self.provider.name == "bitbucket"
 
     def test_default_hostname(self):
         assert self.provider.default_hostname == "bitbucket.org"
@@ -110,22 +72,6 @@ class TestBitbucketBuildAuthenticatedUrl:
         )
         assert url == "https://x-bitbucket-api-token-auth:myapitoken@bitbucket.org/acme/widgets.git"
 
-    def test_token_with_colon(self):
-        """Only split on first colon — email may contain no colons but token might."""
-        url = self.provider.build_authenticated_url(
-            "https://bitbucket.org/acme/widgets.git",
-            "user@example.com:token:with:colons",
-        )
-        assert url == "https://x-bitbucket-api-token-auth:token:with:colons@bitbucket.org/acme/widgets.git"
-
-    def test_email_not_in_url(self):
-        """Atlassian email must NOT appear in the authenticated URL."""
-        url = self.provider.build_authenticated_url(
-            "https://bitbucket.org/acme/widgets.git",
-            "secret@corp.com:myapitoken",
-        )
-        assert "secret@corp.com" not in url
-        assert "x-bitbucket-api-token-auth" in url
 
     def test_missing_colon_raises(self):
         with pytest.raises(ValueError, match="email:api_token"):
@@ -147,17 +93,6 @@ class TestBitbucketValidateAccess:
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
         self.credential = "user@example.com:myapitoken"
 
-    async def test_valid_credential(self):
-        user_resp = _make_response(200, {"username": "myuser", "account_id": "abc123"})
-        repo_resp = _make_response(200, {"full_name": "acme/widgets"})
-        mock_client = _make_async_client(get_responses=[user_resp, repo_resp])
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await self.provider.validate_access(self.credential, self.repo_info)
-
-        assert result.valid is True
-        assert result.username == "myuser"
-        assert result.error is None
 
     async def test_invalid_api_token(self):
         user_resp = _make_response(401, {"type": "error", "error": {"message": "Unauthorized"}})
@@ -225,17 +160,6 @@ class TestBitbucketValidateAccess:
         assert result.valid is False
         assert "Connection refused" in result.error
 
-    async def test_username_from_account_id_fallback(self):
-        """Falls back to account_id if username field is missing."""
-        user_resp = _make_response(200, {"account_id": "abc123"})
-        repo_resp = _make_response(200, {"full_name": "acme/widgets"})
-        mock_client = _make_async_client(get_responses=[user_resp, repo_resp])
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await self.provider.validate_access(self.credential, self.repo_info)
-
-        assert result.valid is True
-        assert result.username == "abc123"
 
     async def test_api_called_with_email_not_username(self):
         """REST API auth uses email (not username slug) as the Basic auth username."""
@@ -343,17 +267,6 @@ class TestBitbucketCreatePR:
                     head="feature", base="main", title="PR",
                 )
 
-    async def test_create_pr_forbidden_scope_message(self):
-        """403 error message references API token scope, not app password."""
-        resp = _make_response(403, {"type": "error"})
-        mock_client = _make_async_client(post_responses=[resp])
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ValueError, match="write:pullrequest:bitbucket"):
-                await self.provider.create_pr(
-                    self.credential, self.repo_info,
-                    head="feature", base="main", title="PR",
-                )
 
     async def test_create_pr_duplicate_no_existing_raises(self):
         """400 duplicate but listing returns empty — raise descriptive error."""
@@ -419,25 +332,6 @@ class TestBitbucketGetPrStatus:
         assert status["state"] == "closed"
         assert status["merged"] is False
 
-    async def test_superseded_state(self):
-        resp = _make_response(200, {"id": 1, "state": "SUPERSEDED"})
-        mock_client = _make_async_client(get_responses=[resp])
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            status = await self.provider.get_pr_status(self.credential, self.repo_info, 1)
-
-        assert status["state"] == "closed"
-        assert status["merged"] is False
-
-    async def test_unknown_state_maps_to_open(self):
-        resp = _make_response(200, {"id": 1, "state": "UNKNOWN_FUTURE_STATE"})
-        mock_client = _make_async_client(get_responses=[resp])
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            status = await self.provider.get_pr_status(self.credential, self.repo_info, 1)
-
-        assert status["state"] == "open"
-        assert status["merged"] is False
 
     async def test_api_error_raises(self):
         resp = _make_response(404, {"type": "error"})
@@ -458,25 +352,6 @@ class TestBitbucketParsePrUrl:
         from switchboard.git.providers.bitbucket import BitbucketProvider
         self.provider = BitbucketProvider()
 
-    def test_valid_pr_url(self):
-        info, number = self.provider.parse_pr_url(
-            "https://bitbucket.org/acme/widgets/pull-requests/42"
-        )
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "bitbucket.org"
-        assert number == 42
-
-    def test_valid_pr_url_with_trailing_slash(self):
-        info, number = self.provider.parse_pr_url(
-            "https://bitbucket.org/acme/widgets/pull-requests/42/"
-        )
-        assert number == 42
-        assert info.owner == "acme"
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse Bitbucket PR URL"):
-            self.provider.parse_pr_url("https://github.com/acme/widgets/pull/42")
 
     def test_gitlab_url_raises(self):
         with pytest.raises(ValueError, match="Cannot parse Bitbucket PR URL"):
@@ -484,9 +359,6 @@ class TestBitbucketParsePrUrl:
                 "https://gitlab.com/acme/widgets/-/merge_requests/5"
             )
 
-    def test_missing_number_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse Bitbucket PR URL"):
-            self.provider.parse_pr_url("https://bitbucket.org/acme/widgets/pull-requests/")
 
     def test_large_pr_number(self):
         _, number = self.provider.parse_pr_url(

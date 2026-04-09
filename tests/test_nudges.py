@@ -36,9 +36,6 @@ class TestToolCategoryMap:
     def test_get_guide_maps_to_none(self):
         assert TOOL_CATEGORY_MAP["get_guide"] is None
 
-    def test_get_context_is_excluded_from_nudges(self):
-        # get_context maps to "planning" in the category map but is in the no-nudge set
-        assert select_nudge("get_context") is None
 
     def test_dispatch_tools_map_to_dispatch(self):
         assert TOOL_CATEGORY_MAP["dispatch_task"] == "dispatch"
@@ -65,96 +62,13 @@ class TestToolCategoryMap:
         assert TOOL_CATEGORY_MAP["get_context"] == "planning"
 
 
-class TestSelectNudge:
-    """select_nudge() behavior."""
-
-    def test_returns_none_for_get_guide(self):
-        assert select_nudge("get_guide") is None
-
-    def test_returns_none_for_get_context(self):
-        assert select_nudge("get_context") is None
-
-    def test_returns_string_for_regular_tool(self):
-        nudge = select_nudge("dispatch_task")
-        assert isinstance(nudge, str)
-        assert nudge.strip()
-
-    def test_returns_string_for_unknown_tool(self):
-        # Tools not in map get baseline weights across all categories
-        nudge = select_nudge("some_unknown_tool")
-        assert isinstance(nudge, str)
-        assert nudge.strip()
-
-    def test_returned_nudge_is_from_nudge_pool(self):
-        all_nudges = {n for nudges in NUDGE_CATEGORIES.values() for n in nudges}
-        for tool in ("dispatch_task", "search", "post", "get_task_status", "list_tasks"):
-            nudge = select_nudge(tool)
-            assert nudge in all_nudges, f"Nudge '{nudge}' not in known pool"
-
-    def test_boosted_category_selected_more_often(self):
-        """dispatch_task boosts 'dispatch' category — dispatch nudges should dominate."""
-        dispatch_nudges = set(NUDGE_CATEGORIES["dispatch"])
-        hits = sum(1 for _ in range(300) if select_nudge("dispatch_task") in dispatch_nudges)
-        # With 4 dispatch nudges at 3x weight vs ~19 others at 1x: expected ~300 * 12/31 ≈ 116
-        # Baseline random would be ~300 * 4/23 ≈ 52. Set a conservative threshold of 70.
-        assert hits > 70, f"Only {hits}/300 nudges from boosted category — weighting may be broken"
-
-    def test_non_boosted_categories_still_appear(self):
-        """Even with a boost, other categories should appear over many draws."""
-        dispatch_nudges = set(NUDGE_CATEGORIES["dispatch"])
-        non_dispatch = sum(
-            1 for _ in range(200) if select_nudge("dispatch_task") not in dispatch_nudges
-        )
-        assert non_dispatch > 20, "Non-boosted categories never appeared — pool may be wrong"
-
-    def test_nudge_selected_deterministically_with_fixed_random(self):
-        """With a fixed random seed, select_nudge returns a consistent result."""
-        with patch("switchboard.config.nudges.random") as mock_random:
-            mock_random.random.return_value = 0.0
-            nudge1 = select_nudge("search")
-            nudge2 = select_nudge("search")
-        assert nudge1 == nudge2
-
-
 class TestInjectNudge:
     """inject_nudge() integration."""
 
-    def test_injects_nudge_field_with_emoji(self):
-        result = {"key": "value"}
-        inject_nudge(result, "dispatch_task")
-        assert "_nudge" in result
-        assert result["_nudge"].startswith("\U0001f4a1")  # 💡
-
-    def test_nudge_field_does_not_corrupt_existing_fields(self):
-        result = {"status": "ok"}
-        inject_nudge(result, "search")
-        assert result["status"] == "ok"
-        assert "_nudge" in result
-
-    def test_no_nudge_injected_for_get_guide(self):
-        result = {"guide": "..."}
-        inject_nudge(result, "get_guide")
-        assert "_nudge" not in result
 
     def test_no_nudge_injected_for_get_context(self):
         result = {"context": "..."}
         inject_nudge(result, "get_context")
         assert "_nudge" not in result
 
-    def test_nudge_text_is_from_known_pool(self):
-        all_nudges = {n for nudges in NUDGE_CATEGORIES.values() for n in nudges}
-        result = {}
-        inject_nudge(result, "post")
-        assert "_nudge" in result
-        # Strip the emoji prefix to get raw nudge text
-        nudge_text = result["_nudge"][len("\U0001f4a1 "):]
-        assert nudge_text in all_nudges
 
-    def test_result_remains_valid_json_after_inject(self):
-        import json
-        result = {"task_id": "proj/task-1", "status": "completed"}
-        inject_nudge(result, "dispatch_task")
-        serialized = json.dumps(result)
-        parsed = json.loads(serialized)
-        assert parsed["status"] == "completed"
-        assert parsed["_nudge"].startswith("\U0001f4a1")

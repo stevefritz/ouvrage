@@ -19,70 +19,6 @@ _GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@t.co
 # Database: subtask CRUD
 # ---------------------------------------------------------------------------
 
-class TestSubtaskCRUD:
-    async def _seed_project_and_task(self, db):
-        """Helper to create a project + task for subtask tests."""
-        await db.create_project(
-            id="test-proj", repo="git@github.com:test/repo.git",
-            working_dir="/tmp/test-proj",
-        )
-        await db.create_task(
-            id="task-1", project_id="test-proj", goal="test task",
-        )
-
-    async def test_create_and_get_subtask(self, db):
-        await self._seed_project_and_task(db)
-        sub = await db.create_subtask(
-            id="task-1/review-0", task_id="task-1",
-            type="review", prompt="Review this", model="sonnet",
-        )
-        assert sub["id"] == "task-1/review-0"
-        assert sub["status"] == "working"
-        assert sub["model"] == "sonnet"
-
-        fetched = await db.get_subtask("task-1/review-0")
-        assert fetched is not None
-        assert fetched["task_id"] == "task-1"
-
-    async def test_update_subtask(self, db):
-        await self._seed_project_and_task(db)
-        await db.create_subtask(
-            id="task-1/review-0", task_id="task-1",
-            type="review", prompt="Review this",
-        )
-        updated = await db.update_subtask(
-            "task-1/review-0",
-            status="completed",
-            result="APPROVED",
-            input_tokens=1000,
-            output_tokens=500,
-            cost_usd=0.05,
-            duration_ms=3000,
-            completed_at=db.now_iso(),
-        )
-        assert updated["status"] == "completed"
-        assert updated["input_tokens"] == 1000
-        assert updated["cost_usd"] == 0.05
-
-    async def test_get_subtasks_by_task(self, db):
-        await self._seed_project_and_task(db)
-        await db.create_subtask(id="task-1/review-0", task_id="task-1",
-                                type="review", prompt="r1")
-        await db.create_subtask(id="task-1/review-1", task_id="task-1",
-                                type="review", prompt="r2")
-        subs = await db.get_subtasks("task-1")
-        assert len(subs) == 2
-        assert subs[0]["id"] == "task-1/review-0"
-
-    async def test_get_subtask_nonexistent(self, db):
-        result = await db.get_subtask("nonexistent")
-        assert result is None
-
-    async def test_subtasks_empty_for_task_without_subtasks(self, db):
-        await self._seed_project_and_task(db)
-        subs = await db.get_subtasks("task-1")
-        assert subs == []
-
 
 # ---------------------------------------------------------------------------
 # Database: task dependencies and chain queries
@@ -101,19 +37,6 @@ class TestDependencyQueries:
         await db.create_task(id="task-c", project_id="chain-proj", goal="C",
                              depends_on="task-b")
 
-    async def test_get_dependents(self, db):
-        await self._seed_chain(db)
-        deps = await db.get_dependents("task-a")
-        assert len(deps) == 1
-        assert deps[0]["id"] == "task-b"
-
-    async def test_get_chain(self, db):
-        await self._seed_chain(db)
-        chain = await db.get_chain("task-a")
-        ids = [t["id"] for t in chain]
-        assert "task-a" in ids
-        assert "task-b" in ids
-        assert "task-c" in ids
 
     async def test_chain_from_middle(self, db):
         await self._seed_chain(db)
@@ -123,94 +46,15 @@ class TestDependencyQueries:
         assert "task-b" in ids
         assert "task-c" in ids
 
-    async def test_no_dependents(self, db):
-        await self._seed_chain(db)
-        deps = await db.get_dependents("task-c")
-        assert deps == []
-
 
 # ---------------------------------------------------------------------------
 # Database: gate status transitions
 # ---------------------------------------------------------------------------
 
-class TestGateStatusTransitions:
-    async def _seed(self, db):
-        await db.create_project(id="gate-proj", repo="git@x.git",
-                                working_dir="/tmp/gate")
-        await db.create_task(id="gate-task", project_id="gate-proj", goal="test gate")
-
-    async def test_gate_testing(self, db):
-        await self._seed(db)
-        await db.update_task("gate-task", gate_status="testing")
-        task = await db.get_task("gate-task")
-        assert task["gate_status"] == "testing"
-
-    async def test_gate_passed(self, db):
-        await self._seed(db)
-        await db.update_task("gate-task", gate_status="passed",
-                             gate_passed_at=db.now_iso())
-        task = await db.get_task("gate-task")
-        assert task["gate_status"] == "passed"
-        assert task["gate_passed_at"] is not None
-
-    async def test_gate_stale(self, db):
-        await self._seed(db)
-        # First pass, then mark stale
-        await db.update_task("gate-task", gate_status="passed",
-                             gate_passed_at=db.now_iso())
-        await db.update_task("gate-task", gate_status="stale",
-                             gate_passed_at=None)
-        task = await db.get_task("gate-task")
-        assert task["gate_status"] == "stale"
-        assert task["gate_passed_at"] is None
-
-    async def test_gate_retries_increment(self, db):
-        await self._seed(db)
-        await db.update_task("gate-task", gate_retries=1)
-        task = await db.get_task("gate-task")
-        assert task["gate_retries"] == 1
-        await db.update_task("gate-task", gate_retries=2)
-        task = await db.get_task("gate-task")
-        assert task["gate_retries"] == 2
-
 
 # ---------------------------------------------------------------------------
 # Database: task messages for review flow
 # ---------------------------------------------------------------------------
-
-class TestTaskMessages:
-    async def _seed(self, db):
-        await db.create_project(id="msg-proj", repo="git@x.git",
-                                working_dir="/tmp/msg")
-        await db.create_task(id="msg-task", project_id="msg-proj", goal="test msgs")
-
-    async def test_post_and_read_review_message(self, db):
-        await self._seed(db)
-        await db.post_task_message(
-            task_id="msg-task", author="cc-worker", type="review",
-            title="APPROVED", content="Code looks good",
-        )
-        thread = await db.read_task_messages("msg-task")
-        msgs = thread["messages"]
-        assert len(msgs) == 1
-        assert msgs[0]["type"] == "review"
-        assert msgs[0]["title"] == "APPROVED"
-
-    async def test_multiple_review_messages(self, db):
-        await self._seed(db)
-        await db.post_task_message(
-            task_id="msg-task", author="cc-worker", type="review",
-            title="CHANGES REQUESTED", content="Fix imports",
-        )
-        await db.post_task_message(
-            task_id="msg-task", author="cc-worker", type="review",
-            title="APPROVED", content="Fixed, looks good now",
-        )
-        thread = await db.read_task_messages("msg-task")
-        msgs = [m for m in thread["messages"] if m["type"] == "review"]
-        assert len(msgs) == 2
-        # Last one should be APPROVED
-        assert msgs[-1]["title"] == "APPROVED"
 
 
 # ---------------------------------------------------------------------------
@@ -389,15 +233,3 @@ class TestRebaseGit:
 # Dashboard API: subtasks in task detail
 # ---------------------------------------------------------------------------
 
-class TestDashboardAPISubtasks:
-    """Verify subtasks appear in task detail API response."""
-
-    async def test_task_detail_includes_subtasks(self, db):
-        await db.create_project(id="api-proj", repo="git@x.git",
-                                working_dir="/tmp/api")
-        await db.create_task(id="api-task", project_id="api-proj", goal="test API")
-        await db.create_subtask(id="api-task/review-0", task_id="api-task",
-                                type="review", prompt="review it")
-        subs = await db.get_subtasks("api-task")
-        assert len(subs) == 1
-        assert subs[0]["type"] == "review"

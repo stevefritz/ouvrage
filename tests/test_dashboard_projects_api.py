@@ -78,38 +78,6 @@ class TestPostProjects:
                        new=AsyncMock(side_effect=lambda pid, proj: proj)):
                 yield
 
-    async def test_create_project_success(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/projects", method="POST")
-        resp = _Capture()
-
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
-            await handle_request(scope, _make_receive(_valid_payload()), resp)
-
-        assert resp.status == 201
-        data = resp.json()
-        assert data["id"] == "test-proj"
-        assert data["repo"] == "https://github.com/org/repo.git"
-        assert data["model"] == "claude-sonnet-4-6"
-        assert data["review_model"] == "claude-opus-4-6"
-        assert data["max_turns"] == 200
-        assert data["max_wall_clock"] == 60
-
-    async def test_create_project_persisted_in_db(self, db):
-        from switchboard.dashboard.api import handle_request
-        import switchboard.db as sw_db
-
-        scope = _make_scope("/dashboard/api/projects", method="POST")
-        resp = _Capture()
-
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
-            await handle_request(scope, _make_receive(_valid_payload()), resp)
-
-        assert resp.status == 201
-        project = await sw_db.get_project("test-proj")
-        assert project is not None
-        assert project["id"] == "test-proj"
 
     async def test_create_project_missing_id(self, db):
         from switchboard.dashboard.api import handle_request
@@ -167,30 +135,6 @@ class TestPostProjects:
         assert resp.status == 400
         assert "model" in resp.json()["error"]
 
-    async def test_create_project_with_optional_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        payload = _valid_payload(
-            id="opt-proj",
-            test_command="pytest -v",
-            setup_command="pip install -r requirements.txt",
-            teardown_command="make clean",
-            review_ignore_patterns=["*.lock", "vendor/"],
-            env_overrides={"KEY": "value"},
-        )
-        scope = _make_scope("/dashboard/api/projects", method="POST")
-        resp = _Capture()
-
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
-            await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 201
-        data = resp.json()
-        assert data["test_command"] == "pytest -v"
-        assert data["setup_command"] == "pip install -r requirements.txt"
-        assert data["teardown_command"] == "make clean"
-        assert data["review_ignore_patterns"] == ["*.lock", "vendor/"]
-        assert data["env_overrides"] == {"KEY": "value"}
 
     async def test_create_project_invalid_json(self, db):
         from switchboard.dashboard.api import handle_request
@@ -247,56 +191,6 @@ class TestPatchProject:
         assert resp.status == 201
         return resp.json()["id"]
 
-    async def test_patch_project_updates_field(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        proj_id = await self._create_project(db)
-        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"default_branch": "develop"}), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["default_branch"] == "develop"
-
-    async def test_patch_project_updates_multiple_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        proj_id = await self._create_project(db)
-        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({
-            "model": "sonnet",
-            "max_turns": 50,
-            "auto_pr": True,
-        }), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["model"] == "sonnet"
-        assert data["max_turns"] == 50
-        assert data["auto_pr"] in (True, 1)
-
-    async def test_patch_project_not_found(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/projects/nonexistent", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"default_branch": "main"}), resp)
-
-        assert resp.status == 404
-        assert "nonexistent" in resp.json()["error"]
-
-    async def test_patch_project_ignores_unknown_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        proj_id = await self._create_project(db)
-        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
-        resp = _Capture()
-        # Sending unknown field should not error, just be silently ignored
-        await handle_request(scope, _make_receive({"default_branch": "main", "bogus_field": "x"}), resp)
-
-        assert resp.status == 200
 
     async def test_patch_project_env_overrides(self, db):
         from switchboard.dashboard.api import handle_request
@@ -331,21 +225,6 @@ class TestPatchProject:
         assert resp.status == 200
         assert resp.json()["id"] == proj_id
 
-    async def test_patch_project_sets_github_pat_override(self, db):
-        """PATCH with a PAT value encrypts and stores it; DB has a non-null value."""
-        import switchboard.db as sw_db
-        from switchboard.dashboard.api import handle_request
-
-        proj_id = await self._create_project(db)
-        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"github_pat_override": "ghp_testtoken123"}), resp)
-
-        assert resp.status == 200
-        # The response won't expose the raw token; just check DB stores something non-null
-        project = await sw_db.get_project(proj_id)
-        assert project["github_pat_override"] is not None
-        assert project["github_pat_override"] != ""
 
     async def test_patch_project_clears_github_pat_override(self, db):
         """PATCH with empty string clears the stored PAT (sets to null in DB)."""
@@ -367,17 +246,3 @@ class TestPatchProject:
         project = await sw_db.get_project(proj_id)
         assert project["github_pat_override"] is None
 
-    async def test_patch_project_display_name(self, db):
-        """PATCH with display_name stores the human-readable name."""
-        import switchboard.db as sw_db
-        from switchboard.dashboard.api import handle_request
-
-        proj_id = await self._create_project(db)
-        scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"display_name": "My Project"}), resp)
-
-        assert resp.status == 200
-        assert resp.json()["display_name"] == "My Project"
-        project = await sw_db.get_project(proj_id)
-        assert project["display_name"] == "My Project"

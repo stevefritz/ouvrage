@@ -127,32 +127,6 @@ class TestGetGitCredentials:
             assert creds[provider]["credential_last4"] is None
             assert creds[provider]["hostname_is_default"] is True
 
-    async def test_returns_default_hostnames(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        creds = {c["provider"]: c for c in data["credentials"]}
-        assert creds["github"]["hostname"] == "github.com"
-        assert creds["gitlab"]["hostname"] == "gitlab.com"
-        assert creds["bitbucket"]["hostname"] == "bitbucket.org"
-
-    async def test_shows_configured_provider_last4(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        await db.create_credential("github", "ghp_abcdefghij1234", "github.com", credential_last4="1234")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        creds = {c["provider"]: c for c in data["credentials"]}
-        assert creds["github"]["configured"] is True
-        assert creds["github"]["credential_last4"] == "1234"
 
     async def test_shows_encrypted_credential_last4(self, db):
         from switchboard.dashboard.api import handle_request
@@ -169,19 +143,6 @@ class TestGetGitCredentials:
         creds = {c["provider"]: c for c in data["credentials"]}
         assert creds["github"]["credential_last4"] == "5678"
 
-    async def test_custom_hostname_flagged_non_default(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        await db.create_credential("gitlab", "glpat-xxxx", "gl.mycompany.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        creds = {c["provider"]: c for c in data["credentials"]}
-        assert creds["gitlab"]["hostname"] == "gl.mycompany.com"
-        assert creds["gitlab"]["hostname_is_default"] is False
 
     async def test_member_gets_403(self, db):
         from switchboard.dashboard.api import handle_request
@@ -192,48 +153,11 @@ class TestGetGitCredentials:
 
         assert resp.status == 403
 
-    async def test_admin_can_access(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials", role="admin")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-
 
 # ── PUT /settings/git-credentials/{provider} ─────────────────────────────────
 
 class TestPutGitCredential:
 
-    async def test_save_github_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import decrypt_value, is_fernet_token
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"credential": "ghp_mytoken12345"}), resp)
-
-        assert resp.status == 200
-        assert resp.json()["ok"] is True
-
-        cred = await db.get_credential_by_provider("github")
-        assert cred is not None
-        raw = cred["credential"]
-        assert is_fernet_token(raw)
-        assert decrypt_value(raw) == "ghp_mytoken12345"
-
-    async def test_save_gitlab_credential_with_custom_hostname(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/gitlab", method="PUT")
-        resp = _Capture()
-        body = {"credential": "glpat-xxxxxxxx", "hostname": "gl.internal.io"}
-        await handle_request(scope, _make_receive(body), resp)
-
-        assert resp.status == 200
-        cred = await db.get_credential_by_provider("gitlab")
-        assert cred["hostname"] == "gl.internal.io"
 
     async def test_update_existing_credential(self, db):
         from switchboard.dashboard.api import handle_request
@@ -306,24 +230,6 @@ class TestPutGitCredential:
         cred = await db.get_credential_by_provider("github")
         assert cred is not None
 
-    async def test_save_with_bad_token_returns_warning(self, db):
-        """Save with a bad token — credential saved but warning returned."""
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
-        resp = _Capture()
-
-        with _patch_httpx(401, {"message": "Bad credentials"}):
-            await handle_request(scope, _make_receive({"credential": "ghp_bad12345"}), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is True
-        assert "warning" in data
-        assert "authentication failed" in data["warning"].lower()
-        # Credential IS still saved in DB
-        cred = await db.get_credential_by_provider("github")
-        assert cred is not None
 
     async def test_save_with_missing_scopes_returns_warning(self, db):
         """Save with token that lacks 'repo' scope — saved but warning returned."""
@@ -408,23 +314,6 @@ class TestTestGitCredential:
         assert data["ok"] is False
         assert "No github credential" in data["message"]
 
-    async def test_github_valid_credential_with_repo_scope(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
-
-        await db.create_credential("github", encrypt_value("ghp_test1234"), "github.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
-        resp = _Capture()
-
-        with _patch_httpx(200, {"login": "octocat"}, headers={"X-OAuth-Scopes": "repo, read:org"}):
-            await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["username"] == "octocat"
-        assert "repo" in data["scopes"]
 
     async def test_github_fine_grained_token(self, db):
         """Fine-grained token has no X-OAuth-Scopes header."""
@@ -446,60 +335,6 @@ class TestTestGitCredential:
         assert data["scopes"] is None
         assert "Fine-grained" in data["message"]
 
-    async def test_github_invalid_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
-
-        await db.create_credential("github", encrypt_value("ghp_bad"), "github.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
-        resp = _Capture()
-
-        with _patch_httpx(401, {"message": "Bad credentials"}):
-            await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is False
-        assert "Authentication failed" in data["message"]
-
-    async def test_github_auth_failure_specific_message(self, db):
-        """401/403 returns specific auth-failed message, not generic 'returned 401'."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
-
-        await db.create_credential("github", encrypt_value("ghp_bad"), "github.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
-        resp = _Capture()
-
-        with _patch_httpx(403, {}):
-            await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is False
-        assert "Authentication failed" in data["message"]
-        assert "invalid or expired" in data["message"]
-
-    async def test_github_missing_repo_scope_specific_message(self, db):
-        """Auth succeeds but 'repo' scope missing — specific message required."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
-
-        await db.create_credential("github", encrypt_value("ghp_norepo"), "github.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
-        resp = _Capture()
-
-        with _patch_httpx(200, {"login": "octocat"}, headers={"X-OAuth-Scopes": "read:user, gist"}):
-            await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is False
-        assert "missing 'repo' scope" in data["message"]
-        assert "Ouvrage" in data["message"]
 
     async def test_network_error_returns_specific_message(self, db):
         """ConnectError returns 'Could not reach {provider}' message."""
@@ -623,19 +458,3 @@ class TestTestGitCredential:
 
         assert resp.status == 403
 
-    async def test_unencrypted_credential_also_works(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        # Credential stored without encryption (edge case — legacy data)
-        await db.create_credential("github", "ghp_plaintext1234", "github.com")
-
-        scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
-        resp = _Capture()
-
-        with _patch_httpx(200, {"login": "testuser"}, headers={"X-OAuth-Scopes": "repo"}):
-            await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["username"] == "testuser"

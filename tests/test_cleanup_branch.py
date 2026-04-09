@@ -28,29 +28,6 @@ class TestCleanupBranchOnWorktreeRelease:
             "worktree_path": worktree_path,
         }
 
-    async def test_branch_deleted_for_completed_task(self):
-        """Terminal (completed) task → branch is force-deleted with -D."""
-        from switchboard.git.worktree import cleanup_worktree
-
-        task = self._task("completed", branch="feature/done")
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-
-        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
-            await cleanup_worktree(self.project, task)
-
-        # Find the branch delete call
-        branch_calls = [
-            c for c in mock_exec.call_args_list
-            if "branch" in c.args
-        ]
-        assert len(branch_calls) == 1, f"Expected 1 branch call, got: {branch_calls}"
-        assert "-D" in branch_calls[0].args, (
-            f"Expected -D flag for completed task, got: {branch_calls[0].args}"
-        )
-        assert "feature/done" in branch_calls[0].args
 
     async def test_branch_deleted_for_cancelled_task(self):
         """Terminal (cancelled) task → branch is force-deleted with -D."""

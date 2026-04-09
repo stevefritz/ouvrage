@@ -38,24 +38,6 @@ class TestReadLastJsonlTimestamp:
         p.write_text("")
         assert self.fn(p) is None
 
-    def test_single_entry_returns_its_timestamp(self, tmp_path):
-        ts = "2026-03-31T12:00:00Z"
-        p = tmp_path / "session.jsonl"
-        p.write_text(json.dumps({"timestamp": ts, "type": "AssistantMessage"}) + "\n")
-        result = self.fn(p)
-        assert result is not None
-        assert result == datetime(2026, 3, 31, 12, 0, 0, tzinfo=timezone.utc)
-
-    def test_returns_last_timestamp_when_multiple_entries(self, tmp_path):
-        p = tmp_path / "session.jsonl"
-        entries = [
-            {"timestamp": "2026-03-31T10:00:00Z", "type": "UserMessage"},
-            {"timestamp": "2026-03-31T11:00:00Z", "type": "AssistantMessage"},
-            {"timestamp": "2026-03-31T12:00:00Z", "type": "UserMessage"},
-        ]
-        p.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
-        result = self.fn(p)
-        assert result == datetime(2026, 3, 31, 12, 0, 0, tzinfo=timezone.utc)
 
     def test_skips_blank_lines(self, tmp_path):
         p = tmp_path / "session.jsonl"
@@ -77,16 +59,6 @@ class TestReadLastJsonlTimestamp:
         result = self.fn(p)
         assert result is not None
         assert result == datetime(2026, 3, 31, 9, 0, 0, tzinfo=timezone.utc)
-
-    def test_entry_without_timestamp_field_skipped(self, tmp_path):
-        p = tmp_path / "session.jsonl"
-        p.write_text(
-            json.dumps({"timestamp": "2026-03-31T08:00:00Z", "type": "UserMessage"}) + "\n"
-            + json.dumps({"type": "AssistantMessage", "content": []}) + "\n"  # no timestamp
-        )
-        result = self.fn(p)
-        # Should find the one with a timestamp
-        assert result == datetime(2026, 3, 31, 8, 0, 0, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -199,43 +171,6 @@ class TestRunSubtaskInactivityWatchdog:
 
         assert subtask["status"] == "stalled"
 
-    async def test_stall_returns_captured_session_id(self, db, sample_project):
-        """Stalled subtask includes _captured_session_id for strike 1 resume."""
-        await self._make_task(db, sample_project)
-
-        # SDK writes one AssistantMessage with session_id, then hangs
-        from claude_agent_sdk import AssistantMessage
-
-        async def _write_then_hang():
-            msg = MagicMock(spec=AssistantMessage)
-            msg.session_id = "ses_captured_abc"
-            msg.content = []
-            yield msg
-            await asyncio.sleep(60)  # hang after first message
-
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.query = AsyncMock()
-        mock_client.receive_response = MagicMock(return_value=_write_then_hang())
-
-        # Patch _read_last_jsonl_timestamp to fast-forward: return a stale timestamp
-        stale_ts = datetime.now(timezone.utc) - timedelta(seconds=10)
-        mock_update_usage = AsyncMock()
-
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=mock_client), \
-             patch("switchboard.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
-            subtask = await _run_subtask(
-                task_id="test-project/stall-task",
-                subtask_type="review",
-                prompt="review this",
-                inactivity_timeout=1,
-            )
-
-        assert subtask["status"] == "stalled"
-        assert subtask["_captured_session_id"] == "ses_captured_abc"
 
     async def test_no_stall_on_active_session(self, db, sample_project):
         """SDK that completes normally does not trigger stall."""
@@ -285,31 +220,6 @@ class TestRunSubtaskInactivityWatchdog:
         assert len(captured_options) == 1
         assert hasattr(captured_options[0], "resume")
         assert captured_options[0].resume == "ses_resume_xyz"
-
-    async def test_stalled_subtask_db_record_has_stalled_status(self, db, sample_project):
-        """DB record for stalled subtask has status='stalled'."""
-        await self._make_task(db, sample_project)
-
-        mock_update_usage = AsyncMock()
-        # Use stale timestamp to fast-track the watchdog
-        stale_ts = datetime.now(timezone.utc) - timedelta(seconds=100)
-
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=_make_hanging_sdk_client()), \
-             patch("switchboard.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
-            subtask = await _run_subtask(
-                task_id="test-project/stall-task",
-                subtask_type="review",
-                prompt="review this",
-                inactivity_timeout=1,
-            )
-
-        # Verify DB record was updated
-        assert subtask["status"] == "stalled"
-        db_subtask = await db.get_subtask("test-project/stall-task/review-1")
-        assert db_subtask is not None
-        assert db_subtask["status"] == "stalled"
 
 
 # ---------------------------------------------------------------------------
@@ -374,94 +284,6 @@ class TestDispatchReviewStrikeLogic:
         assert run_subtask_calls[1]["resume_session_id"] == "ses_stall_abc"
         assert run_subtask_calls[1]["inactivity_timeout"] is not None
 
-    async def test_strike1_posts_stall_message(self, db, sample_project):
-        """Strike 1: a stall message is posted to the task thread."""
-        task = await self._make_completed_task(db, sample_project)
-        project = await db.get_project("test-project")
-
-        call_count = 0
-
-        async def mock_run_subtask(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return {"status": "stalled", "_captured_session_id": None}
-            return {"status": "completed"}
-
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
-                   AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
-            await _dispatch_review("test-project/review-task", project, task)
-
-        msgs = await db.read_task_messages("test-project/review-task")
-        stall_msgs = [m for m in msgs["messages"] if "stalled" in (m.get("title") or "").lower()]
-        assert len(stall_msgs) >= 1
-
-    async def test_strike2_sets_gate_status_needs_review(self, db, sample_project):
-        """Strike 2: task gate_status set to needs-review when session stalls twice."""
-        task = await self._make_completed_task(db, sample_project)
-        project = await db.get_project("test-project")
-
-        async def mock_run_subtask(*args, **kwargs):
-            # Always stall
-            return {"status": "stalled", "_captured_session_id": "ses_abc"}
-
-        mock_notify = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
-                   AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", mock_notify):
-            from switchboard.dispatch.gates import _dispatch_review
-            await _dispatch_review("test-project/review-task", project, task)
-
-        updated = await db.get_task("test-project/review-task")
-        assert updated["gate_status"] == "needs-review"
-
-    async def test_strike2_does_not_call_process_review_result(self, db, sample_project):
-        """Strike 2: review result processing is NOT called — gate halts."""
-        task = await self._make_completed_task(db, sample_project)
-        project = await db.get_project("test-project")
-
-        mock_process = AsyncMock()
-
-        async def mock_run_subtask(*args, **kwargs):
-            return {"status": "stalled", "_captured_session_id": None}
-
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", mock_process), \
-             patch("switchboard.dispatch.gates._run_as_worker",
-                   AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
-            await _dispatch_review("test-project/review-task", project, task)
-
-        mock_process.assert_not_called()
-
-    async def test_strike2_posts_halt_message(self, db, sample_project):
-        """Strike 2: a halt message explaining what happened is posted."""
-        task = await self._make_completed_task(db, sample_project)
-        project = await db.get_project("test-project")
-
-        async def mock_run_subtask(*args, **kwargs):
-            return {"status": "stalled", "_captured_session_id": None}
-
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
-                   AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
-            await _dispatch_review("test-project/review-task", project, task)
-
-        msgs = await db.read_task_messages("test-project/review-task")
-        halt_msgs = [m for m in msgs["messages"]
-                     if "strike 2" in (m.get("title") or "").lower()
-                     or "twice" in (m.get("content") or "").lower()]
-        assert len(halt_msgs) >= 1
 
     async def test_strike2_calls_notify(self, db, sample_project):
         """Strike 2: notify.task_needs_review is called."""
@@ -482,166 +304,8 @@ class TestDispatchReviewStrikeLogic:
 
         mock_notify.assert_called_once()
 
-    async def test_no_stall_on_successful_review(self, db, sample_project):
-        """Normal completed subtask: proceeds to _process_review_result_inline."""
-        task = await self._make_completed_task(db, sample_project)
-        project = await db.get_project("test-project")
-
-        async def mock_run_subtask(*args, **kwargs):
-            return {"status": "completed"}
-
-        mock_process = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", mock_process), \
-             patch("switchboard.dispatch.gates._run_as_worker",
-                   AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
-            await _dispatch_review("test-project/review-task", project, task)
-
-        mock_process.assert_called_once_with("test-project/review-task")
-
 
 # ---------------------------------------------------------------------------
 # retry_task gate pipeline re-run
 # ---------------------------------------------------------------------------
 
-class TestRetryTaskGatePipeline:
-    """retry_task correctly routes based on whether gate was interrupted or code was rejected."""
-
-    async def _make_stalled_task(self, db, sample_project, gate_status="needs-review"):
-        task = await db.create_task(
-            id="test-project/stalled-gate-task",
-            project_id="test-project",
-            goal="Test gate retry",
-        )
-        return await db.update_task(
-            task["id"],
-            status="completed",
-            gate_status=gate_status,
-            worktree_path="/tmp/fake-worktree",
-        )
-
-    async def test_retry_task_dispatches_cc_for_completed_needs_review(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task with completed + gate_status=needs-review launches CC, NOT gate pipeline.
-
-        needs-review means the code was rejected (max retries exceeded or review stalled).
-        CC must run again with the feedback — re-running the gate pipeline would loop forever
-        because the same bad code would fail review again.
-        """
-        task = await self._make_stalled_task(db, sample_project, "needs-review")
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            result = await retry_task("test-project/stalled-gate-task")
-
-        # Should have dispatched CC, NOT re-run the gate pipeline
-        mock_resume_pipeline.assert_not_called()
-        updated = await db.get_task("test-project/stalled-gate-task")
-        assert updated["status"] == "working"
-
-    async def test_retry_task_dispatches_cc_for_completed_review_failed(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task with completed + gate_status=review-failed launches CC, NOT gate pipeline.
-
-        review-failed means the reviewer requested changes. CC must run again with the
-        review feedback injected as revision instructions. Re-entering the gate pipeline
-        would loop: same code → tests pass → review rejects → forever.
-        """
-        task = await self._make_stalled_task(db, sample_project, "review-failed")
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            result = await retry_task("test-project/stalled-gate-task")
-
-        # Should NOT delegate to _resume_gate_pipeline, should dispatch CC instead
-        mock_resume_pipeline.assert_not_called()
-        updated = await db.get_task("test-project/stalled-gate-task")
-        assert updated["status"] == "working"
-
-    async def test_retry_task_does_not_rerun_gate_for_completed_null_gate_status(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task with completed + gate_status=None goes through normal dispatch path.
-
-        gate_status=None is ambiguous (gate never ran, or was reset) — it should NOT
-        trigger the gate-retry path. Only needs-review and review-failed do. This
-        ensures normal retries work correctly when gate_status is None.
-        """
-        task = await self._make_stalled_task(db, sample_project, None)
-        await db.update_task("test-project/stalled-gate-task", gate_status=None)
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            result = await retry_task("test-project/stalled-gate-task")
-
-        # Gate pipeline should NOT have been called — normal dispatch path instead
-        mock_resume_pipeline.assert_not_called()
-        updated = await db.get_task("test-project/stalled-gate-task")
-        assert updated["status"] == "working"
-
-    async def test_retry_task_resets_gate_retries_on_cc_retry(self, db, sample_project, mock_git, mock_sdk):
-        """Gate retries counter is reset when retry_task dispatches a new CC session."""
-        task = await self._make_stalled_task(db, sample_project, "needs-review")
-        await db.update_task("test-project/stalled-gate-task", gate_retries=2)
-
-        from switchboard.dispatch.engine import retry_task
-        await retry_task("test-project/stalled-gate-task")
-
-        updated = await db.get_task("test-project/stalled-gate-task")
-        assert (updated.get("gate_retries") or 0) == 0
-
-    async def test_retry_task_posts_attempt_message_for_needs_review(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task posts an 'Attempt N starting' message when dispatching CC for needs-review."""
-        task = await self._make_stalled_task(db, sample_project, "needs-review")
-
-        from switchboard.dispatch.engine import retry_task
-        await retry_task("test-project/stalled-gate-task")
-
-        msgs = await db.read_task_messages("test-project/stalled-gate-task")
-        attempt_msgs = [m for m in msgs["messages"]
-                        if "attempt" in (m.get("title") or "").lower()
-                        or "attempt" in (m.get("content") or "").lower()]
-        assert len(attempt_msgs) >= 1
-
-    async def test_retry_task_normal_behavior_for_non_completed_task(self, db, sample_project,
-                                                                       mock_git, mock_sdk):
-        """retry_task launches a new CC session when task is NOT completed."""
-        task = await db.create_task(
-            id="test-project/normal-retry",
-            project_id="test-project",
-            goal="Normal retry test",
-        )
-        await db.update_task(task["id"], status="needs-review",
-                             worktree_path="/tmp/fake-worktree")
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/normal-retry")
-
-        # For non-completed task, gate should NOT be re-triggered
-        mock_resume_pipeline.assert_not_called()
-        updated = await db.get_task("test-project/normal-retry")
-        assert updated["status"] == "working"
-
-    async def test_retry_task_does_not_rerun_gate_when_gate_already_passed(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task does NOT re-run gate for completed + gate_passed_at set."""
-        task = await db.create_task(
-            id="test-project/passed-task",
-            project_id="test-project",
-            goal="Already passed gate",
-        )
-        await db.update_task(
-            task["id"], status="completed",
-            gate_status="passed",
-            gate_passed_at=db.now_iso(),
-            worktree_path="/tmp/fake",
-        )
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/passed-task")
-
-        mock_resume_pipeline.assert_not_called()

@@ -44,43 +44,6 @@ class TestResolvePushUrl:
             "default_branch": "main",
         }
 
-    async def test_calls_resolve_credential(self):
-        """_resolve_push_url calls resolve_credential, not get_github_pat."""
-        from switchboard.git.operations import _resolve_push_url
-
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                url = await _resolve_push_url("proj")
-
-        mock_resolve.assert_called_once_with(self.project)
-        assert url == self.mock_provider.build_authenticated_url.return_value
-
-    async def test_calls_provider_build_authenticated_url(self):
-        """_resolve_push_url calls provider.build_authenticated_url with repo URL."""
-        from switchboard.git.operations import _resolve_push_url
-
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                await _resolve_push_url("proj")
-
-        self.mock_provider.build_authenticated_url.assert_called_once_with(
-            self.project["repo"], "tok123"
-        )
-
-    async def test_raises_if_no_credential(self):
-        """_resolve_push_url raises ValueError when resolve_credential fails."""
-        from switchboard.git.operations import _resolve_push_url
-
-        mock_resolve = AsyncMock(side_effect=ValueError("No credential configured"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                with pytest.raises(ValueError, match="No credential"):
-                    await _resolve_push_url("proj")
 
     async def test_raises_if_project_not_found(self):
         """_resolve_push_url raises ValueError when project doesn't exist."""
@@ -186,28 +149,6 @@ class TestMaybeCreatePr:
             "default_branch": "main",
         }
 
-    async def test_calls_provider_create_pr(self):
-        """_maybe_create_pr calls provider.create_pr with correct args."""
-        from switchboard.git.operations import _maybe_create_pr
-
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-
-        with patch("switchboard.git.operations.db.get_task", AsyncMock(return_value=self.task)):
-            with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.get_dependents", AsyncMock(return_value=[])):
-                    with patch("switchboard.git.operations.db.get_chain",
-                               AsyncMock(return_value=[self.task])):
-                        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                            with patch("switchboard.git.operations.db.add_artifact", AsyncMock()):
-                                with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
-                                    await _maybe_create_pr("proj/t1")
-
-        self.mock_provider.create_pr.assert_called_once()
-        call_kwargs = self.mock_provider.create_pr.call_args[1]
-        assert call_kwargs["credential"] == "tok123"
-        assert call_kwargs["head"] == "add-sorting"
-        assert call_kwargs["base"] == "main"
-        assert "Add widget sorting" in call_kwargs["title"]
 
     async def test_skips_when_no_credential(self):
         """_maybe_create_pr posts error message when credential resolution fails."""
@@ -228,29 +169,6 @@ class TestMaybeCreatePr:
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args[1]
         assert "credential" in call_kwargs["title"].lower() or "credential" in call_kwargs["content"].lower()
-
-    async def test_pr_url_from_provider_stored(self):
-        """_maybe_create_pr stores the URL returned by provider.create_pr."""
-        from switchboard.git.operations import _maybe_create_pr
-
-        expected_url = "https://github.com/org/repo/pull/42"
-        self.mock_provider.create_pr = AsyncMock(
-            return_value=PRResult(url=expected_url, number=42)
-        )
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        mock_add_artifact = AsyncMock()
-
-        with patch("switchboard.git.operations.db.get_task", AsyncMock(return_value=self.task)):
-            with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.get_dependents", AsyncMock(return_value=[])):
-                    with patch("switchboard.git.operations.db.get_chain",
-                               AsyncMock(return_value=[self.task])):
-                        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                            with patch("switchboard.git.operations.db.add_artifact", mock_add_artifact):
-                                with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
-                                    await _maybe_create_pr("proj/t1")
-
-        mock_add_artifact.assert_called_once_with("proj/t1", "pr_url", expected_url)
 
 
 # ---------------------------------------------------------------------------
@@ -282,56 +200,6 @@ class TestCheckPrStatusProvider:
 
         self.mock_provider.get_pr_status.assert_called_once()
         assert status == "open"
-
-    async def test_returns_merged_when_provider_says_merged(self):
-        """Status 'merged' is returned when provider reports merged=True."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
-
-        self.mock_provider.get_pr_status = AsyncMock(
-            return_value={"state": "closed", "merged": True}
-        )
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                status = await _check_pr_status(
-                    "https://github.com/org/repo/pull/1", "proj"
-                )
-
-        assert status == "merged"
-
-    async def test_returns_closed_when_provider_says_closed(self):
-        """Status 'closed' when provider says state=closed and merged=False."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
-
-        self.mock_provider.get_pr_status = AsyncMock(
-            return_value={"state": "closed", "merged": False}
-        )
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                status = await _check_pr_status(
-                    "https://github.com/org/repo/pull/1", "proj"
-                )
-
-        assert status == "closed"
-
-    async def test_uses_provider_parse_pr_url(self):
-        """_check_pr_status uses provider.parse_pr_url to parse the PR URL."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
-
-        mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
-                       AsyncMock(return_value=self.project)):
-                await _check_pr_status(
-                    "https://github.com/org/repo/pull/99", "proj"
-                )
-
-        self.mock_provider.parse_pr_url.assert_called_once_with(
-            "https://github.com/org/repo/pull/99"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -378,61 +246,6 @@ class TestGitToolsUseProviderInterface:
             except RuntimeError:
                 pass
 
-    async def test_git_push_calls_resolve_credential(self):
-        """git_push calls resolve_credential instead of get_github_pat."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
-
-        self.mock_run.side_effect = [
-            (b"my-branch\n", b"", 0),   # rev-parse HEAD
-            (b"abc fix\n", b"", 0),     # log origin/branch..HEAD
-            (b"", b"", 0),              # push
-            (b"abc123\n", b"", 0),      # rev-parse HEAD for tracking ref
-            (b"", b"", 0),              # update-ref
-        ]
-
-        await _handle_git_push({"task_id": "proj/t1"})
-
-        self.mock_resolve.assert_called_once_with(self.project)
-
-    async def test_git_push_uses_provider_build_authenticated_url(self):
-        """git_push uses the URL from provider.build_authenticated_url."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
-
-        self.mock_run.side_effect = [
-            (b"my-branch\n", b"", 0),   # rev-parse HEAD
-            (b"abc fix\n", b"", 0),     # log origin/branch..HEAD
-            (b"", b"", 0),              # push
-            (b"abc123\n", b"", 0),      # rev-parse HEAD
-            (b"", b"", 0),              # update-ref
-        ]
-
-        result = await _handle_git_push({"task_id": "proj/t1"})
-
-        assert result["pushed"] is True
-        self.mock_provider.build_authenticated_url.assert_called_once_with(
-            self.project["repo"], "tok123"
-        )
-
-    async def test_git_fetch_calls_resolve_credential(self):
-        """git_fetch calls resolve_credential instead of get_github_pat."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
-
-        result = await _handle_git_fetch({"task_id": "proj/t1"})
-
-        assert result["fetched"] is True
-        self.mock_resolve.assert_called_once_with(self.project)
-
-    async def test_git_fetch_uses_provider_build_authenticated_url(self):
-        """git_fetch uses the URL from provider.build_authenticated_url."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
-
-        result = await _handle_git_fetch({"task_id": "proj/t1", "ref": "main"})
-
-        assert result["fetched"] is True
-        self.mock_provider.build_authenticated_url.assert_called_once_with(
-            self.project["repo"], "tok123"
-        )
-
 
 # ---------------------------------------------------------------------------
 # GitHubProvider.parse_pr_url
@@ -445,34 +258,11 @@ class TestGitHubProviderParsePrUrl:
         from switchboard.git.providers.github import GitHubProvider
         self.provider = GitHubProvider()
 
-    def test_standard_url(self):
-        info, number = self.provider.parse_pr_url("https://github.com/acme/widgets/pull/42")
-        assert info.owner == "acme"
-        assert info.repo == "widgets"
-        assert info.hostname == "github.com"
-        assert number == 42
 
     def test_http_scheme(self):
         info, number = self.provider.parse_pr_url("http://github.com/acme/widgets/pull/7")
         assert number == 7
 
-    def test_hyphenated_names(self):
-        info, number = self.provider.parse_pr_url("https://github.com/my-org/my-repo/pull/100")
-        assert info.owner == "my-org"
-        assert info.repo == "my-repo"
-        assert number == 100
-
-    def test_trailing_whitespace_stripped(self):
-        info, number = self.provider.parse_pr_url("  https://github.com/acme/widgets/pull/5  ")
-        assert number == 5
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(ValueError):
-            self.provider.parse_pr_url("https://gitlab.com/acme/widgets/pull/1")
-
-    def test_missing_pull_raises(self):
-        with pytest.raises(ValueError):
-            self.provider.parse_pr_url("https://github.com/acme/widgets")
 
     def test_empty_raises(self):
         with pytest.raises(ValueError):

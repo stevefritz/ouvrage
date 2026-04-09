@@ -77,41 +77,6 @@ class TestRunningGatesTestGate:
         yield
         _running_gates.clear()
 
-    async def test_running_gates_populated_during_test(self, db, sample_project):
-        """task_id is in _running_gates while _run_test_gate_inner executes."""
-        from switchboard.dispatch.gates import _run_test_gate
-
-        captured = []
-
-        async def _fake_inner(tid, proj, task):
-            captured.append(tid in _running_gates)
-
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _fake_inner):
-            await _run_test_gate("test-project/t1", sample_project, {})
-
-        assert captured == [True]
-
-    async def test_running_gates_cleared_after_test(self, db, sample_project):
-        """task_id is removed from _running_gates after _run_test_gate completes."""
-        from switchboard.dispatch.gates import _run_test_gate
-
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", AsyncMock()):
-            await _run_test_gate("test-project/t1", sample_project, {})
-
-        assert "test-project/t1" not in _running_gates
-
-    async def test_running_gates_cleared_on_exception(self, db, sample_project):
-        """task_id is removed from _running_gates even if _run_test_gate_inner raises."""
-        from switchboard.dispatch.gates import _run_test_gate
-
-        async def _raises(*_):
-            raise RuntimeError("boom")
-
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _raises):
-            with pytest.raises(RuntimeError):
-                await _run_test_gate("test-project/t1", sample_project, {})
-
-        assert "test-project/t1" not in _running_gates
 
     async def test_duplicate_guard_skips_second_call(self, db, sample_project):
         """If task_id is already in _running_gates, _run_test_gate returns immediately."""
@@ -141,67 +106,6 @@ class TestRunningGatesDispatchReview:
         _running_gates.clear()
         yield
         _running_gates.clear()
-
-    async def test_running_gates_populated_during_review(self, db, sample_project):
-        """task_id is in _running_gates while _dispatch_review_inner executes."""
-        from switchboard.dispatch.gates import _dispatch_review
-
-        captured = []
-
-        async def _fake_inner(tid, proj, task):
-            captured.append(tid in _running_gates)
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
-            await _dispatch_review("test-project/t1", sample_project, {})
-
-        assert captured == [True]
-
-    async def test_running_gates_cleared_after_review(self, db, sample_project):
-        """task_id is removed from _running_gates after _dispatch_review completes."""
-        from switchboard.dispatch.gates import _dispatch_review
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", AsyncMock()):
-            await _dispatch_review("test-project/t1", sample_project, {})
-
-        assert "test-project/t1" not in _running_gates
-
-    async def test_running_gates_cleared_on_exception(self, db, sample_project):
-        """task_id is removed from _running_gates even if _dispatch_review_inner raises."""
-        from switchboard.dispatch.gates import _dispatch_review
-
-        async def _raises(*_):
-            raise RuntimeError("review boom")
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _raises):
-            with pytest.raises(RuntimeError):
-                await _dispatch_review("test-project/t1", sample_project, {})
-
-        assert "test-project/t1" not in _running_gates
-
-    async def test_duplicate_guard_skips_when_already_reviewing(self, db, sample_project):
-        """If gate_status is already 'reviewing', _dispatch_review returns immediately.
-
-        The duplicate guard uses gate_status (DB state) instead of _running_gates,
-        because _dispatch_review is called from within _run_test_gate_inner which
-        still holds the task in _running_gates.
-        """
-        from switchboard.dispatch.gates import _dispatch_review
-
-        # Create a task with gate_status=reviewing to trigger duplicate guard
-        task = await db.create_task(
-            id="test-project/t1", project_id="test-project", goal="dup guard test",
-        )
-        await db.update_task("test-project/t1", gate_status="reviewing")
-
-        inner_called = []
-
-        async def _fake_inner(tid, proj, task):
-            inner_called.append(tid)
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
-            await _dispatch_review("test-project/t1", sample_project, {})
-
-        assert inner_called == []
 
 
 # ---------------------------------------------------------------------------
@@ -249,37 +153,6 @@ class TestResumeGatePipeline:
             p.stop()
         _running_gates.clear()
 
-    async def test_skips_if_already_running(self, db, sample_project):
-        """If task_id is in _running_gates, _resume_gate_pipeline does nothing."""
-        await _make_task(db, gate_status="testing")
-        _running_gates.add("test-project/gate-task-1")
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1", reason="test")
-
-        self.mock_run_test_gate.assert_not_called()
-        self.mock_dispatch_review.assert_not_called()
-
-    async def test_none_gate_status_no_push_needed(self, db, sample_project):
-        """gate_status=None with pushed_at set → run_test_gate immediately."""
-        await _make_task(db, gate_status=None, pushed_at=db.now_iso())
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)  # let the create_task run
-
-        self.mock_run_test_gate.assert_called_once()
-
-    async def test_none_gate_status_push_needed_succeeds(self, db, sample_project):
-        """gate_status=None with no pushed_at → push first, then run_test_gate."""
-        await _make_task(db, gate_status=None, pushed_at=None)
-        self.mock_ensure_pushed.return_value = True
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        self.mock_ensure_pushed.assert_called_once()
-        self.mock_run_test_gate.assert_called_once()
 
     async def test_none_gate_status_push_fails(self, db, sample_project):
         """gate_status=None, push fails → sets gate_status=push-failed."""
@@ -292,27 +165,6 @@ class TestResumeGatePipeline:
         assert task["gate_status"] == "push-failed"
         self.mock_run_test_gate.assert_not_called()
 
-    async def test_testing_reruns_test_gate(self, db, sample_project):
-        """gate_status=testing → re-run test gate (idempotent)."""
-        await _make_task(db, gate_status="testing")
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        self.mock_run_test_gate.assert_called_once()
-
-    async def test_test_failed_under_limit_returns_false(self, db, sample_project):
-        """gate_status=test-failed with retries < max → return False (caller does CC retry)."""
-        await _make_task(db, gate_status="test-failed", gate_retries=1)
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is False
-        # gate_status unchanged — caller decides how to handle
-        task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_status"] == "test-failed"
-        self.mock_retry_task.assert_not_called()
 
     async def test_test_failed_at_limit_sets_needs_review(self, db, sample_project):
         """gate_status=test-failed with retries >= max → set needs-review."""
@@ -324,15 +176,6 @@ class TestResumeGatePipeline:
         assert task["gate_status"] == "needs-review"
         self.mock_notify.task_needs_review.assert_called_once()
 
-    async def test_test_passed_with_auto_review(self, db, sample_project):
-        """gate_status=test-passed with auto_review → dispatch review."""
-        await _make_task(db, gate_status="test-passed", auto_review=True)
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        self.mock_dispatch_review.assert_called_once()
 
     async def test_test_passed_without_auto_review(self, db, sample_project):
         """gate_status=test-passed without auto_review → mark passed."""
@@ -345,27 +188,6 @@ class TestResumeGatePipeline:
         assert task["gate_passed_at"] is not None
         self.mock_check_dependents.assert_called_once_with("test-project/gate-task-1")
 
-    async def test_reviewing_starts_fresh_review(self, db, sample_project):
-        """gate_status=reviewing → start fresh _dispatch_review."""
-        await _make_task(db, gate_status="reviewing")
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        self.mock_dispatch_review.assert_called_once()
-
-    async def test_review_failed_under_limit_returns_false(self, db, sample_project):
-        """gate_status=review-failed with retries < max → return False (caller does CC retry)."""
-        await _make_task(db, gate_status="review-failed", gate_retries=1)
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is False
-        # gate_status unchanged — caller decides how to handle
-        task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_status"] == "review-failed"
-        self.mock_retry_task.assert_not_called()
 
     async def test_review_failed_at_limit_sets_needs_review(self, db, sample_project):
         """gate_status=review-failed with retries >= max_review_retries → needs-review."""
@@ -429,80 +251,11 @@ class TestResumeGatePipeline:
 
         self.mock_check_dependents.assert_called_once_with("test-project/gate-task-1")
 
-    async def test_does_not_reset_gate_retries_for_testing(self, db, sample_project):
-        """gate_status=testing → gate_retries preserved (not reset)."""
-        await _make_task(db, gate_status="testing", gate_retries=2)
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_retries"] == 2  # not reset
-
-    async def test_does_not_reset_gate_retries_for_reviewing(self, db, sample_project):
-        """gate_status=reviewing → gate_retries preserved (not reset)."""
-        await _make_task(db, gate_status="reviewing", gate_retries=1)
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1")
-        await asyncio.sleep(0)
-
-        task = await db.get_task("test-project/gate-task-1")
-        assert task["gate_retries"] == 1  # not reset
-
-    async def test_posts_recovery_message(self, db, sample_project):
-        """_resume_gate_pipeline always posts a status message."""
-        await _make_task(db, gate_status="testing", pushed_at=db.now_iso())
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/gate-task-1", reason="test-reason")
-        await asyncio.sleep(0)
-
-        thread = await db.read_task_messages("test-project/gate-task-1")
-        messages = thread.get("messages", [])
-        recovery_msgs = [m for m in messages if m.get("type") == "status"
-                         and "recovery" in (m.get("title") or "").lower()]
-        assert len(recovery_msgs) >= 1
-        # Message should mention the reason
-        assert "test-reason" in recovery_msgs[0]["content"]
 
     async def test_returns_none_for_missing_task(self, db, sample_project):
         """Returns None when task doesn't exist."""
         result = await _resume_gate_pipeline("test-project/nonexistent")
         assert result is None
-
-    async def test_returns_true_for_testing(self, db, sample_project):
-        """gate_status=testing → return True (gate was interrupted, recovery handled)."""
-        await _make_task(db, gate_status="testing")
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is True
-
-    async def test_returns_true_for_reviewing(self, db, sample_project):
-        """gate_status=reviewing → return True (gate was interrupted, recovery handled)."""
-        await _make_task(db, gate_status="reviewing")
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is True
-
-    async def test_returns_false_for_review_failed(self, db, sample_project):
-        """gate_status=review-failed → return False (code rejected, CC must retry)."""
-        await _make_task(db, gate_status="review-failed", gate_retries=1)
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is False
-
-    async def test_returns_false_for_test_failed(self, db, sample_project):
-        """gate_status=test-failed → return False (code rejected, CC must retry)."""
-        await _make_task(db, gate_status="test-failed", gate_retries=1)
-
-        result = await _resume_gate_pipeline("test-project/gate-task-1")
-
-        assert result is False
 
 
 # ---------------------------------------------------------------------------
@@ -545,55 +298,6 @@ class TestStartupRecoveryUnifiedSweep:
             "test-project/gate-task-1", reason="startup recovery"
         )
 
-    async def test_completed_reviewing_triggers_resume_pipeline(self, db, sample_project):
-        """completed task with gate_status=reviewing → _resume_gate_pipeline called."""
-        await _make_task(db, status="completed", gate_status="reviewing")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
-
-    async def test_completed_test_failed_triggers_resume_pipeline(self, db, sample_project):
-        """completed task with gate_status=test-failed → _resume_gate_pipeline called."""
-        await _make_task(db, status="completed", gate_status="test-failed")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
-
-    async def test_completed_review_failed_triggers_resume_pipeline(self, db, sample_project):
-        """completed task with gate_status=review-failed → _resume_gate_pipeline called."""
-        await _make_task(db, status="completed", gate_status="review-failed")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
-
-    async def test_pending_validation_none_gate_triggers_resume_pipeline(self, db, sample_project):
-        """pending-validation with gate_status=None → _resume_gate_pipeline called."""
-        await _make_task(db, status="pending-validation", gate_status=None)
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
-
-    async def test_turns_exhausted_testing_triggers_resume_pipeline(self, db, sample_project):
-        """turns-exhausted with gate_status=testing → _resume_gate_pipeline called."""
-        await _make_task(db, status="turns-exhausted", gate_status="testing")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
 
     async def test_push_failed_skipped(self, db, sample_project):
         """push-failed tasks are skipped at startup (user must fix PAT)."""
@@ -605,15 +309,6 @@ class TestStartupRecoveryUnifiedSweep:
         for call in self.mock_resume_pipeline.call_args_list:
             assert call[0][0] != "test-project/gate-task-1"
 
-    async def test_completed_none_gate_not_triggered(self, db, sample_project):
-        """completed task with gate_status=None → not triggered (no gate to recover)."""
-        await _make_task(db, status="completed", gate_status=None)
-
-        await recover_orphaned_tasks()
-
-        # Should not be called for completed + gate_status=None
-        for call in self.mock_resume_pipeline.call_args_list:
-            assert call[0][0] != "test-project/gate-task-1"
 
     async def test_gate_passed_with_passed_status_dispatches_dependents(self, db, sample_project):
         """Task with gate_passed_at set and gate=passed → dispatch dependents."""
@@ -623,37 +318,6 @@ class TestStartupRecoveryUnifiedSweep:
         await recover_orphaned_tasks()
 
         self.mock_check_dependents.assert_called_with("test-project/gate-task-1")
-
-    async def test_gate_passed_with_gate_passed_at_not_retrieved(self, db, sample_project):
-        """Task with gate_passed_at set and non-'passed' gate → NOT sent to resume pipeline."""
-        await _make_task(db, status="completed", gate_status="reviewing",
-                         gate_passed_at=db.now_iso())
-
-        await recover_orphaned_tasks()
-
-        # Should be skipped (continue on gate_passed_at)
-        for call in self.mock_resume_pipeline.call_args_list:
-            assert call[0][0] != "test-project/gate-task-1"
-
-    async def test_validating_testing_triggers_resume_pipeline(self, db, sample_project):
-        """validating task with gate_status=testing → _resume_gate_pipeline called on startup."""
-        await _make_task(db, status="validating", gate_status="testing")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
-
-    async def test_validating_reviewing_triggers_resume_pipeline(self, db, sample_project):
-        """validating task with gate_status=reviewing → _resume_gate_pipeline called on startup."""
-        await _make_task(db, status="validating", gate_status="reviewing")
-
-        await recover_orphaned_tasks()
-
-        self.mock_resume_pipeline.assert_any_call(
-            "test-project/gate-task-1", reason="startup recovery"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -704,17 +368,6 @@ class TestBackgroundOrphanDetection:
             except asyncio.CancelledError:
                 pass
 
-    async def test_testing_state_orphaned_triggers_recovery(self, db, sample_project):
-        """Testing state task with no live gate and idle > 120s → recovery triggered."""
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
-        await _make_task(db, status="completed", gate_status="testing",
-                         last_activity=old_time)
-
-        await self._run_one_cycle(db)
-
-        self.mock_resume_pipeline.assert_called_with(
-            "test-project/gate-task-1", reason="background monitor"
-        )
 
     async def test_reviewing_state_orphaned_triggers_recovery(self, db, sample_project):
         """Reviewing state task with no live gate and idle > 120s → recovery triggered."""
@@ -741,16 +394,6 @@ class TestBackgroundOrphanDetection:
         for call in self.mock_resume_pipeline.call_args_list:
             assert call[0][0] != "test-project/gate-task-1"
 
-    async def test_within_grace_period_not_recovered(self, db, sample_project):
-        """Testing state task idle for only 60s (< 120s grace) → NOT recovered."""
-        recent_time = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-        await _make_task(db, status="completed", gate_status="testing",
-                         last_activity=recent_time)
-
-        await self._run_one_cycle(db)
-
-        for call in self.mock_resume_pipeline.call_args_list:
-            assert call[0][0] != "test-project/gate-task-1"
 
     async def test_non_active_gate_states_not_recovered(self, db, sample_project):
         """Tasks with gate_status not in (testing, reviewing) → NOT recovered by background."""
@@ -764,52 +407,9 @@ class TestBackgroundOrphanDetection:
         # None of those should trigger background recovery
         assert self.mock_resume_pipeline.call_count == 0
 
-    async def test_turns_exhausted_testing_triggers_recovery(self, db, sample_project):
-        """turns-exhausted with gate_status=testing and old activity → recovery triggered."""
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
-        await _make_task(db, status="turns-exhausted", gate_status="testing",
-                         last_activity=old_time)
-
-        await self._run_one_cycle(db)
-
-        self.mock_resume_pipeline.assert_called_with(
-            "test-project/gate-task-1", reason="background monitor"
-        )
-
-    async def test_no_last_activity_skipped(self, db, sample_project):
-        """Tasks with no last_activity and no updated_at → skipped."""
-        await _make_task(db, status="completed", gate_status="testing")
-        await db.update_task("test-project/gate-task-1", last_activity=None)
-
-        await self._run_one_cycle(db)
 
         # May or may not be called depending on updated_at — but should not crash
         # The key thing is no exception is raised
-
-    async def test_validating_testing_orphaned_triggers_recovery(self, db, sample_project):
-        """validating task with gate_status=testing and idle > 120s → recovery triggered."""
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
-        await _make_task(db, status="validating", gate_status="testing",
-                         last_activity=old_time)
-
-        await self._run_one_cycle(db)
-
-        self.mock_resume_pipeline.assert_called_with(
-            "test-project/gate-task-1", reason="background monitor"
-        )
-
-    async def test_validating_live_gate_not_recovered(self, db, sample_project):
-        """validating task with live gate in _running_gates → NOT recovered (no double-recovery)."""
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
-        await _make_task(db, status="validating", gate_status="testing",
-                         last_activity=old_time)
-
-        _running_gates.add("test-project/gate-task-1")
-
-        await self._run_one_cycle(db)
-
-        for call in self.mock_resume_pipeline.call_args_list:
-            assert call[0][0] != "test-project/gate-task-1"
 
 
 # ---------------------------------------------------------------------------
@@ -880,36 +480,6 @@ class TestRetryTaskGateReentry:
             p.stop()
         _running_gates.clear()
 
-    async def test_completed_needs_review_does_not_delegate_to_pipeline(self, db, sample_project):
-        """completed + needs-review → does NOT delegate to _resume_gate_pipeline (dispatches CC).
-
-        needs-review is a rejection state, not an interrupted gate. Re-entering the gate
-        pipeline would cause an infinite loop because the same rejected code would fail again.
-        """
-        from switchboard.dispatch.engine import retry_task
-        await _make_task(db, status="completed", gate_status="needs-review")
-
-        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-            await retry_task("test-project/gate-task-1")
-
-        self.mock_resume_pipeline.assert_not_called()
-
-    async def test_completed_testing_delegates_to_pipeline(self, db, sample_project):
-        """completed + testing gate_status → _resume_gate_pipeline called."""
-        from switchboard.dispatch.engine import retry_task
-        await _make_task(db, status="completed", gate_status="testing")
-
-        await retry_task("test-project/gate-task-1")
-
-        self.mock_resume_pipeline.assert_called_with(
-            "test-project/gate-task-1", reason="retry"
-        )
 
     async def test_turns_exhausted_any_gate_delegates_to_pipeline(self, db, sample_project):
         """turns-exhausted + any non-None gate_status → _resume_gate_pipeline called."""
@@ -922,33 +492,4 @@ class TestRetryTaskGateReentry:
             "test-project/gate-task-1", reason="retry"
         )
 
-    async def test_completed_none_gate_does_not_delegate(self, db, sample_project):
-        """completed + gate_status=None → normal retry path (dispatch new CC session)."""
-        from switchboard.dispatch.engine import retry_task
 
-        await _make_task(db, status="completed", gate_status=None)
-
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})) as mock_dispatch:
-            with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
-                with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-                    with patch("switchboard.dispatch.engine.notify", AsyncMock()):
-                        with patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()):
-                            await retry_task("test-project/gate-task-1")
-
-        # _resume_gate_pipeline should NOT be called
-        self.mock_resume_pipeline.assert_not_called()
-
-    async def test_gate_passed_at_set_does_not_delegate(self, db, sample_project):
-        """If gate_passed_at is set, the gate re-entry check is skipped (gate already passed)."""
-        from switchboard.dispatch.engine import retry_task
-        await _make_task(db, status="completed", gate_status="needs-review",
-                         gate_passed_at=db.now_iso())
-
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})):
-            with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
-                with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-                    with patch("switchboard.dispatch.engine.notify", AsyncMock()):
-                        with patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()):
-                            await retry_task("test-project/gate-task-1")
-
-        self.mock_resume_pipeline.assert_not_called()

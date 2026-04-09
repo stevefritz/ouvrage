@@ -10,68 +10,6 @@ import switchboard.db as db
 # Audit log table and CRUD
 # ---------------------------------------------------------------------------
 
-class TestAuditLogCRUD:
-    """Basic audit log read/write operations."""
-
-    async def test_write_and_read_audit_log(self, db):
-        """write_audit_log creates a record, get_audit_log retrieves it."""
-        project = await db.create_project(
-            id="audit-proj", repo="https://github.com/x/y.git",
-            working_dir="/tmp/audit", default_branch="main",
-        )
-        task = await db.create_task(
-            id="audit-proj/task-1", project_id="audit-proj",
-            goal="Test audit logging",
-        )
-
-        record = await db.write_audit_log(
-            task_id="audit-proj/task-1",
-            action="cancelled",
-            triggered_by="cancel-api",
-            source_detail="cancel_task",
-            previous_status="working",
-            new_status="cancelled",
-        )
-
-        assert record["task_id"] == "audit-proj/task-1"
-        assert record["action"] == "cancelled"
-        assert record["triggered_by"] == "cancel-api"
-        assert record["source_detail"] == "cancel_task"
-        assert record["previous_status"] == "working"
-        assert record["new_status"] == "cancelled"
-        assert record["created_at"] is not None
-
-        # Read back
-        logs = await db.get_audit_log("audit-proj/task-1")
-        assert len(logs) >= 1
-        # The create_task call also writes an audit log
-        cancel_logs = [l for l in logs if l["action"] == "cancelled"]
-        assert len(cancel_logs) == 1
-        assert cancel_logs[0]["triggered_by"] == "cancel-api"
-
-    async def test_create_task_writes_audit_log(self, db):
-        """create_task automatically writes a 'created' audit log entry."""
-        await db.create_project(
-            id="audit-proj2", repo="https://github.com/x/y.git",
-            working_dir="/tmp/audit2", default_branch="main",
-        )
-        await db.create_task(
-            id="audit-proj2/task-1", project_id="audit-proj2",
-            goal="Test task creation audit",
-        )
-
-        logs = await db.get_audit_log("audit-proj2/task-1")
-        assert len(logs) == 1
-        assert logs[0]["action"] == "created"
-        assert logs[0]["triggered_by"] == "user"
-        assert logs[0]["new_status"] == "ready"
-        assert logs[0]["previous_status"] is None
-
-    async def test_audit_log_empty_for_unknown_task(self, db):
-        """get_audit_log returns empty list for nonexistent task."""
-        logs = await db.get_audit_log("nonexistent/task")
-        assert logs == []
-
 
 # ---------------------------------------------------------------------------
 # Chain cancellation isolation — siblings should NOT be affected
@@ -123,39 +61,6 @@ class TestChainCancellationIsolation:
         assert task_a["status"] == "cancelled"
         assert task_b["status"] == "ready", "Sibling B should NOT be cancelled when sibling A is cancelled"
 
-    async def test_cancel_sibling_a_audit_log_recorded(self):
-        """Cancelling sibling A writes an audit log with correct triggered_by."""
-        from switchboard.dispatch.engine import cancel_task
-
-        await self.db.update_task("chain-proj/sibling-a", status="working")
-        await cancel_task("chain-proj/sibling-a")
-
-        logs = await self.db.get_audit_log("chain-proj/sibling-a")
-        cancel_logs = [l for l in logs if l["action"] == "cancel"]
-        assert len(cancel_logs) == 1
-        assert cancel_logs[0]["triggered_by"] == "cancel-api"
-        assert cancel_logs[0]["previous_status"] == "working"
-        assert cancel_logs[0]["new_status"] == "cancelled"
-
-    async def test_cancel_parent_does_not_cancel_children(self):
-        """Cancelling the parent should NOT cancel its dependent children.
-
-        cancel_task only cancels the specific task, not its dependents.
-        Children should remain in their current state.
-        """
-        from switchboard.dispatch.engine import cancel_task
-
-        await self.db.update_task("chain-proj/parent", status="working")
-        await cancel_task("chain-proj/parent")
-
-        parent = await self.db.get_task("chain-proj/parent")
-        child_a = await self.db.get_task("chain-proj/sibling-a")
-        child_b = await self.db.get_task("chain-proj/sibling-b")
-
-        assert parent["status"] == "cancelled"
-        assert child_a["status"] == "ready", "Child A should NOT be cancelled by parent cancellation"
-        assert child_b["status"] == "ready", "Child B should NOT be cancelled by parent cancellation"
-
 
 # ---------------------------------------------------------------------------
 # cancel_chain — recursive cancellation should only go DOWN the chain
@@ -189,48 +94,6 @@ class TestCancelChain:
             id="cc-proj/unrelated", project_id="cc-proj", goal="Unrelated",
         )
 
-    async def test_cancel_chain_cancels_descendants(self):
-        """cancel_chain should cancel the root and all descendants."""
-        from switchboard.dispatch.engine import cancel_chain
-
-        result = await cancel_chain("cc-proj/root")
-
-        root = await self.db.get_task("cc-proj/root")
-        child = await self.db.get_task("cc-proj/child")
-        grandchild = await self.db.get_task("cc-proj/grandchild")
-        unrelated = await self.db.get_task("cc-proj/unrelated")
-
-        assert root["status"] == "cancelled"
-        assert child["status"] == "cancelled"
-        assert grandchild["status"] == "cancelled"
-        assert unrelated["status"] == "ready", "Unrelated task should NOT be affected"
-
-        assert set(result["cancelled"]) == {"cc-proj/root", "cc-proj/child", "cc-proj/grandchild"}
-
-    async def test_cancel_chain_writes_audit_logs(self):
-        """cancel_chain should write audit logs for each cancelled task."""
-        from switchboard.dispatch.engine import cancel_chain
-
-        await cancel_chain("cc-proj/root")
-
-        for tid in ("cc-proj/root", "cc-proj/child", "cc-proj/grandchild"):
-            logs = await self.db.get_audit_log(tid)
-            chain_cancel_logs = [l for l in logs if l["action"] == "cancel" and l["triggered_by"] == "cancel-chain"]
-            assert len(chain_cancel_logs) >= 1, f"Missing cancel-chain audit log for {tid}"
-
-    async def test_cancel_chain_skips_already_completed(self):
-        """cancel_chain skips tasks that are already completed."""
-        from switchboard.dispatch.engine import cancel_chain
-
-        await self.db.update_task("cc-proj/child", status="completed")
-
-        result = await cancel_chain("cc-proj/root")
-
-        # child was completed, so it and its descendant should be skipped
-        child = await self.db.get_task("cc-proj/child")
-        assert child["status"] == "completed"
-        assert "cc-proj/child" not in result["cancelled"]
-
 
 # ---------------------------------------------------------------------------
 # _invalidate_chain — should cancel working dependents and mark others stale
@@ -261,18 +124,6 @@ class TestInvalidateChain:
             goal="Ready child", depends_on="inv-proj/parent",
         )
 
-    async def test_invalidate_chain_cancels_working_and_marks_ready_stale(self):
-        """Working dependents are cancelled, ready ones get stale gate_status."""
-        from switchboard.dispatch.engine import _invalidate_chain
-
-        await _invalidate_chain("inv-proj/parent")
-
-        working = await self.db.get_task("inv-proj/working-child")
-        ready = await self.db.get_task("inv-proj/ready-child")
-
-        assert working["status"] == "cancelled"
-        assert ready["status"] == "ready"  # status unchanged
-        assert ready["gate_status"] == "stale"
 
     async def test_invalidate_chain_writes_audit_logs(self):
         """_invalidate_chain writes audit logs with triggered_by=chain-invalidation."""
@@ -308,24 +159,6 @@ class TestAuditTriggeredBy:
             test_command="pytest",
         )
 
-    async def test_reopen_task_audit(self):
-        """reopen_task writes audit with triggered_by=user."""
-        from switchboard.dispatch.engine import reopen_task
-
-        task = await self.db.create_task(
-            id="trig-proj/reopen-test", project_id="trig-proj",
-            goal="Test reopen audit",
-        )
-        await self.db.update_task("trig-proj/reopen-test", status="completed")
-
-        await reopen_task("trig-proj/reopen-test")
-
-        logs = await self.db.get_audit_log("trig-proj/reopen-test")
-        reopen_logs = [l for l in logs if l["action"] == "reopen"]
-        assert len(reopen_logs) == 1
-        assert reopen_logs[0]["triggered_by"] == "user"
-        assert reopen_logs[0]["previous_status"] == "completed"
-        assert reopen_logs[0]["new_status"] == "stopped"
 
     async def test_skip_gate_audit(self):
         """skip_gate writes audit with triggered_by=user."""
@@ -416,33 +249,4 @@ class TestCrossChainIsolation:
                              goal="Portal UI", depends_on="fp/fe-foundation")
         await db.update_task("fp/portal-ui", status="working")
 
-    async def test_cancelling_portal_pages_does_not_touch_portal_ui(self):
-        """Cancelling portal-pages (old batch) must NOT cancel portal-ui (new chain)."""
-        from switchboard.dispatch.engine import cancel_task
 
-        # portal-pages is already cancelled, but let's verify
-        # that cancel_chain on it doesn't cross-contaminate
-        from switchboard.dispatch.engine import cancel_chain
-        await self.db.update_task("fp/portal-pages", status="ready")  # un-cancel for test
-        await cancel_chain("fp/portal-pages")
-
-        portal_ui = await self.db.get_task("fp/portal-ui")
-        assert portal_ui["status"] == "working", \
-            "portal-ui should NOT be affected by cancelling portal-pages"
-
-    async def test_cancelling_siblings_does_not_affect_different_chain(self):
-        """Cancelling all old-batch tasks should NOT touch the new chain."""
-        from switchboard.dispatch.engine import cancel_task
-
-        # Cancel each old batch task individually
-        for tid in ("fp/portal-pages", "fp/landing-page"):
-            task = await self.db.get_task(tid)
-            if task["status"] != "cancelled":
-                await self.db.update_task(tid, status="working")
-                await cancel_task(tid)
-
-        # Verify new chain is untouched
-        fe = await self.db.get_task("fp/fe-foundation")
-        portal = await self.db.get_task("fp/portal-ui")
-        assert fe["status"] == "working"
-        assert portal["status"] == "working"

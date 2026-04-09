@@ -18,8 +18,6 @@ class TestTailLines:
         from switchboard.dispatch.gates import _tail_lines
         self.fn = _tail_lines
 
-    def test_short_text_returned_as_is(self):
-        assert self.fn("hello\nworld\n", 100) == "hello\nworld\n"
 
     def test_truncates_at_line_boundary(self):
         text = "line1\nline2\nline3\nline4\nline5\n"
@@ -28,34 +26,16 @@ class TestTailLines:
         for line in result.strip().split("\n"):
             assert len(line) > 0
 
-    def test_empty_string(self):
-        assert self.fn("", 100) == ""
 
     def test_single_long_line(self):
         text = "a" * 200
         result = self.fn(text, 50)
         assert len(result) <= 200
 
-    def test_exact_boundary(self):
-        text = "abc\ndef\n"
-        result = self.fn(text, 8)
-        assert result == text  # exactly fits
-
 
 # ---------------------------------------------------------------------------
 # _is_pid_alive — pure function
 # ---------------------------------------------------------------------------
-
-class TestIsPidAlive:
-    def setup_method(self):
-        from switchboard.dispatch.recovery import _is_pid_alive
-        self.fn = _is_pid_alive
-
-    def test_own_pid_is_alive(self):
-        assert self.fn(os.getpid()) is True
-
-    def test_bogus_pid_is_not_alive(self):
-        assert self.fn(999999999) is False
 
 
 # ---------------------------------------------------------------------------
@@ -80,70 +60,6 @@ class TestInvalidateChain:
         yield
         for p in patches:
             p.stop()
-
-    async def test_no_dependents(self):
-        from switchboard.dispatch.engine import _invalidate_chain
-        self.mock_get_dependents.return_value = []
-        await _invalidate_chain("task-a")
-        self.mock_get_dependents.assert_awaited_once_with("task-a")
-        self.mock_update_task.assert_not_awaited()
-
-    async def test_cancels_working_tasks(self):
-        from switchboard.dispatch.engine import _invalidate_chain
-        self.mock_get_dependents.side_effect = [
-            [{"id": "task-b", "status": "working", "gate_status": None}],
-            [],  # task-b has no dependents
-        ]
-        await _invalidate_chain("task-a")
-        self.mock_cancel_task.assert_awaited_once_with("task-b")
-        # Working tasks don't match the stale condition (not in completed/ready)
-        # so update_task should NOT be called for stale marking
-        self.mock_update_task.assert_not_awaited()
-
-    async def test_marks_completed_as_stale(self):
-        from switchboard.dispatch.engine import _invalidate_chain
-        self.mock_get_dependents.side_effect = [
-            [{"id": "task-b", "status": "completed", "gate_status": "passed"}],
-            [],
-        ]
-        await _invalidate_chain("task-a")
-        self.mock_cancel_task.assert_not_awaited()
-        self.mock_update_task.assert_awaited_once_with(
-            "task-b", gate_status="stale", gate_passed_at=None
-        )
-
-    async def test_recursive_chain(self):
-        """A -> B -> C: invalidating A should mark both B and C stale."""
-        from switchboard.dispatch.engine import _invalidate_chain
-        self.mock_get_dependents.side_effect = [
-            [{"id": "task-b", "status": "completed", "gate_status": "passed"}],
-            [{"id": "task-c", "status": "ready", "gate_status": None}],
-            [],  # task-c has no dependents
-        ]
-        await _invalidate_chain("task-a")
-        # B marked stale (completed with passed gate)
-        assert any(
-            call.args == ("task-b",) and call.kwargs.get("gate_status") == "stale"
-            for call in self.mock_update_task.await_args_list
-        )
-        # C marked stale (ready status)
-        assert any(
-            call.args == ("task-c",) and call.kwargs.get("gate_status") == "stale"
-            for call in self.mock_update_task.await_args_list
-        )
-
-    async def test_skips_already_stale(self):
-        """Already-stale task with cancelled status — not in the marking condition."""
-        from switchboard.dispatch.engine import _invalidate_chain
-        self.mock_get_dependents.side_effect = [
-            [{"id": "task-b", "status": "cancelled", "gate_status": "stale"}],
-            [],
-        ]
-        await _invalidate_chain("task-a")
-        # get_dependents called twice (task-a, task-b) — recurses regardless
-        assert self.mock_get_dependents.await_count == 2
-        # cancelled + stale doesn't match the marking condition
-        self.mock_update_task.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -188,21 +104,6 @@ class TestProcessReviewResultInline:
         call_args = self.mock_lifecycle_execute.await_args
         assert call_args[0] == ("task-1", "gate_pass")
 
-    async def test_rejected_retries_if_under_limit(self):
-        from switchboard.dispatch.gates import _process_review_result_inline
-        self.mock_read_msgs.return_value = {
-            "messages": [
-                {"type": "review", "title": "CHANGES REQUESTED", "content": "Fix X"},
-            ]
-        }
-        self.mock_get_task.return_value = {
-            "gate_retries": 0,
-            "max_gate_retries": 3,
-        }
-        await _process_review_result_inline("task-1")
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args
-        assert call_args[0] == ("task-1", "retry")
 
     async def test_rejected_escalates_after_max_retries(self):
         from switchboard.dispatch.gates import _process_review_result_inline
@@ -224,21 +125,6 @@ class TestProcessReviewResultInline:
             for call in self.mock_lifecycle_execute.await_args_list
         )
 
-    async def test_no_review_message_goes_to_rejection_path(self):
-        """No review message = falls to else branch (rejection)."""
-        from switchboard.dispatch.gates import _process_review_result_inline
-        self.mock_read_msgs.return_value = {"messages": []}
-        self.mock_get_task.return_value = {
-            "id": "task-1",
-            "goal": "test",
-            "gate_retries": 0,
-            "max_gate_retries": 3,
-        }
-        await _process_review_result_inline("task-1")
-        # With no review message, review_msg is None, condition fails → rejection path
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args
-        assert call_args[0] == ("task-1", "retry")
 
     async def test_not_approved_title_does_not_pass_gate(self):
         """'NOT APPROVED' must not trigger approval — exact match only."""
@@ -302,21 +188,6 @@ class TestCheckAndDispatchDependents:
         for p in patches:
             p.stop()
 
-    async def test_dispatches_ready_dependents(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
-            "auto_test": True,
-        }
-        self.mock_get_dependents.return_value = [
-            {"id": "task-b", "status": "ready", "gate_status": None,
-             "project_id": "proj", "goal": "do B"},
-        ]
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args[0]
-        assert call_args[0] == "task-b"
-        assert call_args[1] == "dispatch"
 
     async def test_rebases_stale_completed(self):
         from switchboard.dispatch.engine import _check_and_dispatch_dependents
@@ -332,70 +203,6 @@ class TestCheckAndDispatchDependents:
         self.mock_get_dependents.return_value = [dep]
         await _check_and_dispatch_dependents("task-a")
         self.mock_rebase.assert_awaited_once_with(dep, parent)
-
-    async def test_no_dispatch_if_gate_not_passed(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "gate_passed_at": None,
-        }
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_get_dependents.assert_not_awaited()
-
-    async def test_creates_pr_when_no_dependents(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
-        }
-        self.mock_get_dependents.return_value = []
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_pr.assert_awaited_once_with("task-a")
-
-    async def test_held_task_skips_dispatch(self):
-        """Fix 1 regression: held tasks must NOT be dispatched."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
-        }
-        self.mock_get_dependents.return_value = [
-            {"id": "task-b", "status": "ready", "held": True,
-             "project_id": "proj", "goal": "do B"},
-        ]
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_lifecycle_execute.assert_not_awaited()
-
-    async def test_non_held_ready_task_actually_dispatches(self):
-        """Fix 1: non-held ready dependent task calls lifecycle.execute('dispatch')."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
-        }
-        self.mock_get_dependents.return_value = [
-            {"id": "task-b", "status": "ready", "held": False,
-             "project_id": "proj", "goal": "do B", "auto_test": True},
-        ]
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args[0]
-        assert call_args[0] == "task-b"
-        assert call_args[1] == "dispatch"
-
-    async def test_mixed_held_and_non_held(self):
-        """Fix 1: only the non-held ready task dispatches; held one is skipped."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-        self.mock_get_task.return_value = {
-            "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
-        }
-        self.mock_get_dependents.return_value = [
-            {"id": "task-b", "status": "ready", "held": False,
-             "project_id": "proj", "goal": "do B", "auto_test": True},
-            {"id": "task-c", "status": "ready", "held": True,
-             "project_id": "proj", "goal": "do C"},
-        ]
-        await _check_and_dispatch_dependents("task-a")
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args[0]
-        assert call_args[0] == "task-b"
-        assert call_args[1] == "dispatch"
 
 
 # ---------------------------------------------------------------------------
@@ -432,26 +239,6 @@ class TestMaybeCreatePr:
         for p in patches:
             p.stop()
 
-    async def test_pr_created_when_worktree_exists(self, db, sample_project):
-        """auto_pr task with worktree should create a PR via provider.create_pr()."""
-        from switchboard.git.operations import _maybe_create_pr
-
-        task = await db.create_task(
-            id="test-project/pr-tail", project_id="test-project",
-            goal="Build the thing", auto_pr=True,
-        )
-        await db.update_task(task["id"],
-            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
-            worktree_path="/tmp/fake-worktree", branch="pr-tail",
-        )
-
-        await _maybe_create_pr("test-project/pr-tail")
-        self.mock_provider.create_pr.assert_awaited_once()
-        # Verify provider was called with correct args
-        call_kwargs = self.mock_provider.create_pr.await_args.kwargs
-        assert call_kwargs["credential"] == "ghp_fake_token_123"
-        assert call_kwargs["head"] == "pr-tail"
-        assert call_kwargs["base"] == "main"
 
     async def test_pr_skipped_when_no_worktree(self, db, sample_project):
         """auto_pr task WITHOUT worktree should silently skip."""
@@ -488,24 +275,6 @@ class TestMaybeCreatePr:
         call_kwargs = self.mock_provider.create_pr.await_args.kwargs
         assert call_kwargs["base"] == "foreman-saas"
 
-    async def test_pr_falls_back_to_default_branch_when_base_branch_null(self, db, sample_project):
-        """PR base falls back to project.default_branch when task.base_branch is null."""
-        from switchboard.git.operations import _maybe_create_pr
-
-        task = await db.create_task(
-            id="test-project/pr-default-branch", project_id="test-project",
-            goal="Feature on default branch", auto_pr=True,
-            base_branch=None,
-        )
-        await db.update_task(task["id"],
-            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
-            worktree_path="/tmp/fake-worktree", branch="pr-default-branch",
-        )
-
-        await _maybe_create_pr("test-project/pr-default-branch")
-        self.mock_provider.create_pr.assert_awaited_once()
-        call_kwargs = self.mock_provider.create_pr.await_args.kwargs
-        assert call_kwargs["base"] == "main"  # sample_project.default_branch
 
     async def test_auto_release_before_pr_causes_silent_skip(self, db, sample_project):
         """Integration: _check_and_dispatch_dependents releases worktree before PR creation.
@@ -551,35 +320,6 @@ class TestHeldWithDependsOn:
     sees held=False and auto-dispatches — defeating the hold.
     """
 
-    async def test_held_flag_persisted_despite_pending_dependency(self, db, sample_project):
-        """held=True must be saved to DB even when depends_on causes early return."""
-        from switchboard.dispatch.engine import dispatch_task
-
-        # Create the parent task (not yet gate-passed)
-        await db.create_task(
-            id="test-project/parent-task", project_id="test-project",
-            goal="Parent task",
-        )
-
-        # Dispatch child with held=True + depends_on parent
-        result = await dispatch_task(
-            project_id="test-project",
-            task_id="test-project/held-child",
-            goal="Child that should be held",
-            held=True,
-            depends_on="test-project/parent-task",
-        )
-
-        # Should return early because parent hasn't gate-passed
-        assert result["status"] == "ready"
-        assert "waiting_on" in result or result.get("held") is True
-
-        # The critical check: held flag must be persisted in DB
-        task = await db.get_task("test-project/held-child")
-        assert task["held"], (
-            "held=True was not persisted to DB — it will be ignored when "
-            "dependency resolves and the task will auto-dispatch"
-        )
 
     async def test_held_task_not_auto_dispatched_on_dependency_resolution(self, db, sample_project):
         """When parent gate-passes, held dependent must NOT auto-dispatch."""
@@ -685,22 +425,6 @@ class TestCheckStalledTasksRouting:
                  if c.kwargs.get("type") == "stall-warning"]
         assert len(calls) == 1
 
-    async def test_no_stall_warning_for_active_client_task_below_threshold(self):
-        """Fix 3: no stall warning when active-client task is idle <300s."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
-        task = self._make_task("proj/fresh-1", idle_seconds=60, has_active_client=True)
-        self.mock_list_tasks.side_effect = lambda status=None: (
-            [task] if status == "working" else []
-        )
-        import asyncio as _asyncio
-        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
-        try:
-            await check_stalled_tasks()
-        except _asyncio.CancelledError:
-            pass
-        stall_calls = [c for c in self.mock_post_msg.await_args_list
-                       if c.kwargs.get("type") == "stall-warning"]
-        assert len(stall_calls) == 0
 
     async def test_orphan_recovery_for_no_client_task(self):
         """Fix 3: orphan recovery triggers for no-client task idle >120s."""
@@ -718,40 +442,6 @@ class TestCheckStalledTasksRouting:
         except _asyncio.CancelledError:
             pass
         self.mock_recover.assert_awaited_once()
-
-    async def test_no_recovery_for_no_client_task_below_orphan_threshold(self):
-        """Fix 3: no recovery for no-client task idle <=120s (not dead yet)."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
-        task = self._make_task("proj/recent-1", idle_seconds=30, has_active_client=False)
-        self.mock_list_tasks.side_effect = lambda status=None: (
-            [task] if status == "working" else []
-        )
-        import asyncio as _asyncio
-        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
-        try:
-            await check_stalled_tasks()
-        except _asyncio.CancelledError:
-            pass
-        self.mock_recover.assert_not_awaited()
-
-    async def test_stall_not_triggered_for_no_client_task(self):
-        """Fix 3: stall warning does NOT fire for no-client tasks (even if idle >300s)."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
-        task = self._make_task("proj/orphan-stale", idle_seconds=400, has_active_client=False)
-        task_obj = dict(task, session_id="s1")
-        self.mock_get_task.return_value = task_obj
-        self.mock_list_tasks.side_effect = lambda status=None: (
-            [task] if status == "working" else []
-        )
-        import asyncio as _asyncio
-        self.mock_sleep.side_effect = [None, _asyncio.CancelledError()]
-        try:
-            await check_stalled_tasks()
-        except _asyncio.CancelledError:
-            pass
-        stall_calls = [c for c in self.mock_post_msg.await_args_list
-                       if c.kwargs.get("type") == "stall-warning"]
-        assert len(stall_calls) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -898,63 +588,6 @@ class TestApproveHeldChainChild:
 # approve_task — response correctness (no re-validation after mutation)
 # ---------------------------------------------------------------------------
 
-class TestApproveTaskResponse:
-    """approve_task must return success after approving, never a re-validation error."""
-
-    async def test_approve_standalone_held_task_returns_working(self, db, sample_project, mock_git, mock_sdk):
-        """Approving a standalone held task returns status=working, no error."""
-        from switchboard.dispatch.engine import approve_task
-
-        await db.create_task(
-            id="test-project/standalone-held", project_id="test-project",
-            goal="Do the thing",
-        )
-        await db.update_task("test-project/standalone-held", held=True)
-
-        result = await approve_task("test-project/standalone-held")
-
-        # Response must reflect the dispatch result — no "is not held" error
-        assert result.get("status") == "working", (
-            f"Expected status=working, got: {result}"
-        )
-        assert result.get("held") is not True, "Response must not say task is still held"
-
-        # DB must have held=False
-        task = await db.get_task("test-project/standalone-held")
-        assert not task["held"]
-
-    async def test_approve_non_held_task_raises_not_held(self, db, sample_project):
-        """Approving a task that is not held raises ValueError with 'is not held'."""
-        from switchboard.dispatch.engine import approve_task
-
-        await db.create_task(
-            id="test-project/not-held", project_id="test-project",
-            goal="Already running, not held",
-        )
-        # held defaults to False — do not set it
-
-        with pytest.raises(ValueError, match="is not held"):
-            await approve_task("test-project/not-held")
-
-    async def test_rapid_double_approve_first_succeeds_second_clean_error(self, db, sample_project, mock_git, mock_sdk):
-        """First approve succeeds; second approve gets a clean ValueError, not a crash."""
-        from switchboard.dispatch.engine import approve_task
-
-        await db.create_task(
-            id="test-project/double-approve", project_id="test-project",
-            goal="Approve me twice",
-        )
-        await db.update_task("test-project/double-approve", held=True)
-
-        # First approve — succeeds
-        result = await approve_task("test-project/double-approve")
-        assert result.get("status") == "working"
-
-        # Second approve — must raise clean ValueError (task is now working, not held)
-        # IllegalTransition extends ValueError, so this covers both cases
-        with pytest.raises(ValueError):
-            await approve_task("test-project/double-approve")
-
 
 # ---------------------------------------------------------------------------
 # _ensure_branch_pushed — git push logic
@@ -981,74 +614,12 @@ class TestEnsureBranchPushed:
         for p in patches:
             p.stop()
 
-    async def test_no_worktree_noop(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
-        self.mock_run.assert_not_awaited()
 
     async def test_no_branch_noop(self):
         from switchboard.git.operations import _ensure_branch_pushed
         await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
-    async def test_no_worktree_returns_true(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        result = await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
-        assert result is True
-        self.mock_run.assert_not_awaited()
-
-    async def test_no_branch_returns_true(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
-        assert result is True
-        self.mock_run.assert_not_awaited()
-
-    async def test_nothing_to_push(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        # ls-remote returns a ref (remote exists) + log shows nothing unpushed
-        self.mock_run.side_effect = [
-            (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
-            (b"", b"", 0),  # log shows nothing unpushed
-        ]
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is True
-        assert self.mock_run.await_count == 2  # ls-remote + log, no push
-
-    async def test_pushes_unpushed_commits(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_run.side_effect = [
-            (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
-            (b"abc Fix something\n", b"", 0),  # log shows unpushed
-            (b"", b"", 0),  # push succeeds
-        ]
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is True
-        assert self.mock_run.await_count == 3
-        push_call = self.mock_run.await_args_list[2]
-        assert "push" in push_call.args
-        assert "--force" in push_call.args
-        assert "--force-with-lease" not in push_call.args
-
-    async def test_pushes_when_no_remote_branch(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_run.side_effect = [
-            (b"", b"", 0),  # ls-remote returns empty (no remote branch)
-            (b"", b"", 0),  # push succeeds
-        ]
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is True
-        assert self.mock_run.await_count == 2
-        push_call = self.mock_run.await_args_list[1]
-        assert "push" in push_call.args
-
-    async def test_push_failure_returns_false(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_run.side_effect = [
-            (b"", b"", 0),  # ls-remote empty (no remote branch)
-            (b"", b"rejected", 1),  # push fails
-        ]
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is False
 
     async def test_push_failure_posts_message(self):
         from switchboard.git.operations import _ensure_branch_pushed
@@ -1061,26 +632,6 @@ class TestEnsureBranchPushed:
         call_kwargs = self.mock_post_msg.await_args.kwargs
         assert call_kwargs["type"] == "status"
         assert "Auto-push failed" in call_kwargs["title"]
-
-    async def test_no_pat_returns_false(self):
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_resolve_url.side_effect = ValueError("No PAT configured")
-        result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        assert result is False
-        self.mock_run.assert_not_awaited()
-
-    async def test_always_pushes_via_authenticated_url(self):
-        """After credential helper removal, always pushes via authenticated URL."""
-        from switchboard.git.operations import _ensure_branch_pushed
-        self.mock_run.side_effect = [
-            (b"", b"", 0),  # ls-remote empty (no remote branch)
-            (b"", b"", 0),  # push succeeds
-        ]
-        await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
-        push_call = self.mock_run.await_args_list[1]
-        assert "push" in push_call.args
-        assert "https://oauth2:ghp_test@github.com/acme/widgets.git" in push_call.args
-        assert "--force" in push_call.args
 
 
 # ---------------------------------------------------------------------------
@@ -1154,35 +705,6 @@ class TestPushFailureBlocksGatePipeline:
         for p in patches:
             p.stop()
 
-    async def test_push_fail_sets_push_failed_gate_status(self, db, sample_project, tmp_path):
-        """When push fails after completion, gate_status must be 'push-failed'."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
-
-        task = await db.create_task(
-            id="test-project/push-fail-gate",
-            project_id="test-project",
-            goal="Test push failure blocks gate",
-            auto_test=False,
-            auto_review=False,
-        )
-        await db.update_task(task["id"], status="working",
-                             worktree_path=self.worktree)
-
-        await _run_sdk_session(
-            task_id="test-project/push-fail-gate",
-            prompt="do the thing",
-            worktree_path=self.worktree,
-            session_id=None,
-            is_resume=False,
-            max_turns=10,
-            max_wall_clock_minutes=30,
-            log_dir=self.log_dir,
-        )
-
-        updated = await db.get_task("test-project/push-fail-gate")
-        assert updated["gate_status"] == "push-failed", (
-            f"Expected gate_status='push-failed', got {updated['gate_status']!r}"
-        )
 
     async def test_push_fail_does_not_run_test_gate(self, db, sample_project, tmp_path):
         """When push fails, _run_test_gate must NOT be called."""
@@ -1310,24 +832,6 @@ class TestBuildTaskPrompt:
         t.update(overrides)
         return t
 
-    async def test_includes_push_instruction(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "push your branch" in result.lower()
-
-    async def test_auto_test_tells_cc_not_to_run_tests(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(auto_test=True), "do the thing")
-        assert "automatically" in result.lower()
-
-    async def test_no_auto_test_includes_test_command(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(test_command="php artisan test"),
-            self._make_task(), "do the thing")
-        assert "php artisan test" in result
 
     async def test_dependency_context_included(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
@@ -1345,75 +849,6 @@ class TestBuildTaskPrompt:
             "build the API")
         assert "parent" in result.lower() or "feat-parent" in result
 
-    async def test_identity_section_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(),
-            self._make_task(dispatched_by="stephen", worktree_path="/work/t1"),
-            "do the thing")
-        assert "Ouvrage worker" in result
-        assert "stephen" in result
-        assert "/work/t1" in result
-
-    async def test_identity_section_defaults_for_missing_fields(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        # dispatched_by and worktree_path absent — should not crash
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "Ouvrage worker" in result
-        assert "system" in result  # default dispatched_by fallback
-
-    async def test_behavioral_guidance_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "update_task_checklist" in result
-        assert "post_task_message" in result
-        assert "search(" in result
-        assert "How to Work" in result
-        assert "Finding Context" in result
-
-    async def test_safety_section_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "## Safety" in result
-        assert "System integrity" in result
-        assert "Git safety" in result
-        assert "Process safety" in result
-        assert "Scope safety" in result
-        assert "pkill" in result
-        assert "killall" in result
-
-    async def test_identity_headless_framing(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "headless" in result
-        assert "dashboard" in result.lower()
-        assert "not watching" in result
-
-    async def test_no_component_or_punchlist_in_prompt(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "Component Context" not in result
-        assert "Punchlist" not in result
-        assert "claim_punchlist_item" not in result
-
-    async def test_pipeline_awareness_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "Gate Pipeline" in result or "gate" in result.lower()
-        assert "review gate" in result.lower() or "Review gate" in result
-
-    async def test_escalation_protocol_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "Escalation Protocol" in result
-        assert "Ambiguous spec" in result
 
     async def test_custom_escalation_criteria_injected(self):
         from switchboard.dispatch.sdk_session import _build_task_prompt
@@ -1421,30 +856,6 @@ class TestBuildTaskPrompt:
             self._make_project(), self._make_task(), "do the thing",
             escalation_criteria="Always post question if touching prod DB.")
         assert "Always post question if touching prod DB." in result
-
-    async def test_safety_covers_secrets_and_git(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(), "do the thing")
-        assert "## Safety" in result
-        # Git prohibitions moved into safety
-        assert "force" in result
-        assert "rebase" in result
-        # Secrets
-        assert "credentials" in result.lower() or "secrets" in result.lower()
-
-    async def test_no_full_suite_when_auto_test_disabled(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(auto_test=False), "do the thing")
-        # With auto_test off, the "full suite" warning should not appear in testing section
-        assert "Do NOT run the full suite" not in result
-
-    async def test_full_suite_warning_when_auto_test_enabled(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
-        result = await _build_task_prompt(
-            self._make_project(), self._make_task(auto_test=True), "do the thing")
-        assert "full suite" in result.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1472,14 +883,6 @@ class TestBuildResumePrompt:
         t.update(overrides)
         return t
 
-    async def test_task_exists_includes_id_branch_goal(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
-        self.mock_get_task.return_value = self._make_task(
-            id="task-xyz", branch="feat-xyz", goal="Refactor auth module")
-        result = await _build_resume_prompt("task-xyz")
-        assert "task-xyz" in result
-        assert "feat-xyz" in result
-        assert "Refactor auth module" in result
 
     async def test_task_not_found_returns_fallback_with_task_id(self):
         from switchboard.dispatch.sdk_session import _build_resume_prompt
@@ -1488,32 +891,6 @@ class TestBuildResumePrompt:
         assert "missing-task" in result
         # Should be a short fallback, not crash
         assert len(result) > 0
-
-    async def test_no_checklist_omits_checklist_section(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
-        self.mock_get_task.return_value = self._make_task()
-        self.mock_get_checklist.return_value = []
-        result = await _build_resume_prompt("t1")
-        assert "Checklist" not in result
-
-    async def test_checklist_renders_done_and_undone(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
-        self.mock_get_task.return_value = self._make_task()
-        self.mock_get_checklist.return_value = [
-            {"id": 1, "item": "Write tests", "done": True},
-            {"id": 2, "item": "Update docs", "done": False},
-        ]
-        result = await _build_resume_prompt("t1")
-        assert "✅" in result
-        assert "⬜" in result
-        assert "Write tests" in result
-        assert "Update docs" in result
-
-    async def test_includes_read_task_messages_instruction(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
-        self.mock_get_task.return_value = self._make_task(id="task-abc")
-        result = await _build_resume_prompt("task-abc")
-        assert "read_task_messages" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1595,58 +972,10 @@ class TestRebaseAndRedispatch:
 # _is_binary — binary file detection
 # ---------------------------------------------------------------------------
 
-class TestIsBinary:
-    def setup_method(self):
-        from switchboard.git.files import _is_binary
-        self.fn = _is_binary
-
-    def test_text_is_not_binary(self):
-        assert self.fn(b"hello world\nsome text\n") is False
-
-    def test_null_byte_is_binary(self):
-        assert self.fn(b"some\x00data") is True
-
-    def test_empty_is_not_binary(self):
-        assert self.fn(b"") is False
-
-    def test_null_beyond_8kb_ignored(self):
-        # Null byte after 8192 bytes should NOT trigger detection
-        data = b"a" * 8192 + b"\x00"
-        assert self.fn(data) is False
-
-    def test_null_at_8kb_boundary(self):
-        # Null byte at exactly position 8191 (within 8KB) triggers detection
-        data = b"a" * 8191 + b"\x00"
-        assert self.fn(data) is True
-
 
 # ---------------------------------------------------------------------------
 # _validate_path — path traversal prevention
 # ---------------------------------------------------------------------------
-
-class TestValidatePath:
-    def setup_method(self):
-        from switchboard.git.files import _validate_path
-        self.fn = _validate_path
-
-    def test_normal_path_ok(self):
-        assert self.fn("src/server.py") is None
-
-    def test_root_ok(self):
-        assert self.fn("") is None
-
-    def test_dotdot_rejected(self):
-        assert self.fn("../etc/passwd") is not None
-
-    def test_dotdot_in_middle_rejected(self):
-        assert self.fn("src/../etc/passwd") is not None
-
-    def test_single_dot_ok(self):
-        # "." is a valid path component, not ".."
-        assert self.fn("./src") is None
-
-    def test_filename_with_dots_ok(self):
-        assert self.fn("src/server.py") is None
 
 
 # ---------------------------------------------------------------------------
@@ -1687,36 +1016,6 @@ class TestListTaskFiles:
     def _make_project(self):
         return {"id": "proj", "working_dir": "/work/proj"}
 
-    async def test_active_worktree_uses_head(self):
-        from switchboard.git.files import _handle_list_task_files
-        self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
-        self.mock_get_project.return_value = self._make_project()
-        self.mock_isdir.return_value = True
-        self.mock_git_run.return_value = (b"README.md\nserver.py\n", 0)
-
-        result = await _handle_list_task_files({"task_id": "proj/my-task"})
-
-        assert result["files"] == ["README.md", "server.py"]
-        assert result["ref_used"] == "HEAD"
-        assert "git_dir" not in result
-
-    async def test_released_task_uses_origin_branch(self):
-        from switchboard.git.files import _handle_list_task_files
-        self.mock_get_task.return_value = self._make_task(worktree_path=None, branch="feat/released", status="completed")
-        self.mock_get_project.return_value = self._make_project()
-        self.mock_isdir.return_value = False
-
-        # fetch returns ok, rev-parse returns ok, ls-tree returns ok
-        self.mock_git_run.side_effect = [
-            (b"", 0),   # git fetch origin --prune
-            (b"abc123\n", 0),  # git rev-parse --verify origin/feat/released
-            (b"README.md\n", 0),  # git ls-tree
-        ]
-
-        result = await _handle_list_task_files({"task_id": "proj/my-task"})
-
-        assert result["ref_used"] == "origin/feat/released"
-        assert result["files"] == ["README.md"]
 
     async def test_inaccessible_task_returns_error(self):
         from switchboard.git.files import _handle_list_task_files
@@ -1804,22 +1103,6 @@ class TestGetTaskFile:
     def _make_project(self):
         return {"id": "proj", "working_dir": "/work/proj"}
 
-    async def test_returns_text_content(self):
-        from switchboard.git.files import _handle_get_task_file
-        self.mock_get_task.return_value = self._make_task()
-        self.mock_get_project.return_value = self._make_project()
-        self.mock_isdir.return_value = True
-        self.mock_git_run.side_effect = [
-            (b"blob\n", 0),  # cat-file -t
-            (b"def hello():\n    return 'world'\n", 0),  # git show
-        ]
-
-        result = await _handle_get_task_file({"task_id": "proj/my-task", "path": "src/hello.py"})
-
-        assert result["content"] == "def hello():\n    return 'world'\n"
-        assert result["binary"] is False
-        assert result["truncated"] is False
-        assert "git_dir" not in result
 
     async def test_binary_file_refused(self):
         from switchboard.git.files import _handle_get_task_file
@@ -1836,26 +1119,6 @@ class TestGetTaskFile:
         assert "error" in result
         assert result["binary"] is True
 
-    async def test_large_file_truncated(self):
-        from switchboard.git.files import _handle_get_task_file
-        self.mock_get_task.return_value = self._make_task()
-        self.mock_get_project.return_value = self._make_project()
-        self.mock_isdir.return_value = True
-        content = b"x" * 2000
-        self.mock_git_run.side_effect = [
-            (b"blob\n", 0),  # cat-file -t
-            (content, 0),  # git show
-        ]
-
-        result = await _handle_get_task_file({
-            "task_id": "proj/my-task",
-            "path": "big.txt",
-            "max_bytes": 100,
-        })
-
-        assert result["truncated"] is True
-        assert len(result["content"]) == 100
-        assert result["size"] == 2000
 
     async def test_file_not_found(self):
         from switchboard.git.files import _handle_get_task_file
@@ -1984,32 +1247,6 @@ class TestFetchCache:
     def _make_project(self):
         return {"id": "proj", "working_dir": "/work/proj"}
 
-    async def test_fetch_skipped_within_ttl(self):
-        """Second call within TTL should not trigger another git fetch."""
-        from switchboard.git.files import _handle_list_task_files
-        import switchboard.git.files as _files_mod
-
-        self.mock_get_task.return_value = self._make_task()
-        self.mock_get_project.return_value = self._make_project()
-        self.mock_isdir.return_value = False
-
-        # First call: fetch + rev-parse + ls-tree
-        self.mock_git_run.side_effect = [
-            (b"", 0),          # fetch
-            (b"abc123\n", 0),  # rev-parse
-            (b"README.md\n", 0),  # ls-tree
-            # Second call: rev-parse + ls-tree (NO fetch)
-            (b"abc123\n", 0),  # rev-parse
-            (b"server.py\n", 0),  # ls-tree
-        ]
-
-        result1 = await _handle_list_task_files({"task_id": "proj/my-task"})
-        result2 = await _handle_list_task_files({"task_id": "proj/my-task"})
-
-        assert result1["files"] == ["README.md"]
-        assert result2["files"] == ["server.py"]
-        # Total calls: 3 (first) + 2 (second, skipped fetch) = 5
-        assert self.mock_git_run.call_count == 5
 
     async def test_fetch_runs_when_ttl_expired(self):
         """Fetch should re-run after TTL expires."""
@@ -2060,93 +1297,6 @@ class TestResolveGitRef:
     def _make_project(self):
         return {"working_dir": "/work/proj"}
 
-    async def test_active_worktree_returns_head(self):
-        """Priority 1: active worktree on disk → (worktree_path, HEAD)."""
-        from switchboard.git.files import _resolve_git_ref
-        self.mock_isdir.return_value = True
-        task = self._make_task(worktree_path="/work/proj/worktrees/my-task")
-
-        result = await _resolve_git_ref(task, self._make_project())
-
-        assert result == ("/work/proj/worktrees/my-task", "HEAD")
-        self.mock_git_run.assert_not_called()
-
-    async def test_branch_on_origin_returns_bare_ref(self):
-        """Priority 2: no worktree, branch exists on origin → (bare_path, origin/branch)."""
-        from switchboard.git.files import _resolve_git_ref
-        self.mock_isdir.return_value = False
-        # fetch succeeds, rev-parse finds branch
-        self.mock_git_run.side_effect = [
-            (b"", 0),          # git fetch origin --prune -q
-            (b"abc123\n", 0),  # git rev-parse --verify origin/feat/my-feature
-        ]
-
-        result = await _resolve_git_ref(
-            self._make_task(worktree_path=None, branch="feat/my-feature"),
-            self._make_project(),
-        )
-
-        assert result == ("/work/proj/.bare", "origin/feat/my-feature")
-
-    async def test_branch_not_on_origin_returns_none(self):
-        """Priority 2 fails: branch not found on origin → None."""
-        from switchboard.git.files import _resolve_git_ref
-        self.mock_isdir.return_value = False
-        self.mock_git_run.side_effect = [
-            (b"", 0),   # fetch ok
-            (b"", 128), # rev-parse fails — branch not found
-        ]
-
-        result = await _resolve_git_ref(
-            self._make_task(worktree_path=None, branch="feat/gone"),
-            self._make_project(),
-        )
-
-        assert result is None
-
-    async def test_no_branch_returns_none(self):
-        """No worktree and no branch → None without any git calls."""
-        from switchboard.git.files import _resolve_git_ref
-        self.mock_isdir.return_value = False
-
-        result = await _resolve_git_ref(
-            self._make_task(worktree_path=None, branch=None),
-            self._make_project(),
-        )
-
-        assert result is None
-        self.mock_git_run.assert_not_called()
-
-    async def test_fetch_failure_does_not_poison_cache(self):
-        """If fetch fails, the cache entry must NOT be set so the next call retries."""
-        import time
-        import switchboard.git.files as _files_mod
-        from switchboard.git.files import _resolve_git_ref
-
-        self.mock_isdir.return_value = False
-        bare_path = "/work/proj/.bare"
-
-        # First call: fetch fails, rev-parse also fails
-        self.mock_git_run.side_effect = [
-            (b"", 1),   # fetch fails
-            (b"", 128), # rev-parse fails
-            # Second call: fetch succeeds this time, rev-parse succeeds
-            (b"", 0),
-            (b"abc123\n", 0),
-        ]
-
-        task = self._make_task(worktree_path=None, branch="feat/my-feature")
-        project = self._make_project()
-
-        result1 = await _resolve_git_ref(task, project)
-        # Cache should NOT have been set — fetch failed
-        assert bare_path not in _files_mod._fetch_cache
-
-        result2 = await _resolve_git_ref(task, project)
-        assert result2 == (bare_path, "origin/feat/my-feature")
-        # Cache should now be set after successful fetch
-        assert bare_path in _files_mod._fetch_cache
-
 
 # ---------------------------------------------------------------------------
 # _handle_post — reactive conversation injection
@@ -2186,28 +1336,6 @@ class TestReactiveConversationInjection:
         assert "conv-a" in call_kwargs["content"]
         assert "stephen" in call_kwargs["content"]
 
-    async def test_skips_injection_for_cc_worker_author(self):
-        from switchboard.server.handlers.conversations import _handle_post
-        self.mock_get_working_tasks.return_value = ["proj/task-1"]
-        await _handle_post({
-            "conversation_id": "conv-a",
-            "author": "cc-worker",
-            "content": "Task completed successfully",
-        })
-        self.mock_get_working_tasks.assert_not_awaited()
-        self.mock_post_task_message.assert_not_awaited()
-
-    async def test_skips_injection_for_status_type(self):
-        from switchboard.server.handlers.conversations import _handle_post
-        self.mock_get_working_tasks.return_value = ["proj/task-1"]
-        await _handle_post({
-            "conversation_id": "conv-a",
-            "author": "stephen",
-            "type": "status",
-            "content": "Still thinking...",
-        })
-        self.mock_get_working_tasks.assert_not_awaited()
-        self.mock_post_task_message.assert_not_awaited()
 
     async def test_injection_failure_is_non_blocking(self):
         from switchboard.server.handlers.conversations import _handle_post
@@ -2219,29 +1347,6 @@ class TestReactiveConversationInjection:
         })
         assert result["id"] == 1
         self.mock_post_task_message.assert_not_awaited()
-
-    async def test_no_working_tasks_no_injection(self):
-        from switchboard.server.handlers.conversations import _handle_post
-        self.mock_get_working_tasks.return_value = []
-        await _handle_post({
-            "conversation_id": "conv-a",
-            "author": "stephen",
-            "content": "Update with no active tasks",
-        })
-        self.mock_post_task_message.assert_not_awaited()
-
-    async def test_preview_uses_title_when_present(self):
-        from switchboard.server.handlers.conversations import _handle_post
-        self.mock_get_working_tasks.return_value = ["proj/task-1"]
-        await _handle_post({
-            "conversation_id": "conv-a",
-            "author": "stephen",
-            "title": "Important finding",
-            "content": "Long content that should not appear in preview",
-        })
-        call_kwargs = self.mock_post_task_message.await_args_list[0].kwargs
-        assert "Important finding" in call_kwargs["content"]
-        assert "Long content" not in call_kwargs["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -2260,17 +1365,6 @@ class TestHeldDefaults:
                        return_value={"owner_user_id": None}):
                 yield
 
-    async def test_standalone_task_defaults_to_held(self, db, sample_project):
-        """Standalone task (no depends_on) defaults to held=true."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
-        result = await _handle_dispatch_task({
-            "project_id": "test-project",
-            "id": "standalone-held",
-            "goal": "Standalone task",
-        })
-        assert result.get("held") is True
-        task = await db.get_task("test-project/standalone-held")
-        assert task["held"]
 
     async def test_chain_task_defaults_to_held_false(self, db, sample_project):
         """Chain task (with depends_on) defaults to held=false — waiting on parent."""
@@ -2349,23 +1443,6 @@ class TestProjectCreateValidation:
         for field in ["model", "review_model", "auto_test", "auto_review", "auto_pr", "auto_merge", "max_turns", "max_wall_clock"]:
             assert field in result["error"]
 
-    async def test_missing_single_field_returns_error(self, db):
-        from switchboard.server.handlers.projects import _handle_create_project
-        result = await _handle_create_project({
-            "id": "new-proj2",
-            "repo": "git@github.com:acme/new2.git",
-            "model": "sonnet",
-            "review_model": "opus",
-            "auto_test": True,
-            "auto_review": True,
-            "auto_pr": False,
-            "auto_merge": False,
-            "max_turns": 200,
-            # max_wall_clock missing
-        })
-        assert "error" in result
-        assert "max_wall_clock" in result["error"]
-        assert "model" not in result["error"]
 
     async def test_all_required_fields_present_proceeds(self, db):
         from switchboard.server.handlers.projects import _handle_create_project

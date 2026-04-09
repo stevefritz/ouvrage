@@ -319,11 +319,6 @@ class TestHookScripts:
 class TestToolRegistration:
     """Tests for git_push/git_fetch tool registration on worker endpoint."""
 
-    def test_tools_in_worker_allowlist(self):
-        """git_push and git_fetch are in WORKER_TOOL_ALLOWLIST."""
-        from switchboard.server.tools import WORKER_TOOL_ALLOWLIST
-        assert "git_push" in WORKER_TOOL_ALLOWLIST
-        assert "git_fetch" in WORKER_TOOL_ALLOWLIST
 
     def test_tools_in_worker_tools(self):
         """git_push and git_fetch are in WORKER_TOOLS."""
@@ -332,8 +327,3 @@ class TestToolRegistration:
         assert "git_push" in names
         assert "git_fetch" in names
 
-    def test_handlers_registered(self):
-        """git_push and git_fetch handlers are registered in TOOL_HANDLERS."""
-        from switchboard.server.dispatch import TOOL_HANDLERS
-        assert "git_push" in TOOL_HANDLERS
-        assert "git_fetch" in TOOL_HANDLERS

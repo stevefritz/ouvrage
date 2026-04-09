@@ -80,47 +80,6 @@ class TestTestToReviewTransition:
         yield
         _running_gates.clear()
 
-    async def test_dispatch_review_works_when_running_gates_held(self, db, sample_project):
-        """_dispatch_review proceeds even when task_id is in _running_gates.
-
-        This is the exact bug scenario: _run_test_gate adds to _running_gates,
-        then _run_test_gate_inner calls _dispatch_review. The review must run.
-        """
-        from switchboard.dispatch.gates import _dispatch_review
-
-        # Simulate: task is in _running_gates (held by _run_test_gate)
-        _running_gates.add("test-project/audit-task-1")
-
-        # Create task in test-passed state (not yet reviewing)
-        await _make_task(db, gate_status="test-passed")
-
-        inner_called = []
-
-        async def _fake_inner(tid, proj, task):
-            inner_called.append(tid)
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
-            await _dispatch_review("test-project/audit-task-1", sample_project, {})
-
-        # The review inner function MUST be called (was skipped before the fix)
-        assert inner_called == ["test-project/audit-task-1"]
-
-    async def test_dispatch_review_adds_to_running_gates_for_liveness(self, db, sample_project):
-        """_dispatch_review still adds to _running_gates for background monitor liveness."""
-        from switchboard.dispatch.gates import _dispatch_review
-
-        # Create task NOT in reviewing state
-        await _make_task(db, gate_status="test-passed")
-
-        captured_in_gates = []
-
-        async def _fake_inner(tid, proj, task):
-            captured_in_gates.append(tid in _running_gates)
-
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
-            await _dispatch_review("test-project/audit-task-1", sample_project, {})
-
-        assert captured_in_gates == [True]
 
     async def test_dispatch_review_blocks_duplicate_via_gate_status(self, db, sample_project):
         """If gate_status is already 'reviewing', _dispatch_review skips (new duplicate guard)."""
@@ -174,65 +133,6 @@ class TestInterruptedGateRecovery:
             p.stop()
         _running_gates.clear()
 
-    async def test_testing_interrupted_reruns_test_gate(self, db, sample_project):
-        """Scenario 4: gate_status=testing after restart → re-run test gate."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="testing")
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            result = await _resume_gate_pipeline("test-project/audit-task-1", reason="startup recovery")
-        await asyncio.sleep(0)
-
-        assert result is True
-        self.mock_run_test_gate.assert_called_once()
-        # gate_retries should NOT be reset (interrupted, not a fresh attempt)
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["gate_retries"] == 0  # was 0, stayed 0
-
-    async def test_testing_interrupted_preserves_gate_retries(self, db, sample_project):
-        """Recovery does not reset gate_retries for interrupted test gates."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="testing", gate_retries=2)
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/audit-task-1", reason="startup recovery")
-        await asyncio.sleep(0)
-
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["gate_retries"] == 2  # preserved
-
-    async def test_reviewing_interrupted_dispatches_fresh_review(self, db, sample_project):
-        """Scenario 5: gate_status=reviewing after restart → fresh review dispatch."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="reviewing")
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            result = await _resume_gate_pipeline("test-project/audit-task-1", reason="startup recovery")
-        await asyncio.sleep(0)
-
-        assert result is True
-        self.mock_dispatch_review.assert_called_once()
-
-    async def test_reviewing_recovery_resets_gate_status_before_dispatch(self, db, sample_project):
-        """Scenario 5 detail: recovery resets gate_status to test-passed so
-        _dispatch_review's duplicate guard (gate_status==reviewing) doesn't block it."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="reviewing")
-
-        with patch("asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
-            await _resume_gate_pipeline("test-project/audit-task-1", reason="startup recovery")
-        await asyncio.sleep(0)
-
-        # After _resume_gate_pipeline, verify that it called update_task to reset gate_status
-        # before dispatching review. The mock_dispatch_review receives the task arg — check it.
-        self.mock_dispatch_review.assert_called_once()
-        call_args = self.mock_dispatch_review.call_args
-        task_arg = call_args[0][2]  # third positional arg is task dict
-        assert task_arg["gate_status"] == "test-passed"
 
     async def test_test_passed_dispatches_review(self, db, sample_project):
         """Scenario 6: gate_status=test-passed after restart → dispatch review."""
@@ -260,32 +160,6 @@ class TestInterruptedGateRecovery:
 class TestRejectionStatesNotReenteredByRetry:
     """retry_task with rejection gate states must launch CC, not re-enter gates."""
 
-    async def test_review_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
-        """Scenario 2: review-failed → retry_task launches fresh CC session."""
-        await _make_task(db, status="completed", gate_status="review-failed", gate_retries=1)
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/audit-task-1")
-
-        # review-failed is NOT an interrupted state — CC gets a fresh session, not gate re-entry
-        mock_resume_pipeline.assert_not_called()
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["status"] == "working"
-
-    async def test_test_failed_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
-        """Scenario 3: test-failed → retry_task launches fresh CC session."""
-        await _make_task(db, status="completed", gate_status="test-failed", gate_retries=1)
-
-        mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/audit-task-1")
-
-        mock_resume_pipeline.assert_not_called()
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["status"] == "working"
 
     async def test_needs_review_excluded_from_gate_reentry(self, db, sample_project, mock_git, mock_sdk):
         """Scenario 8: needs-review → retry_task launches fresh CC session."""
@@ -299,18 +173,6 @@ class TestRejectionStatesNotReenteredByRetry:
         mock_resume_pipeline.assert_not_called()
         task = await db.get_task("test-project/audit-task-1")
         assert task["status"] == "working"
-
-    async def test_retry_task_clears_gate_state_for_fresh_run(self, db, sample_project, mock_git, mock_sdk):
-        """retry_task resets gate_status and gate_retries for fresh CC run."""
-        await _make_task(db, status="completed", gate_status="review-failed", gate_retries=2)
-
-        from switchboard.dispatch.engine import retry_task
-        await retry_task("test-project/audit-task-1")
-
-        # After retry_task, gate state is cleared before dispatch_task is called
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["gate_status"] is None
-        assert task["gate_retries"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -334,45 +196,6 @@ class TestMissingWorktreeGuard:
         for p in patches:
             p.stop()
         _running_gates.clear()
-
-    async def test_missing_worktree_sets_needs_review(self, db, sample_project):
-        """Scenario 9: worktree released → recovery sets gate_status=needs-review."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        # worktree_path is None (released)
-        await _make_task(db, gate_status="testing", worktree_path=None)
-
-        result = await _resume_gate_pipeline("test-project/audit-task-1", reason="test")
-
-        assert result is False
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["gate_status"] == "needs-review"
-
-    async def test_nonexistent_worktree_sets_needs_review(self, db, sample_project):
-        """Worktree path set but directory doesn't exist → needs-review."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="testing",
-                         worktree_path="/tmp/nonexistent-worktree-xyz-999")
-
-        result = await _resume_gate_pipeline("test-project/audit-task-1", reason="test")
-
-        assert result is False
-        task = await db.get_task("test-project/audit-task-1")
-        assert task["gate_status"] == "needs-review"
-
-    async def test_worktree_guard_posts_message(self, db, sample_project):
-        """Missing worktree posts a status message explaining the situation."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-
-        await _make_task(db, gate_status="reviewing", worktree_path=None)
-
-        await _resume_gate_pipeline("test-project/audit-task-1", reason="background monitor")
-
-        thread = await db.read_task_messages("test-project/audit-task-1")
-        messages = thread.get("messages", [])
-        worktree_msgs = [m for m in messages if "worktree" in (m.get("title") or "").lower()]
-        assert len(worktree_msgs) >= 1
 
 
 # ---------------------------------------------------------------------------

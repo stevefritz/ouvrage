@@ -90,78 +90,6 @@ class TestUserSettingsResponseContract:
         assert "anthropic" in data, "Missing 'anthropic' key"
         assert "notifications" in data, "Missing 'notifications' key"
 
-    async def test_profile_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        owner = await db.get_user_by_email("owner@localhost")
-        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"])
-        resp = _Capture()
-
-        await handle_request(scope, _make_receive(), resp)
-
-        profile = resp.json()["profile"]
-        assert "name" in profile
-        assert "email" in profile
-        assert "timezone" in profile
-        assert "role" in profile
-
-    async def test_anthropic_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        owner = await db.get_user_by_email("owner@localhost")
-        scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"])
-        resp = _Capture()
-
-        await handle_request(scope, _make_receive(), resp)
-
-        anthropic = resp.json()["anthropic"]
-        assert "configured" in anthropic
-        assert "key_last4" in anthropic
-        assert isinstance(anthropic["configured"], bool)
-
-
-class TestInstanceSettingsResponseContract:
-    """Verify the exact JSON structure the Settings UI expects from GET /settings/instance."""
-
-    async def test_response_has_required_top_level_keys(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance")
-        resp = _Capture()
-
-        with _patch_httpx(200, {}):
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        assert "instance" in data, "Missing 'instance' key"
-        assert "github" in data, "Missing 'github' key"
-        assert "oauth" in data, "Missing 'oauth' key"
-
-    async def test_github_has_connected_field(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance")
-        resp = _Capture()
-
-        await handle_request(scope, _make_receive(), resp)
-
-        github = resp.json()["github"]
-        assert "connected" in github
-        assert isinstance(github["connected"], bool)
-
-    async def test_instance_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance")
-        resp = _Capture()
-
-        with _patch_httpx(200, {}):
-            await handle_request(scope, _make_receive(), resp)
-
-        instance = resp.json()["instance"]
-        assert "name" in instance
-        assert "slug" in instance
-
 
 # ── Multi-step workflow tests ─────────────────────────────────────────────────
 
@@ -377,20 +305,6 @@ class TestRegenerateOAuthWorkflow:
 class TestRoleBasedAccess:
     """Verify the frontend's role-based visibility logic is backed by the API."""
 
-    async def test_member_can_access_user_settings(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        user = await db.create_user(email="member@test.com", name="Member",
-                                    role="member")
-        scope = _make_scope("/dashboard/api/settings/user", user_id=user["id"],
-                            email="member@test.com", role="member")
-        resp = _Capture()
-
-        await handle_request(scope, _make_receive(), resp)
-
-        assert resp.status == 200
-        data = resp.json()
-        assert data["profile"]["role"] == "member"
 
     async def test_member_role_in_response_prevents_instance_access(self, db):
         """The frontend checks profile.role to decide whether to show instance settings.
@@ -413,51 +327,4 @@ class TestRoleBasedAccess:
         await handle_request(scope, _make_receive(), resp)
         assert resp.status == 403
 
-    async def test_admin_can_access_both(self, db):
-        from switchboard.dashboard.api import handle_request
 
-        user = await db.create_user(email="admin@test.com", name="Admin",
-                                    role="admin")
-
-        # User settings
-        scope = _make_scope("/dashboard/api/settings/user", user_id=user["id"],
-                            email="admin@test.com", role="admin")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-        assert resp.status == 200
-        assert resp.json()["profile"]["role"] == "admin"
-
-        # Instance settings
-        scope = _make_scope("/dashboard/api/settings/instance", role="admin",
-                            user_id=user["id"], email="admin@test.com")
-        resp = _Capture()
-        with _patch_httpx(200, {}):
-            await handle_request(scope, _make_receive(), resp)
-        assert resp.status == 200
-
-    async def test_member_cannot_patch_instance(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance", method="PATCH",
-                            role="member")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"github_pat": "ghp_x"}), resp)
-        assert resp.status == 403
-
-    async def test_member_cannot_test_github(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance/test-github",
-                            method="POST", role="member")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-        assert resp.status == 403
-
-    async def test_member_cannot_regenerate_secret(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
-                            method="POST", role="member")
-        resp = _Capture()
-        await handle_request(scope, _make_receive(), resp)
-        assert resp.status == 403

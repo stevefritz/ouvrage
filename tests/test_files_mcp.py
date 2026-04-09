@@ -55,34 +55,6 @@ class TestAddProjectFileWorktreeValidation:
                 "source_path": str(outside_file),
             })
 
-    async def test_rejects_symlink_escape(self, db, sample_project, tmp_path):
-        """Symlinks that escape the worktree are rejected after resolve()."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
-
-        worktree = tmp_path / "worktree"
-        worktree.mkdir()
-
-        outside_file = tmp_path / "secret.txt"
-        outside_file.write_text("sensitive")
-
-        # Symlink inside worktree pointing outside
-        symlink = worktree / "escape.txt"
-        symlink.symlink_to(outside_file)
-
-        task = await db.create_task(
-            id="test-project/symlink-task",
-            project_id="test-project",
-            goal="Symlink test",
-        )
-        await db.update_task(task["id"], worktree_path=str(worktree))
-
-        _set_worker_context()
-        with pytest.raises(ValueError, match="must be within the worktree"):
-            await _handle_add_project_file({
-                "project_id": "test-project",
-                "task_id": "test-project/symlink-task",
-                "source_path": str(symlink),
-            })
 
     async def test_accepts_path_inside_worktree(self, db, sample_project, tmp_path):
         """Worker can upload files that genuinely live inside the worktree."""

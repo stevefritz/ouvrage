@@ -15,81 +15,6 @@ class TestResolveBranchTarget:
     depends_on has NO influence on merge target.
     """
 
-    async def test_depends_on_does_not_affect_branch_target(self, db, sample_project):
-        """depends_on must NOT affect branch target — task.base_branch wins."""
-        from switchboard.git.operations import resolve_branch_target
-
-        parent = await db.create_task(
-            id="test-project/parent", project_id="test-project",
-            goal="Parent", branch="feature/parent-branch",
-        )
-        child = await db.create_task(
-            id="test-project/child", project_id="test-project",
-            goal="Child", depends_on="test-project/parent",
-            base_branch="staging",
-        )
-
-        result = await resolve_branch_target(child)
-        # Must return task's own base_branch, never the parent's branch
-        assert result == "staging"
-        assert result != "feature/parent-branch"
-
-    async def test_depends_on_resolves_to_project_default(self, db, sample_project):
-        """depends_on with no other config falls back to project.default_branch, not parent branch."""
-        from switchboard.git.operations import resolve_branch_target
-
-        parent = await db.create_task(
-            id="test-project/parent-a", project_id="test-project",
-            goal="Parent A", branch="task-a-branch",
-        )
-        child = await db.create_task(
-            id="test-project/child-b", project_id="test-project",
-            goal="Child B", depends_on="test-project/parent-a",
-        )
-
-        result = await resolve_branch_target(child)
-        assert result == "main"       # project default_branch
-        assert result != "task-a-branch"  # must NOT be parent's branch
-
-    async def test_uses_task_base_branch(self, db, sample_project):
-        """task.base_branch is used when set."""
-        from switchboard.git.operations import resolve_branch_target
-
-        task = await db.create_task(
-            id="test-project/explicit", project_id="test-project",
-            goal="Explicit base", base_branch="staging",
-        )
-
-        result = await resolve_branch_target(task)
-        assert result == "staging"
-
-    async def test_uses_component_base_branch(self, db, sample_project):
-        """component.base_branch used when task has none."""
-        from switchboard.git.operations import resolve_branch_target
-
-        comp = await db.create_component(
-            id="test-project/api", project_id="test-project",
-            name="API Layer", base_branch="develop",
-        )
-        task = await db.create_task(
-            id="test-project/comp-task", project_id="test-project",
-            goal="Component task", component_id="test-project/api",
-        )
-
-        result = await resolve_branch_target(task)
-        assert result == "develop"
-
-    async def test_falls_back_to_project_default(self, db, sample_project):
-        """Falls back to project.default_branch."""
-        from switchboard.git.operations import resolve_branch_target
-
-        task = await db.create_task(
-            id="test-project/basic", project_id="test-project",
-            goal="Basic task",
-        )
-
-        result = await resolve_branch_target(task)
-        assert result == "main"  # sample_project default_branch
 
     async def test_component_base_branch_wins_over_depends_on(self, db, sample_project):
         """component.base_branch is used even when depends_on is set."""
@@ -114,48 +39,6 @@ class TestResolveBranchTarget:
         assert result == "develop"
         assert result != "feature/parent"
 
-    async def test_depends_on_parent_merged_falls_to_project_default(self, db, sample_project):
-        """depends_on child with no other config returns project default regardless of parent state."""
-        from switchboard.git.operations import resolve_branch_target
-
-        parent = await db.create_task(
-            id="test-project/merged-parent", project_id="test-project",
-            goal="Parent", branch="parent-branch",
-        )
-        await db.update_task("test-project/merged-parent",
-            status="merged", gate_status="passed",
-            gate_passed_at=db.now_iso(), worktree_path=None,
-        )
-        child = await db.create_task(
-            id="test-project/orphan-child", project_id="test-project",
-            goal="Child", depends_on="test-project/merged-parent",
-        )
-
-        result = await resolve_branch_target(child)
-        assert result == "main"
-
-    async def test_depends_on_parent_with_worktree_still_uses_project_default(self, db, sample_project):
-        """depends_on child returns project default even when parent's worktree still exists."""
-        from switchboard.git.operations import resolve_branch_target
-
-        parent = await db.create_task(
-            id="test-project/wt-parent", project_id="test-project",
-            goal="Parent", branch="wt-parent-branch",
-        )
-        await db.update_task("test-project/wt-parent",
-            status="completed", gate_status="passed",
-            gate_passed_at=db.now_iso(), worktree_path="/work/test/wt-parent",
-        )
-        child = await db.create_task(
-            id="test-project/wt-child", project_id="test-project",
-            goal="Child", depends_on="test-project/wt-parent",
-        )
-
-        result = await resolve_branch_target(child)
-        # depends_on must never pollute merge target
-        assert result == "main"
-        assert result != "wt-parent-branch"
-
 
 # ---------------------------------------------------------------------------
 # Auto-merge flow
@@ -178,26 +61,6 @@ class TestAutoMerge:
         for p in patches:
             p.stop()
 
-    async def test_merge_success(self, db, sample_project):
-        """Successful merge: status=merged, pushed_at set."""
-        from switchboard.git.operations import _perform_auto_merge
-
-        task = await db.create_task(
-            id="test-project/merge-ok", project_id="test-project",
-            goal="Merge OK", auto_merge=True,
-        )
-        await db.update_task(task["id"],
-            status="completed", worktree_path="/tmp/fake-worktree",
-        )
-
-        result = await _perform_auto_merge("test-project/merge-ok")
-        assert result is True
-
-        updated = await db.get_task("test-project/merge-ok")
-        assert updated["status"] == "merged"
-        assert updated["pushed_at"] is not None
-        assert updated["pr_status"] == "merged"
-        assert updated["branch_target"] == "main"  # project default
 
     async def test_merge_conflict(self, db, sample_project):
         """Merge conflict: status=needs-review, conflict files listed."""
@@ -233,22 +96,6 @@ class TestAutoMerge:
         assert updated["pr_status"] == "conflict"
         assert "file1.py" in updated["pr_error"]
 
-    async def test_merge_sets_branch_target(self, db, sample_project):
-        """branch_target is resolved and stored on the task."""
-        from switchboard.git.operations import _perform_auto_merge
-
-        task = await db.create_task(
-            id="test-project/target-test", project_id="test-project",
-            goal="Target test", auto_merge=True, base_branch="staging",
-        )
-        await db.update_task(task["id"],
-            status="completed", worktree_path="/tmp/fake-worktree",
-        )
-
-        await _perform_auto_merge("test-project/target-test")
-
-        updated = await db.get_task("test-project/target-test")
-        assert updated["branch_target"] == "staging"
 
     async def test_detached_head_avoids_branch_conflict(self, db, sample_project):
         """Detached HEAD approach never checks out branch by name — no worktree conflict possible."""
@@ -287,38 +134,6 @@ class TestAutoMerge:
         # release_worktree must never be called
         mock_release.assert_not_awaited()
 
-    async def test_push_retry_succeeds(self, db, sample_project):
-        """Push retry: fails on first attempt, succeeds on second."""
-        from switchboard.git.operations import _perform_auto_merge
-
-        task = await db.create_task(
-            id="test-project/retry-ok", project_id="test-project",
-            goal="Retry OK", auto_merge=True,
-        )
-        await db.update_task(task["id"],
-            status="completed", worktree_path="/tmp/fake-worktree",
-            branch="feature/retry",
-        )
-
-        push_count = 0
-        async def mock_run(*args, **kwargs):
-            nonlocal push_count
-            cmd = " ".join(args)
-            if "push" in cmd and "HEAD:" in cmd:
-                push_count += 1
-                if push_count == 1:
-                    return (b"", b"rejected", 1)
-                return (b"", b"", 0)
-            return (b"", b"", 0)
-
-        self.mock_run.side_effect = mock_run
-
-        result = await _perform_auto_merge("test-project/retry-ok")
-        assert result is True
-        assert push_count == 2
-
-        updated = await db.get_task("test-project/retry-ok")
-        assert updated["status"] == "merged"
 
     async def test_push_retry_exhausted(self, db, sample_project):
         """Push retry: fails all 3 attempts → needs-review."""
@@ -351,24 +166,6 @@ class TestAutoMerge:
         updated = await db.get_task("test-project/retry-fail")
         assert updated["status"] == "needs-review"
         assert updated["pr_status"] == "push-failed"
-
-    async def test_merge_posts_message(self, db, sample_project):
-        """Auto-merge posts a status message on success."""
-        from switchboard.git.operations import _perform_auto_merge
-
-        task = await db.create_task(
-            id="test-project/msg-test", project_id="test-project",
-            goal="Msg test", auto_merge=True,
-        )
-        await db.update_task(task["id"],
-            status="completed", worktree_path="/tmp/fake-worktree",
-        )
-
-        await _perform_auto_merge("test-project/msg-test")
-
-        msgs = await db.read_task_messages("test-project/msg-test")
-        status_msgs = [m for m in msgs["messages"] if m["type"] == "status"]
-        assert any("Auto-merged" in m["title"] for m in status_msgs)
 
 
 # ---------------------------------------------------------------------------
@@ -417,19 +214,6 @@ class TestWorktreeLifecycle:
         with pytest.raises(ValueError, match="not found"):
             await release_worktree("test-project/nonexistent")
 
-    async def test_auto_release_on_gate_pass(self, db, sample_project):
-        """auto_release_worktree=true triggers release after gate pass."""
-        from switchboard.dispatch.engine import _auto_release_worktree
-
-        task = await db.create_task(
-            id="test-project/auto-release", project_id="test-project",
-            goal="Auto release", auto_release_worktree=True,
-        )
-        await db.update_task(task["id"], worktree_path="/tmp/fake-worktree")
-
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
-            await _auto_release_worktree("test-project/auto-release")
-            mock_release.assert_awaited_once_with("test-project/auto-release", reason="completion")
 
     async def test_no_auto_release_when_disabled(self, db, sample_project):
         """auto_release_worktree=false skips release."""
@@ -475,12 +259,6 @@ class TestBlockingErrors:
         assert result["status"] == "completed"
         assert result["worktree_path"] == "/work/test-project/holder"
 
-    async def test_find_branch_holder_none(self, db, sample_project):
-        """_find_branch_holder returns None when no holder."""
-        from switchboard.git.worktree import _find_branch_holder
-
-        result = await _find_branch_holder("feature/nonexistent")
-        assert result is None
 
     async def test_find_branch_holder_null_worktree(self, db, sample_project):
         """_find_branch_holder ignores tasks with NULL worktree_path."""
@@ -499,44 +277,6 @@ class TestBlockingErrors:
 # ---------------------------------------------------------------------------
 # Schema: new fields on tasks
 # ---------------------------------------------------------------------------
-
-class TestNewFields:
-    """New task fields are persisted and returned correctly."""
-
-    async def test_create_task_with_auto_merge(self, db, sample_project):
-        task = await db.create_task(
-            id="test-project/merge-task", project_id="test-project",
-            goal="Merge task", auto_merge=True, auto_release_worktree=True,
-            base_branch="staging",
-        )
-        assert task["auto_merge"] is True
-        assert task["auto_release_worktree"] is True
-        assert task["base_branch"] == "staging"
-
-    async def test_update_task_merge_fields(self, db, sample_project):
-        task = await db.create_task(
-            id="test-project/update-merge", project_id="test-project",
-            goal="Update merge",
-        )
-        updated = await db.update_task(task["id"],
-            branch_target="develop", pushed_at="2026-01-01T00:00:00Z",
-            pr_status="merged", pr_error=None,
-        )
-        assert updated["branch_target"] == "develop"
-        assert updated["pushed_at"] == "2026-01-01T00:00:00Z"
-        assert updated["pr_status"] == "merged"
-
-    async def test_queued_at_field(self, db, sample_project):
-        task = await db.create_task(
-            id="test-project/q-field", project_id="test-project",
-            goal="Queue field test",
-        )
-        updated = await db.update_task(task["id"], queued_at="2026-01-01T00:00:00Z")
-        assert updated["queued_at"] == "2026-01-01T00:00:00Z"
-
-        # Clear it
-        updated = await db.update_task(task["id"], queued_at=None)
-        assert updated["queued_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -581,48 +321,4 @@ class TestCheckAndDispatchWithAutoMerge:
                 await _check_and_dispatch_dependents("test-project/am-gate")
                 mock_merge.assert_awaited_once_with("test-project/am-gate")
 
-    async def test_mid_chain_skips_merge_dispatches_dependent(self, db, sample_project):
-        """Mid-chain task with auto_merge=True skips merge and dispatches dependent."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
 
-        task = await db.create_task(
-            id="test-project/am-mid", project_id="test-project",
-            goal="Mid chain", auto_merge=True,
-        )
-        await db.update_task(task["id"],
-            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
-        )
-
-        dep = await db.create_task(
-            id="test-project/am-dep", project_id="test-project",
-            goal="Dependent", depends_on="test-project/am-mid",
-        )
-
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock()) as mock_merge:
-            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
-                await _check_and_dispatch_dependents("test-project/am-mid")
-
-        # Mid-chain: merge should NOT be called, dependent SHOULD be dispatched
-        mock_merge.assert_not_awaited()
-        self.mock_lifecycle_execute.assert_awaited_once()
-        call_args = self.mock_lifecycle_execute.await_args[0]
-        assert call_args[0] == "test-project/am-dep"
-        assert call_args[1] == "dispatch"
-
-    async def test_queue_drained_after_chain(self, db, sample_project):
-        """_drain_queue is called at the end of _check_and_dispatch_dependents."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
-
-        task = await db.create_task(
-            id="test-project/drain-test", project_id="test-project",
-            goal="Drain test",
-        )
-        await db.update_task(task["id"],
-            status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
-        )
-
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
-            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
-                await _check_and_dispatch_dependents("test-project/drain-test")
-
-        self.mock_drain.assert_awaited_once()

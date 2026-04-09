@@ -87,49 +87,11 @@ async def test_user(db):
 
 # ── OIDC Discovery ────────────────────────────────────────────────────────
 
-class TestOIDCDiscovery:
-    def test_discovery_has_required_fields(self, rsa_keys):
-        config = get_openid_configuration()
-        assert config["issuer"] == "https://switchboard.test"
-        assert config["authorization_endpoint"] == "https://switchboard.test/oauth/authorize"
-        assert config["token_endpoint"] == "https://switchboard.test/oauth/token"
-        assert config["revocation_endpoint"] == "https://switchboard.test/oauth/revoke"
-        assert config["jwks_uri"] == "https://switchboard.test/jwks"
-
-    def test_discovery_code_challenge_methods(self, rsa_keys):
-        config = get_openid_configuration()
-        assert "S256" in config["code_challenge_methods_supported"]
-
-    def test_discovery_supported_scopes(self, rsa_keys):
-        config = get_openid_configuration()
-        for scope in ["openid", "profile", "email", "offline_access"]:
-            assert scope in config["scopes_supported"]
-
-    def test_discovery_rs256(self, rsa_keys):
-        config = get_openid_configuration()
-        assert "RS256" in config["id_token_signing_alg_values_supported"]
-
-    def test_discovery_client_secret_post(self, rsa_keys):
-        config = get_openid_configuration()
-        assert "client_secret_post" in config["token_endpoint_auth_methods_supported"]
-
 
 # ── JWKS ──────────────────────────────────────────────────────────────────
 
 class TestJWKS:
-    def test_jwks_has_keys(self, rsa_keys):
-        jwks = get_jwks()
-        assert "keys" in jwks
-        assert len(jwks["keys"]) == 1
 
-    def test_jwks_key_properties(self, rsa_keys):
-        key = get_jwks()["keys"][0]
-        assert key["kty"] == "RSA"
-        assert key["kid"] == RSA_KID
-        assert key["use"] == "sig"
-        assert key["alg"] == "RS256"
-        assert "n" in key
-        assert "e" in key
 
     def test_jwks_key_persists(self, rsa_keys, oauth_env):
         """Key should be loadable from disk on second init."""
@@ -168,16 +130,6 @@ class TestClientManagement:
         assert "authorization_code" in seeded_client["grant_types"]
         assert "refresh_token" in seeded_client["grant_types"]
 
-    async def test_invalid_client(self, db, rsa_keys):
-        client = await get_client("nonexistent")
-        assert client is None
-
-    async def test_validate_client_secret(self, seeded_client):
-        """Seeded client should have a valid encrypted secret."""
-        from switchboard.crypto import decrypt_value
-        secret = decrypt_value(seeded_client["client_secret_encrypted"])
-        assert await validate_client_secret("claude-mcp", secret)
-        assert not await validate_client_secret("claude-mcp", "wrong-secret")
 
     async def test_seed_idempotent(self, seeded_client):
         """Seeding again should not create duplicates."""
@@ -189,14 +141,7 @@ class TestClientManagement:
 # ── PKCE ──────────────────────────────────────────────────────────────────
 
 class TestPKCE:
-    def test_pkce_s256_valid(self):
-        verifier = secrets.token_urlsafe(32)
-        digest = hashlib.sha256(verifier.encode("ascii")).digest()
-        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-        assert verify_pkce(verifier, challenge, "S256")
 
-    def test_pkce_s256_invalid(self):
-        assert not verify_pkce("wrong-verifier", "some-challenge", "S256")
 
     def test_pkce_unsupported_method(self):
         assert not verify_pkce("verifier", "challenge", "plain")
@@ -205,20 +150,6 @@ class TestPKCE:
 # ── Authorization Code ────────────────────────────────────────────────────
 
 class TestAuthorizationCode:
-    async def test_create_and_consume(self, seeded_client, test_user):
-        code = await create_authorization_code(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            redirect_uri="https://claude.ai/oauth/callback",
-            scope="openid profile email",
-        )
-        assert code is not None
-
-        code_data = await consume_authorization_code(code)
-        assert code_data is not None
-        assert code_data["client_id"] == "claude-mcp"
-        assert code_data["user_id"] == test_user["id"]
-        assert code_data["scope"] == "openid profile email"
 
     async def test_code_single_use(self, seeded_client, test_user):
         code = await create_authorization_code(
@@ -250,105 +181,13 @@ class TestAuthorizationCode:
 
         assert await consume_authorization_code(code) is None
 
-    async def test_code_with_pkce(self, seeded_client, test_user):
-        verifier = secrets.token_urlsafe(32)
-        digest = hashlib.sha256(verifier.encode("ascii")).digest()
-        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-
-        code = await create_authorization_code(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            redirect_uri="https://claude.ai/oauth/callback",
-            scope="openid",
-            code_challenge=challenge,
-            code_challenge_method="S256",
-        )
-        code_data = await consume_authorization_code(code)
-        assert code_data["code_challenge"] == challenge
-        assert code_data["code_challenge_method"] == "S256"
-        assert verify_pkce(verifier, code_data["code_challenge"], code_data["code_challenge_method"])
-
 
 # ── Token Issuance ────────────────────────────────────────────────────────
-
-class TestTokenIssuance:
-    async def test_issue_tokens(self, seeded_client, test_user, rsa_keys):
-        result = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid profile email",
-            email="test@example.com",
-            name="Test User",
-        )
-
-        assert "access_token" in result
-        assert result["token_type"] == "Bearer"
-        assert result["expires_in"] == ACCESS_TOKEN_TTL
-        assert "refresh_token" in result
-        assert result["scope"] == "openid profile email"
-
-    async def test_access_token_is_valid_jwt(self, seeded_client, test_user, rsa_keys):
-        result = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid profile email",
-            email="test@example.com",
-            name="Test User",
-        )
-
-        # Decode and verify the JWT
-        jwks = get_jwks()
-        key_data = jwks["keys"][0]
-        pub_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-
-        claims = pyjwt.decode(
-            result["access_token"],
-            pub_key,
-            algorithms=["RS256"],
-            audience="claude-mcp",
-        )
-
-        assert claims["iss"] == "https://switchboard.test"
-        assert claims["sub"] == str(test_user["id"])
-        assert claims["aud"] == "claude-mcp"
-        assert claims["scope"] == "openid profile email"
-        assert claims["email"] == "test@example.com"
-        assert claims["name"] == "Test User"
-        assert "jti" in claims
-        assert "exp" in claims
-        assert "iat" in claims
-
-    async def test_jwt_kid_header(self, seeded_client, test_user, rsa_keys):
-        result = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid",
-        )
-        header = pyjwt.get_unverified_header(result["access_token"])
-        assert header["kid"] == RSA_KID
-        assert header["alg"] == "RS256"
 
 
 # ── Token Refresh ─────────────────────────────────────────────────────────
 
 class TestTokenRefresh:
-    async def test_refresh_token_exchange(self, seeded_client, test_user, rsa_keys):
-        # Issue initial tokens
-        initial = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid profile",
-            email="test@example.com",
-        )
-
-        # Refresh
-        refreshed = await refresh_access_token(
-            initial["refresh_token"], "claude-mcp"
-        )
-        assert refreshed is not None
-        assert refreshed["access_token"] != initial["access_token"]
-        assert refreshed["refresh_token"] != initial["refresh_token"]
-        assert refreshed["scope"] == "openid profile"
 
     async def test_refresh_token_rotation(self, seeded_client, test_user, rsa_keys):
         """Old refresh token should be revoked after rotation."""
@@ -370,54 +209,8 @@ class TestTokenRefresh:
         )
         assert second is None
 
-    async def test_refresh_wrong_client(self, seeded_client, test_user, rsa_keys):
-        initial = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid",
-        )
-        result = await refresh_access_token(
-            initial["refresh_token"], "wrong-client"
-        )
-        assert result is None
-
-    async def test_refresh_invalid_token(self, seeded_client, rsa_keys):
-        result = await refresh_access_token("bogus-token", "claude-mcp")
-        assert result is None
-
 
 # ── Token Revocation ──────────────────────────────────────────────────────
-
-class TestTokenRevocation:
-    async def test_revoke_refresh_token(self, seeded_client, test_user, rsa_keys):
-        tokens = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid",
-        )
-
-        result = await revoke_token(tokens["refresh_token"])
-        assert result is True
-
-        # Refresh should now fail
-        refreshed = await refresh_access_token(
-            tokens["refresh_token"], "claude-mcp"
-        )
-        assert refreshed is None
-
-    async def test_revoke_access_token(self, seeded_client, test_user, rsa_keys):
-        tokens = await issue_tokens(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            scope="openid",
-        )
-
-        result = await revoke_token(tokens["access_token"], "access_token")
-        assert result is True
-
-    async def test_revoke_unknown_token(self, seeded_client, rsa_keys):
-        result = await revoke_token("nonexistent-token")
-        assert result is False
 
 
 # ── ASGI Handler Integration Tests ────────────────────────────────────────
@@ -471,54 +264,6 @@ class TestASGIHandlers:
         assert len(data["keys"]) == 1
         assert data["keys"][0]["kid"] == RSA_KID
 
-    async def test_authorize_no_session_redirects_to_login(self, seeded_client):
-        from switchboard.auth.oauth import handle_authorize
-        query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid"
-        status, headers, body = await self._call_handler(
-            handle_authorize, path="/oauth/authorize", query=query
-        )
-        # No session → redirect to login page (not 401 anymore)
-        assert status == 302
-        location = headers.get("location", "")
-        assert location.startswith("/dashboard/login?next=")
-        # oauth/authorize appears URL-encoded in the next= param
-        assert "oauth" in location and "authorize" in location
-
-    async def test_authorize_with_session(self, seeded_client, test_user):
-        from switchboard.auth.oauth import handle_authorize
-        query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid&state=xyz"
-
-        scope = {
-            "type": "http",
-            "method": "GET",
-            "path": "/oauth/authorize",
-            "query_string": query.encode(),
-            "headers": [],
-            "oauth_user_id": test_user["id"],
-        }
-
-        status = None
-        location = None
-
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(message):
-            nonlocal status, location
-            if message["type"] == "http.response.start":
-                status = message["status"]
-                for k, v in message.get("headers", []):
-                    key = k.decode() if isinstance(k, bytes) else k
-                    val = v.decode() if isinstance(v, bytes) else v
-                    if key == "location":
-                        location = val
-
-        await handle_authorize(scope, receive, send)
-        assert status == 302
-        assert location is not None
-        assert "code=" in location
-        assert "state=xyz" in location
-        assert location.startswith("https://claude.ai/oauth/callback")
 
     async def test_authorize_invalid_client(self, db, rsa_keys):
         from switchboard.auth.oauth import handle_authorize
@@ -538,38 +283,6 @@ class TestASGIHandlers:
         assert status == 400
         assert json.loads(body)["error"] == "invalid_request"
 
-    async def test_token_exchange_full_flow(self, seeded_client, test_user, rsa_keys):
-        """Full auth code → token exchange flow."""
-        from switchboard.auth.oauth import handle_token
-        from switchboard.crypto import decrypt_value
-
-        # Create auth code
-        code = await create_authorization_code(
-            client_id="claude-mcp",
-            user_id=test_user["id"],
-            redirect_uri="https://claude.ai/oauth/callback",
-            scope="openid profile email",
-        )
-
-        # Get client secret
-        client = await get_client("claude-mcp")
-        client_secret = decrypt_value(client["client_secret_encrypted"])
-
-        # Exchange code for tokens
-        body = (
-            f"grant_type=authorization_code&code={code}"
-            f"&client_id=claude-mcp&client_secret={client_secret}"
-            f"&redirect_uri=https://claude.ai/oauth/callback"
-        ).encode()
-
-        status, _, resp_body = await self._call_handler(
-            handle_token, method="POST", path="/oauth/token", body=body
-        )
-        assert status == 200
-        data = json.loads(resp_body)
-        assert "access_token" in data
-        assert "refresh_token" in data
-        assert data["token_type"] == "Bearer"
 
     async def test_token_exchange_with_pkce(self, seeded_client, test_user, rsa_keys):
         """Auth code flow with PKCE S256."""

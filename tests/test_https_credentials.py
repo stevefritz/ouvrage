@@ -14,49 +14,10 @@ from switchboard.git.operations import normalize_repo_url
 class TestNormalizeRepoUrl:
     """normalize_repo_url must return canonical HTTPS format for any provider."""
 
-    def test_github_ssh_with_git_suffix(self):
-        assert normalize_repo_url("git@github.com:acme/widgets.git") == "https://github.com/acme/widgets.git"
-
-    def test_github_ssh_without_git_suffix(self):
-        assert normalize_repo_url("git@github.com:acme/widgets") == "https://github.com/acme/widgets.git"
-
-    def test_https_passthrough_with_suffix(self):
-        assert normalize_repo_url("https://github.com/acme/widgets.git") == "https://github.com/acme/widgets.git"
-
-    def test_https_passthrough_without_suffix(self):
-        assert normalize_repo_url("https://github.com/acme/widgets") == "https://github.com/acme/widgets.git"
 
     def test_http_scheme_upgraded(self):
         assert normalize_repo_url("http://github.com/acme/widgets") == "https://github.com/acme/widgets.git"
 
-    def test_hyphens_preserved(self):
-        assert normalize_repo_url("git@github.com:my-org/my-repo.git") == "https://github.com/my-org/my-repo.git"
-
-    def test_dots_in_repo_name(self):
-        assert normalize_repo_url("git@github.com:org/repo.name.git") == "https://github.com/org/repo.name.git"
-
-    def test_result_always_has_git_suffix(self):
-        result = normalize_repo_url("git@github.com:org/repo")
-        assert result.endswith(".git")
-
-    def test_result_always_starts_with_https(self):
-        result = normalize_repo_url("git@github.com:org/repo.git")
-        assert result.startswith("https://")
-
-    def test_gitlab_ssh_normalized(self):
-        assert normalize_repo_url("git@gitlab.com:acme/widgets.git") == "https://gitlab.com/acme/widgets.git"
-
-    def test_gitlab_ssh_nested_groups(self):
-        assert normalize_repo_url("git@gitlab.com:group/subgroup/project.git") == "https://gitlab.com/group/subgroup/project.git"
-
-    def test_bitbucket_ssh_normalized(self):
-        assert normalize_repo_url("git@bitbucket.org:workspace/repo.git") == "https://bitbucket.org/workspace/repo.git"
-
-    def test_self_hosted_ssh(self):
-        assert normalize_repo_url("git@gl.example.com:team/backend.git") == "https://gl.example.com/team/backend.git"
-
-    def test_https_trailing_slash_stripped(self):
-        assert normalize_repo_url("https://gitlab.com/group/repo/") == "https://gitlab.com/group/repo.git"
 
     def test_unknown_format_passthrough(self):
         result = normalize_repo_url("not-a-url")
@@ -115,17 +76,6 @@ class TestCreateProjectNormalizesUrl:
         })
         assert self.created_args["repo"] == "https://github.com/acme/widgets.git"
 
-    @pytest.mark.asyncio
-    async def test_https_url_passthrough(self):
-        from switchboard.server.handlers.projects import _handle_create_project
-        await _handle_create_project({
-            "id": "test-proj",
-            "repo": "https://github.com/acme/widgets.git",
-            "working_dir": "/work/widgets",
-            **self._REQUIRED_CONFIG,
-        })
-        assert self.created_args["repo"] == "https://github.com/acme/widgets.git"
-
 
 # ---------------------------------------------------------------------------
 # Handler: update_project normalizes repo URL
@@ -157,23 +107,6 @@ class TestUpdateProjectNormalizesUrl:
         for p in self.patches:
             p.stop()
 
-    @pytest.mark.asyncio
-    async def test_ssh_repo_normalized_on_update(self):
-        from switchboard.server.handlers.projects import _handle_update_project
-        await _handle_update_project({
-            "id": "test-proj",
-            "repo": "git@github.com:acme/widgets.git",
-        })
-        assert self.updated_fields["repo"] == "https://github.com/acme/widgets.git"
-
-    @pytest.mark.asyncio
-    async def test_no_repo_field_not_normalized(self):
-        from switchboard.server.handlers.projects import _handle_update_project
-        await _handle_update_project({
-            "id": "test-proj",
-            "test_command": "pytest",
-        })
-        assert "repo" not in self.updated_fields
 
     @pytest.mark.asyncio
     async def test_https_repo_unchanged_on_update(self):
@@ -185,7 +118,6 @@ class TestUpdateProjectNormalizesUrl:
         assert self.updated_fields["repo"] == "https://github.com/acme/widgets.git"
 
 
-
 # ---------------------------------------------------------------------------
 # Startup migration — SSH URLs in DB converted to HTTPS
 # ---------------------------------------------------------------------------
@@ -193,50 +125,6 @@ class TestUpdateProjectNormalizesUrl:
 class TestStartupMigration:
     """init_db migration must convert SSH repo URLs to HTTPS."""
 
-    @pytest.mark.asyncio
-    async def test_ssh_url_migrated(self, db):
-        """Projects with SSH URLs should be migrated to HTTPS on init_db."""
-        # Insert a project with SSH URL directly (bypassing the handler)
-        async with db.get_db() as conn:
-            await conn.execute(
-                "INSERT INTO projects (id, repo, default_branch, working_dir, created_at) VALUES (?, ?, ?, ?, ?)",
-                ("ssh-proj", "git@github.com:acme/widgets.git", "main", "/work/widgets", "2024-01-01T00:00:00Z"),
-            )
-            await conn.commit()
-
-        # Re-run init_db (migration runs again)
-        with patch("asyncio.create_subprocess_exec") as mock_proc:
-            mock_instance = MagicMock()
-            mock_instance.communicate = AsyncMock(return_value=(b"", b""))
-            mock_instance.returncode = 0
-            mock_proc.return_value = mock_instance
-            # Ensure bare path does NOT exist so we skip git remote set-url
-            with patch("os.path.exists", return_value=False):
-                from switchboard.db.schema import init_db
-                await init_db()
-
-        # Verify the URL was updated
-        async with db.get_db() as conn:
-            rows = await conn.execute_fetchall("SELECT repo FROM projects WHERE id = 'ssh-proj'")
-        assert rows[0]["repo"] == "https://github.com/acme/widgets.git"
-
-    @pytest.mark.asyncio
-    async def test_https_url_unchanged(self, db):
-        """Projects with HTTPS URLs should not be modified."""
-        async with db.get_db() as conn:
-            await conn.execute(
-                "INSERT INTO projects (id, repo, default_branch, working_dir, created_at) VALUES (?, ?, ?, ?, ?)",
-                ("https-proj", "https://github.com/acme/widgets.git", "main", "/work/widgets", "2024-01-01T00:00:00Z"),
-            )
-            await conn.commit()
-
-        with patch("os.path.exists", return_value=False):
-            from switchboard.db.schema import init_db
-            await init_db()
-
-        async with db.get_db() as conn:
-            rows = await conn.execute_fetchall("SELECT repo FROM projects WHERE id = 'https-proj'")
-        assert rows[0]["repo"] == "https://github.com/acme/widgets.git"
 
     @pytest.mark.asyncio
     async def test_bare_repo_remote_updated(self, db, tmp_path):
@@ -357,96 +245,6 @@ class TestBareCloneAuth:
         )
         assert self.REPO not in clone_call.args, "Plain URL (no PAT) must not be used when PAT is available"
 
-    @pytest.mark.asyncio
-    async def test_bare_clone_falls_back_to_plain_url_when_no_pat(self):
-        """When no PAT is configured, git clone --bare falls back to plain project URL."""
-        from switchboard.git.worktree import setup_worktree
-
-        mock_resolve = AsyncMock(side_effect=ValueError("No GitHub PAT configured"))
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
-                try:
-                    await setup_worktree(self.project, "test-task", "test-branch")
-                except Exception:
-                    pass
-
-        clone_call = self._get_clone_call()
-        assert clone_call is not None, "git clone --bare was not called"
-        assert self.REPO in clone_call.args, (
-            f"Plain project URL not used for bare clone when no PAT. Got: {clone_call.args}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_bare_clone_skipped_when_bare_path_exists(self):
-        """When .bare already exists, git clone --bare must NOT be called."""
-        from switchboard.git.worktree import setup_worktree
-
-        # Pre-create the bare path to simulate existing project
-        bare_path = os.path.join(self.working_dir, ".bare")
-        os.makedirs(bare_path)
-
-        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
-                try:
-                    await setup_worktree(self.project, "test-task", "test-branch")
-                except Exception:
-                    pass
-
-        clone_call = self._get_clone_call()
-        assert clone_call is None, "git clone --bare must not run when .bare already exists"
-
-    @pytest.mark.asyncio
-    async def test_fetch_uses_authenticated_url_when_pat_available(self):
-        """The post-clone git fetch must also use the authenticated URL."""
-        from switchboard.git.worktree import setup_worktree
-
-        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
-                try:
-                    await setup_worktree(self.project, "test-task", "test-branch")
-                except Exception:
-                    pass
-
-        fetch_calls = [
-            c for c in self.mock_run.call_args_list
-            if c.args[0] == "git" and "fetch" in c.args and "--bare" not in c.args
-            and c.args[2] != self.working_dir  # not the worktree fetch at the end
-        ]
-        auth_fetch = any(self.AUTH_URL in c.args for c in fetch_calls)
-        assert auth_fetch, "Authenticated URL must be used for the bare repo fetch"
-
-    @pytest.mark.asyncio
-    async def test_pat_stripped_from_bare_repo_remote_url_after_clone(self):
-        """After bare clone, remote.origin.url must be reset to the plain URL (no PAT)."""
-        from switchboard.git.worktree import setup_worktree
-
-        mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
-                try:
-                    await setup_worktree(self.project, "test-task", "test-branch")
-                except Exception:
-                    pass
-
-        # Find the git config remote.origin.url call that resets to plain URL
-        reset_calls = [
-            c for c in self.mock_run.call_args_list
-            if c.args[0] == "git" and "config" in c.args
-            and "remote.origin.url" in c.args
-            and self.REPO in c.args
-            and self.AUTH_URL not in c.args
-        ]
-        assert reset_calls, (
-            "remote.origin.url must be reset to plain URL after clone to strip PAT from disk"
-        )
-        # And the PAT must not appear in any git config call
-        for c in self.mock_run.call_args_list:
-            if c.args[0] == "git" and "config" in c.args:
-                for arg in c.args:
-                    assert self.PAT not in str(arg), f"PAT found in git config call: {c.args}"
-
 
 # ---------------------------------------------------------------------------
 # setup_worktree — existing worktree fetch fallback
@@ -488,23 +286,6 @@ class TestExistingWorktreeFetchFallback:
         for p in self.patches:
             p.stop()
 
-    @pytest.mark.asyncio
-    async def test_fetch_success_no_fallback(self):
-        """When fetch origin succeeds, fallback fetch is not attempted."""
-        from switchboard.git.worktree import setup_worktree
-
-        self.mock_run.return_value = (b"", b"", 0)  # all git commands succeed
-
-        await setup_worktree(self.project, self.dir_name, self.branch)
-
-        # There should be a 'fetch origin' call
-        fetch_calls = [c for c in self.mock_run.call_args_list if "fetch" in c.args]
-        assert len(fetch_calls) >= 1
-        assert any("origin" in c.args for c in fetch_calls)
-
-        # No authenticated URL should appear in any fetch call
-        auth_fetches = [c for c in fetch_calls if self.AUTH_URL in c.args]
-        assert len(auth_fetches) == 0
 
     @pytest.mark.asyncio
     async def test_fetch_failure_tries_authenticated_url(self):

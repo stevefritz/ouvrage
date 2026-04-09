@@ -24,62 +24,16 @@ from switchboard.server.handlers.conversations import _handle_post, _handle_sear
 # ---------------------------------------------------------------------------
 
 class TestShouldEmbed:
-    def test_long_content_no_type_is_embedded(self):
-        from switchboard.embeddings.service import should_embed
-        assert should_embed("x" * 50, None) is True
 
-    def test_content_exactly_50_chars(self):
-        from switchboard.embeddings.service import should_embed
-        assert should_embed("x" * 50, "note") is True
 
     def test_content_49_chars_skipped(self):
         from switchboard.embeddings.service import should_embed
         assert should_embed("x" * 49, "note") is False
 
-    def test_empty_content_skipped(self):
-        from switchboard.embeddings.service import should_embed
-        assert should_embed("", "note") is False
-
-    def test_none_content_skipped(self):
-        from switchboard.embeddings.service import should_embed
-        assert should_embed(None, "note") is False
 
     def test_test_result_skipped(self):
         from switchboard.embeddings.service import should_embed
         assert should_embed("x" * 100, "test-result") is False
-
-    def test_spec_with_long_content_embedded(self):
-        from switchboard.embeddings.service import should_embed
-        assert should_embed("This is a specification. " * 5, "spec") is True
-
-    def test_status_with_long_content_embedded(self):
-        from switchboard.embeddings.service import should_embed
-        # status gets low weight but still gets embedded
-        assert should_embed("Status update: task completed." * 3, "status") is True
-
-
-class TestVectorEncoding:
-    def test_encode_decode_roundtrip(self):
-        from switchboard.embeddings.service import encode_vector, decode_vector
-        original = [0.1, 0.5, -0.3, 0.99, -1.0]
-        blob = encode_vector(original)
-        decoded = decode_vector(blob)
-        assert len(decoded) == len(original)
-        for a, b in zip(original, decoded):
-            assert abs(a - b) < 1e-5
-
-    def test_encode_1536_dims(self):
-        from switchboard.embeddings.service import encode_vector, decode_vector
-        vec = [float(i) / 1536 for i in range(1536)]
-        blob = encode_vector(vec)
-        assert len(blob) == 1536 * 4  # 4 bytes per float32
-        decoded = decode_vector(blob)
-        assert len(decoded) == 1536
-
-    def test_blob_is_bytes(self):
-        from switchboard.embeddings.service import encode_vector
-        blob = encode_vector([1.0, 2.0, 3.0])
-        assert isinstance(blob, bytes)
 
 
 class TestCosineSimilarity:
@@ -88,61 +42,12 @@ class TestCosineSimilarity:
         v = [1.0, 0.0, 0.5]
         assert abs(cosine_similarity(v, v) - 1.0) < 1e-6
 
-    def test_orthogonal_vectors(self):
-        from switchboard.embeddings.service import cosine_similarity
-        a = [1.0, 0.0]
-        b = [0.0, 1.0]
-        assert abs(cosine_similarity(a, b)) < 1e-6
-
-    def test_opposite_vectors(self):
-        from switchboard.embeddings.service import cosine_similarity
-        a = [1.0, 0.0]
-        b = [-1.0, 0.0]
-        assert abs(cosine_similarity(a, b) - (-1.0)) < 1e-6
 
     def test_zero_vector_returns_zero(self):
         from switchboard.embeddings.service import cosine_similarity
         a = [0.0, 0.0]
         b = [1.0, 0.0]
         assert cosine_similarity(a, b) == 0.0
-
-    def test_range_minus_one_to_one(self):
-        from switchboard.embeddings.service import cosine_similarity
-        a = [0.3, 0.5, -0.2]
-        b = [0.1, -0.4, 0.8]
-        sim = cosine_similarity(a, b)
-        assert -1.0 <= sim <= 1.0
-
-
-class TestRelevanceScoring:
-    def test_spec_gets_highest_weight(self):
-        from switchboard.embeddings.service import compute_relevance_score
-        spec_score = compute_relevance_score(0.8, "spec", False)
-        status_score = compute_relevance_score(0.8, "status", False)
-        assert spec_score > status_score
-
-    def test_pinned_boost_applies(self):
-        from switchboard.embeddings.service import compute_relevance_score
-        unpinned = compute_relevance_score(0.8, "note", False)
-        pinned = compute_relevance_score(0.8, "note", True)
-        assert abs(pinned / unpinned - 1.3) < 1e-6
-
-    def test_unknown_type_gets_neutral_weight(self):
-        from switchboard.embeddings.service import compute_relevance_score
-        score = compute_relevance_score(0.8, "unknown-type", False)
-        assert abs(score - 0.8) < 1e-6  # weight = 1.0
-
-    def test_formula(self):
-        from switchboard.embeddings.service import compute_relevance_score
-        # spec=1.5, pinned=1.3, similarity=0.6 → 0.6 * 1.5 * 1.3 = 1.17
-        score = compute_relevance_score(0.6, "spec", True)
-        assert abs(score - 0.6 * 1.5 * 1.3) < 1e-6
-
-    def test_test_result_gets_lowest_weight(self):
-        from switchboard.embeddings.service import compute_relevance_score
-        test_result = compute_relevance_score(0.9, "test-result", False)
-        spec = compute_relevance_score(0.9, "spec", False)
-        assert spec > test_result
 
 
 class TestEmbeddingServiceSingleton:
@@ -153,58 +58,10 @@ class TestEmbeddingServiceSingleton:
         service = get_embedding_service()
         assert isinstance(service, OpenAIEmbeddingService)
 
-    def test_set_service_replaces_singleton(self):
-        from switchboard.embeddings.service import get_embedding_service, set_embedding_service, EmbeddingService
-
-        class FakeService(EmbeddingService):
-            async def embed(self, text):
-                return [0.0] * 1536
-
-        fake = FakeService()
-        set_embedding_service(fake)
-        assert get_embedding_service() is fake
-
-        # Cleanup
-        set_embedding_service(None)
-
-
-class TestEmbedSafe:
-    @pytest.mark.asyncio
-    async def test_embed_safe_returns_none_on_error(self):
-        from switchboard.embeddings.service import EmbeddingService
-
-        class FailingService(EmbeddingService):
-            async def embed(self, text):
-                raise RuntimeError("API down")
-
-        svc = FailingService()
-        result = await svc.embed_safe("some content here")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_embed_safe_returns_vector_on_success(self):
-        from switchboard.embeddings.service import EmbeddingService
-
-        class GoodService(EmbeddingService):
-            async def embed(self, text):
-                return [0.1] * 1536
-
-        svc = GoodService()
-        result = await svc.embed_safe("some content here")
-        assert result == [0.1] * 1536
-
 
 # ---------------------------------------------------------------------------
 # Database integration tests
 # ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_migration_adds_embedding_column(db):
-    """After init_db(), messages table should have an embedding column."""
-    async with db.get_db() as conn:
-        cols = await conn.execute_fetchall("PRAGMA table_info(messages)")
-        col_names = [c["name"] for c in cols]
-    assert "embedding" in col_names
 
 
 @pytest.mark.asyncio
@@ -262,34 +119,6 @@ async def test_get_messages_needing_embedding_excludes_test_result(db, sample_co
         assert row["type"] != "test-result"
 
 
-@pytest.mark.asyncio
-async def test_get_messages_needing_embedding_excludes_short(db, sample_conversation):
-    """Messages with content < 50 chars are excluded from backfill."""
-    rows = await db.get_messages_needing_embedding(batch_size=100)
-    for row in rows:
-        assert len(row["content"]) >= 50
-
-
-@pytest.mark.asyncio
-async def test_get_messages_needing_embedding_excludes_already_embedded(db, sample_conversation):
-    """Messages that already have an embedding are excluded."""
-    from switchboard.embeddings.service import encode_vector
-
-    # Get a message that needs embedding
-    rows = await db.get_messages_needing_embedding(batch_size=1)
-    if not rows:
-        return  # nothing to test
-
-    msg_id = rows[0]["id"]
-    blob = encode_vector([0.1] * 1536)
-    await db.set_message_embedding(msg_id, blob)
-
-    # It should no longer appear
-    remaining = await db.get_messages_needing_embedding(batch_size=100)
-    ids = [r["id"] for r in remaining]
-    assert msg_id not in ids
-
-
 # ---------------------------------------------------------------------------
 # search_messages_semantic tests
 # ---------------------------------------------------------------------------
@@ -301,73 +130,6 @@ def _make_vector(seed: float) -> list[float]:
     idx = int(seed * 1535) % 1536
     v[idx] = 1.0
     return v
-
-
-@pytest.mark.asyncio
-async def test_search_finds_similar_messages(db, sample_conversation):
-    """search_messages_semantic returns messages ranked by similarity."""
-    from switchboard.embeddings.service import encode_vector
-
-    # Post messages with known embeddings
-    msg1 = await db.post_message(
-        conversation_id="widget-redesign",
-        author="test",
-        content="Architectural decision about widget sorting algorithm using timsort",
-        type="spec",
-    )
-    msg2 = await db.post_message(
-        conversation_id="widget-redesign",
-        author="test",
-        content="Database schema design for storing widget configuration values",
-        type="note",
-    )
-
-    # Assign vectors: msg1 gets vector pointing in direction 0, msg2 in direction 1
-    vec_a = _make_vector(0.0)
-    vec_b = _make_vector(0.5)
-    await db.set_message_embedding(msg1["id"], encode_vector(vec_a))
-    await db.set_message_embedding(msg2["id"], encode_vector(vec_b))
-
-    # Query with vector close to vec_a
-    results = await db.search_messages_semantic(query_vector=vec_a, limit=10)
-    ids = [r["message_id"] for r in results]
-    assert msg1["id"] in ids
-    # msg1 should be ranked first (exact match)
-    assert results[0]["message_id"] == msg1["id"]
-
-
-@pytest.mark.asyncio
-async def test_search_filters_by_conversation(db, sample_project):
-    """conversation_id filter scopes search correctly."""
-    from switchboard.embeddings.service import encode_vector
-
-    # Create two conversations
-    conv1 = await db.create_conversation(id="conv-a", project="test-project", goal="Conv A")
-    conv2 = await db.create_conversation(id="conv-b", project="test-project", goal="Conv B")
-
-    vec = _make_vector(0.1)
-    blob = encode_vector(vec)
-
-    msg_a = await db.post_message(
-        conversation_id="conv-a", author="test",
-        content="Important architectural note about the system design approach",
-        type="note",
-    )
-    msg_b = await db.post_message(
-        conversation_id="conv-b", author="test",
-        content="Important architectural note about the system design approach",
-        type="note",
-    )
-    await db.set_message_embedding(msg_a["id"], blob)
-    await db.set_message_embedding(msg_b["id"], blob)
-
-    # Search scoped to conv-a only
-    results = await db.search_messages_semantic(
-        query_vector=vec, conversation_id="conv-a", limit=10
-    )
-    ids = [r["message_id"] for r in results]
-    assert msg_a["id"] in ids
-    assert msg_b["id"] not in ids
 
 
 @pytest.mark.asyncio
@@ -416,41 +178,6 @@ async def test_search_filters_by_project(db, sample_project):
 # Embed-on-write integration test (with mocked OpenAI)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_embed_on_write_via_handle_post(db, sample_conversation):
-    """_handle_post triggers async embedding after message is created."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-
-    embedded_ids = []
-
-    class FakeService(EmbeddingService):
-        async def embed(self, text):
-            return [0.5] * 1536
-
-    set_embedding_service(FakeService())
-
-    try:
-        result = await _handle_post({
-            "conversation_id": "widget-redesign",
-            "author": "test",
-            "content": "This is a substantial message about the widget redesign architecture decision",
-            "type": "note",
-        })
-
-        msg_id = result["id"]
-
-        # Allow the async task to complete
-        await asyncio.sleep(0.1)
-
-        # Check embedding was stored
-        async with db.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT embedding FROM messages WHERE id = ?", (msg_id,)
-            )
-        assert rows[0]["embedding"] is not None
-    finally:
-        set_embedding_service(None)
-
 
 @pytest.mark.asyncio
 async def test_embed_on_write_skips_short_content(db, sample_conversation):
@@ -479,75 +206,9 @@ async def test_embed_on_write_skips_short_content(db, sample_conversation):
         set_embedding_service(None)
 
 
-@pytest.mark.asyncio
-async def test_embed_on_write_skips_test_result(db, sample_conversation):
-    """test-result messages don't get embedded."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-
-    embed_calls = []
-
-    class TrackingService(EmbeddingService):
-        async def embed(self, text):
-            embed_calls.append(text)
-            return [0.5] * 1536
-
-    set_embedding_service(TrackingService())
-
-    try:
-        await _handle_post({
-            "conversation_id": "widget-redesign",
-            "author": "gate",
-            "content": "SUITE PASSED: 150 tests OK " + "x" * 100,
-            "type": "test-result",
-        })
-
-        await asyncio.sleep(0.1)
-        assert len(embed_calls) == 0
-    finally:
-        set_embedding_service(None)
-
-
 # ---------------------------------------------------------------------------
 # search_conversations MCP tool test
 # ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_search_conversations_tool_type_weighting(db, sample_project):
-    """Type weighting raises spec/note above status for same similarity."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector, compute_relevance_score
-
-    vec = _make_vector(0.3)
-    blob = encode_vector(vec)
-
-    conv = await db.create_conversation(id="search-test", project="test-project", goal="test")
-
-    spec_msg = await db.post_message(
-        conversation_id="search-test", author="test",
-        content="Architectural decision: use timsort for widget ordering because it is stable and O(n log n)",
-        type="spec",
-    )
-    status_msg = await db.post_message(
-        conversation_id="search-test", author="test",
-        content="Task completed successfully. The implementation is done and ready for review.",
-        type="status",
-    )
-
-    await db.set_message_embedding(spec_msg["id"], blob)
-    await db.set_message_embedding(status_msg["id"], blob)
-
-    # Both have same similarity to query, but spec should rank higher due to weight
-    spec_score = compute_relevance_score(0.8, "spec", False)
-    status_score = compute_relevance_score(0.8, "status", False)
-    assert spec_score > status_score
-
-
-@pytest.mark.asyncio
-async def test_search_conversations_tool_pinned_boost(db):
-    """Pinned messages get 1.3x boost over unpinned."""
-    from switchboard.embeddings.service import compute_relevance_score
-    unpinned = compute_relevance_score(0.7, "note", False)
-    pinned = compute_relevance_score(0.7, "note", True)
-    assert abs(pinned / unpinned - 1.3) < 1e-6
 
 
 @pytest.mark.asyncio

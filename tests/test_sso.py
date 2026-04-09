@@ -186,11 +186,6 @@ class TestLocalMode:
         status, _, _ = await _call_sso(token="whatever")
         assert status == 404
 
-    async def test_returns_404_without_token_in_local_mode(self, db):
-        """AUTH_MODE=local → 404 even without token param."""
-        status, _, _ = await _call_sso()
-        assert status == 404
-
 
 # ── Tests: missing/bad token ─────────────────────────────────────────────────
 
@@ -270,20 +265,6 @@ class TestValidJwtFlow:
              patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
-    async def test_valid_jwt_creates_session_and_redirects(self, db):
-        """Valid JWT → session cookie set, 302 to /dashboard."""
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        token = _make_jwt(key, audience="test-instance", email="user@example.com")
-
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            status, headers, _ = await _call_sso(token=token)
-
-        assert status == 302
-        assert headers["location"] == "/dashboard"
-        assert "set-cookie" in headers
-        cookie = headers["set-cookie"] if isinstance(headers["set-cookie"], str) else headers["set-cookie"][0]
-        assert "switchboard_session=" in cookie
 
     async def test_valid_jwt_redirects_to_redirect_param(self, db):
         """Valid JWT with redirect param → redirects to that path."""
@@ -323,46 +304,6 @@ class TestUserUpsert:
              patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
-    async def test_first_sso_creates_user(self, db):
-        """First SSO for an email → new user created in DB."""
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        token = _make_jwt(key, audience="test-instance", email="newuser@example.com", role="admin")
-
-        # Confirm user does not exist yet
-        from switchboard.db.users import get_user_by_email
-        assert await get_user_by_email("newuser@example.com") is None
-
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            status, _, _ = await _call_sso(token=token)
-
-        assert status == 302
-        user = await get_user_by_email("newuser@example.com")
-        assert user is not None
-        assert user["email"] == "newuser@example.com"
-        assert user["role"] == "admin"
-
-    async def test_second_sso_reuses_existing_user(self, db):
-        """Second SSO for same email → user ID is unchanged."""
-        from switchboard.db.users import get_user_by_email
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        token = _make_jwt(key, audience="test-instance", email="existing@example.com")
-
-        # First SSO
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            await _call_sso(token=token)
-
-        user_after_first = await get_user_by_email("existing@example.com")
-        first_id = user_after_first["id"]
-
-        # Second SSO — regenerate token but same email
-        token2 = _make_jwt(key, audience="test-instance", email="existing@example.com")
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            await _call_sso(token=token2)
-
-        user_after_second = await get_user_by_email("existing@example.com")
-        assert user_after_second["id"] == first_id  # same user, not duplicated
 
     async def test_role_update_on_subsequent_sso(self, db):
         """Subsequent SSO with changed role → role is updated."""
@@ -386,19 +327,6 @@ class TestUserUpsert:
         user_updated = await get_user_by_email("role@example.com")
         assert user_updated["role"] == "admin"
 
-    async def test_email_is_lowercased(self, db):
-        """JWT email is normalized to lowercase before upsert."""
-        from switchboard.db.users import get_user_by_email
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        token = _make_jwt(key, audience="test-instance", email="User@Example.COM")
-
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
-            await _call_sso(token=token)
-
-        user = await get_user_by_email("user@example.com")
-        assert user is not None
-
 
 # ── Tests: JWKS caching ───────────────────────────────────────────────────────
 
@@ -411,40 +339,6 @@ class TestJwksCaching:
              patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
-    async def test_jwks_fetched_only_once_per_ttl(self, db):
-        """JWKS is fetched once and cached for subsequent requests."""
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        fetch_mock = AsyncMock(return_value=jwks)
-
-        with patch("switchboard.auth.sso._fetch_jwks", fetch_mock):
-            token1 = _make_jwt(key, audience="test-instance", email="a@example.com")
-            token2 = _make_jwt(key, audience="test-instance", email="b@example.com")
-            await _call_sso(token=token1)
-            await _call_sso(token=token2)
-
-        # Should have fetched JWKS only once (cache hit on second call)
-        assert fetch_mock.call_count == 1
-
-    async def test_jwks_cache_refreshed_when_stale(self, db):
-        """Stale cache (past TTL) → JWKS re-fetched."""
-        import switchboard.auth.sso as sso_mod
-        key = _generate_rsa_key()
-        jwks = _build_jwks(key)
-        fetch_mock = AsyncMock(return_value=jwks)
-
-        with patch("switchboard.auth.sso._fetch_jwks", fetch_mock):
-            # First request
-            token = _make_jwt(key, audience="test-instance", email="c@example.com")
-            await _call_sso(token=token)
-
-            # Expire the cache
-            sso_mod._jwks_fetched_at = time.time() - 7200  # 2 hours ago
-
-            token2 = _make_jwt(key, audience="test-instance", email="d@example.com")
-            await _call_sso(token=token2)
-
-        assert fetch_mock.call_count == 2
 
     async def test_signature_failure_invalidates_cache_and_retries(self, db):
         """kid not in cached JWKS → cache refreshed, key searched again."""

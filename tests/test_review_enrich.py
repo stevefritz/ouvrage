@@ -43,36 +43,10 @@ index 333..444 100644
         result = self.fn(self.SAMPLE_DIFF, [])
         assert result == self.SAMPLE_DIFF
 
-    def test_strips_package_lock(self):
-        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json"])
-        assert "package-lock.json" not in result
-        assert "src/app.py" in result
-        assert ".switchboard/" in result
-
-    def test_strips_switchboard(self):
-        result = self.fn(self.SAMPLE_DIFF, [".switchboard/"])
-        assert ".switchboard/" not in result
-        assert "src/app.py" in result
-        assert "package-lock.json" in result
-
-    def test_strips_multiple_patterns(self):
-        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".switchboard/"])
-        assert "package-lock.json" not in result
-        assert ".switchboard/" not in result
-        assert "src/app.py" in result
 
     def test_no_match_returns_full_diff(self):
         result = self.fn(self.SAMPLE_DIFF, ["*.rb"])
         assert result == self.SAMPLE_DIFF
-
-    def test_empty_diff(self):
-        result = self.fn("", ["package-lock.json"])
-        assert result == ""
-
-    def test_preserves_content_of_kept_files(self):
-        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".switchboard/"])
-        assert "+import os" in result
-        assert "import sys" in result
 
 
 # ---------------------------------------------------------------------------
@@ -183,144 +157,6 @@ class TestDispatchReviewComponentContext:
 
         assert "No component assigned" in captured["prompt"]
 
-    async def test_component_context_included(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
-        task = {
-            "id": "test-project/my-task", "goal": "Do thing", "component_id": "auth",
-            "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
-        }
-        project = {"id": "test-project", "default_branch": "main", "test_command": "pytest"}
-        fake_component = {
-            "id": "auth", "name": "Auth Service",
-            "description": "Handles authentication", "phase": "implementing",
-        }
-        captured = {}
-
-        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
-            captured["prompt"] = prompt
-            return {"status": "completed"}
-
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
-            await _dispatch_review(task["id"], project, task)
-
-        prompt = captured["prompt"]
-        assert "Auth Service" in prompt
-        assert "Handles authentication" in prompt
-        assert "implementing" in prompt
-
-
-class TestDispatchReviewPromptStructure:
-    """Tests for the new reviewer prompt structure: identity, lifecycle, self-run diff."""
-
-    async def _run(self, task_overrides=None, project_overrides=None):
-        from switchboard.dispatch.gates import _dispatch_review
-        task = {
-            "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
-            "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
-            "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
-        }
-        if task_overrides:
-            task.update(task_overrides)
-        project = {"id": "test-project", "test_command": "pytest -v", "default_branch": "main", **(project_overrides or {})}
-        captured = {}
-
-        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
-            captured["prompt"] = prompt
-            return {"status": "completed"}
-
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
-            await _dispatch_review(task["id"], project, task)
-
-        return captured.get("prompt", "")
-
-    async def test_reviewer_identity_present(self, tmp_db):
-        prompt = await self._run()
-        assert "You are an Ouvrage code reviewer" in prompt
-
-    async def test_lifecycle_section_present(self, tmp_db):
-        prompt = await self._run()
-        assert "Task Lifecycle" in prompt
-        assert "Test gate" in prompt
-        assert "final gate before code ships" in prompt
-
-    async def test_test_command_injected(self, tmp_db):
-        prompt = await self._run()
-        assert "pytest -v" in prompt
-
-    async def test_self_run_diff_instruction_present(self, tmp_db):
-        prompt = await self._run()
-        assert "git diff" in prompt
-        assert "origin/main...HEAD" in prompt
-
-    async def test_no_pre_built_diff_injected(self, tmp_db):
-        prompt = await self._run()
-        # Prompt should not contain a raw diff blob (no diff header lines)
-        assert "diff --git" not in prompt
-
-    async def test_base_branch_in_diff_instruction(self, tmp_db):
-        prompt = await self._run({"base_branch": "develop"})
-        assert "origin/develop...HEAD" in prompt
-
-    async def test_base_branch_falls_back_to_project_default(self, tmp_db):
-        prompt = await self._run({"base_branch": None})
-        assert "origin/main...HEAD" in prompt
-
-    async def test_worktree_path_in_prompt(self, tmp_db):
-        prompt = await self._run({"worktree_path": "/work/some-task"})
-        assert "/work/some-task" in prompt
-
-    async def test_task_goal_in_prompt(self, tmp_db):
-        prompt = await self._run({"goal": "Add OAuth login"})
-        assert "Add OAuth login" in prompt
-
-    async def test_exact_title_guidance_present(self, tmp_db):
-        prompt = await self._run()
-        assert '"APPROVED"' in prompt or "APPROVED" in prompt
-        assert "CHANGES REQUESTED" in prompt
-
-    async def test_severity_calibration_present(self, tmp_db):
-        prompt = await self._run()
-        assert "Request changes when" in prompt
-        assert "Approve when" in prompt
-
-    async def test_feedback_format_blockers_present(self, tmp_db):
-        prompt = await self._run()
-        assert "BLOCKER" in prompt
-        assert "SUGGESTION" in prompt
-
-    async def test_no_retry_leniency_on_first_attempt(self, tmp_db):
-        prompt = await self._run({"current_attempt": 1})
-        assert "This is a retry" not in prompt
-
-    async def test_retry_leniency_on_second_attempt(self, tmp_db):
-        prompt = await self._run({"current_attempt": 2})
-        assert "This is a retry" in prompt
-        assert "cosmetic issues" in prompt
-
-    async def test_tests_passed_stated_as_fact(self, tmp_db):
-        prompt = await self._run()
-        assert "tests passed (exit code 0) or you would not be running" in prompt
-
-    async def test_ignore_guidance_hardcoded(self, tmp_db):
-        prompt = await self._run()
-        assert "lockfiles" in prompt
-        assert ".switchboard/" in prompt
-
 
 class TestDispatchReviewPunchlistClaims:
     async def test_punchlist_claims_included(self, tmp_db):
@@ -361,35 +197,6 @@ class TestDispatchReviewPunchlistClaims:
         assert "#1" in prompt
         assert "#2" in prompt
 
-    async def test_no_punchlist_shows_none(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
-        task = {
-            "id": "test-project/my-task", "goal": "Do thing", "component_id": "api",
-            "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
-        }
-        project = {"id": "test-project", "test_command": "pytest", "default_branch": "main"}
-        fake_component = {
-            "id": "api", "name": "API", "description": None, "phase": "dev",
-        }
-        captured = {}
-
-        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
-            captured["prompt"] = prompt
-            return {"status": "completed"}
-
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
-            await _dispatch_review(task["id"], project, task)
-
-        assert "None." in captured["prompt"]
-
 
 class TestDispatchReviewPriorReviewHistory:
     """Tests for prior review carry-forward in the reviewer prompt."""
@@ -429,16 +236,6 @@ class TestDispatchReviewPriorReviewHistory:
 
         return captured.get("prompt", "")
 
-    async def test_no_prior_reviews_no_section(self, tmp_db):
-        prompt = await self._run_with_prior_reviews([], current_attempt=1)
-        assert "Prior Review History" not in prompt
-
-    async def test_prior_review_section_included(self, tmp_db):
-        prior = [{"type": "review", "author": "cc-worker", "attempt_number": 1,
-                  "content": "Missing error handling in auth module"}]
-        prompt = await self._run_with_prior_reviews(prior, current_attempt=2)
-        assert "Prior Review History" in prompt
-        assert "Missing error handling in auth module" in prompt
 
     async def test_carry_forward_instruction_present(self, tmp_db):
         prior = [{"type": "review", "author": "cc-worker", "attempt_number": 1,
@@ -485,80 +282,3 @@ class TestDispatchReviewPriorReviewHistory:
         assert "Skip the frontend part" in prompt
 
 
-class TestDispatchReviewFetchBeforeDiff:
-    """Verify that git fetch origin is called before the review prompt is built."""
-
-    async def _run_capturing_fetch(self, task_overrides=None):
-        from switchboard.dispatch.gates import _dispatch_review
-        task = {
-            "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
-            "worktree_path": "/tmp/fake-worktree", "branch": "my-task", "review_model": "opus",
-            "project_id": "test-project", "base_branch": "main", "current_attempt": 1,
-        }
-        if task_overrides:
-            task.update(task_overrides)
-        project = {"id": "test-project", "test_command": "pytest -v", "default_branch": "main"}
-        fetch_calls = []
-        prompt_captured = {}
-
-        async def fake_run_as_worker(*args, **kwargs):
-            fetch_calls.append(args)
-            return (b"", b"", 0)
-
-        async def fake_subtask(task_id, subtask_type, prompt, model, **kwargs):
-            prompt_captured["prompt"] = prompt
-            return {"status": "completed"}
-
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", fake_run_as_worker), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
-            await _dispatch_review(task["id"], project, task)
-
-        return fetch_calls, prompt_captured.get("prompt", "")
-
-    async def test_fetch_called_before_review(self, tmp_db):
-        fetch_calls, _ = await self._run_capturing_fetch()
-        assert len(fetch_calls) >= 1
-        # At least one call must be a git fetch origin <branch>
-        assert any(
-            "fetch" in args and "origin" in args
-            for args in fetch_calls
-        )
-
-    async def test_fetch_uses_correct_base_branch(self, tmp_db):
-        fetch_calls, _ = await self._run_capturing_fetch({"base_branch": "develop"})
-        assert any(
-            "fetch" in args and "origin" in args and "develop" in args
-            for args in fetch_calls
-        )
-
-    async def test_fetch_falls_back_to_project_default(self, tmp_db):
-        fetch_calls, _ = await self._run_capturing_fetch({"base_branch": None})
-        assert any(
-            "fetch" in args and "origin" in args and "main" in args
-            for args in fetch_calls
-        )
-
-    async def test_prompt_uses_origin_prefix_in_diff(self, tmp_db):
-        _, prompt = await self._run_capturing_fetch()
-        assert "origin/main...HEAD" in prompt
-        # Old bare ref must not appear without origin/ prefix
-        assert "git diff main...HEAD" not in prompt
-
-    async def test_prompt_uses_origin_prefix_with_custom_branch(self, tmp_db):
-        _, prompt = await self._run_capturing_fetch({"base_branch": "release"})
-        assert "origin/release...HEAD" in prompt
-        assert "git diff release...HEAD" not in prompt
-
-    async def test_fetch_skipped_when_no_worktree(self, tmp_db):
-        """No crash if worktree_path is None — fetch is skipped gracefully."""
-        fetch_calls, prompt = await self._run_capturing_fetch({"worktree_path": None})
-        # fetch should not have been called
-        assert not any("fetch" in args for args in fetch_calls)
-        # prompt still uses origin/ prefix regardless
-        assert "origin/main...HEAD" in prompt

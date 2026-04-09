@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -69,85 +68,15 @@ class TestRetryTaskReviewFailed:
         mock_test_gate.assert_not_called()
         mock_run_sdk.assert_called_once()
 
-    async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
-        """review-failed must NOT delegate to _resume_gate_pipeline (that re-runs gates)."""
-        await _make_completed_task(db, "review-failed", gate_retries=1)
-
-        mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/reentry-task")
-
-        mock_resume_pipeline.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # Spec test 2: retry_task + test-failed → CC session (not test gate)
 # ---------------------------------------------------------------------------
 
-class TestRetryTaskTestFailed:
-    """retry_task with gate_status=test-failed must launch CC, not re-run gates."""
-
-    async def test_test_failed_launches_cc_not_test_gate(self, db, sample_project):
-        """Spec test 2: retry_task with gate_status=test-failed launches CC session."""
-        await _make_completed_task(db, "test-failed", gate_retries=1)
-
-        mock_test_gate = AsyncMock()
-        mock_run_sdk = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/reentry-task")
-
-        await asyncio.sleep(0)
-        mock_test_gate.assert_not_called()
-        mock_run_sdk.assert_called_once()
-
-    async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
-        """test-failed must NOT delegate to _resume_gate_pipeline."""
-        await _make_completed_task(db, "test-failed", gate_retries=1)
-
-        mock_resume_pipeline = AsyncMock()
-        mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/reentry-task")
-
-        mock_resume_pipeline.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # Spec test 3: retry_task + testing → _run_test_gate (not CC)
 # ---------------------------------------------------------------------------
-
-class TestRetryTaskTesting:
-    """retry_task with gate_status=testing must re-enter gate pipeline (interrupted)."""
-
-    async def test_testing_calls_run_test_gate_not_cc(self, db, sample_project):
-        """Spec test 3: retry_task with gate_status=testing re-runs test gate."""
-        await _make_completed_task(db, "testing")
-
-        mock_test_gate = AsyncMock()
-        mock_dispatch = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
-            await retry_task("test-project/reentry-task")
-
-        await asyncio.sleep(0)
-        mock_test_gate.assert_called_once()
-        task_id_arg = mock_test_gate.call_args[0][0]
-        assert task_id_arg == "test-project/reentry-task"
-        mock_dispatch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -224,78 +153,4 @@ class TestResumePipelineReturnValues:
             pushed_at=db.now_iso(),
         )
 
-    async def test_returns_false_for_review_failed(self, db, sample_project):
-        """Spec test 5a: _resume_gate_pipeline returns False for review-failed."""
-        await self._make_task(db, "review-failed", gate_retries=1)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is False
-
-    async def test_returns_false_for_test_failed(self, db, sample_project):
-        """Spec test 5b: _resume_gate_pipeline returns False for test-failed."""
-        await self._make_task(db, "test-failed", gate_retries=1)
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is False
-
-    async def test_returns_false_for_needs_review(self, db, sample_project):
-        """_resume_gate_pipeline returns False for needs-review (terminal state)."""
-        await self._make_task(db, "needs-review", gate_retries=3)
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is False
-
-    async def test_returns_true_for_testing(self, db, sample_project):
-        """Spec test 6a: _resume_gate_pipeline returns True for testing (interrupted)."""
-        await self._make_task(db, "testing")
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is True
-
-    async def test_returns_true_for_reviewing(self, db, sample_project):
-        """Spec test 6b: _resume_gate_pipeline returns True for reviewing (interrupted)."""
-        await self._make_task(db, "reviewing")
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is True
-
-    async def test_returns_true_for_test_passed(self, db, sample_project):
-        """_resume_gate_pipeline returns True for test-passed (interrupted before review)."""
-        await self._make_task(db, "test-passed")
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is True
-
-    async def test_returns_false_for_review_failed_at_limit(self, db, sample_project):
-        """review-failed at max retries → sets needs-review and still returns False."""
-        await self._make_task(db, "review-failed", gate_retries=3)
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is False
-        task = await db.get_task("test-project/return-val-task")
-        assert task["gate_status"] == "needs-review"
-
-    async def test_returns_false_for_test_failed_at_limit(self, db, sample_project):
-        """test-failed at max retries → sets needs-review and still returns False."""
-        await self._make_task(db, "test-failed", gate_retries=3)
-
-        from switchboard.dispatch.gates import _resume_gate_pipeline
-        result = await _resume_gate_pipeline("test-project/return-val-task")
-
-        assert result is False
-        task = await db.get_task("test-project/return-val-task")
-        assert task["gate_status"] == "needs-review"

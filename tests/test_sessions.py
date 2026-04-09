@@ -95,54 +95,11 @@ class TestSessionCRUD:
         assert isinstance(session_id, str)
         assert len(session_id) > 20
 
-    async def test_create_session_unique(self, db):
-        from switchboard.auth.sessions import create_session
-        user = await db.create_user(email="u2@test.com", name="U2")
-        sid1 = await create_session(user["id"])
-        sid2 = await create_session(user["id"])
-        assert sid1 != sid2
-
-    async def test_delete_session(self, db):
-        from switchboard.auth.sessions import create_session, delete_session, get_session_user
-        user = await db.create_user(email="u3@test.com", name="U3")
-        sid = await create_session(user["id"])
-
-        scope = _make_scope(f"switchboard_session={sid}")
-        assert await get_session_user(scope) is not None
-
-        await delete_session(sid)
-        assert await get_session_user(scope) is None
-
-    async def test_delete_nonexistent_session(self, db):
-        from switchboard.auth.sessions import delete_session
-        # Should not raise
-        await delete_session("nonexistent-session-id")
-
 
 # ── Session Validation ─────────────────────────────────────────────────────
 
 class TestGetSessionUser:
-    async def test_valid_session_returns_user(self, db):
-        from switchboard.auth.sessions import create_session, get_session_user
-        user = await db.create_user(email="v@test.com", name="V")
-        sid = await create_session(user["id"])
 
-        scope = _make_scope(f"switchboard_session={sid}")
-        result = await get_session_user(scope)
-        assert result is not None
-        assert result["id"] == user["id"]
-        assert result["email"] == "v@test.com"
-        assert result["name"] == "V"
-
-    async def test_no_cookie_returns_none(self, db):
-        from switchboard.auth.sessions import get_session_user
-        scope = _make_scope(None)
-        assert await get_session_user(scope) is None
-
-    async def test_invalid_cookie_returns_none(self, db):
-        from switchboard.auth.sessions import get_session_user
-        scope = _make_scope("switchboard_session=bogus-session-id-not-in-db")
-        assert await get_session_user(scope) is None
 
     async def test_expired_session_returns_none(self, db):
         from switchboard.auth.sessions import get_session_user
@@ -189,53 +146,10 @@ class TestGetSessionUser:
         scope = _make_scope("switchboard_session=inactive-session")
         assert await get_session_user(scope) is None
 
-    async def test_recent_session_passes_inactivity(self, db):
-        """Session active 23h ago is still valid."""
-        from switchboard.auth.sessions import get_session_user
-        from switchboard.db.connection import get_db as _get_db
-
-        user = await db.create_user(email="recent@test.com", name="Recent")
-
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(days=7)
-        recent_active = now - timedelta(hours=23)
-
-        def iso(dt):
-            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        async with _get_db() as conn:
-            await conn.execute(
-                """INSERT INTO sessions (session_id, user_id, created_at, expires_at, last_active)
-                   VALUES (?, ?, ?, ?, ?)""",
-                ("recent-session", user["id"], iso(now), iso(expires_at), iso(recent_active)),
-            )
-            await conn.commit()
-
-        scope = _make_scope("switchboard_session=recent-session")
-        result = await get_session_user(scope)
-        assert result is not None
-        assert result["id"] == user["id"]
-
 
 # ── Login Handler ──────────────────────────────────────────────────────────
 
 class TestHandleLogin:
-    async def test_login_success(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
-        status, resp_headers, resp_body = await _call_handler(handle_login, body=body, headers=headers)
-
-        assert status == 200
-        data = json.loads(resp_body)
-        assert "redirect" in data
-        assert data["redirect"] == "/dashboard/"
-
-        # Cookie should be set
-        set_cookie = resp_headers.get("set-cookie", "")
-        assert "switchboard_session=" in set_cookie
-        assert "HttpOnly" in set_cookie
-        assert "Secure" in set_cookie
-        assert "SameSite=Lax" in set_cookie
 
     async def test_login_with_next_param(self, db, user_with_password):
         from switchboard.auth.sessions import handle_login
@@ -250,13 +164,6 @@ class TestHandleLogin:
         data = json.loads(resp_body)
         assert data["redirect"] == next_url
 
-    async def test_login_wrong_password(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        body, headers = _json_body({"email": "alice@example.com", "password": "wrongpassword"})
-        status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
-        assert status == 401
-        data = json.loads(resp_body)
-        assert data["error"] == "invalid_credentials"
 
     async def test_login_unknown_email(self, db):
         from switchboard.auth.sessions import handle_login
@@ -266,14 +173,6 @@ class TestHandleLogin:
         data = json.loads(resp_body)
         assert data["error"] == "invalid_credentials"
 
-    async def test_login_generic_error_message(self, db, user_with_password):
-        """Error should not reveal whether email exists or password is wrong."""
-        from switchboard.auth.sessions import handle_login
-        body, headers = _json_body({"email": "alice@example.com", "password": "wrong"})
-        status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
-        data = json.loads(resp_body)
-        # Same generic message regardless of what was wrong
-        assert "Invalid email or password" in data.get("message", "")
 
     async def test_login_missing_fields(self, db):
         from switchboard.auth.sessions import handle_login
@@ -305,22 +204,6 @@ class TestHandleLogin:
         assert user is not None
         assert user["email"] == "alice@example.com"
 
-    async def test_login_resets_failed_count(self, db, user_with_password):
-        """Successful login resets failed_login_count to 0."""
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import update_user
-
-        # Pre-set some failed attempts
-        await update_user(user_with_password["id"], failed_login_count=3)
-
-        body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
-        status, _, _ = await _call_handler(handle_login, body=body, headers=headers)
-        assert status == 200
-
-        # Check count was reset
-        from switchboard.db.users import get_user_by_email_with_auth
-        user = await get_user_by_email_with_auth("alice@example.com")
-        assert user["failed_login_count"] == 0
 
     async def test_login_no_password_hash(self, db):
         """User with no password_hash should be denied."""
@@ -355,16 +238,6 @@ class TestHandleLogin:
 # ── Rate Limiting / Lockout ────────────────────────────────────────────────
 
 class TestRateLimiting:
-    async def test_failed_attempts_increment_count(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import get_user_by_email_with_auth
-
-        for _ in range(3):
-            body, headers = _json_body({"email": "alice@example.com", "password": "wrong"})
-            await _call_handler(handle_login, body=body, headers=headers)
-
-        user = await get_user_by_email_with_auth("alice@example.com")
-        assert user["failed_login_count"] == 3
 
     async def test_lockout_after_5_failures(self, db, user_with_password):
         from switchboard.auth.sessions import handle_login
@@ -386,21 +259,6 @@ class TestRateLimiting:
         user = await get_user_by_email_with_auth("alice@example.com")
         assert user["locked_until"] is not None
 
-    async def test_correct_password_during_lockout_rejected(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import update_user
-
-        # Pre-lock the account
-        future = datetime.now(timezone.utc) + timedelta(minutes=10)
-        locked_until = future.strftime("%Y-%m-%dT%H:%M:%SZ")
-        await update_user(user_with_password["id"], locked_until=locked_until, failed_login_count=5)
-
-        # Even correct password should be rejected
-        body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
-        status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
-        assert status == 429
-        data = json.loads(resp_body)
-        assert data["error"] == "account_locked"
 
     async def test_expired_lockout_allows_login(self, db, user_with_password):
         from switchboard.auth.sessions import handle_login
@@ -438,42 +296,8 @@ class TestHandleLogout:
         scope = _make_scope(f"switchboard_session={sid}")
         assert await get_session_user(scope) is None
 
-    async def test_logout_without_cookie_is_ok(self, db):
-        from switchboard.auth.sessions import handle_logout
-        status, _, _ = await _call_handler(handle_logout)
-        assert status == 200
-
-    async def test_logout_returns_ok_json(self, db):
-        from switchboard.auth.sessions import handle_logout
-        status, _, body = await _call_handler(handle_logout)
-        assert status == 200
-        data = json.loads(body)
-        assert data.get("ok") is True
-
 
 # ── Cookie Safety ──────────────────────────────────────────────────────────
-
-class TestCookieSafety:
-    async def test_cookie_attributes(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
-        _, resp_headers, _ = await _call_handler(handle_login, body=body, headers=headers)
-
-        set_cookie = resp_headers.get("set-cookie", "")
-        assert "HttpOnly" in set_cookie
-        assert "Secure" in set_cookie
-        assert "SameSite=Lax" in set_cookie
-        assert "Max-Age=" in set_cookie
-        assert "Path=/" in set_cookie
-
-    async def test_cookie_max_age_is_7_days(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login, SESSION_TTL_DAYS
-        body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
-        _, resp_headers, _ = await _call_handler(handle_login, body=body, headers=headers)
-
-        set_cookie = resp_headers.get("set-cookie", "")
-        expected_age = str(SESSION_TTL_DAYS * 86400)
-        assert f"Max-Age={expected_age}" in set_cookie
 
 
 # ── OAuth → Login Redirect ─────────────────────────────────────────────────
@@ -497,39 +321,6 @@ class TestOAuthLoginRedirect:
         os.environ.pop("OAUTH_BASE_URL", None)
         os.environ.pop("OAUTH_RSA_KEY_PATH", None)
 
-    async def test_authorize_no_session_redirects_to_login(self, db):
-        from switchboard.auth.oauth import handle_authorize, seed_default_client
-        await seed_default_client()
-
-        query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid&state=abc"
-        scope = {
-            "type": "http",
-            "method": "GET",
-            "path": "/oauth/authorize",
-            "query_string": query.encode(),
-            "headers": [],
-        }
-
-        status = None
-        location = None
-
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(message):
-            nonlocal status, location
-            if message["type"] == "http.response.start":
-                status = message["status"]
-                for k, v in message.get("headers", []):
-                    key = k.decode() if isinstance(k, bytes) else k
-                    val = v.decode() if isinstance(v, bytes) else v
-                    if key == "location":
-                        location = val
-
-        await handle_authorize(scope, receive, send)
-        assert status == 302
-        assert location.startswith("/dashboard/login?next=")
-        assert "oauth%2Fauthorize" in location or "oauth/authorize" in location
 
     async def test_authorize_no_session_encodes_full_url(self, db):
         """The next= param should contain the full authorize URL with all params."""

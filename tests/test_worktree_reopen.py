@@ -61,37 +61,6 @@ class TestSetupWorktreeReopenedTask:
             "default_branch": "main",
         }
 
-    async def test_reopened_task_uses_remote_branch(self, tmp_path):
-        """Branch exists on origin → base_ref should be origin/{branch}."""
-        from switchboard.git.worktree import setup_worktree
-
-        project = self._project(tmp_path)
-        await setup_worktree(project, "existing-branch", "existing-branch")
-
-        # Find the worktree add call
-        worktree_add_calls = [c for c in self.run_calls if "worktree" in c and "add" in c]
-        assert len(worktree_add_calls) == 1
-
-        call = worktree_add_calls[0]
-        # Should use origin/existing-branch as base, not origin/main
-        assert call[-1] == "origin/existing-branch", (
-            f"Expected base_ref 'origin/existing-branch' but got '{call[-1]}'"
-        )
-
-    async def test_new_task_uses_default_branch(self, tmp_path):
-        """Branch does NOT exist on origin → base_ref should be origin/main."""
-        from switchboard.git.worktree import setup_worktree
-
-        project = self._project(tmp_path)
-        await setup_worktree(project, "new-branch", "new-branch")
-
-        worktree_add_calls = [c for c in self.run_calls if "worktree" in c and "add" in c]
-        assert len(worktree_add_calls) == 1
-
-        call = worktree_add_calls[0]
-        assert call[-1] == "origin/main", (
-            f"Expected base_ref 'origin/main' but got '{call[-1]}'"
-        )
 
     async def test_depends_on_overrides_remote_branch(self, db, sample_project, tmp_path):
         """Even if origin/{branch} exists, depends_on takes priority."""

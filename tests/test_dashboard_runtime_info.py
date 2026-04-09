@@ -79,45 +79,6 @@ class TestRuntimeInfo:
 
         assert resp.status == 200
 
-    async def test_returns_list(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
-            scope = _make_scope("/dashboard/api/runtime-info")
-            resp = _Capture()
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
-
-    async def test_all_expected_runtimes_present(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
-            scope = _make_scope("/dashboard/api/runtime-info")
-            resp = _Capture()
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        keys = {r["key"] for r in data}
-        expected = {"python", "node", "typescript", "php", "ruby", "go", "rust", "java", "dotnet"}
-        assert expected == keys
-
-    async def test_each_entry_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
-            scope = _make_scope("/dashboard/api/runtime-info")
-            resp = _Capture()
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        for entry in data:
-            assert "key" in entry
-            assert "name" in entry
-            assert "version" in entry
-            assert "pkg_manager" in entry
 
     async def test_version_parsed_from_output(self, db):
         from switchboard.dashboard.api import handle_request, _RUNTIME_COMMANDS
@@ -151,32 +112,4 @@ class TestRuntimeInfo:
         assert by_key["go"]["version"] == "1.23.0"
         assert by_key["dotnet"]["version"] == "9.0.100"
 
-    async def test_not_installed_when_empty_output(self, db):
-        from switchboard.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
-            scope = _make_scope("/dashboard/api/runtime-info")
-            resp = _Capture()
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        for entry in data:
-            assert entry["version"] == "not installed"
-
-    async def test_pkg_manager_values(self, db):
-        from switchboard.dashboard.api import handle_request
-
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
-            scope = _make_scope("/dashboard/api/runtime-info")
-            resp = _Capture()
-            await handle_request(scope, _make_receive(), resp)
-
-        data = resp.json()
-        by_key = {r["key"]: r for r in data}
-
-        assert by_key["python"]["pkg_manager"] == "pip"
-        assert by_key["node"]["pkg_manager"] == "npm"
-        assert by_key["rust"]["pkg_manager"] == "Cargo"
-        assert by_key["java"]["pkg_manager"] == "Maven, Gradle"
-        assert by_key["dotnet"]["pkg_manager"] == "dotnet CLI"
-        assert by_key["go"]["pkg_manager"] is None

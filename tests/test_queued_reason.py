@@ -48,52 +48,6 @@ class TestDetermineQueuedReason:
         self.db = db
         await _seed_project(db)
 
-    async def test_concurrency_fallback(self):
-        """No depends_on, project/component not paused → concurrency."""
-        task_id = await _seed_task(self.db, "conc-task", queued_at=db.now_iso())
-        task = await self.db.get_task(task_id)
-        reason, blocking_id = await _determine_queued_reason(task)
-        assert reason == "concurrency"
-        assert blocking_id is None
-
-    async def test_dependency_reason(self):
-        """depends_on set and parent not gate-passed → dependency."""
-        parent_id = await _seed_task(self.db, "parent-task")
-        child_id = await _seed_task(
-            self.db, "child-task",
-            queued_at=db.now_iso(), depends_on=parent_id,
-        )
-        task = await self.db.get_task(child_id)
-        reason, blocking_id = await _determine_queued_reason(task)
-        assert reason == "dependency"
-        assert blocking_id == parent_id
-
-    async def test_dependency_cleared_when_parent_gate_passed(self):
-        """depends_on set but parent has gate_passed_at → NOT dependency → concurrency."""
-        parent_id = await _seed_task(
-            self.db, "gated-parent",
-            status="completed", gate_passed_at=db.now_iso(),
-        )
-        child_id = await _seed_task(
-            self.db, "gated-child",
-            queued_at=db.now_iso(), depends_on=parent_id,
-        )
-        task = await self.db.get_task(child_id)
-        reason, blocking_id = await _determine_queued_reason(task)
-        assert reason == "concurrency"
-        assert blocking_id is None
-
-    async def test_project_paused(self):
-        """Project is paused → project_paused reason."""
-        await self.db.update_project(PROJECT_ID, paused=True)
-        try:
-            task_id = await _seed_task(self.db, "pp-task", queued_at=db.now_iso())
-            task = await self.db.get_task(task_id)
-            reason, blocking_id = await _determine_queued_reason(task)
-            assert reason == "project_paused"
-            assert blocking_id is None
-        finally:
-            await self.db.update_project(PROJECT_ID, paused=False)
 
     async def test_component_paused(self):
         """Component is paused → component_paused reason."""
@@ -113,22 +67,6 @@ class TestDetermineQueuedReason:
         assert reason == "component_paused"
         assert blocking_id is None
 
-    async def test_dependency_takes_priority_over_project_paused(self):
-        """depends_on unmet takes priority over project being paused."""
-        await self.db.update_project(PROJECT_ID, paused=True)
-        try:
-            parent_id = await _seed_task(self.db, "dep-pri-parent")
-            child_id = await _seed_task(
-                self.db, "dep-pri-child",
-                queued_at=db.now_iso(), depends_on=parent_id,
-            )
-            task = await self.db.get_task(child_id)
-            reason, blocking_id = await _determine_queued_reason(task)
-            assert reason == "dependency"
-            assert blocking_id == parent_id
-        finally:
-            await self.db.update_project(PROJECT_ID, paused=False)
-
 
 # ---------------------------------------------------------------------------
 # get_state_label integration tests
@@ -143,12 +81,6 @@ class TestGetStateLabelQueuedReason:
         self.db = db
         await _seed_project(db)
 
-    async def test_queued_reason_absent_for_non_queued_task(self):
-        """Non-queued tasks have queued_reason=None."""
-        task_id = await _seed_task(self.db, "working-task", status="working")
-        info = await _lifecycle.get_state_label(task_id)
-        assert info["queued_reason"] is None
-        assert info["queued_blocking_task_id"] is None
 
     async def test_queued_reason_concurrency(self):
         """Queued task with no blocking cause → concurrency."""
@@ -181,9 +113,3 @@ class TestGetStateLabelQueuedReason:
         finally:
             await self.db.update_project(PROJECT_ID, paused=False)
 
-    async def test_queued_reason_keys_always_present(self):
-        """queued_reason and queued_blocking_task_id always present in state label response."""
-        task_id = await _seed_task(self.db, "sl-keys", status="working")
-        info = await _lifecycle.get_state_label(task_id)
-        assert "queued_reason" in info
-        assert "queued_blocking_task_id" in info

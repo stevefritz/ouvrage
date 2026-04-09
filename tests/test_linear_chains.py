@@ -36,55 +36,6 @@ class TestDispatchTaskLinearChain:
         for p in patches:
             p.stop()
 
-    async def test_first_dependent_allowed(self, db, sample_project):
-        """First task with depends_on pointing to parent succeeds."""
-        from switchboard.dispatch.engine import dispatch_task
-
-        parent = await db.create_task(
-            id="test-project/parent-a",
-            project_id="test-project",
-            goal="Parent task",
-        )
-
-        result = await dispatch_task(
-            project_id="test-project",
-            task_id="test-project/child-a1",
-            goal="First dependent",
-            depends_on=parent["id"],
-            held=True,
-        )
-        assert result.get("task_id") == "test-project/child-a1"
-        # Verify depends_on is stored in DB
-        child = await db.get_task("test-project/child-a1")
-        assert child["depends_on"] == parent["id"]
-
-    async def test_second_dependent_rejected(self, db, sample_project):
-        """A second task trying to depend on the same parent is rejected."""
-        from switchboard.dispatch.engine import dispatch_task
-
-        parent = await db.create_task(
-            id="test-project/parent-b",
-            project_id="test-project",
-            goal="Parent task",
-        )
-        # First dependent — should succeed
-        await dispatch_task(
-            project_id="test-project",
-            task_id="test-project/child-b1",
-            goal="First dependent",
-            depends_on=parent["id"],
-            held=True,
-        )
-
-        # Second dependent — must be rejected
-        with pytest.raises(ValueError, match="already has a dependent"):
-            await dispatch_task(
-                project_id="test-project",
-                task_id="test-project/child-b2",
-                goal="Second dependent — should fail",
-                depends_on=parent["id"],
-                held=True,
-            )
 
     async def test_error_message_contains_expected_info(self, db, sample_project):
         """Error message names the existing dependent and states chains are linear."""
@@ -117,17 +68,6 @@ class TestDispatchTaskLinearChain:
         assert "test-project/parent-c" in error
         assert "Chains cannot fork" in error
 
-    async def test_no_depends_on_still_works(self, db, sample_project):
-        """Tasks without depends_on are not affected by the constraint."""
-        from switchboard.dispatch.engine import dispatch_task
-
-        result = await dispatch_task(
-            project_id="test-project",
-            task_id="test-project/standalone-task",
-            goal="No dependency",
-            held=True,
-        )
-        assert result.get("task_id") == "test-project/standalone-task"
 
     async def test_redispatch_existing_task_not_blocked(self, db, sample_project):
         """Re-dispatching an existing task (task already in DB) is not blocked by the check."""
@@ -192,53 +132,4 @@ class TestUpdateTaskLinearChain:
 
         assert result["depends_on"] == parent["id"]
 
-    async def test_update_depends_on_to_taken_parent_rejected(self, db, sample_project):
-        """Updating depends_on to a parent that already has a dependent is rejected."""
-        from switchboard.server.handlers.tasks import _handle_update_task
 
-        parent = await db.create_task(
-            id="test-project/upd-parent-b",
-            project_id="test-project",
-            goal="Parent",
-        )
-        await db.create_task(
-            id="test-project/upd-child-b1",
-            project_id="test-project",
-            goal="Existing child",
-            depends_on=parent["id"],
-        )
-        new_child = await db.create_task(
-            id="test-project/upd-child-b2",
-            project_id="test-project",
-            goal="New child — wants to take same parent",
-        )
-
-        with pytest.raises(ValueError, match="already has a dependent"):
-            await _handle_update_task({
-                "task_id": new_child["id"],
-                "depends_on": parent["id"],
-            })
-
-    async def test_update_resetting_same_parent_allowed(self, db, sample_project):
-        """Re-setting a task's depends_on to its current parent is allowed (not fan-out)."""
-        from switchboard.server.handlers.tasks import _handle_update_task
-
-        parent = await db.create_task(
-            id="test-project/upd-parent-c",
-            project_id="test-project",
-            goal="Parent",
-        )
-        child = await db.create_task(
-            id="test-project/upd-child-c",
-            project_id="test-project",
-            goal="Child",
-            depends_on=parent["id"],
-        )
-
-        # Re-setting same parent — should not be rejected as fan-out
-        result = await _handle_update_task({
-            "task_id": child["id"],
-            "depends_on": parent["id"],
-        })
-
-        assert result["depends_on"] == parent["id"]

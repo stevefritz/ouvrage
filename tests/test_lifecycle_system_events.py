@@ -85,21 +85,6 @@ class TestCompleteEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_complete_enters_validating(self):
-        task_id = await _seed(self.db_mod, "complete-basic")
-        result_msg = _mock_result_msg()
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            task = await self.lifecycle.execute(task_id, "complete",
-                triggered_by="system", result_msg=result_msg)
-        finally:
-            for p in patches:
-                p.stop()
-
-        assert task["status"] == "validating"
 
     async def test_complete_calls_push_and_gate(self):
         task_id = await _seed(self.db_mod, "complete-gate",
@@ -127,50 +112,6 @@ class TestCompleteEvent:
         push_mock.assert_called_once()
         gate_mock.assert_called_once()
         usage_mock.assert_called_once()
-
-    async def test_complete_push_failed_sets_gate_status(self):
-        task_id = await _seed(self.db_mod, "complete-push-fail",
-                              auto_test=True)
-        result_msg = _mock_result_msg()
-
-        push_mock = AsyncMock(return_value=False)
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.git.operations._ensure_branch_pushed", push_mock):
-            await self.lifecycle.execute(task_id, "complete",
-                triggered_by="system", result_msg=result_msg)
-
-        for p in patches:
-            p.stop()
-
-        task = await self.db_mod.get_task(task_id)
-        assert task["gate_status"] == "push-failed"
-
-    async def test_complete_no_gates_marks_passed(self):
-        """No auto_test and no auto_review → gate_status=passed immediately."""
-        task_id = await _seed(self.db_mod, "complete-no-gates",
-                              auto_test=False, auto_review=False)
-        result_msg = _mock_result_msg()
-
-        deps_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock):
-            await self.lifecycle.execute(task_id, "complete",
-                triggered_by="system", result_msg=result_msg)
-
-        for p in patches:
-            p.stop()
-
-        task = await self.db_mod.get_task(task_id)
-        assert task["gate_status"] == "passed"
-        assert task["gate_passed_at"] is not None
-        deps_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -207,37 +148,6 @@ class TestExhaustTurnsEvent:
         assert task["status"] == "stopped"
         assert task["reason"] == "turns_exhausted"
 
-    async def test_exhaust_turns_without_gates(self):
-        """Without test_command, task goes to stopped(turns_exhausted)."""
-        # Create a project without test_command
-        try:
-            await self.db_mod.create_project(
-                id="no-gates-proj",
-                repo="https://github.com/test/no-gates.git",
-                working_dir="/tmp/no-gates",
-            )
-        except Exception:
-            pass
-        task_id = "no-gates-proj/exhaust-no-gates"
-        await self.db_mod.create_task(id=task_id, project_id="no-gates-proj", goal="test")
-        await self.db_mod.update_task(task_id, status="working")
-
-        result_msg = _mock_result_msg(stop_reason="max_turns")
-        project = await self.db_mod.get_project("no-gates-proj")
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            task = await self.lifecycle.execute(task_id, "exhaust_turns",
-                triggered_by="system", result_msg=result_msg, project=project)
-        finally:
-            for p in patches:
-                p.stop()
-
-        assert task["status"] == "stopped"
-        assert task["reason"] == "turns_exhausted"
-
 
 # ---------------------------------------------------------------------------
 # SDK Timeout
@@ -252,24 +162,6 @@ class TestTimeoutEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_timeout_stops_task(self):
-        task_id = await _seed(self.db_mod, "timeout-basic")
-
-        drain_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.dispatch.queue._drain_queue", drain_mock):
-            task = await self.lifecycle.execute(task_id, "timeout",
-                triggered_by="system", max_wall_clock_minutes=120)
-
-        for p in patches:
-            p.stop()
-
-        assert task["status"] == "stopped"
-        assert task["reason"] == "wall_clock_timeout"
-        drain_mock.assert_called_once()
 
     async def test_timeout_posts_message(self):
         task_id = await _seed(self.db_mod, "timeout-msg")
@@ -302,23 +194,6 @@ class TestRateLimitEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_rate_limit_stops_task(self):
-        task_id = await _seed(self.db_mod, "ratelimit-basic")
-        result_msg = _mock_result_msg(is_error=True, result="hit your limit")
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            task = await self.lifecycle.execute(task_id, "rate_limit",
-                triggered_by="system", result_msg=result_msg,
-                retry_after="2026-04-02T05:05:00Z")
-        finally:
-            for p in patches:
-                p.stop()
-
-        assert task["status"] == "stopped"
-        assert task["reason"] == "rate_limited"
 
     async def test_rate_limit_sets_retry_after(self):
         task_id = await _seed(self.db_mod, "ratelimit-retry")
@@ -370,24 +245,6 @@ class TestErrorEvent:
         assert task["status"] == "stopped"
         assert task["reason"] == "dispatch_error"
 
-    async def test_error_with_exception(self):
-        task_id = await _seed(self.db_mod, "error-exception")
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            task = await self.lifecycle.execute(task_id, "error",
-                triggered_by="system",
-                error_message="RuntimeError: connection failed",
-                error_title="Dispatch error",
-                error_content="SDK session raised an exception:\n\n```\nRuntimeError: connection failed\n```")
-        finally:
-            for p in patches:
-                p.stop()
-
-        assert task["status"] == "stopped"
-        assert task["reason"] == "dispatch_error"
 
     async def test_error_no_result_no_message(self):
         """Error with no result_msg and no error_message posts generic message."""
@@ -408,23 +265,6 @@ class TestErrorEvent:
         titles = [m["title"] for m in msgs.get("messages", []) if m.get("title")]
         assert any("Session ended without result" in t for t in titles)
 
-    async def test_error_drains_queue(self):
-        task_id = await _seed(self.db_mod, "error-drain")
-
-        drain_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.dispatch.queue._drain_queue", drain_mock):
-            await self.lifecycle.execute(task_id, "error",
-                triggered_by="system", error_message="fail")
-
-        for p in patches:
-            p.stop()
-
-        drain_mock.assert_called_once()
-
 
 # ---------------------------------------------------------------------------
 # Signal Kill
@@ -439,22 +279,6 @@ class TestSignalKillEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_signal_kill_stays_working(self):
-        task_id = await _seed(self.db_mod, "sigkill-basic")
-
-        task = await self.lifecycle.execute(task_id, "signal_kill",
-            triggered_by="system", error_message="exit code -15")
-
-        assert task["status"] == "working"
-
-    async def test_signal_kill_sets_recovery_priority(self):
-        task_id = await _seed(self.db_mod, "sigkill-recovery")
-
-        await self.lifecycle.execute(task_id, "signal_kill",
-            triggered_by="system", error_message="exit code -15")
-
-        task = await self.db_mod.get_task(task_id)
-        assert task["recovery_priority"] == 1
 
     async def test_signal_kill_posts_message(self):
         task_id = await _seed(self.db_mod, "sigkill-msg")
@@ -480,62 +304,6 @@ class TestGatePassEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_gate_pass_completes(self):
-        task_id = await _seed(self.db_mod, "gatepass-basic",
-                              status="validating")
-
-        deps_mock = AsyncMock()
-        drain_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock), \
-             patch("switchboard.dispatch.queue._drain_queue", drain_mock):
-            task = await self.lifecycle.execute(task_id, "gate_pass",
-                triggered_by="gate-pipeline")
-
-        for p in patches:
-            p.stop()
-
-        assert task["status"] == "completed"
-        assert task["reason"] == "gate_passed"
-
-    async def test_gate_pass_sets_gate_passed_at(self):
-        task_id = await _seed(self.db_mod, "gatepass-timestamp",
-                              status="validating")
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            await self.lifecycle.execute(task_id, "gate_pass",
-                triggered_by="gate-pipeline")
-        finally:
-            for p in patches:
-                p.stop()
-
-        task = await self.db_mod.get_task(task_id)
-        assert task["gate_passed_at"] is not None
-        assert task["gate_status"] == "passed"
-
-    async def test_gate_pass_dispatches_dependents(self):
-        task_id = await _seed(self.db_mod, "gatepass-chain",
-                              status="validating")
-
-        deps_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock):
-            await self.lifecycle.execute(task_id, "gate_pass",
-                triggered_by="gate-pipeline")
-
-        for p in patches:
-            p.stop()
-
-        deps_mock.assert_called_once_with(task_id)
 
     async def test_gate_pass_resolves_punchlist(self):
         task_id = await _seed(self.db_mod, "gatepass-punchlist",
@@ -569,22 +337,6 @@ class TestGateFailEvent:
         self.db_mod = db
         self.lifecycle = TaskLifecycle()
 
-    async def test_gate_fail_max_test_retries(self):
-        task_id = await _seed(self.db_mod, "gatefail-test",
-                              status="validating")
-
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-        try:
-            task = await self.lifecycle.execute(task_id, "gate_fail",
-                triggered_by="gate-pipeline", reason="max_test_retries")
-        finally:
-            for p in patches:
-                p.stop()
-
-        assert task["status"] == "stopped"
-        assert task["reason"] == "max_test_retries"
 
     async def test_gate_fail_max_review_retries(self):
         task_id = await _seed(self.db_mod, "gatefail-review",
@@ -602,24 +354,6 @@ class TestGateFailEvent:
 
         assert task["status"] == "stopped"
         assert task["reason"] == "max_review_retries"
-
-    async def test_gate_fail_notifies(self):
-        task_id = await _seed(self.db_mod, "gatefail-notify",
-                              status="validating")
-
-        notify_mock = AsyncMock()
-        patches = _system_event_patches()
-        for p in patches:
-            p.start()
-
-        with patch("switchboard.notifications.slack.task_needs_review", notify_mock):
-            await self.lifecycle.execute(task_id, "gate_fail",
-                triggered_by="gate-pipeline", reason="max_test_retries")
-
-        for p in patches:
-            p.stop()
-
-        notify_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

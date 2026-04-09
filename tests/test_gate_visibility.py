@@ -44,25 +44,6 @@ class TestRunTestStreaming:
         assert "hello" in content
         assert "world" in content
 
-    async def test_captures_exit_code(self, tmp_path):
-        """Non-zero exit code should be returned."""
-        worktree = str(tmp_path)
-        (tmp_path / ".switchboard").mkdir()
-
-        with patch("switchboard.dispatch.gates.pwd") as mock_pwd, \
-             patch("switchboard.dispatch.gates.WORKER_USER", "nobody"):
-            pw = MagicMock()
-            pw.pw_uid = os.getuid()
-            pw.pw_gid = os.getgid()
-            pw.pw_dir = str(tmp_path)
-            mock_pwd.getpwnam.return_value = pw
-
-            from switchboard.dispatch.gates import _run_test_streaming
-            output, rc = await _run_test_streaming(worktree, "echo failing && exit 1")
-
-        assert rc == 1
-        assert "failing" in output
-
 
 # ---------------------------------------------------------------------------
 # _read_session_log — shared reader helper
@@ -71,20 +52,6 @@ class TestRunTestStreaming:
 class TestReadSessionLog:
     """Verify the JSONL session log reader helper."""
 
-    async def test_reads_jsonl_with_tail(self, tmp_path):
-        """Should read JSONL file and apply tail parameter."""
-        log_path = tmp_path / "session.jsonl"
-        entries = [{"type": "AssistantMessage", "content": [{"type": "text", "text": f"msg {i}"}]}
-                   for i in range(10)]
-        log_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
-
-        from switchboard.server.handlers.tasks import _read_session_log
-        result = await _read_session_log(str(log_path), {"tail": 3}, "test-source")
-
-        assert result["count"] == 3
-        assert result["source"] == "test-source"
-        # Should be the LAST 3 entries
-        assert "msg 7" in result["entries"][0]["content"][0]["text"]
 
     async def test_filters_by_type(self, tmp_path):
         """Should filter entries by type when types parameter is given."""

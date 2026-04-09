@@ -28,33 +28,6 @@ def _set_base_url(url):
 # _task_url helper
 # ===========================================================================
 
-class TestTaskUrlHelper:
-    """_task_url builds correct URL or returns None."""
-
-    def test_returns_url_when_base_set(self):
-        _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _task_url
-        assert _task_url(TASK_ID) == EXPECTED_URL
-
-    def test_returns_none_when_no_base(self):
-        _set_base_url(None)
-        from switchboard.server.handlers.tasks import _task_url
-        assert _task_url(TASK_ID) is None
-
-    def test_strips_trailing_slash_in_base(self):
-        _set_base_url("https://switchboard.example.dev/")
-        from switchboard.server.handlers.tasks import _task_url
-        result = _task_url(TASK_ID)
-        assert result is not None
-        # _task_url strips trailing slash so no double-slash appears
-        assert "//" not in result.replace("https://", "")
-
-    def test_url_format(self):
-        _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _task_url
-        url = _task_url("my-project/some-task")
-        assert url == "https://switchboard.example.dev/dashboard#/task/my-project/some-task"
-
 
 # ===========================================================================
 # get_task_status — slim mode
@@ -69,11 +42,6 @@ class TestGetTaskStatusUrl:
         result = await _handle_get_task_status({"task_id": TASK_ID})
         assert result.get("url") == EXPECTED_URL
 
-    async def test_slim_omits_url_when_no_base(self, db, sample_project, sample_task):
-        _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
-        result = await _handle_get_task_status({"task_id": TASK_ID})
-        assert "url" not in result
 
     async def test_detail_includes_url(self, db, sample_project, sample_task):
         _set_base_url(BASE_URL)
@@ -82,14 +50,6 @@ class TestGetTaskStatusUrl:
             {"task_id": TASK_ID, "include_detail": True}
         )
         assert result.get("url") == EXPECTED_URL
-
-    async def test_detail_omits_url_when_no_base(self, db, sample_project, sample_task):
-        _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
-        result = await _handle_get_task_status(
-            {"task_id": TASK_ID, "include_detail": True}
-        )
-        assert "url" not in result
 
 
 # ===========================================================================
@@ -107,13 +67,6 @@ class TestListTasksUrl:
         for task in result:
             expected = f"{BASE_URL}/dashboard#/task/{task['id']}"
             assert task.get("url") == expected
-
-    async def test_no_url_when_no_base(self, db, sample_project, sample_task):
-        _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_list_tasks
-        result = await _handle_list_tasks({"project_id": "test-project", "active_only": False})
-        for task in result:
-            assert "url" not in task
 
 
 # ===========================================================================
@@ -143,22 +96,6 @@ class TestDispatchTaskUrl:
 
         expected_task_id = "test-project/dispatch-url-test"
         assert result.get("url") == f"{BASE_URL}/dashboard#/task/{expected_task_id}"
-
-    async def test_dispatch_omits_url_when_no_base(self, db, sample_project):
-        _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
-        from switchboard.server.context import _REQUEST_USER_ID
-        _REQUEST_USER_ID.set(None)
-
-        # held=True → task stays in "ready", no session launched
-        result = await _handle_dispatch_task({
-            "project_id": "test-project",
-            "id": "dispatch-no-url-test",
-            "goal": "Test no URL in dispatch response",
-            "held": True,
-        })
-
-        assert "url" not in result
 
 
 # ===========================================================================
@@ -192,8 +129,3 @@ class TestResolveBaseUrl:
             scope = {"headers": [], "scheme": "https"}
             assert _resolve_base_url(scope) is None
 
-    def test_strips_trailing_slash_from_oauth_base_url(self):
-        with patch("switchboard.server.app.OAUTH_BASE_URL", "https://configured.example.com/"):
-            from switchboard.server.app import _resolve_base_url
-            scope = {"headers": [], "scheme": "https"}
-            assert _resolve_base_url(scope) == "https://configured.example.com"

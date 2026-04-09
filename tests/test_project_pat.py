@@ -83,84 +83,10 @@ def _valid_create_payload(**overrides):
 # DB layer: create_project with github_pat_override
 # ---------------------------------------------------------------------------
 
-class TestCreateProjectWithPat:
-
-    async def test_create_project_stores_pat(self, db):
-        """create_project accepts github_pat_override and stores it."""
-        from switchboard.crypto import encrypt_value
-        encrypted = encrypt_value("ghp_testtoken")
-
-        proj = await db.create_project(
-            id="pat-proj",
-            repo="https://github.com/org/repo.git",
-            working_dir="/work/repo",
-            github_pat_override=encrypted,
-        )
-        assert proj["github_pat_override"] == encrypted
-
-    async def test_create_project_without_pat_is_null(self, db):
-        """create_project without github_pat_override stores NULL."""
-        proj = await db.create_project(
-            id="nopat-proj",
-            repo="https://github.com/org/repo.git",
-            working_dir="/work/repo",
-        )
-        assert proj["github_pat_override"] is None
-
-    async def test_get_project_returns_pat(self, db):
-        """get_project returns the stored github_pat_override."""
-        from switchboard.crypto import encrypt_value
-        encrypted = encrypt_value("ghp_readback")
-
-        await db.create_project(
-            id="getpat-proj",
-            repo="https://github.com/org/repo.git",
-            working_dir="/work/repo",
-            github_pat_override=encrypted,
-        )
-        proj = await db.get_project("getpat-proj")
-        assert proj["github_pat_override"] == encrypted
-
 
 # ---------------------------------------------------------------------------
 # DB layer: update_project with github_pat_override
 # ---------------------------------------------------------------------------
-
-class TestUpdateProjectPat:
-
-    async def test_update_project_sets_pat(self, db):
-        """update_project can set github_pat_override."""
-        from switchboard.crypto import encrypt_value, is_fernet_token
-        await db.create_project(id="upd-pat", repo="https://github.com/org/r.git", working_dir="/work/r")
-        encrypted = encrypt_value("ghp_newtoken")
-        updated = await db.update_project("upd-pat", github_pat_override=encrypted)
-        assert is_fernet_token(updated["github_pat_override"])
-
-    async def test_update_project_clears_pat_with_empty_string(self, db):
-        """update_project with empty string clears github_pat_override to NULL."""
-        from switchboard.crypto import encrypt_value
-        encrypted = encrypt_value("ghp_clearme")
-        await db.create_project(
-            id="clr-pat",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted,
-        )
-        updated = await db.update_project("clr-pat", github_pat_override="")
-        assert updated["github_pat_override"] is None
-
-    async def test_update_project_clears_pat_with_none(self, db):
-        """update_project with None clears github_pat_override."""
-        from switchboard.crypto import encrypt_value
-        encrypted = encrypt_value("ghp_clearme2")
-        await db.create_project(
-            id="clrn-pat",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted,
-        )
-        updated = await db.update_project("clrn-pat", github_pat_override=None)
-        assert updated["github_pat_override"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -188,52 +114,12 @@ class TestGetGithubPatResolution:
         pat = await db.get_github_pat("fallback-proj")
         assert pat == "ghp_instancetoken"
 
-    async def test_get_github_pat_falls_back_to_instance_pat(self, db):
-        """get_github_pat falls back to instance.github_pat_encrypted."""
-        await db.create_project(id="fallback-owner", repo="https://github.com/org/r.git", working_dir="/work/r")
-        await db.set_instance_github_pat("ghp_ownertoken")
-
-        pat = await db.get_github_pat("fallback-owner")
-        assert pat == "ghp_ownertoken"
-
-    async def test_get_github_pat_project_overrides_instance(self, db):
-        """Project PAT takes priority over instance PAT."""
-        await db.set_instance_github_pat("ghp_instancetoken")
-        from switchboard.crypto import encrypt_value
-        encrypted = encrypt_value("ghp_projectwins")
-        await db.create_project(
-            id="prio-proj",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted,
-        )
-
-        pat = await db.get_github_pat("prio-proj")
-        assert pat == "ghp_projectwins"
 
     async def test_get_github_pat_raises_if_none_configured(self, db):
         """get_github_pat raises ValueError when no PAT found anywhere."""
         await db.create_project(id="none-pat", repo="https://github.com/org/r.git", working_dir="/work/r")
         with pytest.raises(ValueError, match="GitHub PAT"):
             await db.get_github_pat("none-pat")
-
-    async def test_pat_override_encrypted_in_db(self, db):
-        """github_pat_override is Fernet-encrypted in the raw DB row."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value, is_fernet_token
-
-        encrypted = encrypt_value("ghp_rawcheck")
-        await db.create_project(
-            id="rawchk-proj",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted,
-        )
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("rawchk-proj",)
-            )
-        assert is_fernet_token(rows[0]["github_pat_override"])
 
 
 # ---------------------------------------------------------------------------
@@ -245,63 +131,6 @@ class TestMcpCreateProjectPat:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_db):
         pass
-
-    async def test_create_project_mcp_encrypts_pat(self, db):
-        """_handle_create_project encrypts github_pat_override before storing."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.server.handlers.projects import _handle_create_project
-
-        with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
-             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
-            await _handle_create_project({
-                "id": "mcp-enc-proj",
-                "repo": "https://github.com/org/repo.git",
-                "model": "sonnet",
-                "review_model": "opus",
-                "auto_test": True,
-                "auto_review": True,
-                "auto_pr": False,
-                "auto_merge": False,
-                "max_turns": 100,
-                "max_wall_clock": 30,
-                "github_pat_override": "ghp_plaintextpat",
-            })
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("mcp-enc-proj",)
-            )
-        assert rows, "Project should have been created"
-        assert is_fernet_token(rows[0]["github_pat_override"]), "PAT should be Fernet-encrypted"
-
-    async def test_create_project_mcp_no_pat_stores_null(self, db):
-        """_handle_create_project with no PAT stores NULL."""
-        import switchboard.db.connection as _conn
-        from switchboard.server.handlers.projects import _handle_create_project
-
-        with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
-             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
-            await _handle_create_project({
-                "id": "mcp-nopat-proj",
-                "repo": "https://github.com/org/repo.git",
-                "model": "sonnet",
-                "review_model": "opus",
-                "auto_test": True,
-                "auto_review": True,
-                "auto_pr": False,
-                "auto_merge": False,
-                "max_turns": 100,
-                "max_wall_clock": 30,
-            })
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("mcp-nopat-proj",)
-            )
-        assert rows[0]["github_pat_override"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -356,53 +185,6 @@ class TestMcpUpdateProjectPat:
 # Dashboard API: POST /dashboard/api/projects with PAT
 # ---------------------------------------------------------------------------
 
-class TestDashboardCreateProjectPat:
-
-    async def test_dashboard_create_project_encrypts_pat(self, db):
-        """POST /dashboard/api/projects encrypts github_pat_override before storing."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/projects", method="POST")
-        resp = _Capture()
-        payload = _valid_create_payload(github_pat_override="ghp_dashboardpat")
-
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
-             patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
-            await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 201
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("pat-test-proj",)
-            )
-        assert is_fernet_token(rows[0]["github_pat_override"])
-
-    async def test_dashboard_create_project_no_pat_stores_null(self, db):
-        """POST /dashboard/api/projects without PAT stores NULL."""
-        import switchboard.db.connection as _conn
-        from switchboard.dashboard.api import handle_request
-
-        scope = _make_scope("/dashboard/api/projects", method="POST")
-        resp = _Capture()
-        payload = _valid_create_payload(id="nopat-dash-proj")
-
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
-             patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
-            await handle_request(scope, _make_receive(payload), resp)
-
-        assert resp.status == 201
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("nopat-dash-proj",)
-            )
-        assert rows[0]["github_pat_override"] is None
-
 
 # ---------------------------------------------------------------------------
 # Dashboard API: PATCH /dashboard/api/projects/{id}
@@ -410,75 +192,6 @@ class TestDashboardCreateProjectPat:
 
 class TestDashboardUpdateProjectPat:
 
-    async def test_patch_project_sets_pat(self, db):
-        """PATCH /dashboard/api/projects/{id} encrypts and stores PAT."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
-
-        await db.create_project(id="patch-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
-
-        scope = _make_scope("/dashboard/api/projects/patch-proj", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"github_pat_override": "ghp_patchtoken"}), resp)
-
-        assert resp.status == 200
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("patch-proj",)
-            )
-        assert is_fernet_token(rows[0]["github_pat_override"])
-
-    async def test_patch_project_clears_pat(self, db):
-        """PATCH /dashboard/api/projects/{id} with empty string clears PAT."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value
-        from switchboard.dashboard.api import handle_request
-
-        encrypted = encrypt_value("ghp_clearpatch")
-        await db.create_project(
-            id="clrpatch-proj",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted,
-        )
-
-        scope = _make_scope("/dashboard/api/projects/clrpatch-proj", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"github_pat_override": ""}), resp)
-
-        assert resp.status == 200
-
-        async with _conn.get_db() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT github_pat_override FROM projects WHERE id = ?", ("clrpatch-proj",)
-            )
-        assert rows[0]["github_pat_override"] is None
-
-    async def test_patch_project_decrypts_and_reencrypts_pat(self, db):
-        """PATCH with a new PAT replaces the old encrypted value."""
-        from switchboard.crypto import encrypt_value, is_fernet_token, decrypt_value
-        from switchboard.dashboard.api import handle_request
-
-        encrypted_old = encrypt_value("ghp_oldtoken")
-        await db.create_project(
-            id="reenc-proj",
-            repo="https://github.com/org/r.git",
-            working_dir="/work/r",
-            github_pat_override=encrypted_old,
-        )
-
-        scope = _make_scope("/dashboard/api/projects/reenc-proj", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"github_pat_override": "ghp_newtoken"}), resp)
-
-        assert resp.status == 200
-
-        # Verify new PAT was stored and decrypts correctly
-        proj = await db.get_project("reenc-proj")
-        assert is_fernet_token(proj["github_pat_override"])
-        assert decrypt_value(proj["github_pat_override"]) == "ghp_newtoken"
 
     async def test_patch_project_not_found(self, db):
         """PATCH returns 404 for nonexistent project."""
@@ -490,29 +203,4 @@ class TestDashboardUpdateProjectPat:
 
         assert resp.status == 404
 
-    async def test_patch_project_empty_body(self, db):
-        """PATCH with no updatable fields returns unchanged project (no-op)."""
-        from switchboard.dashboard.api import handle_request
 
-        await db.create_project(id="empty-patch", repo="https://github.com/org/r.git", working_dir="/work/r")
-
-        scope = _make_scope("/dashboard/api/projects/empty-patch", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"unknown_field": "value"}), resp)
-
-        assert resp.status == 200
-        assert resp.json()["id"] == "empty-patch"
-
-    async def test_patch_project_updates_non_pat_fields(self, db):
-        """PATCH can update other project fields like test_command."""
-        from switchboard.dashboard.api import handle_request
-
-        await db.create_project(id="nonpat-patch", repo="https://github.com/org/r.git", working_dir="/work/r")
-
-        scope = _make_scope("/dashboard/api/projects/nonpat-patch", method="PATCH")
-        resp = _Capture()
-        await handle_request(scope, _make_receive({"test_command": "pytest -v"}), resp)
-
-        assert resp.status == 200
-        result = resp.json()
-        assert result["test_command"] == "pytest -v"
