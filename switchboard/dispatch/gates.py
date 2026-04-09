@@ -245,6 +245,7 @@ async def _run_subtask(
         setting_sources=["user", "project"],
         system_prompt={"type": "preset", "preset": "claude_code", "append": prompt if not resume_session_id else ""},
         mcp_servers=mcp_servers,
+        disallowed_tools=["mcp__claude_ai_*"],
         debug_stderr=stderr_log,
         extra_args={"replay-user-messages": None},
     )
