@@ -11,7 +11,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_unconfigure(config):
-    """Warn about leaked non-daemon threads. Join with timeout so pytest exits cleanly."""
+    """Warn about leaked non-daemon threads. Join with timeout, then force exit."""
     alive = [t for t in threading.enumerate()
              if t.is_alive() and t is not threading.main_thread() and not t.daemon]
     if alive:
@@ -19,6 +19,12 @@ def pytest_unconfigure(config):
         for t in alive:
             print(f"  - {t.name} (daemon={t.daemon})")
             t.join(timeout=5)
+        # If any non-daemon threads are still alive, force exit to prevent the
+        # process from hanging (Python waits for all non-daemon threads).
+        still_alive = [t for t in threading.enumerate()
+                       if t.is_alive() and t is not threading.main_thread() and not t.daemon]
+        if still_alive:
+            _os._exit(_pytest_exit_status)
 
 
 import pytest
