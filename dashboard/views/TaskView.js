@@ -450,23 +450,58 @@ const STYLE_COLORS = {
     danger:    { bg: colors.redBg,    fg: colors.red },
 };
 
-function ActionToolbar({ task, chain, apiActions, onAction }) {
+// Gerund labels shown during button loading state
+const GERUND_MAP = {
+    approve:            'Approving…',
+    stop:               'Stopping…',
+    cancel:             'Cancelling…',
+    'cancel-reopen':    'Cancelling…',
+    retry:              'Retrying…',
+    resume:             'Resuming…',
+    reopen:             'Reopening…',
+    start:              'Starting…',
+    close:              'Closing…',
+    'skip-gate':        'Skipping…',
+    skip_gate:          'Skipping…',
+    'advance-chain':    'Advancing…',
+    'cancel-chain':     'Cancelling…',
+    'release-worktree': 'Releasing…',
+    hold:               'Holding…',
+    dispatch:           'Dispatching…',
+    'end-task':         'Finishing…',
+};
+
+function ActionErrorToast({ message }) {
+    if (!message) return null;
+    return html`<div class="foreman-error-toast">⚠ ${message}</div>`;
+}
+
+function ActionToolbar({ task, chain, apiActions, onAction, activeAction }) {
     const actions = [];
 
-    const btn = (action, label, bg, fg, needsConfirm = true) => html`
-        <button key=${action} onClick=${() => onAction(action, task.id, needsConfirm)}
+    const btn = (action, label, bg, fg, needsConfirm = true) => {
+        const isLoading = activeAction === action;
+        return html`
+        <button key=${action} onClick=${() => !isLoading && onAction(action, task.id, needsConfirm)}
             title=${ACTION_TOOLTIPS[action] || ''}
+            disabled=${isLoading}
             style=${{
                 padding: '4px 12px', borderRadius: layout.borderRadius.sm,
-                background: bg, color: fg, border: 'none', cursor: 'pointer',
+                background: bg, color: fg, border: 'none',
+                cursor: isLoading ? 'wait' : 'pointer',
                 fontFamily: typography.fontBody, fontSize: typography.size.sm,
                 fontWeight: typography.weight.medium, whiteSpace: 'nowrap',
                 transition: 'opacity 120ms',
+                opacity: isLoading ? 0.75 : 1,
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
             }}
             class="foreman-action-btn">
-            ${label}
+            ${isLoading
+                ? html`<span class="foreman-action-spinner"></span>${GERUND_MAP[action] || label}`
+                : label}
         </button>
-    `;
+    `};
+
 
     // API-driven buttons (from /actions endpoint)
     if (apiActions) {
@@ -2457,8 +2492,17 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [taskActions, setTaskActions] = useState(null);
     const [taskState, setTaskState] = useState(null);
     const [showSpec, setShowSpec] = useState(false);
+    const [activeAction, setActiveAction] = useState(null);
+    const [toastMessage, setToastMessage] = useState(null);
     const mountedRef = useRef(true);
     const loadedRef = useRef(false);
+    const toastTimerRef = useRef(null);
+
+    const showToast = useCallback((msg) => {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToastMessage(msg);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 4000);
+    }, []);
 
     const loadTask = useCallback(async () => {
         try {
@@ -2639,52 +2683,67 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             if (compound?.options) setEndTaskOptions(compound.options);
         } else if (!needsConfirm) {
             // Execute immediately without confirmation dialog
+            setActiveAction(action);
             try {
                 const fn = resolveAction(action);
                 if (fn) await fn();
-                setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
+                loadTask(); loadAttempts(); loadActions();
             } catch (e) {
                 console.error('Action error:', e);
+                showToast(e.message || 'Action failed');
+            } finally {
+                setActiveAction(null);
             }
         } else {
             setConfirmAction(action);
         }
-    }, [id, resolveAction, loadTask, loadAttempts, loadActions, taskActions]);
+    }, [id, resolveAction, loadTask, loadAttempts, loadActions, taskActions, showToast]);
 
     const executeAction = useCallback(async () => {
         if (!confirmAction || !task) return;
         const action = confirmAction;
         setConfirmAction(null);
+        setActiveAction(action);
         try {
             const fn = resolveAction(action);
             if (fn) await fn();
-            // Reload after action
-            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
+            loadTask(); loadAttempts(); loadActions();
         } catch (e) {
             console.error('Action error:', e);
+            showToast(e.message || 'Action failed');
+        } finally {
+            setActiveAction(null);
         }
-    }, [confirmAction, resolveAction, task, loadTask, loadAttempts, loadActions]);
+    }, [confirmAction, resolveAction, task, loadTask, loadAttempts, loadActions, showToast]);
 
     const executeStart = useCallback(async (overrides) => {
         setShowStartOverlay(false);
+        setActiveAction('start');
         try {
             await api.startTask(id, overrides);
-            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
+            loadTask(); loadAttempts(); loadActions();
         } catch (e) {
             console.error('Start action error:', e);
+            showToast(e.message || 'Action failed');
+        } finally {
+            setActiveAction(null);
         }
-    }, [id, loadTask, loadAttempts, loadActions]);
+    }, [id, loadTask, loadAttempts, loadActions, showToast]);
 
     const executeEndTask = useCallback(async (selectedAction) => {
         setEndTaskOptions(null);
+        setActiveAction(selectedAction);
         try {
             const fn = resolveAction(selectedAction);
             if (fn) await fn();
-            setTimeout(() => { loadTask(); loadAttempts(); loadActions(); }, 500);
+            loadTask(); loadAttempts(); loadActions();
         } catch (e) {
             console.error('End task action error:', e);
+            showToast(e.message || 'Action failed');
+        } finally {
+            setActiveAction(null);
         }
-    }, [resolveAction, loadTask, loadAttempts, loadActions]);
+    }, [resolveAction, loadTask, loadAttempts, loadActions, showToast]);
 
     // Loading state
     if (error) {
@@ -2954,7 +3013,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
 
                 <!-- Actions -->
-                <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
+                <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} activeAction=${activeAction} />
 
                 <!-- Open → full task page -->
                 <a href=${routes.task(id)}
@@ -2974,6 +3033,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
 
                 <${ConfirmOverlay} action=${confirmAction} onConfirm=${executeAction} onCancel=${() => setConfirmAction(null)} />
                 ${endTaskOptions && html`<${EndTaskOverlay} options=${endTaskOptions} onSelect=${executeEndTask} onCancel=${() => setEndTaskOptions(null)} />`}
+                <${ActionErrorToast} message=${toastMessage} />
             </div>
         `;
     }
@@ -2999,7 +3059,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GitFlowLineage} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ChainInvalidationWarning} task=${task} chain=${chain} />
-            <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
+            <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} activeAction=${activeAction} />
             ${showStartOverlay ? html`
                 <${StartConfigOverlay}
                     task=${task}
@@ -3060,6 +3120,8 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                     onSaved=${() => { setShowEditPanel(false); loadTask(); }}
                 />
             ` : null}
+
+            <${ActionErrorToast} message=${toastMessage} />
         </div>
     `;
 }

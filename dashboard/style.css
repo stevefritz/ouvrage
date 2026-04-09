@@ -1028,3 +1028,41 @@ body { background: var(--bg-primary); color: var(--text-primary); }
 .foreman-status-dot-pulse {
     animation: foreman-pulse 1.8s ease-in-out infinite;
 }
+
+/* Action button spinner */
+@keyframes foreman-spin { to { transform: rotate(360deg) } }
+.foreman-action-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: foreman-spin 0.6s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Action error toast */
+@keyframes foreman-toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.foreman-error-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1715;
+    border: 1px solid #ef4444;
+    color: #ede8e3;
+    border-radius: 6px;
+    padding: 12px 20px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    z-index: 9999;
+    max-width: 480px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    animation: foreman-toast-in 0.2s ease;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
