@@ -6,6 +6,7 @@ import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import { colors, typography, layout } from './tokens.js';
 import { TrialBanner } from './components/TrialBanner.js';
+import { ProjectLimitBanner } from './components/ProjectLimitBanner.js';
 
 const html = htm.bind(h);
 
@@ -39,6 +40,7 @@ export function ForemanShell({ header, children }) {
         <div id="foreman-app">
             ${header !== undefined ? header : html`<${ForemanHeader} />`}
             <${TrialBanner} />
+            <${ProjectLimitBanner} />
             <main class="foreman-content">
                 ${children}
             </main>

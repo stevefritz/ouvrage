@@ -450,23 +450,36 @@ const STYLE_COLORS = {
     danger:    { bg: colors.redBg,    fg: colors.red },
 };
 
-function ActionToolbar({ task, chain, apiActions, onAction }) {
+// Actions that trigger a CC session launch — blocked by the backend when over project limit
+const DISPATCH_ACTIONS = ['dispatch', 'approve', 'start', 'resume'];
+
+function ActionToolbar({ task, chain, apiActions, onAction, overLimit }) {
     const actions = [];
 
-    const btn = (action, label, bg, fg, needsConfirm = true) => html`
-        <button key=${action} onClick=${() => onAction(action, task.id, needsConfirm)}
-            title=${ACTION_TOOLTIPS[action] || ''}
-            style=${{
-                padding: '4px 12px', borderRadius: layout.borderRadius.sm,
-                background: bg, color: fg, border: 'none', cursor: 'pointer',
-                fontFamily: typography.fontBody, fontSize: typography.size.sm,
-                fontWeight: typography.weight.medium, whiteSpace: 'nowrap',
-                transition: 'opacity 120ms',
-            }}
-            class="foreman-action-btn">
-            ${label}
-        </button>
-    `;
+    const btn = (action, label, bg, fg, needsConfirm = true) => {
+        const isBlocked = overLimit && DISPATCH_ACTIONS.includes(action);
+        const tooltip = isBlocked
+            ? 'Over project limit — remove projects or upgrade your plan'
+            : (ACTION_TOOLTIPS[action] || '');
+        return html`
+            <button key=${action}
+                onClick=${isBlocked ? undefined : () => onAction(action, task.id, needsConfirm)}
+                disabled=${isBlocked}
+                title=${tooltip}
+                style=${{
+                    padding: '4px 12px', borderRadius: layout.borderRadius.sm,
+                    background: bg, color: fg, border: 'none',
+                    cursor: isBlocked ? 'not-allowed' : 'pointer',
+                    fontFamily: typography.fontBody, fontSize: typography.size.sm,
+                    fontWeight: typography.weight.medium, whiteSpace: 'nowrap',
+                    transition: 'opacity 120ms',
+                    opacity: isBlocked ? 0.4 : 1,
+                }}
+                class="foreman-action-btn">
+                ${label}
+            </button>
+        `;
+    };
 
     // API-driven buttons (from /actions endpoint)
     if (apiActions) {
@@ -2452,6 +2465,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const [error, setError] = useState(null);
     const [confirmAction, setConfirmAction] = useState(null);
     const [endTaskOptions, setEndTaskOptions] = useState(null);
+    const [overProjectLimit, setOverProjectLimit] = useState(false);
     const [showStartOverlay, setShowStartOverlay] = useState(false);
     const [showEditPanel, setShowEditPanel] = useState(false);
     const [taskActions, setTaskActions] = useState(null);
@@ -2581,6 +2595,11 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         loadAttempts();
         loadChain();
         loadActions();
+
+        // Fetch over-project-limit state once on mount (banner handles ongoing polling)
+        api.getSystem().then(data => {
+            if (mountedRef.current) setOverProjectLimit(!!data.over_project_limit);
+        }).catch(() => {});  // silent — banner already shows the state
 
         // Unified 5s poll — task + attempts + actions + pollTick (drives FilesDrawer)
         const mainTimer = setInterval(() => {
@@ -2954,7 +2973,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                 ` : null}
 
                 <!-- Actions -->
-                <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
+                <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} overLimit=${overProjectLimit} />
 
                 <!-- Open → full task page -->
                 <a href=${routes.task(id)}
@@ -2999,7 +3018,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
             <${GitFlowLineage} task=${task} chain=${chain} />
             <${BlockedBy} task=${task} blockerTask=${blockerTask} />
             <${ChainInvalidationWarning} task=${task} chain=${chain} />
-            <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} />
+            <${ActionToolbar} task=${task} chain=${chain} apiActions=${taskActions} onAction=${handleAction} overLimit=${overProjectLimit} />
             ${showStartOverlay ? html`
                 <${StartConfigOverlay}
                     task=${task}
