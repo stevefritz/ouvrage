@@ -1836,10 +1836,11 @@ async def _handle_test_git_credential(send, scope, provider):
 async def _handle_get_user_settings(scope, send):
     user = scope.get("session_user") or {}
     user_id = user.get("id")
+    user_email = user.get("email")
     if not user_id:
         return await _error(send, "Not authenticated", 401)
 
-    full_user = await db.get_user(user_id)
+    full_user = await db.get_user_by_email_with_auth(user_email)
     if not full_user:
         return await _error(send, "User not found", 404)
 
@@ -1863,6 +1864,7 @@ async def _handle_get_user_settings(scope, send):
             "email": full_user.get("email"),
             "timezone": full_user.get("timezone"),
             "role": full_user.get("role"),
+            "has_password": bool(full_user.get("password_hash")),
         },
         "anthropic": anthropic_info,
         "git_credential": {"configured": git_credential_configured},
