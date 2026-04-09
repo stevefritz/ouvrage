@@ -9,6 +9,7 @@ Auth: Bearer token compared against INTERNAL_API_TOKEN env var.
 Only active when AUTH_MODE=saas. All routes return 404 in local mode.
 """
 
+import asyncio
 import json
 import logging
 import secrets
@@ -120,6 +121,13 @@ async def _handle_config(scope, receive, send) -> None:
         "max_projects": cfg["max_projects"],
         "trial_ends_at": cfg["trial_ends_at"],
     })
+
+    # When max_projects changes, trigger drain for project-limit-blocked tasks.
+    # Fire-and-forget — response already sent.
+    if max_projects is not None:
+        from switchboard.dispatch.queue import _drain_queue, _drain_project_limit_blocked
+        asyncio.create_task(_drain_queue())
+        asyncio.create_task(_drain_project_limit_blocked())
 
 
 async def _handle_bootstrap_user(scope, receive, send) -> None:

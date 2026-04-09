@@ -365,6 +365,9 @@ async def _handle_system(send):
     all_tasks = await db.list_tasks()
     total_cost = sum(t.get("total_cost_usd", 0) or 0 for t in all_tasks)
     instance_cfg = await db.get_instance_config()
+    projects_count = len(projects)
+    max_projects = await db.get_max_projects()
+    over_project_limit = max_projects > 0 and projects_count > max_projects
     await _json_response(send, {
         "active_tasks": active,
         "max_concurrent": DEFAULT_MAX_CONCURRENT,
@@ -372,6 +375,9 @@ async def _handle_system(send):
         "uptime_seconds": round(time.monotonic() - _start_time),
         "jira_base_url": JIRA_BASE_URL or None,
         "trial_ends_at": instance_cfg.get("trial_ends_at"),
+        "over_project_limit": over_project_limit,
+        "projects_count": projects_count,
+        "max_projects": max_projects,
     })
 
 

@@ -373,6 +373,30 @@
         "/dashboard/api/files*": "fixtures/visual/project-files.json"
       },
       "wait_ms": 2000
+    },
+    "project-limit-banner": {
+      "url": "/dashboard#/task/fix-auth-bug",
+      "viewport": { "width": 1280, "height": 900 },
+      "mocks": {
+        "/dashboard/api/tasks/fix-auth-bug/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/fix-auth-bug/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/fix-auth-bug/actions": "fixtures/visual/task-stopped-actions.json",
+        "/dashboard/api/tasks/fix-auth-bug": "fixtures/visual/task-stopped-task.json",
+        "/dashboard/api/system": "fixtures/visual/system-over-limit.json"
+      },
+      "wait_ms": 2000
+    },
+    "project-limit-banner-mobile": {
+      "url": "/dashboard#/task/fix-auth-bug",
+      "viewport": { "width": 375, "height": 812 },
+      "mocks": {
+        "/dashboard/api/tasks/fix-auth-bug/files": "fixtures/visual/task-detail-files.json",
+        "/dashboard/api/tasks/fix-auth-bug/chain": "fixtures/visual/task-detail-chain.json",
+        "/dashboard/api/tasks/fix-auth-bug/actions": "fixtures/visual/task-stopped-actions.json",
+        "/dashboard/api/tasks/fix-auth-bug": "fixtures/visual/task-stopped-task.json",
+        "/dashboard/api/system": "fixtures/visual/system-over-limit.json"
+      },
+      "wait_ms": 2000
     }
   }
 }

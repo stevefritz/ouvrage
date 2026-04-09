@@ -164,6 +164,16 @@ async def _handle_dispatch_task(arguments):
     url = _task_url(task_id)
     if url:
         result["url"] = url
+
+    # Warn if the instance is over project limit — task was created but won't run
+    from switchboard.dispatch.internals import is_over_project_limit
+    over_limit, proj_count, max_proj = await is_over_project_limit()
+    if over_limit:
+        result["warning"] = (
+            f"⚠️ Your account has {proj_count} projects but your plan allows {max_proj}. "
+            f"Tasks cannot run until you remove projects or upgrade your plan."
+        )
+
     return result
 
 
@@ -176,6 +186,21 @@ async def _handle_transition_task(arguments):
     task_id = arguments["task_id"]
     action = arguments["action"]
     options = arguments.get("options") or {}
+
+    # Block dispatch-triggering actions when over project limit
+    if action in ("start", "resume", "approve"):
+        from switchboard.dispatch.internals import is_over_project_limit
+        over_limit, proj_count, max_proj = await is_over_project_limit()
+        if over_limit:
+            return {
+                "error": (
+                    f"⚠️ Your account has {proj_count} projects but your plan allows {max_proj}. "
+                    f"Tasks cannot run until you remove projects or upgrade your plan."
+                ),
+                "task_id": task_id,
+                "action": action,
+            }
+
     try:
         result = await lifecycle.execute(
             task_id, action,
