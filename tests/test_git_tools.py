@@ -278,14 +278,15 @@ class TestGitFetch:
 class TestHookScripts:
     """Tests for the block-git-push.sh and block-git-fetch.sh hook scripts."""
 
-    def test_block_git_push_script_output(self):
-        """block-git-push.sh outputs valid JSON with deny decision."""
+    def test_block_git_push_script_denies_git_push(self):
+        """block-git-push.sh outputs deny JSON when input command is git push."""
         script_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "hooks", "block-git-push.sh",
         )
         result = subprocess.run(
             ["bash", script_path],
+            input='{"tool_input":{"command":"git push origin main"}}',
             capture_output=True, text=True, timeout=5,
         )
         assert result.returncode == 0
@@ -294,14 +295,29 @@ class TestHookScripts:
         assert output["permissionDecision"] == "deny"
         assert "git_push" in output["permissionDecisionReason"]
 
-    def test_block_git_fetch_script_output(self):
-        """block-git-fetch.sh outputs valid JSON with deny decision."""
+    def test_block_git_push_script_allows_other_bash(self):
+        """block-git-push.sh exits silently (allow) when command is not git push."""
+        script_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "hooks", "block-git-push.sh",
+        )
+        result = subprocess.run(
+            ["bash", script_path],
+            input='{"tool_input":{"command":"ls -la"}}',
+            capture_output=True, text=True, timeout=5,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_block_git_fetch_script_denies_git_fetch(self):
+        """block-git-fetch.sh outputs deny JSON when input command is git fetch."""
         script_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "hooks", "block-git-fetch.sh",
         )
         result = subprocess.run(
             ["bash", script_path],
+            input='{"tool_input":{"command":"git fetch origin"}}',
             capture_output=True, text=True, timeout=5,
         )
         assert result.returncode == 0
@@ -309,6 +325,20 @@ class TestHookScripts:
         output = data["hookSpecificOutput"]
         assert output["permissionDecision"] == "deny"
         assert "git_fetch" in output["permissionDecisionReason"]
+
+    def test_block_git_fetch_script_allows_other_bash(self):
+        """block-git-fetch.sh exits silently (allow) when command is not git fetch."""
+        script_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "hooks", "block-git-fetch.sh",
+        )
+        result = subprocess.run(
+            ["bash", script_path],
+            input='{"tool_input":{"command":"git log --oneline"}}',
+            capture_output=True, text=True, timeout=5,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
 
 
 # ---------------------------------------------------------------------------

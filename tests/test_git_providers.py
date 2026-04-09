@@ -224,6 +224,12 @@ class TestParseHostname:
 class TestResolveCredential:
     """Test credential resolution chain."""
 
+    @pytest.fixture(autouse=True)
+    def _use_real_resolve_credential(self, real_resolve_credential):
+        # This class tests resolve_credential itself — opt out of the
+        # autouse mock so we exercise the real function.
+        pass
+
     async def test_project_credential_override(self, db):
         """Project-level credential_override is used first."""
         from switchboard.git.providers import resolve_credential
@@ -414,6 +420,12 @@ class TestSchemaAutoMigration:
 
 class TestDispatchCredentialValidation:
     """Test that dispatch blocks when no credential is available."""
+
+    @pytest.fixture(autouse=True)
+    def _use_real_resolve_credential(self, real_resolve_credential):
+        # This class verifies dispatch's credential pre-flight — opt out of
+        # the autouse mock so the real resolution path runs.
+        pass
 
     @pytest.fixture(autouse=True)
     def _mock_launch_patches(self):

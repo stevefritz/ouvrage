@@ -24,6 +24,12 @@ import pytest
 class TestSetupHookConfig:
     """Unit tests for the setup_hook_config() function in internals.py."""
 
+    @pytest.fixture(autouse=True)
+    def _use_real_fs_worker(self, real_fs_worker):
+        # setup_hook_config uses _run_as_worker (setuid in production).
+        # Tests can't setuid, so this fixture replaces it with a direct subprocess exec.
+        pass
+
     async def test_writes_hook_config_to_empty_dir(self, tmp_path):
         """setup_hook_config creates .claude/settings.json with hook entries."""
         from switchboard.dispatch.internals import setup_hook_config

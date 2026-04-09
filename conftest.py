@@ -172,20 +172,43 @@ async def completed_chain(db, sample_project):
 
 @pytest.fixture(autouse=True)
 def _mock_credential_validation():
-    """Auto-mock validate_project_access for all tests to prevent dispatch/retry
-    from hitting real credential checks. Tests that need the real function should
-    patch it back with `_real_validate_project_access` (captured at module level)."""
+    """Auto-mock credential checks for all tests so dispatch can proceed without
+    a real PAT configured. Two pre-flight gates need mocking:
+
+    1. validate_project_access — full PAT scope check (clone/push/PR)
+    2. resolve_credential — looks up if any credential exists for the provider
+
+    Tests that need the real functions should patch them back with the
+    `_real_*` references captured at module level.
+    """
+    from switchboard.git.providers import GitHubProvider
+    fake_provider_credential = (GitHubProvider(), "ghp_test_fake_credential")
+
     with patch("switchboard.git.validation.validate_project_access", AsyncMock(return_value={
         "status": "validated",
         "message": "Credential validated",
         "checked_at": "2024-01-01T00:00:00Z",
         "detail": {"clone": True, "push": True, "pr": True},
-    })):
+    })), patch("switchboard.git.providers.resolve_credential", AsyncMock(return_value=fake_provider_credential)):
         yield
 
 
-# Capture the real function at module level, before any autouse fixtures run.
+# Capture the real functions at module level, before any autouse fixtures run.
 from switchboard.git.validation import validate_project_access as _real_validate_project_access
+from switchboard.git.providers import resolve_credential as _real_resolve_credential
+
+
+@pytest.fixture
+def real_resolve_credential():
+    """Opt-out fixture for tests that need the real resolve_credential function.
+
+    The autouse _mock_credential_validation fixture mocks resolve_credential
+    so dispatch tests don't fail with 'no credential configured'. Tests that
+    actually exercise credential resolution should request this fixture to
+    restore the real function.
+    """
+    with patch("switchboard.git.providers.resolve_credential", _real_resolve_credential):
+        yield _real_resolve_credential
 
 
 @pytest.fixture
@@ -222,6 +245,56 @@ def mock_git():
     yield mocks
     for p in patches:
         p.stop()
+
+
+@pytest.fixture
+def real_fs_worker():
+    """Replace _run_as_worker with a direct subprocess exec (no setuid).
+
+    Tests that exercise setup_hook_config and similar functions need real
+    filesystem operations to occur, but can't use the production setuid path
+    because tests don't run as root and don't have CAP_SETUID.
+
+    This fixture patches _run_as_worker (in every module that imports it) to
+    just exec the command in the current process — files actually get created,
+    directories actually get made, but no privilege drop happens.
+
+    NOTE: production _run_as_worker raises a generic PermissionError when
+    setuid fails, which is hard to debug. Consider improving the error message
+    upstream so it's clear that CAP_SETUID is required and tests should mock.
+    """
+    import asyncio as _asyncio
+
+    async def _direct_exec(*cmd, **kwargs):
+        env = kwargs.pop("env", None)
+        proc = await _asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
+            env=env,
+            **kwargs,
+        )
+        stdout, stderr = await proc.communicate()
+        return stdout, stderr, proc.returncode
+
+    # Patch every module that imports _run_as_worker by name
+    patches = [
+        patch("switchboard.git.worktree._run_as_worker", side_effect=_direct_exec),
+        patch("switchboard.dispatch.internals._run_as_worker", side_effect=_direct_exec, create=True),
+        patch("switchboard.dispatch.engine._run_as_worker", side_effect=_direct_exec),
+    ]
+    started = []
+    for p in patches:
+        try:
+            started.append(p.start())
+        except (AttributeError, ModuleNotFoundError):
+            pass  # not all modules import it directly
+    yield
+    for p in patches:
+        try:
+            p.stop()
+        except RuntimeError:
+            pass
 
 
 @pytest.fixture

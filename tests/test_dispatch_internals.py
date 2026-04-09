@@ -394,6 +394,12 @@ class TestCollectReopenFeedback:
 # ---------------------------------------------------------------------------
 
 class TestSetupHookConfig:
+    @pytest.fixture(autouse=True)
+    def _use_real_fs_worker(self, real_fs_worker):
+        # setup_hook_config calls _run_as_worker which uses setuid in production.
+        # Tests can't setuid, so this fixture replaces it with a direct subprocess exec.
+        pass
+
     async def test_writes_fresh_config_no_existing_file(self, tmp_path):
         """With no existing .claude/settings.json, writes Ouvrage's hooks from scratch."""
         from switchboard.dispatch.internals import setup_hook_config

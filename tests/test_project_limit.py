@@ -353,8 +353,12 @@ class TestDispatchTaskOverLimitWarning:
     """_handle_dispatch_task includes warning when over project limit."""
 
     @pytest.fixture(autouse=True)
-    def setup_patches(self, mock_git, mock_sdk):
-        pass
+    def setup_patches(self, mock_git, mock_sdk, monkeypatch):
+        # Bypass the handler-level Anthropic API key check — this test class
+        # focuses on over-limit warnings, not credential validation.
+        # Patch both the module binding and the source so re-imports also see it.
+        monkeypatch.setattr("switchboard.server.handlers.tasks.SKIP_CREDENTIAL_CHECK", True)
+        monkeypatch.setattr("switchboard.config.settings.SKIP_CREDENTIAL_CHECK", True)
 
     async def test_warning_in_response_when_over_limit(self, db):
         from switchboard.server.handlers.tasks import _handle_dispatch_task
