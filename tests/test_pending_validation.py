@@ -260,35 +260,64 @@ class TestRetryTaskPendingValidation:
 # ---------------------------------------------------------------------------
 
 class TestEscalateTool:
-    """escalate tool sets needs-review and posts escalation message."""
+    """escalate tool routes through lifecycle: working → stopped(escalated), kills session."""
 
     def teardown_method(self, _):
         _clear_context()
 
-    async def test_escalate_sets_needs_review(self, db, sample_task):
+    async def test_escalate_stops_task_with_reason_escalated(self, db, sample_task):
+        """Escalate transitions task to stopped with reason=escalated (not needs-review)."""
         from switchboard.server.handlers.tasks import _handle_escalate
 
         _set_worker_context()
-        result = await _handle_escalate({
-            "task_id": sample_task["id"],
-            "reason": "Spec is ambiguous — cannot proceed without clarification.",
-        })
+        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+            result = await _handle_escalate({
+                "task_id": sample_task["id"],
+                "reason": "Spec is ambiguous — cannot proceed without clarification.",
+            })
 
         assert result.get("escalated") is True
-        assert result.get("status") == "needs-review"
+        assert result.get("status") == "stopped"
 
         updated = await db.get_task(sample_task["id"])
-        assert updated["status"] == "needs-review"
+        assert updated["status"] == "stopped"
+        assert updated["reason"] == "escalated"
+
+    async def test_escalate_kills_running_session(self, db, sample_task):
+        """Escalate cancels the asyncio task in _running_tasks."""
+        import asyncio
+        from switchboard.server.handlers.tasks import _handle_escalate
+        from switchboard.dispatch._state import _running_tasks
+
+        # Seed a fake asyncio task that tracks whether it was cancelled
+        mock_task = MagicMock(spec=asyncio.Task)
+        mock_task.get_name.return_value = f"sdk-session-{sample_task['id']}"
+        mock_task.done.return_value = False
+        mock_task.cancel.return_value = True
+        _running_tasks.add(mock_task)
+
+        try:
+            _set_worker_context()
+            with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+                await _handle_escalate({
+                    "task_id": sample_task["id"],
+                    "reason": "Need human input.",
+                })
+            mock_task.cancel.assert_called_once()
+        finally:
+            _running_tasks.discard(mock_task)
 
     async def test_escalate_posts_escalation_message(self, db, sample_task):
+        """Escalate posts escalation message with correct author, type, and content."""
         from switchboard.server.handlers.tasks import _handle_escalate
 
         _set_worker_context()
         reason = "Blocked: missing external API credentials."
-        result = await _handle_escalate({
-            "task_id": sample_task["id"],
-            "reason": reason,
-        })
+        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+            result = await _handle_escalate({
+                "task_id": sample_task["id"],
+                "reason": reason,
+            })
 
         assert result.get("escalated") is True
 
@@ -304,6 +333,7 @@ class TestEscalateTool:
         assert "human review needed" in escalation.get("title", "").lower()
 
     async def test_escalate_returns_error_for_missing_task(self, db):
+        """Escalate returns error dict for unknown task_id."""
         from switchboard.server.handlers.tasks import _handle_escalate
 
         result = await _handle_escalate({
@@ -311,6 +341,28 @@ class TestEscalateTool:
             "reason": "something",
         })
         assert "error" in result
+
+    async def test_resume_available_after_escalate(self, db, sample_task):
+        """After escalation, resume/retry/cancel are available actions (not blocked by awaiting_feedback)."""
+        from switchboard.server.handlers.tasks import _handle_escalate
+        from switchboard.dispatch.lifecycle import lifecycle
+
+        # Give the task a session_id so _require_session_or_gate_resumable passes
+        await db.update_task(sample_task["id"], session_id="sess-escalated")
+
+        _set_worker_context()
+        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+            await _handle_escalate({
+                "task_id": sample_task["id"],
+                "reason": "Need guidance.",
+            })
+
+        actions = await lifecycle.get_available_actions(sample_task["id"])
+        action_names = {a["name"] for a in actions}
+        assert "resume" in action_names
+        assert "retry" in action_names
+        # cancel/close are folded into end_task
+        assert "end_task" in action_names
 
 
 # ---------------------------------------------------------------------------

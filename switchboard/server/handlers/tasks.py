@@ -164,6 +164,16 @@ async def _handle_dispatch_task(arguments):
     url = _task_url(task_id)
     if url:
         result["url"] = url
+
+    # Warn if the instance is over project limit — task was created but won't run
+    from switchboard.dispatch.internals import is_over_project_limit
+    over_limit, proj_count, max_proj = await is_over_project_limit()
+    if over_limit:
+        result["warning"] = (
+            f"⚠️ Your account has {proj_count} projects but your plan allows {max_proj}. "
+            f"Tasks cannot run until you remove projects or upgrade your plan."
+        )
+
     return result
 
 
@@ -176,6 +186,21 @@ async def _handle_transition_task(arguments):
     task_id = arguments["task_id"]
     action = arguments["action"]
     options = arguments.get("options") or {}
+
+    # Block dispatch-triggering actions when over project limit
+    if action in ("start", "resume", "approve"):
+        from switchboard.dispatch.internals import is_over_project_limit
+        over_limit, proj_count, max_proj = await is_over_project_limit()
+        if over_limit:
+            return {
+                "error": (
+                    f"⚠️ Your account has {proj_count} projects but your plan allows {max_proj}. "
+                    f"Tasks cannot run until you remove projects or upgrade your plan."
+                ),
+                "task_id": task_id,
+                "action": action,
+            }
+
     try:
         result = await lifecycle.execute(
             task_id, action,
@@ -653,6 +678,8 @@ async def _handle_search_task_messages(arguments):
 
 async def _handle_escalate(arguments: dict) -> dict:
     """Worker-only: flag a task for human review and post an escalation message."""
+    from switchboard.dispatch.lifecycle import lifecycle
+
     task_id = arguments["task_id"]
     reason = arguments["reason"]
 
@@ -660,25 +687,15 @@ async def _handle_escalate(arguments: dict) -> dict:
     if not task:
         return {"error": f"Task '{task_id}' not found"}
 
-    prev_status = task.get("status")
-    await db.update_task(task_id, status="needs-review")
-    await db.write_audit_log(
-        task_id=task_id, action="escalated",
+    await lifecycle.execute(
+        task_id, "escalate",
         triggered_by="cc-worker",
         source_detail="escalate tool (worker cannot resolve)",
-        previous_status=prev_status, new_status="needs-review",
+        escalation_reason=reason,
     )
-    await db.post_task_message(
-        task_id=task_id,
-        author="cc-worker",
-        type="escalation",
-        title="Worker escalated — human review needed",
-        content=reason,
-    )
-    await notify.task_needs_review(task_id=task_id, reason=f"Worker escalated: {reason[:200]}")
     return {
         "task_id": task_id,
-        "status": "needs-review",
+        "status": "stopped",
         "escalated": True,
         "reason": reason,
     }

@@ -174,6 +174,23 @@ async def _post_stop_message(task: dict, **ctx: Any) -> None:
     )
 
 
+async def _escalate_post_message_and_notify(task: dict, **ctx: Any) -> None:
+    """Post escalation message to task thread and send Slack notification."""
+    from switchboard.notifications import slack as notify
+
+    task_id = task["id"]
+    reason = ctx.get("escalation_reason", "Worker escalated — human review needed")
+
+    await db.post_task_message(
+        task_id=task_id,
+        author="cc-worker",
+        type="escalation",
+        title="Worker escalated — human review needed",
+        content=reason,
+    )
+    await notify.task_needs_review(task_id=task_id, reason=f"Worker escalated: {reason[:200]}")
+
+
 # ---------------------------------------------------------------------------
 # Side-effect functions for dispatch
 # ---------------------------------------------------------------------------
@@ -189,6 +206,19 @@ async def _dispatch_launch_session(task: dict, **ctx: Any) -> None:
     from switchboard.notifications import slack as notify
 
     task_id = task["id"]
+
+    # Project limit check — hard block (higher priority than concurrency)
+    from switchboard.dispatch.internals import is_over_project_limit
+    over_limit, projects_count, max_projects_val = await is_over_project_limit()
+    if over_limit:
+        # Revert to ready without setting queued_at — project-limit-blocked tasks
+        # are NOT drained on concurrency slot opening (only on limit increase).
+        await db.update_task(task_id, status="ready")
+        logger.info(
+            "Task %s blocked by project limit (%d/%d projects)",
+            task_id, projects_count, max_projects_val,
+        )
+        return
 
     # Concurrency check — may queue instead
     if await check_and_queue_if_full(task_id):
@@ -1139,6 +1169,7 @@ OUTCOME_DEFINITIONS = {
     # Defensive entries
     "awaiting_feedback": {"label": "awaiting feedback", "color": "#eab308"},
     "manually_closed": {"label": "closed", "color": "#6b7280"},
+    "escalated": {"label": "escalated", "color": "#f59e0b"},
 }
 
 _OUTCOME_FALLBACK = {"label": "unknown", "color": "#6b7280"}
@@ -1196,6 +1227,12 @@ TRANSITIONS: dict[tuple[str, str], TransitionDef] = {
         label="Stop",
         style="secondary",
         confirm=False,
+    ),
+    ("working", "escalate"): TransitionDef(
+        to_state="stopped",
+        reason="escalated",
+        side_effects=[_stop_cc_session, _escalate_post_message_and_notify, _drain_queue_effect, _finalize_attempt],
+        user_action=False,  # triggered by CC worker via MCP tool, not the dashboard
     ),
     ("working", "cancel"): TransitionDef(
         to_state="cancelled",
@@ -1467,6 +1504,7 @@ STATE_LABELS: dict[tuple[str, str | None], dict[str, Any]] = {
     ("validating", "reviewing"): {"label": "Reviewing", "color": "#8b5cf6", "pulse": True},
     ("validating", "pushing"): {"label": "Pushing", "color": "#8b5cf6", "pulse": True},
     ("validating", None): {"label": "Validating", "color": "#8b5cf6", "pulse": True},
+    ("stopped", "escalated"): {"label": "Escalated", "color": "#f59e0b", "pulse": False},
     ("stopped", "paused_by_user"): {"label": "Paused", "color": "#f59e0b", "pulse": False},
     ("stopped", "turns_exhausted"): {"label": "Turns Exhausted", "color": "#f59e0b", "pulse": False},
     ("stopped", "wall_clock_timeout"): {"label": "Timed Out", "color": "#f59e0b", "pulse": False},

@@ -61,6 +61,7 @@ from switchboard.dispatch.internals import (
     build_dispatch_prompt,
     launch_sdk_session,
     check_and_queue_if_full,
+    is_over_project_limit,
     collect_review_feedback,
     collect_reopen_feedback,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "build_dispatch_prompt",
     "launch_sdk_session",
     "check_and_queue_if_full",
+    "is_over_project_limit",
     "collect_review_feedback",
     "collect_reopen_feedback",
     # engine — public API
