@@ -11,6 +11,19 @@ chown switchboard:switchboard /work
 gosu switchboard git config --global user.email "worker@ouvrage.dev"
 gosu switchboard git config --global user.name "Ouvrage Worker"
 
+# --- Temp directory ---
+# TMPDIR=/work/.tmp redirects all app temp files (pytest, CC sessions) to the
+# work volume instead of /tmp. tmpreaper runs hourly to clean files older than 2h.
+mkdir -p /work/.tmp
+chown switchboard:switchboard /work/.tmp
+chmod 1777 /work/.tmp
+
+# Clean any stale temp files from previous runs
+tmpreaper 2h /work/.tmp 2>/dev/null || true
+
+# Background tmpreaper loop — cleans /work/.tmp every hour
+(while true; do sleep 3600; tmpreaper 2h /work/.tmp 2>/dev/null || true; done) &
+
 # --- Uploads directory ---
 # Lives in /work so CC workers can read uploaded files directly.
 # Owned by service user (writes), group-readable by worker (reads).

@@ -352,8 +352,10 @@ These must never block the request path.
 
 ## Testing — THIS IS CRITICAL
 
-Every new function, endpoint, or behavior MUST have corresponding tests.
-Test count should only go up, never down.
+Write tests only when the task spec or checklist explicitly requires them, or when your changes
+introduce genuinely new behavior not already covered by existing tests. Do not write tests for
+bug fixes, refactors, or config changes that are already exercised by the existing suite.
+Before writing a test, check what coverage already exists — duplicate tests waste CI time.
 
 ### Fixtures (defined in `conftest.py`)
 - `tmp_db` — Temporary SQLite DB with `SWITCHBOARD_DB` env var + Fernet encryption key

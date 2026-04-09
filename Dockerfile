@@ -50,7 +50,9 @@ COPY switchboard/ switchboard/
 COPY dashboard/ dashboard/
 COPY foreman.html ./
 
-RUN pip install --no-cache-dir ".[dev]" sqlite-vec
+RUN pip install --no-cache-dir ".[dev]" sqlite-vec \
+    && apt-get update && apt-get install -y --no-install-recommends tmpreaper \
+    && rm -rf /var/lib/apt/lists/*
 
 # Lock down /app — only root and svc-only group (switchboard-svc) can read.
 # Worker user (switchboard) cannot access the codebase or DB schema.
@@ -85,6 +87,7 @@ ENV SWITCHBOARD_DB=/data/switchboard.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
     WORKER_USER=switchboard \
     AUTH_MODE=local \
+    TMPDIR=/work/.tmp \
     PORT=8100
 
 EXPOSE 8100

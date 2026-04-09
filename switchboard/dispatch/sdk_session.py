@@ -197,9 +197,6 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append("   Query `db.list_files(task_id)` in `_handle_get_task_status` and include compact file metadata.")
         parts.append("2. `switchboard/server/tools.py` — Register `get_file` tool on user endpoint alongside existing `get_attached_file`.")
         parts.append("   Point both to the same handler in `files_handler.py`.")
-        parts.append("3. `tests/test_files.py` — Add 2 tests:")
-        parts.append("   - `test_get_task_status_includes_files`: create task with attached file, verify files array in response")
-        parts.append("   - `test_get_file_returns_same_as_get_attached_file`: verify both tools return identical content")
         parts.append("")
         parts.append("Assumptions:")
         parts.append("- `list_files` already supports filtering by task_id (verified in db/files.py)")
@@ -332,6 +329,10 @@ async def _build_task_prompt(project: dict, task: dict, spec_content: str | None
         parts.append(f"Run tests with: `{project['test_command']}`")
     else:
         parts.append("No test command configured. If the project has tests, discover and run them.")
+    parts.append("")
+    parts.append("Write tests only if they add value and are not repeating existing coverage. "
+                 "Bug fixes and refactors should verify existing tests pass, not add new ones. "
+                 "Check what test coverage already exists before writing new tests.")
     parts.append("")
 
     # ── 14. Escalation ───────────────────────────────────────────────────────

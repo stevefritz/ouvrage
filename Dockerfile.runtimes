@@ -151,7 +151,9 @@ COPY switchboard/ switchboard/
 COPY dashboard/ dashboard/
 COPY foreman.html ./
 
-RUN python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed hatchling \
+RUN apt-get update && apt-get install -y --no-install-recommends tmpreaper \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed hatchling \
     && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed ".[dev]" sqlite-vec
 
 # Lock down /app — only root and svc-only group (switchboard-svc) can read.
@@ -181,6 +183,7 @@ ENV SWITCHBOARD_DB=/data/switchboard.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
     WORKER_USER=switchboard \
     AUTH_MODE=local \
+    TMPDIR=/work/.tmp \
     PORT=8100
 
 EXPOSE 8100
