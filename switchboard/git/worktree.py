@@ -241,6 +241,10 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         log.debug(f"Branch '{branch}' exists on origin — using {remote_ref} as base (reopened task)")
         base_ref = remote_ref
 
+    # Prune stale worktree refs — if a worktree directory was deleted externally
+    # (disk cleanup, crash), git still thinks the branch is checked out there.
+    await _run_as_worker("git", "-C", bare_path, "worktree", "prune")
+
     stdout, stderr, rc = await _run_as_worker(
         "git", "-C", bare_path, "worktree", "add",
         "-b", branch, worktree_path, base_ref,
