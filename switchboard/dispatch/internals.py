@@ -156,6 +156,15 @@ async def setup_hook_config(worktree_path: str) -> None:
         "sh", "-c", f"cat > {shlex.quote(settings_path)} << 'HOOKEOF'\n{settings_json}\nHOOKEOF"
     )
 
+    # Hide the overwrite from git — the repo may track .claude/settings.json
+    # with different content (skills, kill-blocker hooks).  Without this flag
+    # CC workers doing `git add -A` would commit Ouvrage's runtime hooks into
+    # the repo, leaking operational config into task commits.
+    await _run_as_worker(
+        "git", "-C", worktree_path,
+        "update-index", "--assume-unchanged", ".claude/settings.json",
+    )
+
     log.debug(f"Wrote hook config to {settings_path}")
 
 
