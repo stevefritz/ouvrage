@@ -138,10 +138,18 @@ RUN ln -sf /home/switchboard/.cargo/bin/cargo /usr/local/bin/cargo \
     && ln -sf /home/switchboard/.cargo/bin/rustup /usr/local/bin/rustup
 
 # ── Layer 9: Claude Code ────────────────────────────────────────────────────
+# The installer writes to ~/.local/bin/claude (NOT ~/.claude/local/bin — that
+# was the old path). Symlink target must match the new location, otherwise
+# /usr/local/bin/claude points at nothing.
+#
+# IMPORTANT: do not install the binary inside /home/switchboard/.claude/ —
+# that directory is bind-mounted in production (./claude-auth volume) for
+# auth state persistence, and the mount would shadow the binary on first run.
+# Installing to ~/.local/bin/ keeps it outside the bind mount.
 USER switchboard
 RUN curl -fsSL https://claude.ai/install.sh | bash
 USER root
-RUN ln -sf /home/switchboard/.claude/local/bin/claude /usr/local/bin/claude
+RUN ln -sf /home/switchboard/.local/bin/claude /usr/local/bin/claude
 
 # ── Layer 10: App code (busts cache on every deploy) ─────────────────────────
 WORKDIR /app

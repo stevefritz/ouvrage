@@ -2,9 +2,25 @@
 set -euo pipefail
 
 # --- Fix volume ownership ---
-# Mounted volumes start as root. Fix ownership so the app and workers can write.
+# Mounted volumes start as root, OR may carry over from a previous container
+# that used a different UID (we changed worker UID from 999 → 1001 in the
+# multi-runtime image). Recursively reconcile so the app and workers can read.
 chown switchboard-svc:switchboard /data
 chown switchboard:switchboard /work
+
+# Worker home subdirs that get bind-mounted (./claude-auth → ~/.claude,
+# ./gitconfig → ~/.gitconfig). If files inside are owned by a stale UID
+# (e.g. 999 from the previous image), the worker can't read its own
+# .credentials.json and CC dispatch silently fails with worker_has_oauth=False.
+# Only chown if the dir exists and ownership is wrong (avoids needless work).
+WORKER_UID=$(id -u switchboard)
+WORKER_GID=$(id -g switchboard)
+if [ -d /home/switchboard/.claude ]; then
+    if [ "$(stat -c %u /home/switchboard/.claude)" != "$WORKER_UID" ]; then
+        echo "[entrypoint] Reconciling /home/switchboard/.claude ownership to ${WORKER_UID}:${WORKER_GID}"
+        chown -R "${WORKER_UID}:${WORKER_GID}" /home/switchboard/.claude
+    fi
+fi
 
 # --- Temp directory ---
 # TMPDIR=/work/.tmp redirects all app temp files (pytest, CC sessions) to the
