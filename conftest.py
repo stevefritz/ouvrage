@@ -215,7 +215,9 @@ def real_resolve_credential():
 def mock_git():
     """Mock all git/subprocess operations in dispatch engine and lifecycle.
 
-    Patches: _run_as_worker, setup_worktree, cleanup_worktree, _ensure_branch_pushed.
+    Patches: _run_as_worker, setup_worktree, cleanup_worktree, _ensure_branch_pushed,
+    checkout_existing_worktree, and launch_sdk_session (prevents background asyncio
+    tasks that would outlive the test and cause teardown timeouts).
     Returns a dict of the mocks for assertion.
     """
     mocks = {
@@ -224,6 +226,8 @@ def mock_git():
         "cleanup_worktree": AsyncMock(),
         "ensure_branch_pushed": AsyncMock(return_value=True),
         "setup_hook_config": AsyncMock(),
+        "checkout_existing_worktree": AsyncMock(return_value="/tmp/fake-worktree"),
+        "launch_sdk_session": AsyncMock(),
         "validate_project_access": AsyncMock(return_value={
             "status": "validated",
             "message": "Credential validated",
@@ -238,6 +242,8 @@ def mock_git():
         patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
         patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
         patch("switchboard.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
+        patch("switchboard.dispatch.internals.checkout_existing_worktree", mocks["checkout_existing_worktree"]),
+        patch("switchboard.dispatch.internals.launch_sdk_session", mocks["launch_sdk_session"]),
         patch("switchboard.git.validation.validate_project_access", mocks["validate_project_access"]),
     ]
     for p in patches:
