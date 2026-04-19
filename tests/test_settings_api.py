@@ -104,7 +104,7 @@ class TestGetInstanceSettings:
         scope = _make_scope("/dashboard/api/settings/instance")
         resp = _Capture()
 
-        with _patch_httpx(200, {"login": "stevefritz"}):
+        with _patch_httpx(200, {"login": "example-user"}):
             await handle_request(scope, _make_receive(), resp)
 
         assert resp.status == 200
@@ -112,7 +112,7 @@ class TestGetInstanceSettings:
         assert data["instance"]["name"] == "Ouvrage"
         assert data["instance"]["slug"] == "default"
         assert data["github"]["connected"] is True
-        assert data["github"]["username"] == "stevefritz"
+        assert data["github"]["username"] == "example-user"
         assert data["github"]["pat_last4"] == "1234"
 
     async def test_github_not_connected_when_no_pat(self, db):

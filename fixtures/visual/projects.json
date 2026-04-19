@@ -2,7 +2,7 @@
   {
     "id": "mcp-switchboard",
     "name": "mcp-switchboard",
-    "repo_url": "https://github.com/stevefritz/mcp-switchboard",
+    "repo_url": "https://github.com/example-org/mcp-switchboard",
     "status": "active",
     "model": "opus",
     "task_count": 12,
@@ -15,7 +15,7 @@
   {
     "id": "laura-storefront",
     "name": "laura-storefront",
-    "repo_url": "https://github.com/stevefritz/laura-storefront",
+    "repo_url": "https://github.com/example-org/laura-storefront",
     "status": "active",
     "model": "sonnet",
     "task_count": 7,
@@ -28,7 +28,7 @@
   {
     "id": "ledger-app",
     "name": "ledger-app",
-    "repo_url": "https://github.com/stevefritz/ledger-app",
+    "repo_url": "https://github.com/example-org/ledger-app",
     "status": "active",
     "model": "opus",
     "task_count": 4,
@@ -41,7 +41,7 @@
   {
     "id": "shopify-extensions",
     "name": "shopify-extensions",
-    "repo_url": "https://github.com/stevefritz/shopify-extensions",
+    "repo_url": "https://github.com/example-org/shopify-extensions",
     "status": "paused",
     "model": "sonnet",
     "task_count": 3,
@@ -54,7 +54,7 @@
   {
     "id": "graphiti-memory",
     "name": "graphiti-memory",
-    "repo_url": "https://github.com/stevefritz/graphiti-memory",
+    "repo_url": "https://github.com/example-org/graphiti-memory",
     "status": "idle",
     "model": "opus",
     "task_count": 1,

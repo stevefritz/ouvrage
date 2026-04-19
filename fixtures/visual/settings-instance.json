@@ -1,5 +1,5 @@
 {
   "instance": {"name": "Acme Corp", "slug": "acme", "plan_tier": "solo"},
-  "github": {"connected": true, "username": "stevefritz", "pat_last4": "JZ9f"},
+  "github": {"connected": true, "username": "example-user", "pat_last4": "JZ9f"},
   "oauth": {"client_id": "claude-mcp", "client_secret": "CRBNaQfpKHNfmnAxnnGg8PdgIn91N_vSza5_B1M3GMo"}
 }

@@ -234,7 +234,7 @@ export function FormRow({ children }) {
  *   icon        — string (emoji) or element rendered at 16px
  *   name        — credential name, e.g. "GitHub"
  *   connected   — boolean; controls dot color (green/red)
- *   statusText  — short status string, e.g. "Connected as stevefritz"
+ *   statusText  — short status string, e.g. "Connected as example-user"
  *   maskedValue — masked secret preview, e.g. "····JZ9f"
  *   onUpdate    — click handler for Update button (omit to hide button)
  *   onTest      — click handler for Test button (omit to hide button)

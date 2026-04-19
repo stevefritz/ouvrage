@@ -268,7 +268,7 @@ class TestUpdateProfileWorkflow:
                             user_id=owner["id"])
         resp = _Capture()
         await handle_request(scope, _make_receive({
-            "name": "Stephen Fritz",
+            "name": "Test User",
             "timezone": "America/New_York",
         }), resp)
         assert resp.status == 200
@@ -279,7 +279,7 @@ class TestUpdateProfileWorkflow:
         await handle_request(scope, _make_receive(), resp)
 
         profile = resp.json()["profile"]
-        assert profile["name"] == "Stephen Fritz"
+        assert profile["name"] == "Test User"
         assert profile["timezone"] == "America/New_York"
 
 

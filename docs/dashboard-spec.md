@@ -335,7 +335,7 @@ Status colors:
 - Add `/dashboard` prefix to unprotected paths (Caddy handles auth externally)
 
 ### Modified: Caddyfile
-- Add basic auth block for `switchboard.stephenfritz.dev/dashboard*`
+- Add basic auth block for `switchboard.example.dev/dashboard*`
 
 ## Implementation Order
 

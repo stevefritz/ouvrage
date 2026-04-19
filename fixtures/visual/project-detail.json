@@ -1,6 +1,6 @@
 {
   "id": "mcp-switchboard",
-  "repo": "stevefritz/mcp-switchboard",
+  "repo": "example-org/mcp-switchboard",
   "paused": false,
   "model": "opus",
   "created_at": "2026-01-15T10:00:00Z",

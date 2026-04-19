@@ -1,7 +1,7 @@
 {
   "id": "mcp-switchboard",
   "name": "mcp-switchboard",
-  "repo_url": "https://github.com/stevefritz/mcp-switchboard",
+  "repo_url": "https://github.com/example-org/mcp-switchboard",
   "status": "active",
   "model": "opus",
   "review_model": "opus",

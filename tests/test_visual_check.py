@@ -78,7 +78,7 @@ class TestLoadFixture:
             "fixtures/visual/settings-user.json", base_dir
         )
         data = json.loads(content)
-        assert data["profile"]["name"] == "Stephen Fritz"
+        assert data["profile"]["name"] == "Example User"
         assert data["anthropic"]["configured"] is True
 
     def test_loads_projects(self):
