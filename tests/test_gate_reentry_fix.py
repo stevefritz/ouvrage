@@ -69,7 +69,7 @@ class TestRetryTaskReviewFailed:
         mock_test_gate.assert_not_called()
         mock_run_sdk.assert_called_once()
 
-    async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
+    async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project, mock_git):
         """review-failed must NOT delegate to _resume_gate_pipeline (that re-runs gates)."""
         await _make_completed_task(db, "review-failed", gate_retries=1)
 
@@ -111,7 +111,7 @@ class TestRetryTaskTestFailed:
         mock_test_gate.assert_not_called()
         mock_run_sdk.assert_called_once()
 
-    async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
+    async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project, mock_git):
         """test-failed must NOT delegate to _resume_gate_pipeline."""
         await _make_completed_task(db, "test-failed", gate_retries=1)
 
