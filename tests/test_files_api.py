@@ -879,7 +879,7 @@ class TestReactiveInjection:
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args.kwargs
         assert call_kwargs["task_id"] == task_id
-        assert call_kwargs["author"] == "switchboard"
+        assert call_kwargs["author"] == "ouvrage"
         assert call_kwargs["type"] == "note"
         assert "📎" in call_kwargs["content"]
         assert "ref.txt" in call_kwargs["content"]
@@ -900,7 +900,7 @@ class TestReactiveInjection:
         assert resp.status == 201
         # Check the message appears in the task thread
         thread = await db.read_task_messages(task_id)
-        notes = [m for m in thread.get("messages", []) if m.get("type") == "note" and m.get("author") == "switchboard"]
+        notes = [m for m in thread.get("messages", []) if m.get("type") == "note" and m.get("author") == "ouvrage"]
         assert len(notes) == 1
         assert "📎" in notes[0]["content"]
         assert "doc.txt" in notes[0]["content"]

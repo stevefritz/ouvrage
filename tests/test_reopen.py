@@ -183,7 +183,7 @@ class TestReopenTask:
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
-        reopen_msgs = [m for m in msgs if m.get("author") == "switchboard"]
+        reopen_msgs = [m for m in msgs if m.get("author") == "ouvrage"]
         assert len(reopen_msgs) == 1
         assert "awaiting feedback" in reopen_msgs[0]["title"].lower()
         assert reopen_msgs[0]["type"] == "status"
@@ -397,7 +397,7 @@ class TestRetryTaskStartingMessage:
         starting_msgs = [m for m in msgs if "starting" in (m.get("title") or "").lower()]
         assert len(starting_msgs) == 1
         assert starting_msgs[0]["attempt_number"] == 2
-        assert starting_msgs[0]["author"] == "switchboard"
+        assert starting_msgs[0]["author"] == "ouvrage"
 
     async def test_retry_starting_message_posted_before_dispatch(self, db, sample_project, mock_git, mock_sdk):
         """The 'Attempt N starting' message is posted as part of the retry side effect."""

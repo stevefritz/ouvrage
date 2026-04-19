@@ -2182,7 +2182,7 @@ class TestReactiveConversationInjection:
         assert self.mock_post_task_message.await_count == 2
         call_kwargs = self.mock_post_task_message.await_args_list[0].kwargs
         assert call_kwargs["task_id"] == "proj/task-1"
-        assert call_kwargs["author"] == "switchboard"
+        assert call_kwargs["author"] == "ouvrage"
         assert "conv-a" in call_kwargs["content"]
         assert "stephen" in call_kwargs["content"]
 
