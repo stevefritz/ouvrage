@@ -88,16 +88,16 @@ class TestDispatchTaskCredentialGuard:
     @pytest.fixture(autouse=True)
     def patch_context(self, owner_user):
         """Set MCP request context to the owner user; disable bypass flags so the guard fires."""
-        import switchboard.server.handlers.tasks as tasks_module
-        with patch("switchboard.server.handlers.tasks.get_request_user_id", return_value=owner_user["id"]):
-            with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=True):
-                with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=False):
+        import ouvrage.server.handlers.tasks as tasks_module
+        with patch("ouvrage.server.handlers.tasks.get_request_user_id", return_value=owner_user["id"]):
+            with patch("ouvrage.server.handlers.tasks.get_request_is_token_auth", return_value=True):
+                with patch("ouvrage.server.handlers.tasks.get_request_is_worker", return_value=False):
                     with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
                             yield
 
     async def test_dispatch_without_anthropic_key_returns_error(self, db, sample_project, user_without_anthropic_key):
         """dispatch_task with no key → error dict, no task row created."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
         result = await _handle_dispatch_task({
             "project_id": "test-project",
@@ -116,7 +116,7 @@ class TestDispatchTaskCredentialGuard:
 
     async def test_dispatch_with_anthropic_key_succeeds(self, db, sample_project, user_with_anthropic_key, mock_git):
         """dispatch_task with key configured → no credential error."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
         result = await _handle_dispatch_task({
             "project_id": "test-project",
@@ -132,9 +132,9 @@ class TestDispatchTaskCredentialGuard:
 
     async def test_dispatch_without_key_no_side_effects(self, db, sample_project, user_without_anthropic_key):
         """Confirm the guard fires early — no worktree created, no DB row."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
-        with patch("switchboard.dispatch.engine.dispatch_task") as mock_dispatch:
+        with patch("ouvrage.dispatch.engine.dispatch_task") as mock_dispatch:
             result = await _handle_dispatch_task({
                 "project_id": "test-project",
                 "id": "test-project/no-key-task",
@@ -153,16 +153,16 @@ class TestDispatchTaskCredentialGuardNoUser:
     @pytest.fixture(autouse=True)
     def patch_context_no_user(self):
         """Simulate no authenticated user (worker path); disable bypass flags so the guard fires."""
-        import switchboard.server.handlers.tasks as tasks_module
-        with patch("switchboard.server.handlers.tasks.get_request_user_id", return_value=None):
-            with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=False):
-                with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=True):
+        import ouvrage.server.handlers.tasks as tasks_module
+        with patch("ouvrage.server.handlers.tasks.get_request_user_id", return_value=None):
+            with patch("ouvrage.server.handlers.tasks.get_request_is_token_auth", return_value=False):
+                with patch("ouvrage.server.handlers.tasks.get_request_is_worker", return_value=True):
                     with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
                             yield
 
     async def test_dispatch_no_user_no_owner_key_returns_error(self, db, sample_project, owner_user):
         """No user context but instance owner has no key → reject with error."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
         result = await _handle_dispatch_task({
             "project_id": "test-project",
@@ -179,7 +179,7 @@ class TestDispatchTaskCredentialGuardNoUser:
 
     async def test_dispatch_no_user_with_owner_key_succeeds(self, db, sample_project, user_with_anthropic_key, mock_git):
         """No user context but instance owner has key → dispatch proceeds."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
         result = await _handle_dispatch_task({
             "project_id": "test-project",
@@ -212,9 +212,9 @@ class TestCreateProjectPostCreateValidation:
 
     async def test_create_project_succeeds_without_credential(self, db):
         """create_project succeeds even without a credential — validation is non-blocking."""
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"):
             result = await _handle_create_project(self._BASE_ARGS)
 
         assert "error" not in result
@@ -223,10 +223,10 @@ class TestCreateProjectPostCreateValidation:
 
     async def test_create_project_fires_validation_task(self, db):
         """create_project kicks off background validation after DB write."""
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
-            with patch("switchboard.server.handlers.projects._run_project_validation", new_callable=AsyncMock) as mock_validate:
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"):
+            with patch("ouvrage.server.handlers.projects._run_project_validation", new_callable=AsyncMock) as mock_validate:
                 result = await _handle_create_project(self._BASE_ARGS)
 
         # The asyncio.create_task should have been called (we patched the target)
@@ -250,7 +250,7 @@ class TestDeleteProjectMCP:
             working_dir=working_dir,
         )
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "delete-me"})
 
@@ -281,7 +281,7 @@ class TestDeleteProjectMCP:
         )
         await db.update_task(task["id"], status="working")
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "active-project"})
 
@@ -295,7 +295,7 @@ class TestDeleteProjectMCP:
 
     async def test_delete_project_not_found(self, db):
         """delete_project returns error for non-existent project."""
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "ghost-project"})
 
@@ -307,10 +307,10 @@ class TestDeleteProjectMCP:
         await db.create_project(
             id="no-dir-project",
             repo="https://github.com/acme/no-dir.git",
-            working_dir="/tmp/switchboard-nonexistent-path-xyz",
+            working_dir="/tmp/ouvrage-nonexistent-path-xyz",
         )
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "no-dir-project"})
 
@@ -335,7 +335,7 @@ class TestDeleteProjectMCP:
         )
         await db.update_task(task["id"], status="completed")
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "old-project"})
         assert result.get("deleted") is True
@@ -358,7 +358,7 @@ class TestDashboardDeleteProject:
             working_dir=working_dir,
         )
 
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(method="DELETE", path="/dashboard/api/projects/dash-project")
         send = _Capture()
@@ -391,7 +391,7 @@ class TestDashboardDeleteProject:
         )
         await db.update_task(task["id"], status="working")
 
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(method="DELETE", path="/dashboard/api/projects/busy-project")
         send = _Capture()
@@ -407,7 +407,7 @@ class TestDashboardDeleteProject:
 
     async def test_delete_project_api_not_found(self, db):
         """DELETE /dashboard/api/projects/{id} returns 404 for unknown project."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(method="DELETE", path="/dashboard/api/projects/ghost")
         send = _Capture()
@@ -424,7 +424,7 @@ class TestDashboardDeleteProject:
             working_dir="/tmp/auth-test",
         )
 
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(method="DELETE", path="/dashboard/api/projects/auth-test-project", no_user=True)
         send = _Capture()
@@ -442,15 +442,15 @@ class TestFiveHundredErrorLogging:
 
     async def test_global_exception_handler_logs_traceback(self, db, caplog):
         """Unhandled exception in API → 500 with exception logged."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Use AttributeError — not caught by ValueError (404) or RuntimeError (409) handlers
-        with patch("switchboard.dashboard.api._handle_list_projects",
+        with patch("ouvrage.dashboard.api._handle_list_projects",
                    side_effect=AttributeError("Simulated internal server error")):
             scope = _make_scope(method="GET", path="/dashboard/api/projects")
             send = _Capture()
 
-            with caplog.at_level(logging.ERROR, logger="switchboard.dashboard.api"):
+            with caplog.at_level(logging.ERROR, logger="ouvrage.dashboard.api"):
                 await handle_request(scope, _make_receive(), send)
 
         assert send.status == 500
@@ -463,10 +463,10 @@ class TestFiveHundredErrorLogging:
 
     async def test_500_response_includes_error_field(self, db):
         """500 response body includes 'error' key."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Use AttributeError — not caught by ValueError (404) or RuntimeError (409) handlers
-        with patch("switchboard.dashboard.api._handle_list_projects",
+        with patch("ouvrage.dashboard.api._handle_list_projects",
                    side_effect=AttributeError("boom")):
             scope = _make_scope(method="GET", path="/dashboard/api/projects")
             send = _Capture()
@@ -478,7 +478,7 @@ class TestFiveHundredErrorLogging:
 
     async def test_create_project_exception_logs_traceback(self, db, caplog):
         """Exception during project creation → 500 with exception logged."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # A body that will pass the early validation but blow up later
         body = {
@@ -494,12 +494,12 @@ class TestFiveHundredErrorLogging:
             "max_wall_clock": 30,
         }
 
-        with patch("switchboard.dashboard.api.db.create_project",
+        with patch("ouvrage.dashboard.api.db.create_project",
                    side_effect=RuntimeError("DB exploded")):
             scope = _make_scope(method="POST", path="/dashboard/api/projects")
             send = _Capture()
 
-            with caplog.at_level(logging.ERROR, logger="switchboard.dashboard.api"):
+            with caplog.at_level(logging.ERROR, logger="ouvrage.dashboard.api"):
                 await handle_request(scope, _make_receive(body), send)
 
         # Should be a 500 or 400 with error logged

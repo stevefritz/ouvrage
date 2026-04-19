@@ -16,7 +16,7 @@ import struct
 
 import pytest
 
-from switchboard.server.handlers.search import _strip_markdown, _make_search_snippet
+from ouvrage.server.handlers.search import _strip_markdown, _make_search_snippet
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +121,8 @@ class TestSearchResultShape:
         return v
 
     async def test_task_result_shape(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-        from switchboard.server.handlers.search import _handle_search
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.server.handlers.search import _handle_search
 
         vec = self._vec(4, 0)
 
@@ -156,8 +156,8 @@ class TestSearchResultShape:
             set_embedding_service(None)
 
     async def test_message_result_shape(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-        from switchboard.server.handlers.search import _handle_search
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.server.handlers.search import _handle_search
 
         vec = self._vec(4, 1)
 
@@ -196,8 +196,8 @@ class TestSearchResultShape:
 
     async def test_entity_id_is_string_for_messages(self, db, sample_project):
         """entity_id must always be a string (message_id as str for messages/chunks)."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-        from switchboard.server.handlers.search import _handle_search
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.server.handlers.search import _handle_search
 
         vec = self._vec(4, 2)
 
@@ -234,8 +234,8 @@ class TestSearchResultShape:
 class TestSearchResponseSize:
     async def test_10_results_under_10k_chars(self, db, sample_project):
         """10 results should serialize to well under 10K characters."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-        from switchboard.server.handlers.search import _handle_search
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.server.handlers.search import _handle_search
 
         vec = [1.0, 0.0, 0.0, 0.0]
 
@@ -250,7 +250,7 @@ class TestSearchResponseSize:
                 project_id="test-project",
                 goal=f"Task {i}: " + "This is a detailed goal description. " * 10,
             )
-            from switchboard.embeddings.service import encode_vector
+            from ouvrage.embeddings.service import encode_vector
             await db.set_task_embedding(t["id"], encode_vector(vec))
 
         set_embedding_service(MockService())
@@ -268,7 +268,7 @@ class TestSearchResponseSize:
 
 class TestReadAround:
     async def test_around_returns_messages_centered_on_target(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         # Get messages to find IDs
         result = await db.read_messages("widget-redesign", last_n=10)
@@ -289,7 +289,7 @@ class TestReadAround:
         assert target_msg["id"] in ids
 
     async def test_around_does_not_require_conversation_id(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         result = await db.read_messages("widget-redesign", last_n=10)
         msgs = result["messages"]
@@ -301,7 +301,7 @@ class TestReadAround:
         assert "messages" in resp
 
     async def test_around_resolves_conversation_id(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         result = await db.read_messages("widget-redesign", last_n=10)
         target = result["messages"][0]
@@ -310,7 +310,7 @@ class TestReadAround:
         assert resp.get("conversation_id") == "widget-redesign"
 
     async def test_around_returns_chronological_order(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         result = await db.read_messages("widget-redesign", last_n=10)
         msgs = result["messages"]
@@ -324,14 +324,14 @@ class TestReadAround:
         assert returned_ids == sorted(returned_ids)
 
     async def test_around_not_found_returns_error(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({"around": 99999999})
         assert "error" in resp
 
     async def test_around_window_is_3(self, db):
         """Window defaults to 3: 1 before + target + 1 after."""
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="around-test-conv", project="test-project", goal="Around test")
         # Create 5 messages
@@ -356,7 +356,7 @@ class TestReadAround:
 
     async def test_around_at_edge_returns_fewer_messages(self, db):
         """When target is first message, only target + 1 after returned."""
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="around-edge-conv", project="test-project", goal="Edge test")
         msgs = []
@@ -382,7 +382,7 @@ class TestReadAround:
 
 class TestReadTaskMessagesAround:
     async def test_around_returns_task_messages_centered_on_target(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         # Post extra messages to have context
         for i in range(4):
@@ -407,7 +407,7 @@ class TestReadTaskMessagesAround:
         assert target["id"] in ids
 
     async def test_around_does_not_require_task_id(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         msg = await db.post_task_message(
             task_id=sample_task["id"],
@@ -422,7 +422,7 @@ class TestReadTaskMessagesAround:
         assert "messages" in resp
 
     async def test_around_resolves_task_id(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         msg = await db.post_task_message(
             task_id=sample_task["id"],
@@ -435,13 +435,13 @@ class TestReadTaskMessagesAround:
         assert resp.get("task_id") == sample_task["id"]
 
     async def test_around_not_found_returns_error(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         resp = await _handle_read_task_messages({"around": 99999999})
         assert "error" in resp
 
     async def test_no_task_id_no_around_returns_error(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         resp = await _handle_read_task_messages({})
         assert "error" in resp
@@ -455,7 +455,7 @@ class TestReadTaskMessagesAround:
 class TestWindowParameter:
     async def test_window_5_returns_5_messages(self, db):
         """Caller can pass window=5 to get 2 before + target + 2 after."""
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="window-test-conv", project="test-project", goal="Window test")
         msgs = []
@@ -479,7 +479,7 @@ class TestWindowParameter:
 
     async def test_window_default_is_3(self, db):
         """Without window param, defaults to 3."""
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="window-default-conv", project="test-project", goal="Window default test")
         msgs = []
@@ -497,7 +497,7 @@ class TestWindowParameter:
 
     async def test_window_passed_through_read_task_messages(self, db, sample_task):
         """window param works for read_task_messages too."""
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         msgs = []
         for i in range(7):

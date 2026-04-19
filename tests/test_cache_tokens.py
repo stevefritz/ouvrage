@@ -34,7 +34,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_cache_read_tokens_accumulated(self):
         """cache_read_input_tokens is stored in total_cache_read_tokens."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         task = self._make_task()
         result = self._make_result(input_tokens=100, cache_read=40, cache_creation=10)
@@ -42,8 +42,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]
@@ -52,7 +52,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_cache_tokens_sum_into_total_input(self):
         """total_input_tokens includes cache_read + cache_creation + base input_tokens."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         task = self._make_task()
         result = self._make_result(input_tokens=100, cache_read=50, cache_creation=20)
@@ -60,8 +60,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]
@@ -70,7 +70,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_cache_tokens_accumulate_across_attempts(self):
         """Cache tokens accumulate (sum) across multiple calls, like other token fields."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         # Task already has 30 cache_read from a prior attempt
         task = self._make_task(total_input=200, cache_read=30, cache_creation=5)
@@ -79,8 +79,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]
@@ -89,7 +89,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_missing_cache_fields_default_to_zero(self):
         """Missing cache fields in usage don't crash; they default to 0."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         task = self._make_task()
         result = MagicMock()
@@ -99,8 +99,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]
@@ -110,7 +110,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_null_usage_results_in_zero_cache_tokens(self):
         """When result.usage is None/falsy, cache tokens are 0."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         task = self._make_task()
         result = MagicMock()
@@ -120,8 +120,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]
@@ -130,7 +130,7 @@ class TestUpdateUsageCacheTokens:
 
     async def test_null_existing_cache_tokens_treated_as_zero(self):
         """If task has NULL for cache token columns (pre-migration rows), treat as 0."""
-        from switchboard.dispatch.engine import _update_usage
+        from ouvrage.dispatch.engine import _update_usage
 
         # Simulate a pre-migration row where columns are NULL
         task = self._make_task()
@@ -142,8 +142,8 @@ class TestUpdateUsageCacheTokens:
         mock_get = AsyncMock(return_value=task)
         mock_update = AsyncMock()
 
-        with patch("switchboard.dispatch.engine.db.get_task", mock_get), \
-             patch("switchboard.dispatch.engine.db.update_task", mock_update):
+        with patch("ouvrage.dispatch.engine.db.get_task", mock_get), \
+             patch("ouvrage.dispatch.engine.db.update_task", mock_update):
             await _update_usage("proj/task-1", result)
 
         call_kwargs = mock_update.call_args[1]

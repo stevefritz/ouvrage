@@ -15,7 +15,7 @@ import pytest
 
 class TestTailLines:
     def setup_method(self):
-        from switchboard.dispatch.gates import _tail_lines
+        from ouvrage.dispatch.gates import _tail_lines
         self.fn = _tail_lines
 
     def test_short_text_returned_as_is(self):
@@ -48,7 +48,7 @@ class TestTailLines:
 
 class TestIsPidAlive:
     def setup_method(self):
-        from switchboard.dispatch.recovery import _is_pid_alive
+        from ouvrage.dispatch.recovery import _is_pid_alive
         self.fn = _is_pid_alive
 
     def test_own_pid_is_alive(self):
@@ -70,10 +70,10 @@ class TestInvalidateChain:
         self.mock_cancel_task = AsyncMock()
 
         patches = [
-            patch("switchboard.db.get_dependents", self.mock_get_dependents),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.write_audit_log", AsyncMock()),
-            patch("switchboard.dispatch.engine.cancel_task", self.mock_cancel_task),
+            patch("ouvrage.db.get_dependents", self.mock_get_dependents),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.write_audit_log", AsyncMock()),
+            patch("ouvrage.dispatch.engine.cancel_task", self.mock_cancel_task),
         ]
         for p in patches:
             p.start()
@@ -82,14 +82,14 @@ class TestInvalidateChain:
             p.stop()
 
     async def test_no_dependents(self):
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
         self.mock_get_dependents.return_value = []
         await _invalidate_chain("task-a")
         self.mock_get_dependents.assert_awaited_once_with("task-a")
         self.mock_update_task.assert_not_awaited()
 
     async def test_cancels_working_tasks(self):
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
         self.mock_get_dependents.side_effect = [
             [{"id": "task-b", "status": "working", "gate_status": None}],
             [],  # task-b has no dependents
@@ -101,7 +101,7 @@ class TestInvalidateChain:
         self.mock_update_task.assert_not_awaited()
 
     async def test_marks_completed_as_stale(self):
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
         self.mock_get_dependents.side_effect = [
             [{"id": "task-b", "status": "completed", "gate_status": "passed"}],
             [],
@@ -114,7 +114,7 @@ class TestInvalidateChain:
 
     async def test_recursive_chain(self):
         """A -> B -> C: invalidating A should mark both B and C stale."""
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
         self.mock_get_dependents.side_effect = [
             [{"id": "task-b", "status": "completed", "gate_status": "passed"}],
             [{"id": "task-c", "status": "ready", "gate_status": None}],
@@ -134,7 +134,7 @@ class TestInvalidateChain:
 
     async def test_skips_already_stale(self):
         """Already-stale task with cancelled status — not in the marking condition."""
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
         self.mock_get_dependents.side_effect = [
             [{"id": "task-b", "status": "cancelled", "gate_status": "stale"}],
             [],
@@ -161,13 +161,13 @@ class TestProcessReviewResultInline:
         self.mock_notify = AsyncMock()
 
         patches = [
-            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.write_audit_log", AsyncMock()),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_deps),
-            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
-            patch("switchboard.notifications.slack.task_needs_review", self.mock_notify),
+            patch("ouvrage.db.read_task_messages", self.mock_read_msgs),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.write_audit_log", AsyncMock()),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", self.mock_check_deps),
+            patch("ouvrage.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
+            patch("ouvrage.notifications.slack.task_needs_review", self.mock_notify),
         ]
         for p in patches:
             p.start()
@@ -176,7 +176,7 @@ class TestProcessReviewResultInline:
             p.stop()
 
     async def test_approved_passes_gate(self):
-        from switchboard.dispatch.gates import _process_review_result_inline
+        from ouvrage.dispatch.gates import _process_review_result_inline
         self.mock_read_msgs.return_value = {
             "messages": [
                 {"type": "review", "title": "APPROVED", "content": "Looks good"},
@@ -189,7 +189,7 @@ class TestProcessReviewResultInline:
         assert call_args[0] == ("task-1", "gate_pass")
 
     async def test_rejected_retries_if_under_limit(self):
-        from switchboard.dispatch.gates import _process_review_result_inline
+        from ouvrage.dispatch.gates import _process_review_result_inline
         self.mock_read_msgs.return_value = {
             "messages": [
                 {"type": "review", "title": "CHANGES REQUESTED", "content": "Fix X"},
@@ -205,7 +205,7 @@ class TestProcessReviewResultInline:
         assert call_args[0] == ("task-1", "retry")
 
     async def test_rejected_escalates_after_max_retries(self):
-        from switchboard.dispatch.gates import _process_review_result_inline
+        from ouvrage.dispatch.gates import _process_review_result_inline
         self.mock_read_msgs.return_value = {
             "messages": [
                 {"type": "review", "title": "CHANGES REQUESTED", "content": "Still broken"},
@@ -226,7 +226,7 @@ class TestProcessReviewResultInline:
 
     async def test_no_review_message_goes_to_rejection_path(self):
         """No review message = falls to else branch (rejection)."""
-        from switchboard.dispatch.gates import _process_review_result_inline
+        from ouvrage.dispatch.gates import _process_review_result_inline
         self.mock_read_msgs.return_value = {"messages": []}
         self.mock_get_task.return_value = {
             "id": "task-1",
@@ -242,7 +242,7 @@ class TestProcessReviewResultInline:
 
     async def test_not_approved_title_does_not_pass_gate(self):
         """'NOT APPROVED' must not trigger approval — exact match only."""
-        from switchboard.dispatch.gates import _process_review_result_inline
+        from ouvrage.dispatch.gates import _process_review_result_inline
         self.mock_read_msgs.return_value = {
             "messages": [
                 {"type": "review", "title": "NOT APPROVED", "content": "Issues found"},
@@ -283,18 +283,18 @@ class TestCheckAndDispatchDependents:
         self.mock_update_task = AsyncMock()
 
         patches = [
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.get_dependents", self.mock_get_dependents),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.write_audit_log", AsyncMock()),
-            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
-            patch("switchboard.dispatch.engine._rebase_and_redispatch", self.mock_rebase),
-            patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
-            patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
-            patch("switchboard.dispatch.engine._perform_auto_merge", self.mock_auto_merge),
-            patch("switchboard.dispatch.engine._auto_release_worktree", self.mock_auto_release),
-            patch("switchboard.db.resolve_punchlist_items_for_task", self.mock_resolve_punchlist),
-            patch("switchboard.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.get_dependents", self.mock_get_dependents),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.write_audit_log", AsyncMock()),
+            patch("ouvrage.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
+            patch("ouvrage.dispatch.engine._rebase_and_redispatch", self.mock_rebase),
+            patch("ouvrage.dispatch.engine._maybe_create_pr", self.mock_pr),
+            patch("ouvrage.dispatch.engine._drain_queue", self.mock_drain),
+            patch("ouvrage.dispatch.engine._perform_auto_merge", self.mock_auto_merge),
+            patch("ouvrage.dispatch.engine._auto_release_worktree", self.mock_auto_release),
+            patch("ouvrage.db.resolve_punchlist_items_for_task", self.mock_resolve_punchlist),
+            patch("ouvrage.db.post_task_message", self.mock_post_msg),
         ]
         for p in patches:
             p.start()
@@ -303,7 +303,7 @@ class TestCheckAndDispatchDependents:
             p.stop()
 
     async def test_dispatches_ready_dependents(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
             "auto_test": True,
@@ -319,7 +319,7 @@ class TestCheckAndDispatchDependents:
         assert call_args[1] == "dispatch"
 
     async def test_rebases_stale_completed(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         parent = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
             "auto_test": True,
@@ -334,7 +334,7 @@ class TestCheckAndDispatchDependents:
         self.mock_rebase.assert_awaited_once_with(dep, parent)
 
     async def test_no_dispatch_if_gate_not_passed(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "gate_passed_at": None,
         }
@@ -342,7 +342,7 @@ class TestCheckAndDispatchDependents:
         self.mock_get_dependents.assert_not_awaited()
 
     async def test_creates_pr_when_no_dependents(self):
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
         }
@@ -352,7 +352,7 @@ class TestCheckAndDispatchDependents:
 
     async def test_held_task_skips_dispatch(self):
         """Fix 1 regression: held tasks must NOT be dispatched."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
         }
@@ -365,7 +365,7 @@ class TestCheckAndDispatchDependents:
 
     async def test_non_held_ready_task_actually_dispatches(self):
         """Fix 1: non-held ready dependent task calls lifecycle.execute('dispatch')."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
         }
@@ -381,7 +381,7 @@ class TestCheckAndDispatchDependents:
 
     async def test_mixed_held_and_non_held(self):
         """Fix 1: only the non-held ready task dispatches; held one is skipped."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         self.mock_get_task.return_value = {
             "id": "task-a", "project_id": "proj", "gate_passed_at": "2026-01-01",
         }
@@ -407,7 +407,7 @@ class TestMaybeCreatePr:
 
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        from switchboard.git.providers.base import RepoInfo, PRResult
+        from ouvrage.git.providers.base import RepoInfo, PRResult
         from unittest.mock import MagicMock
 
         self.mock_provider = MagicMock()
@@ -422,9 +422,9 @@ class TestMaybeCreatePr:
         self.mock_post_msg = AsyncMock()
 
         patches = [
-            patch("switchboard.git.operations.resolve_credential", self.mock_resolve),
-            patch("switchboard.git.operations.db.add_artifact", self.mock_add_artifact),
-            patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.git.operations.resolve_credential", self.mock_resolve),
+            patch("ouvrage.git.operations.db.add_artifact", self.mock_add_artifact),
+            patch("ouvrage.git.operations.db.post_task_message", self.mock_post_msg),
         ]
         for p in patches:
             p.start()
@@ -434,7 +434,7 @@ class TestMaybeCreatePr:
 
     async def test_pr_created_when_worktree_exists(self, db, sample_project):
         """auto_pr task with worktree should create a PR via provider.create_pr()."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         task = await db.create_task(
             id="test-project/pr-tail", project_id="test-project",
@@ -455,7 +455,7 @@ class TestMaybeCreatePr:
 
     async def test_pr_skipped_when_no_worktree(self, db, sample_project):
         """auto_pr task WITHOUT worktree should silently skip."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         task = await db.create_task(
             id="test-project/pr-no-wt", project_id="test-project",
@@ -471,7 +471,7 @@ class TestMaybeCreatePr:
 
     async def test_pr_targets_task_base_branch_when_set(self, db, sample_project):
         """PR base must be task.base_branch, not project default_branch."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         task = await db.create_task(
             id="test-project/pr-base-override", project_id="test-project",
@@ -490,7 +490,7 @@ class TestMaybeCreatePr:
 
     async def test_pr_falls_back_to_default_branch_when_base_branch_null(self, db, sample_project):
         """PR base falls back to project.default_branch when task.base_branch is null."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         task = await db.create_task(
             id="test-project/pr-default-branch", project_id="test-project",
@@ -514,7 +514,7 @@ class TestMaybeCreatePr:
         then _maybe_create_pr sees worktree_path=None and bails.
         The PR is never created despite auto_pr=true.
         """
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/pr-release-bug", project_id="test-project",
@@ -530,9 +530,9 @@ class TestMaybeCreatePr:
             await db.update_task(tid, worktree_path=None)
             return {"released": True}
 
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock(side_effect=fake_release)):
-            with patch("switchboard.dispatch.engine._drain_queue", AsyncMock()):
-                with patch("switchboard.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
+        with patch("ouvrage.dispatch.engine.release_worktree", AsyncMock(side_effect=fake_release)):
+            with patch("ouvrage.dispatch.engine._drain_queue", AsyncMock()):
+                with patch("ouvrage.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
                     await _check_and_dispatch_dependents("test-project/pr-release-bug")
 
         # The PR should have been created
@@ -553,7 +553,7 @@ class TestHeldWithDependsOn:
 
     async def test_held_flag_persisted_despite_pending_dependency(self, db, sample_project):
         """held=True must be saved to DB even when depends_on causes early return."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         # Create the parent task (not yet gate-passed)
         await db.create_task(
@@ -583,7 +583,7 @@ class TestHeldWithDependsOn:
 
     async def test_held_task_not_auto_dispatched_on_dependency_resolution(self, db, sample_project):
         """When parent gate-passes, held dependent must NOT auto-dispatch."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         # Create parent task that has gate-passed
         parent = await db.create_task(
@@ -603,10 +603,10 @@ class TestHeldWithDependsOn:
         await db.update_task(child["id"], held=True)
 
         # Now run dependency resolution
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()):
-            with patch("switchboard.dispatch.engine._drain_queue", AsyncMock()):
-                with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
-                    with patch("switchboard.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
+        with patch("ouvrage.dispatch.engine.release_worktree", AsyncMock()):
+            with patch("ouvrage.dispatch.engine._drain_queue", AsyncMock()):
+                with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock()) as mock_dispatch:
+                    with patch("ouvrage.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)):
                         await _check_and_dispatch_dependents("test-project/gated-parent")
 
         # dispatch_task must NOT have been called for the held child
@@ -637,17 +637,17 @@ class TestCheckStalledTasksRouting:
         self.mock_sleep = AsyncMock()
 
         patches = [
-            patch("switchboard.db.list_tasks", self.mock_list_tasks),
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.post_task_message", self.mock_post_msg),
-            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
-            patch("switchboard.db.get_project", AsyncMock(return_value=None)),
-            patch("switchboard.db.get_component", AsyncMock(return_value=None)),
-            patch("switchboard.dispatch.recovery._recover_single_task", self.mock_recover),
-            patch("switchboard.dispatch.recovery.notify", self.mock_notify),
-            patch("switchboard.dispatch.recovery.asyncio.sleep", self.mock_sleep),
-            patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
+            patch("ouvrage.db.list_tasks", self.mock_list_tasks),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.db.read_task_messages", self.mock_read_msgs),
+            patch("ouvrage.db.get_project", AsyncMock(return_value=None)),
+            patch("ouvrage.db.get_component", AsyncMock(return_value=None)),
+            patch("ouvrage.dispatch.recovery._recover_single_task", self.mock_recover),
+            patch("ouvrage.dispatch.recovery.notify", self.mock_notify),
+            patch("ouvrage.dispatch.recovery.asyncio.sleep", self.mock_sleep),
+            patch("ouvrage.dispatch.engine.retry_task", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -658,18 +658,18 @@ class TestCheckStalledTasksRouting:
     def _make_task(self, task_id, idle_seconds, has_active_client):
         from datetime import datetime, timezone, timedelta
         last = (datetime.now(timezone.utc) - timedelta(seconds=idle_seconds)).isoformat()
-        from switchboard.dispatch._state import _active_clients
+        from ouvrage.dispatch._state import _active_clients
         if has_active_client:
             _active_clients[task_id] = object()
         return {"id": task_id, "status": "working", "last_activity": last}
 
     def teardown_method(self):
-        from switchboard.dispatch._state import _active_clients
+        from ouvrage.dispatch._state import _active_clients
         _active_clients.clear()
 
     async def test_stall_warning_fires_for_active_client_task(self):
         """Fix 3: stall warning posts when active-client task is idle >=300s."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
         task = self._make_task("proj/stalled-1", idle_seconds=310, has_active_client=True)
         self.mock_list_tasks.side_effect = lambda status=None: (
             [task] if status == "working" else []
@@ -687,7 +687,7 @@ class TestCheckStalledTasksRouting:
 
     async def test_no_stall_warning_for_active_client_task_below_threshold(self):
         """Fix 3: no stall warning when active-client task is idle <300s."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
         task = self._make_task("proj/fresh-1", idle_seconds=60, has_active_client=True)
         self.mock_list_tasks.side_effect = lambda status=None: (
             [task] if status == "working" else []
@@ -704,7 +704,7 @@ class TestCheckStalledTasksRouting:
 
     async def test_orphan_recovery_for_no_client_task(self):
         """Fix 3: orphan recovery triggers for no-client task idle >120s."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
         task = self._make_task("proj/orphan-1", idle_seconds=200, has_active_client=False)
         task_obj = dict(task, session_id="s1")
         self.mock_get_task.return_value = task_obj
@@ -721,7 +721,7 @@ class TestCheckStalledTasksRouting:
 
     async def test_no_recovery_for_no_client_task_below_orphan_threshold(self):
         """Fix 3: no recovery for no-client task idle <=120s (not dead yet)."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
         task = self._make_task("proj/recent-1", idle_seconds=30, has_active_client=False)
         self.mock_list_tasks.side_effect = lambda status=None: (
             [task] if status == "working" else []
@@ -736,7 +736,7 @@ class TestCheckStalledTasksRouting:
 
     async def test_stall_not_triggered_for_no_client_task(self):
         """Fix 3: stall warning does NOT fire for no-client tasks (even if idle >300s)."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
         task = self._make_task("proj/orphan-stale", idle_seconds=400, has_active_client=False)
         task_obj = dict(task, session_id="s1")
         self.mock_get_task.return_value = task_obj
@@ -777,18 +777,18 @@ class TestCheckStalledTasksHeldChain:
         self.mock_get_component = AsyncMock(return_value=None)
 
         patches = [
-            patch("switchboard.db.list_tasks", self.mock_list_tasks),
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.post_task_message", self.mock_post_msg),
-            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
-            patch("switchboard.db.get_project", self.mock_get_project),
-            patch("switchboard.db.get_component", self.mock_get_component),
-            patch("switchboard.dispatch.recovery._recover_single_task", self.mock_recover),
-            patch("switchboard.dispatch.recovery.notify", self.mock_notify),
-            patch("switchboard.dispatch.recovery.asyncio.sleep", self.mock_sleep),
+            patch("ouvrage.db.list_tasks", self.mock_list_tasks),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.db.read_task_messages", self.mock_read_msgs),
+            patch("ouvrage.db.get_project", self.mock_get_project),
+            patch("ouvrage.db.get_component", self.mock_get_component),
+            patch("ouvrage.dispatch.recovery._recover_single_task", self.mock_recover),
+            patch("ouvrage.dispatch.recovery.notify", self.mock_notify),
+            patch("ouvrage.dispatch.recovery.asyncio.sleep", self.mock_sleep),
             # retry_task is imported locally in recovery.py — patch at the source module
-            patch("switchboard.dispatch.engine.retry_task", self.mock_retry),
+            patch("ouvrage.dispatch.engine.retry_task", self.mock_retry),
         ]
         started = []
         try:
@@ -805,7 +805,7 @@ class TestCheckStalledTasksHeldChain:
 
     async def test_held_child_skipped_when_parent_gate_passed(self):
         """Recovery sweep must NOT dispatch a held child even when parent gate-passed."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
 
         parent = {"id": "proj/parent", "gate_passed_at": "2026-01-01", "auto_merge": None, "pr_status": None}
         child = {
@@ -829,7 +829,7 @@ class TestCheckStalledTasksHeldChain:
 
     async def test_non_held_child_dispatched_when_parent_gate_passed(self):
         """Recovery sweep MUST dispatch a non-held child when parent gate-passed."""
-        from switchboard.dispatch.recovery import check_stalled_tasks
+        from ouvrage.dispatch.recovery import check_stalled_tasks
 
         parent = {"id": "proj/parent", "gate_passed_at": "2026-01-01", "auto_merge": None, "pr_status": None}
         child = {
@@ -861,7 +861,7 @@ class TestApproveHeldChainChild:
 
     async def test_approve_held_child_dispatches_when_parent_passed(self, db, sample_project, mock_git, mock_sdk):
         """After parent gate-passes, approving the held child must trigger dispatch."""
-        from switchboard.dispatch.engine import approve_task
+        from ouvrage.dispatch.engine import approve_task
 
         # Create parent task that has gate-passed
         await db.create_task(
@@ -903,7 +903,7 @@ class TestApproveTaskResponse:
 
     async def test_approve_standalone_held_task_returns_working(self, db, sample_project, mock_git, mock_sdk):
         """Approving a standalone held task returns status=working, no error."""
-        from switchboard.dispatch.engine import approve_task
+        from ouvrage.dispatch.engine import approve_task
 
         await db.create_task(
             id="test-project/standalone-held", project_id="test-project",
@@ -925,7 +925,7 @@ class TestApproveTaskResponse:
 
     async def test_approve_non_held_task_raises_not_held(self, db, sample_project):
         """Approving a task that is not held raises ValueError with 'is not held'."""
-        from switchboard.dispatch.engine import approve_task
+        from ouvrage.dispatch.engine import approve_task
 
         await db.create_task(
             id="test-project/not-held", project_id="test-project",
@@ -938,7 +938,7 @@ class TestApproveTaskResponse:
 
     async def test_rapid_double_approve_first_succeeds_second_clean_error(self, db, sample_project, mock_git, mock_sdk):
         """First approve succeeds; second approve gets a clean ValueError, not a crash."""
-        from switchboard.dispatch.engine import approve_task
+        from ouvrage.dispatch.engine import approve_task
 
         await db.create_task(
             id="test-project/double-approve", project_id="test-project",
@@ -969,10 +969,10 @@ class TestEnsureBranchPushed:
         self.mock_resolve_url = AsyncMock(return_value="https://oauth2:ghp_test@github.com/acme/widgets.git")
 
         patches = [
-            patch("switchboard.git.operations._run_as_worker", self.mock_run),
-            patch("switchboard.git.operations.db.post_task_message", self.mock_post_msg),
-            patch("switchboard.git.operations.os.path.exists", side_effect=self.mock_exists),
-            patch("switchboard.git.operations._resolve_push_url", self.mock_resolve_url),
+            patch("ouvrage.git.operations._run_as_worker", self.mock_run),
+            patch("ouvrage.git.operations.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.git.operations.os.path.exists", side_effect=self.mock_exists),
+            patch("ouvrage.git.operations._resolve_push_url", self.mock_resolve_url),
         ]
         for p in patches:
             p.start()
@@ -982,29 +982,29 @@ class TestEnsureBranchPushed:
             p.stop()
 
     async def test_no_worktree_noop(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
     async def test_no_branch_noop(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
         self.mock_run.assert_not_awaited()
 
     async def test_no_worktree_returns_true(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         result = await _ensure_branch_pushed("t1", {"worktree_path": None, "branch": "feat", "project_id": "p"})
         assert result is True
         self.mock_run.assert_not_awaited()
 
     async def test_no_branch_returns_true(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": None, "project_id": "p"})
         assert result is True
         self.mock_run.assert_not_awaited()
 
     async def test_nothing_to_push(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         # ls-remote returns a ref (remote exists) + log shows nothing unpushed
         self.mock_run.side_effect = [
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
@@ -1015,7 +1015,7 @@ class TestEnsureBranchPushed:
         assert self.mock_run.await_count == 2  # ls-remote + log, no push
 
     async def test_pushes_unpushed_commits(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
             (b"abc123\trefs/heads/feat\n", b"", 0),  # ls-remote
             (b"abc Fix something\n", b"", 0),  # log shows unpushed
@@ -1030,7 +1030,7 @@ class TestEnsureBranchPushed:
         assert "--force-with-lease" not in push_call.args
 
     async def test_pushes_when_no_remote_branch(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
             (b"", b"", 0),  # ls-remote returns empty (no remote branch)
             (b"", b"", 0),  # push succeeds
@@ -1042,7 +1042,7 @@ class TestEnsureBranchPushed:
         assert "push" in push_call.args
 
     async def test_push_failure_returns_false(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
             (b"", b"", 0),  # ls-remote empty (no remote branch)
             (b"", b"rejected", 1),  # push fails
@@ -1051,7 +1051,7 @@ class TestEnsureBranchPushed:
         assert result is False
 
     async def test_push_failure_posts_message(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
             (b"", b"", 0),  # ls-remote empty
             (b"", b"rejected", 1),  # push fails
@@ -1063,7 +1063,7 @@ class TestEnsureBranchPushed:
         assert "Auto-push failed" in call_kwargs["title"]
 
     async def test_no_pat_returns_false(self):
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_resolve_url.side_effect = ValueError("No PAT configured")
         result = await _ensure_branch_pushed("t1", {"worktree_path": "/work/x", "branch": "feat", "project_id": "p"})
         assert result is False
@@ -1071,7 +1071,7 @@ class TestEnsureBranchPushed:
 
     async def test_always_pushes_via_authenticated_url(self):
         """After credential helper removal, always pushes via authenticated URL."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         self.mock_run.side_effect = [
             (b"", b"", 0),  # ls-remote empty (no remote branch)
             (b"", b"", 0),  # push succeeds
@@ -1134,18 +1134,18 @@ class TestPushFailureBlocksGatePipeline:
         mock_client.receive_response = MagicMock(return_value=_fast_gen())
 
         patches = [
-            patch("switchboard.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client),
-            patch("switchboard.git.operations._ensure_branch_pushed",
+            patch("ouvrage.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client),
+            patch("ouvrage.git.operations._ensure_branch_pushed",
                   AsyncMock(return_value=False)),
-            patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents",
+            patch("ouvrage.dispatch.gates._run_test_gate", self.mock_run_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents",
                   self.mock_check_dependents),
-            patch("switchboard.dispatch.engine._update_usage", self.mock_update_usage),
-            patch("switchboard.dispatch.sdk_session.pwd.getpwnam", return_value=mock_pw),
-            patch("switchboard.notifications.slack.task_completed", AsyncMock()),
-            patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
-            patch("switchboard.dispatch.queue._drain_queue", AsyncMock()),
+            patch("ouvrage.dispatch.engine._update_usage", self.mock_update_usage),
+            patch("ouvrage.dispatch.sdk_session.pwd.getpwnam", return_value=mock_pw),
+            patch("ouvrage.notifications.slack.task_completed", AsyncMock()),
+            patch("ouvrage.notifications.slack.task_needs_review", AsyncMock()),
+            patch("ouvrage.dispatch.queue._drain_queue", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -1156,7 +1156,7 @@ class TestPushFailureBlocksGatePipeline:
 
     async def test_push_fail_sets_push_failed_gate_status(self, db, sample_project, tmp_path):
         """When push fails after completion, gate_status must be 'push-failed'."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from ouvrage.dispatch.sdk_session import _run_sdk_session
 
         task = await db.create_task(
             id="test-project/push-fail-gate",
@@ -1186,7 +1186,7 @@ class TestPushFailureBlocksGatePipeline:
 
     async def test_push_fail_does_not_run_test_gate(self, db, sample_project, tmp_path):
         """When push fails, _run_test_gate must NOT be called."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from ouvrage.dispatch.sdk_session import _run_sdk_session
 
         task = await db.create_task(
             id="test-project/push-fail-no-gate",
@@ -1215,7 +1215,7 @@ class TestPushFailureBlocksGatePipeline:
 
     async def test_session_id_captured_from_system_init(self, db, sample_project, tmp_path):
         """session_id should be captured early from SystemMessage(subtype='init')."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from ouvrage.dispatch.sdk_session import _run_sdk_session
         from claude_agent_sdk import SystemMessage as _SM, ResultMessage as _RM
 
         task = await db.create_task(
@@ -1257,7 +1257,7 @@ class TestPushFailureBlocksGatePipeline:
         mock_client.query = AsyncMock()
         mock_client.receive_response = MagicMock(return_value=_gen_with_init())
 
-        with patch("switchboard.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client):
+        with patch("ouvrage.dispatch.sdk_session.ClaudeSDKClient", return_value=mock_client):
             await _run_sdk_session(
                 task_id="test-project/early-session",
                 prompt="do the thing",
@@ -1288,9 +1288,9 @@ class TestBuildTaskPrompt:
         self.mock_list_files = AsyncMock(return_value=[])
 
         patches = [
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
-            patch("switchboard.db.list_files", self.mock_list_files),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.read_task_messages", self.mock_read_msgs),
+            patch("ouvrage.db.list_files", self.mock_list_files),
         ]
         for p in patches:
             p.start()
@@ -1311,26 +1311,26 @@ class TestBuildTaskPrompt:
         return t
 
     async def test_includes_push_instruction(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "push your branch" in result.lower()
 
     async def test_auto_test_tells_cc_not_to_run_tests(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(auto_test=True), "do the thing")
         assert "automatically" in result.lower()
 
     async def test_no_auto_test_includes_test_command(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(test_command="php artisan test"),
             self._make_task(), "do the thing")
         assert "php artisan test" in result
 
     async def test_dependency_context_included(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         parent = {
             "id": "parent-task", "branch": "feat-parent",
             "goal": "build models", "status": "completed",
@@ -1346,7 +1346,7 @@ class TestBuildTaskPrompt:
         assert "parent" in result.lower() or "feat-parent" in result
 
     async def test_identity_section_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(),
             self._make_task(dispatched_by="stephen", worktree_path="/work/t1"),
@@ -1356,7 +1356,7 @@ class TestBuildTaskPrompt:
         assert "/work/t1" in result
 
     async def test_identity_section_defaults_for_missing_fields(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         # dispatched_by and worktree_path absent — should not crash
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
@@ -1364,7 +1364,7 @@ class TestBuildTaskPrompt:
         assert "system" in result  # default dispatched_by fallback
 
     async def test_behavioral_guidance_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "update_task_checklist" in result
@@ -1374,7 +1374,7 @@ class TestBuildTaskPrompt:
         assert "Finding Context" in result
 
     async def test_safety_section_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "## Safety" in result
@@ -1386,7 +1386,7 @@ class TestBuildTaskPrompt:
         assert "killall" in result
 
     async def test_identity_headless_framing(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "headless" in result
@@ -1394,7 +1394,7 @@ class TestBuildTaskPrompt:
         assert "not watching" in result
 
     async def test_no_component_or_punchlist_in_prompt(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "Component Context" not in result
@@ -1402,28 +1402,28 @@ class TestBuildTaskPrompt:
         assert "claim_punchlist_item" not in result
 
     async def test_pipeline_awareness_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "Gate Pipeline" in result or "gate" in result.lower()
         assert "review gate" in result.lower() or "Review gate" in result
 
     async def test_escalation_protocol_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "Escalation Protocol" in result
         assert "Ambiguous spec" in result
 
     async def test_custom_escalation_criteria_injected(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing",
             escalation_criteria="Always post question if touching prod DB.")
         assert "Always post question if touching prod DB." in result
 
     async def test_safety_covers_secrets_and_git(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(), "do the thing")
         assert "## Safety" in result
@@ -1434,14 +1434,14 @@ class TestBuildTaskPrompt:
         assert "credentials" in result.lower() or "secrets" in result.lower()
 
     async def test_no_full_suite_when_auto_test_disabled(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(auto_test=False), "do the thing")
         # With auto_test off, the "full suite" warning should not appear in testing section
         assert "Do NOT run the full suite" not in result
 
     async def test_full_suite_warning_when_auto_test_enabled(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._make_project(), self._make_task(auto_test=True), "do the thing")
         assert "full suite" in result.lower()
@@ -1458,8 +1458,8 @@ class TestBuildResumePrompt:
         self.mock_get_checklist = AsyncMock(return_value=[])
 
         patches = [
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.get_checklist", self.mock_get_checklist),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.get_checklist", self.mock_get_checklist),
         ]
         for p in patches:
             p.start()
@@ -1473,7 +1473,7 @@ class TestBuildResumePrompt:
         return t
 
     async def test_task_exists_includes_id_branch_goal(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        from ouvrage.dispatch.sdk_session import _build_resume_prompt
         self.mock_get_task.return_value = self._make_task(
             id="task-xyz", branch="feat-xyz", goal="Refactor auth module")
         result = await _build_resume_prompt("task-xyz")
@@ -1482,7 +1482,7 @@ class TestBuildResumePrompt:
         assert "Refactor auth module" in result
 
     async def test_task_not_found_returns_fallback_with_task_id(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        from ouvrage.dispatch.sdk_session import _build_resume_prompt
         self.mock_get_task.return_value = None
         result = await _build_resume_prompt("missing-task")
         assert "missing-task" in result
@@ -1490,14 +1490,14 @@ class TestBuildResumePrompt:
         assert len(result) > 0
 
     async def test_no_checklist_omits_checklist_section(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        from ouvrage.dispatch.sdk_session import _build_resume_prompt
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_checklist.return_value = []
         result = await _build_resume_prompt("t1")
         assert "Checklist" not in result
 
     async def test_checklist_renders_done_and_undone(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        from ouvrage.dispatch.sdk_session import _build_resume_prompt
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_checklist.return_value = [
             {"id": 1, "item": "Write tests", "done": True},
@@ -1510,7 +1510,7 @@ class TestBuildResumePrompt:
         assert "Update docs" in result
 
     async def test_includes_read_task_messages_instruction(self):
-        from switchboard.dispatch.sdk_session import _build_resume_prompt
+        from ouvrage.dispatch.sdk_session import _build_resume_prompt
         self.mock_get_task.return_value = self._make_task(id="task-abc")
         result = await _build_resume_prompt("task-abc")
         assert "read_task_messages" in result
@@ -1529,10 +1529,10 @@ class TestRebaseAndRedispatch:
         self.mock_lifecycle_execute = AsyncMock()
 
         patches = [
-            patch("switchboard.git.operations._run_as_worker", self.mock_run),
-            patch("switchboard.db.update_task", self.mock_update_task),
-            patch("switchboard.db.post_task_message", self.mock_post_msg),
-            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
+            patch("ouvrage.git.operations._run_as_worker", self.mock_run),
+            patch("ouvrage.db.update_task", self.mock_update_task),
+            patch("ouvrage.db.post_task_message", self.mock_post_msg),
+            patch("ouvrage.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
         ]
         for p in patches:
             p.start()
@@ -1541,7 +1541,7 @@ class TestRebaseAndRedispatch:
             p.stop()
 
     async def test_successful_rebase(self):
-        from switchboard.dispatch.engine import _rebase_and_redispatch
+        from ouvrage.dispatch.engine import _rebase_and_redispatch
         dep = {
             "id": "task-b", "project_id": "proj", "goal": "do B",
             "worktree_path": "/work/proj/task-b", "branch": "feat-b",
@@ -1567,7 +1567,7 @@ class TestRebaseAndRedispatch:
         assert call_args[1] == "dispatch"
 
     async def test_rebase_conflict_aborts_and_dispatches(self):
-        from switchboard.dispatch.engine import _rebase_and_redispatch
+        from ouvrage.dispatch.engine import _rebase_and_redispatch
         dep = {
             "id": "task-b", "project_id": "proj", "goal": "do B",
             "worktree_path": "/work/proj/task-b", "branch": "feat-b",
@@ -1597,7 +1597,7 @@ class TestRebaseAndRedispatch:
 
 class TestIsBinary:
     def setup_method(self):
-        from switchboard.git.files import _is_binary
+        from ouvrage.git.files import _is_binary
         self.fn = _is_binary
 
     def test_text_is_not_binary(self):
@@ -1626,7 +1626,7 @@ class TestIsBinary:
 
 class TestValidatePath:
     def setup_method(self):
-        from switchboard.git.files import _validate_path
+        from ouvrage.git.files import _validate_path
         self.fn = _validate_path
 
     def test_normal_path_ok(self):
@@ -1656,7 +1656,7 @@ class TestValidatePath:
 class TestListTaskFiles:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        import switchboard.git.files as _files_mod
+        import ouvrage.git.files as _files_mod
         # Clear module-level fetch cache so tests don't interfere with each other
         _files_mod._fetch_cache.clear()
 
@@ -1666,9 +1666,9 @@ class TestListTaskFiles:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("switchboard.git.files.db.get_task", self.mock_get_task),
-            patch("switchboard.git.files.db.get_project", self.mock_get_project),
-            patch("switchboard.git.files._git_run", self.mock_git_run),
+            patch("ouvrage.git.files.db.get_task", self.mock_get_task),
+            patch("ouvrage.git.files.db.get_project", self.mock_get_project),
+            patch("ouvrage.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1688,7 +1688,7 @@ class TestListTaskFiles:
         return {"id": "proj", "working_dir": "/work/proj"}
 
     async def test_active_worktree_uses_head(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1701,7 +1701,7 @@ class TestListTaskFiles:
         assert "git_dir" not in result
 
     async def test_released_task_uses_origin_branch(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = self._make_task(worktree_path=None, branch="feat/released", status="completed")
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = False
@@ -1719,7 +1719,7 @@ class TestListTaskFiles:
         assert result["files"] == ["README.md"]
 
     async def test_inaccessible_task_returns_error(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = self._make_task(worktree_path=None, branch=None, status="cancelled")
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = False
@@ -1730,7 +1730,7 @@ class TestListTaskFiles:
         assert "not accessible" in result["error"]
 
     async def test_task_not_found(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = None
 
         result = await _handle_list_task_files({"task_id": "proj/nonexistent"})
@@ -1739,7 +1739,7 @@ class TestListTaskFiles:
         assert "not found" in result["error"]
 
     async def test_path_traversal_rejected(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1750,7 +1750,7 @@ class TestListTaskFiles:
         assert ".." in result["error"]
 
     async def test_recursive_flag_passed(self):
-        from switchboard.git.files import _handle_list_task_files
+        from ouvrage.git.files import _handle_list_task_files
         self.mock_get_task.return_value = self._make_task(worktree_path="/work/proj/my-task")
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1774,7 +1774,7 @@ class TestListTaskFiles:
 class TestGetTaskFile:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        import switchboard.git.files as _files_mod
+        import ouvrage.git.files as _files_mod
         _files_mod._fetch_cache.clear()
 
         self.mock_get_task = AsyncMock()
@@ -1783,9 +1783,9 @@ class TestGetTaskFile:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("switchboard.git.files.db.get_task", self.mock_get_task),
-            patch("switchboard.git.files.db.get_project", self.mock_get_project),
-            patch("switchboard.git.files._git_run", self.mock_git_run),
+            patch("ouvrage.git.files.db.get_task", self.mock_get_task),
+            patch("ouvrage.git.files.db.get_project", self.mock_get_project),
+            patch("ouvrage.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1805,7 +1805,7 @@ class TestGetTaskFile:
         return {"id": "proj", "working_dir": "/work/proj"}
 
     async def test_returns_text_content(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1822,7 +1822,7 @@ class TestGetTaskFile:
         assert "git_dir" not in result
 
     async def test_binary_file_refused(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1837,7 +1837,7 @@ class TestGetTaskFile:
         assert result["binary"] is True
 
     async def test_large_file_truncated(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1858,7 +1858,7 @@ class TestGetTaskFile:
         assert result["size"] == 2000
 
     async def test_file_not_found(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1870,7 +1870,7 @@ class TestGetTaskFile:
         assert "not found" in result["error"]
 
     async def test_path_traversal_rejected(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
 
@@ -1883,7 +1883,7 @@ class TestGetTaskFile:
         assert ".." in result["error"]
 
     async def test_inaccessible_task(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = {
             "id": "proj/my-task", "project_id": "proj",
             "worktree_path": None, "branch": None, "status": "cancelled",
@@ -1897,7 +1897,7 @@ class TestGetTaskFile:
         assert "not accessible" in result["error"]
 
     async def test_directory_path_returns_clear_error(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1913,7 +1913,7 @@ class TestGetTaskFile:
         assert self.mock_git_run.call_count == 1
 
     async def test_git_dir_not_in_response(self):
-        from switchboard.git.files import _handle_get_task_file
+        from ouvrage.git.files import _handle_get_task_file
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
         self.mock_isdir.return_value = True
@@ -1935,7 +1935,7 @@ class TestGitRunTimeout:
     async def test_timeout_raises(self):
         import asyncio
         from unittest.mock import AsyncMock, patch, MagicMock
-        from switchboard.git.files import _git_run
+        from ouvrage.git.files import _git_run
 
         # Simulate a process that hangs forever
         mock_proc = MagicMock()
@@ -1954,7 +1954,7 @@ class TestGitRunTimeout:
 class TestFetchCache:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        import switchboard.git.files as _files_mod
+        import ouvrage.git.files as _files_mod
         _files_mod._fetch_cache.clear()
 
         self.mock_get_task = AsyncMock()
@@ -1963,9 +1963,9 @@ class TestFetchCache:
         self.mock_isdir = patch("os.path.isdir").start()
 
         patches = [
-            patch("switchboard.git.files.db.get_task", self.mock_get_task),
-            patch("switchboard.git.files.db.get_project", self.mock_get_project),
-            patch("switchboard.git.files._git_run", self.mock_git_run),
+            patch("ouvrage.git.files.db.get_task", self.mock_get_task),
+            patch("ouvrage.git.files.db.get_project", self.mock_get_project),
+            patch("ouvrage.git.files._git_run", self.mock_git_run),
         ]
         for p in patches:
             p.start()
@@ -1986,8 +1986,8 @@ class TestFetchCache:
 
     async def test_fetch_skipped_within_ttl(self):
         """Second call within TTL should not trigger another git fetch."""
-        from switchboard.git.files import _handle_list_task_files
-        import switchboard.git.files as _files_mod
+        from ouvrage.git.files import _handle_list_task_files
+        import ouvrage.git.files as _files_mod
 
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
@@ -2014,8 +2014,8 @@ class TestFetchCache:
     async def test_fetch_runs_when_ttl_expired(self):
         """Fetch should re-run after TTL expires."""
         import time
-        from switchboard.git.files import _handle_list_task_files
-        import switchboard.git.files as _files_mod
+        from ouvrage.git.files import _handle_list_task_files
+        import ouvrage.git.files as _files_mod
 
         self.mock_get_task.return_value = self._make_task()
         self.mock_get_project.return_value = self._make_project()
@@ -2045,12 +2045,12 @@ class TestFetchCache:
 class TestResolveGitRef:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
-        import switchboard.git.files as _files_mod
+        import ouvrage.git.files as _files_mod
         _files_mod._fetch_cache.clear()
 
         self.mock_git_run = AsyncMock()
         self.mock_isdir = patch("os.path.isdir").start()
-        patch("switchboard.git.files._git_run", self.mock_git_run).start()
+        patch("ouvrage.git.files._git_run", self.mock_git_run).start()
         yield
         patch.stopall()
 
@@ -2062,7 +2062,7 @@ class TestResolveGitRef:
 
     async def test_active_worktree_returns_head(self):
         """Priority 1: active worktree on disk → (worktree_path, HEAD)."""
-        from switchboard.git.files import _resolve_git_ref
+        from ouvrage.git.files import _resolve_git_ref
         self.mock_isdir.return_value = True
         task = self._make_task(worktree_path="/work/proj/worktrees/my-task")
 
@@ -2073,7 +2073,7 @@ class TestResolveGitRef:
 
     async def test_branch_on_origin_returns_bare_ref(self):
         """Priority 2: no worktree, branch exists on origin → (bare_path, origin/branch)."""
-        from switchboard.git.files import _resolve_git_ref
+        from ouvrage.git.files import _resolve_git_ref
         self.mock_isdir.return_value = False
         # fetch succeeds, rev-parse finds branch
         self.mock_git_run.side_effect = [
@@ -2090,7 +2090,7 @@ class TestResolveGitRef:
 
     async def test_branch_not_on_origin_returns_none(self):
         """Priority 2 fails: branch not found on origin → None."""
-        from switchboard.git.files import _resolve_git_ref
+        from ouvrage.git.files import _resolve_git_ref
         self.mock_isdir.return_value = False
         self.mock_git_run.side_effect = [
             (b"", 0),   # fetch ok
@@ -2106,7 +2106,7 @@ class TestResolveGitRef:
 
     async def test_no_branch_returns_none(self):
         """No worktree and no branch → None without any git calls."""
-        from switchboard.git.files import _resolve_git_ref
+        from ouvrage.git.files import _resolve_git_ref
         self.mock_isdir.return_value = False
 
         result = await _resolve_git_ref(
@@ -2120,8 +2120,8 @@ class TestResolveGitRef:
     async def test_fetch_failure_does_not_poison_cache(self):
         """If fetch fails, the cache entry must NOT be set so the next call retries."""
         import time
-        import switchboard.git.files as _files_mod
-        from switchboard.git.files import _resolve_git_ref
+        import ouvrage.git.files as _files_mod
+        from ouvrage.git.files import _resolve_git_ref
 
         self.mock_isdir.return_value = False
         bare_path = "/work/proj/.bare"
@@ -2160,9 +2160,9 @@ class TestReactiveConversationInjection:
         self.mock_post_task_message = AsyncMock(return_value={"id": 99})
 
         patches = [
-            patch("switchboard.db.post_message", self.mock_post_message),
-            patch("switchboard.db.get_working_tasks_for_conversation", self.mock_get_working_tasks),
-            patch("switchboard.db.post_task_message", self.mock_post_task_message),
+            patch("ouvrage.db.post_message", self.mock_post_message),
+            patch("ouvrage.db.get_working_tasks_for_conversation", self.mock_get_working_tasks),
+            patch("ouvrage.db.post_task_message", self.mock_post_task_message),
         ]
         for p in patches:
             p.start()
@@ -2171,7 +2171,7 @@ class TestReactiveConversationInjection:
             p.stop()
 
     async def test_injects_nudge_for_working_tasks(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.return_value = ["proj/task-1", "proj/task-2"]
         result = await _handle_post({
             "conversation_id": "conv-a",
@@ -2187,7 +2187,7 @@ class TestReactiveConversationInjection:
         assert "stephen" in call_kwargs["content"]
 
     async def test_skips_injection_for_cc_worker_author(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.return_value = ["proj/task-1"]
         await _handle_post({
             "conversation_id": "conv-a",
@@ -2198,7 +2198,7 @@ class TestReactiveConversationInjection:
         self.mock_post_task_message.assert_not_awaited()
 
     async def test_skips_injection_for_status_type(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.return_value = ["proj/task-1"]
         await _handle_post({
             "conversation_id": "conv-a",
@@ -2210,7 +2210,7 @@ class TestReactiveConversationInjection:
         self.mock_post_task_message.assert_not_awaited()
 
     async def test_injection_failure_is_non_blocking(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.side_effect = Exception("DB is down")
         result = await _handle_post({
             "conversation_id": "conv-a",
@@ -2221,7 +2221,7 @@ class TestReactiveConversationInjection:
         self.mock_post_task_message.assert_not_awaited()
 
     async def test_no_working_tasks_no_injection(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.return_value = []
         await _handle_post({
             "conversation_id": "conv-a",
@@ -2231,7 +2231,7 @@ class TestReactiveConversationInjection:
         self.mock_post_task_message.assert_not_awaited()
 
     async def test_preview_uses_title_when_present(self):
-        from switchboard.server.handlers.conversations import _handle_post
+        from ouvrage.server.handlers.conversations import _handle_post
         self.mock_get_working_tasks.return_value = ["proj/task-1"]
         await _handle_post({
             "conversation_id": "conv-a",
@@ -2254,15 +2254,15 @@ class TestHeldDefaults:
     @pytest.fixture(autouse=True)
     def mock_anthropic_key(self):
         """Bypass Anthropic key guard so these tests focus on held-default logic."""
-        with patch("switchboard.server.handlers.tasks.db.get_user_credentials",
+        with patch("ouvrage.server.handlers.tasks.db.get_user_credentials",
                    return_value={"anthropic_api_key": "sk-ant-test"}):
-            with patch("switchboard.server.handlers.tasks.db.get_instance",
+            with patch("ouvrage.server.handlers.tasks.db.get_instance",
                        return_value={"owner_user_id": None}):
                 yield
 
     async def test_standalone_task_defaults_to_held(self, db, sample_project):
         """Standalone task (no depends_on) defaults to held=true."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
         result = await _handle_dispatch_task({
             "project_id": "test-project",
             "id": "standalone-held",
@@ -2274,7 +2274,7 @@ class TestHeldDefaults:
 
     async def test_chain_task_defaults_to_held_false(self, db, sample_project):
         """Chain task (with depends_on) defaults to held=false — waiting on parent."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
         # Parent task not yet gate-passed — child will wait but NOT be held
         await db.create_task(
             id="test-project/parent-for-chain", project_id="test-project", goal="Parent",
@@ -2294,8 +2294,8 @@ class TestHeldDefaults:
 
     async def test_explicit_held_false_overrides_standalone_default(self, db, sample_project, mock_git):
         """Explicit held=false overrides the standalone default."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
-        with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
+        with patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
             result = await _handle_dispatch_task({
                 "project_id": "test-project",
                 "id": "standalone-explicit-false",
@@ -2308,7 +2308,7 @@ class TestHeldDefaults:
 
     async def test_explicit_held_true_overrides_chain_default(self, db, sample_project):
         """Explicit held=true overrides chain default of false."""
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
         parent = await db.create_task(
             id="test-project/parent-for-held-chain", project_id="test-project", goal="Parent",
         )
@@ -2334,12 +2334,12 @@ class TestProjectCreateValidation:
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
         """Bypass credential validation so tests focus on config-field validation logic."""
-        with patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.server.handlers.projects._run_project_validation",
                    new=AsyncMock(side_effect=lambda pid, proj: proj)):
             yield
 
     async def test_missing_all_required_fields_returns_error(self, db):
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
         result = await _handle_create_project({
             "id": "new-proj",
             "repo": "git@github.com:acme/new.git",
@@ -2350,7 +2350,7 @@ class TestProjectCreateValidation:
             assert field in result["error"]
 
     async def test_missing_single_field_returns_error(self, db):
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
         result = await _handle_create_project({
             "id": "new-proj2",
             "repo": "git@github.com:acme/new2.git",
@@ -2368,7 +2368,7 @@ class TestProjectCreateValidation:
         assert "model" not in result["error"]
 
     async def test_all_required_fields_present_proceeds(self, db):
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
         result = await _handle_create_project({
             "id": "valid-proj",
             "repo": "git@github.com:acme/valid.git",

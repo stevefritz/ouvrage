@@ -80,7 +80,7 @@ def _patch_httpx(status_code: int, json_data: dict):
         async def __aexit__(self, *args):
             return False
 
-    return patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
+    return patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
 
 
 # ── Instance settings ─────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ class TestGetInstanceSettings:
 
     @pytest.fixture(autouse=True)
     async def reset_oauth_keys(self, tmp_path, monkeypatch):
-        import switchboard.auth.oauth as _oauth
+        import ouvrage.auth.oauth as _oauth
         monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
         _oauth._rsa_private_key = None
         _oauth._rsa_public_jwk = None
@@ -98,7 +98,7 @@ class TestGetInstanceSettings:
         _oauth._rsa_public_jwk = None
 
     async def test_owner_gets_full_response(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.set_instance_github_pat("ghp_testtoken1234")
         scope = _make_scope("/dashboard/api/settings/instance")
@@ -116,7 +116,7 @@ class TestGetInstanceSettings:
         assert data["github"]["pat_last4"] == "1234"
 
     async def test_github_not_connected_when_no_pat(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance")
         resp = _Capture()
@@ -128,7 +128,7 @@ class TestGetInstanceSettings:
         assert data["github"]["connected"] is False
 
     async def test_github_not_connected_when_api_fails(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.set_instance_github_pat("ghp_badtoken")
         scope = _make_scope("/dashboard/api/settings/instance")
@@ -144,8 +144,8 @@ class TestGetInstanceSettings:
         assert data["github"]["pat_last4"] == "oken"
 
     async def test_includes_oauth_info(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.auth.oauth import seed_default_client, init_oauth_keys
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.auth.oauth import seed_default_client, init_oauth_keys
         init_oauth_keys()
         await seed_default_client()
 
@@ -161,7 +161,7 @@ class TestGetInstanceSettings:
         assert data["oauth"].get("client_secret") is not None
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", role="member")
         resp = _Capture()
@@ -171,7 +171,7 @@ class TestGetInstanceSettings:
         assert resp.status == 403
 
     async def test_viewer_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", role="viewer")
         resp = _Capture()
@@ -181,7 +181,7 @@ class TestGetInstanceSettings:
         assert resp.status == 403
 
     async def test_admin_can_access(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", role="admin")
         resp = _Capture()
@@ -195,7 +195,7 @@ class TestGetInstanceSettings:
 class TestPatchInstanceSettings:
 
     async def test_owner_can_set_pat(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH")
         resp = _Capture()
@@ -211,9 +211,9 @@ class TestPatchInstanceSettings:
         assert pat == "ghp_newtoken5678"
 
     async def test_pat_is_stored_encrypted(self, db):
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH")
         resp = _Capture()
@@ -226,7 +226,7 @@ class TestPatchInstanceSettings:
         assert is_fernet_token(rows[0]["github_pat_encrypted"])
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH", role="member")
         resp = _Capture()
@@ -239,7 +239,7 @@ class TestPatchInstanceSettings:
 class TestTestGithub:
 
     async def test_valid_pat_returns_username(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.set_instance_github_pat("ghp_validtoken")
         scope = _make_scope("/dashboard/api/settings/instance/test-github", method="POST")
@@ -254,7 +254,7 @@ class TestTestGithub:
         assert data["username"] == "testuser"
 
     async def test_invalid_pat_returns_false(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.set_instance_github_pat("ghp_badtoken")
         scope = _make_scope("/dashboard/api/settings/instance/test-github", method="POST")
@@ -269,7 +269,7 @@ class TestTestGithub:
         assert "error" in data
 
     async def test_no_pat_configured_returns_false(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/test-github", method="POST")
         resp = _Capture()
@@ -281,7 +281,7 @@ class TestTestGithub:
         assert data["valid"] is False
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/test-github",
                             method="POST", role="member")
@@ -296,7 +296,7 @@ class TestRegenerateOAuthSecret:
 
     @pytest.fixture(autouse=True)
     async def reset_oauth_keys(self, tmp_path, monkeypatch):
-        import switchboard.auth.oauth as _oauth
+        import ouvrage.auth.oauth as _oauth
         monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
         _oauth._rsa_private_key = None
         _oauth._rsa_public_jwk = None
@@ -305,8 +305,8 @@ class TestRegenerateOAuthSecret:
         _oauth._rsa_public_jwk = None
 
     async def test_owner_gets_new_secret(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.auth.oauth import seed_default_client, init_oauth_keys
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.auth.oauth import seed_default_client, init_oauth_keys
         init_oauth_keys()
         await seed_default_client()
 
@@ -323,7 +323,7 @@ class TestRegenerateOAuthSecret:
         assert len(data["client_secret"]) > 10
 
     async def test_returns_404_when_oauth_client_not_seeded(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
                             method="POST")
@@ -334,9 +334,9 @@ class TestRegenerateOAuthSecret:
         assert resp.status == 404
 
     async def test_new_secret_is_different_from_old(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.auth.oauth import get_client, seed_default_client, init_oauth_keys
-        from switchboard.crypto import decrypt_value, is_fernet_token
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.auth.oauth import get_client, seed_default_client, init_oauth_keys
+        from ouvrage.crypto import decrypt_value, is_fernet_token
         init_oauth_keys()
         await seed_default_client()
 
@@ -354,9 +354,9 @@ class TestRegenerateOAuthSecret:
         assert new_secret != old_secret
 
     async def test_new_secret_stored_encrypted(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.auth.oauth import get_client, seed_default_client, init_oauth_keys
-        from switchboard.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.auth.oauth import get_client, seed_default_client, init_oauth_keys
+        from ouvrage.crypto import is_fernet_token
         init_oauth_keys()
         await seed_default_client()
 
@@ -369,7 +369,7 @@ class TestRegenerateOAuthSecret:
         assert is_fernet_token(client["client_secret_encrypted"])
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
                             method="POST", role="member")
@@ -385,7 +385,7 @@ class TestRegenerateOAuthSecret:
 class TestGetUserSettings:
 
     async def test_returns_profile_info(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Use the seeded owner user
         owner = await db.get_user_by_email("owner@localhost")
@@ -403,7 +403,7 @@ class TestGetUserSettings:
         assert "timezone" in data["profile"]
 
     async def test_anthropic_not_configured_when_no_key(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
@@ -417,7 +417,7 @@ class TestGetUserSettings:
         assert data["anthropic"]["key_last4"] is None
 
     async def test_anthropic_key_last4_when_configured(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         await db.update_user_credentials(owner["id"], anthropic_api_key="sk-ant-xK3mABC")
@@ -432,7 +432,7 @@ class TestGetUserSettings:
         assert data["anthropic"]["key_last4"] == "mABC"
 
     async def test_full_key_not_returned(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         await db.update_user_credentials(owner["id"], anthropic_api_key="sk-ant-secret")
@@ -447,7 +447,7 @@ class TestGetUserSettings:
         assert "sk-ant-secret" not in body
 
     async def test_notifications_returned(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         prefs = {"task_completed": True, "task_failed": True}
@@ -463,7 +463,7 @@ class TestGetUserSettings:
 
     async def test_has_password_false_when_no_password_hash(self, db):
         """SSO/SaaS users with no local password_hash get has_password=false."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # owner@localhost is created without a password hash
         owner = await db.get_user_by_email("owner@localhost")
@@ -479,7 +479,7 @@ class TestGetUserSettings:
     async def test_has_password_true_when_password_hash_set(self, db):
         """Standalone users with a local password get has_password=true."""
         from argon2 import PasswordHasher
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         ph = PasswordHasher()
         user = await db.create_user(
@@ -501,7 +501,7 @@ class TestGetUserSettingsGitCredential:
 
     async def test_git_credential_not_configured_by_default(self, db):
         """With no git credentials in the table, git_credential.configured is False."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"],
@@ -516,7 +516,7 @@ class TestGetUserSettingsGitCredential:
 
     async def test_git_credential_configured_when_github_set(self, db):
         """After adding a GitHub credential, git_credential.configured is True."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_credential(
             provider="github",
@@ -537,7 +537,7 @@ class TestGetUserSettingsGitCredential:
 
     async def test_git_credential_configured_for_non_github_provider(self, db):
         """A GitLab or Bitbucket credential also satisfies git_credential.configured."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_credential(
             provider="gitlab",
@@ -560,7 +560,7 @@ class TestGetUserSettingsGitCredential:
 class TestPatchUserSettings:
 
     async def test_update_name(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", method="PATCH",
@@ -574,7 +574,7 @@ class TestPatchUserSettings:
         assert updated["name"] == "Stephen"
 
     async def test_update_timezone(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", method="PATCH",
@@ -588,9 +588,9 @@ class TestPatchUserSettings:
         assert updated["timezone"] == "America/New_York"
 
     async def test_update_anthropic_key(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import is_fernet_token
-        import switchboard.db.connection as _conn
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import is_fernet_token
+        import ouvrage.db.connection as _conn
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", method="PATCH",
@@ -614,7 +614,7 @@ class TestPatchUserSettings:
         assert key == "sk-ant-newkey"
 
     async def test_update_notification_prefs(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", method="PATCH",
@@ -630,7 +630,7 @@ class TestPatchUserSettings:
         assert creds["notification_preferences"]["task_failed"] is False
 
     async def test_empty_body_is_noop(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         original = await db.get_user(owner["id"])
@@ -648,7 +648,7 @@ class TestPatchUserSettings:
 class TestTestAnthropic:
 
     async def test_valid_key_returns_true(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         await db.update_user_credentials(owner["id"], anthropic_api_key="sk-ant-valid")
@@ -663,7 +663,7 @@ class TestTestAnthropic:
         assert resp.json()["valid"] is True
 
     async def test_invalid_key_returns_false(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         await db.update_user_credentials(owner["id"], anthropic_api_key="sk-ant-bad")
@@ -679,7 +679,7 @@ class TestTestAnthropic:
         assert data["valid"] is False
 
     async def test_no_key_configured_returns_false(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user/test-anthropic", method="POST",
@@ -704,7 +704,7 @@ class TestChangePassword:
                                     role="member", password_hash=pw_hash)
 
     async def test_correct_current_password_updates(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await self._create_user_with_password(db, "pw@test.com", "oldpass123")
         scope = _make_scope("/dashboard/api/settings/user/change-password", method="POST",
@@ -721,7 +721,7 @@ class TestChangePassword:
         assert resp.json()["ok"] is True
 
     async def test_correct_password_allows_login_with_new(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
         from argon2 import PasswordHasher
 
         user = await self._create_user_with_password(db, "pw2@test.com", "original")
@@ -741,7 +741,7 @@ class TestChangePassword:
         assert ph.verify(full["password_hash"], "updated")
 
     async def test_wrong_current_password_returns_401(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await self._create_user_with_password(db, "pw3@test.com", "rightpass")
         scope = _make_scope("/dashboard/api/settings/user/change-password", method="POST",
@@ -757,7 +757,7 @@ class TestChangePassword:
         assert resp.status == 401
 
     async def test_missing_fields_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user/change-password", method="POST",
@@ -770,7 +770,7 @@ class TestChangePassword:
 
     async def test_no_password_hash_returns_400(self, db):
         """SSO/SaaS users with no local password get a clear 400 error, not a crash."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # owner@localhost has no password_hash — simulates SSO user
         owner = await db.get_user_by_email("owner@localhost")

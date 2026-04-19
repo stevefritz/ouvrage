@@ -134,7 +134,7 @@ function ConversationCard({ conv, projectId }) {
     const lastAt = conv.last_message_at || conv.updated_at;
 
     return html`
-        <a href=${href} style=${cardStyle} class="foreman-conv-card">
+        <a href=${href} style=${cardStyle} class="ouvrage-conv-card">
             <div style=${{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                 <div style=${{ flex: 1, minWidth: 0 }}>
                     <div style=${titleStyle}>${title}</div>
@@ -213,7 +213,7 @@ function SearchResultCard({ result, conv, projectId, searchQuery }) {
     const lastAt = conv.last_message_at || conv.updated_at;
 
     return html`
-        <a href=${href} style=${cardStyle} class="foreman-conv-card foreman-conv-search-result">
+        <a href=${href} style=${cardStyle} class="ouvrage-conv-card ouvrage-conv-search-result">
             <div style=${{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                 <div style=${{ flex: 1, minWidth: 0 }}>
                     <div style=${titleStyle}>${title}</div>
@@ -441,12 +441,12 @@ export function ConversationIndex({ projectId }) {
                     value=${searchQuery}
                     onInput=${e => handleSearch(e.target.value)}
                     style=${searchStyle}
-                    class="foreman-conv-search"
+                    class="ouvrage-conv-search"
                 />
                 <a
                     href="#/conversation/new?project=${encodeURIComponent(projectId)}"
                     style=${newBtnStyle}
-                    class="foreman-new-conv-btn"
+                    class="ouvrage-new-conv-btn"
                 >+ New conversation</a>
             </div>
 

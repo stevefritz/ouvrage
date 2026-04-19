@@ -55,7 +55,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_single_field(self, db, sample_task):
         """Happy path: update a single mutable field."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -74,7 +74,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_multiple_fields(self, db, sample_task):
         """Update several metadata fields at once."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         payload = {
@@ -98,7 +98,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_tags(self, db, sample_task):
         """Tags are replaced (not appended)."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -113,7 +113,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_boolean_fields(self, db, sample_task):
         """auto_* boolean fields can be toggled."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -129,7 +129,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_unknown_task_returns_404(self, db, sample_project):
         """PATCH on non-existent task returns 404."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(path="/dashboard/api/tasks/test-project/does-not-exist")
         receive = _make_receive({"jira_ticket": "PROJ-99"})
@@ -143,7 +143,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_empty_body_returns_400(self, db, sample_task):
         """PATCH with empty body returns 400."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -158,7 +158,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_conversation_id(self, db, sample_task):
         """conversation_id field can be set."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -173,7 +173,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_component_id_cleared(self, db, sample_task):
         """component_id can be cleared (set to null)."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))
@@ -188,7 +188,7 @@ class TestUpdateTaskEndpoint:
 
     async def test_update_returns_updated_task(self, db, sample_task):
         """Response body is the updated task record."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task_id = sample_task["id"]
         scope = _make_scope(path=_task_path(task_id))

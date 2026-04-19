@@ -7,7 +7,7 @@ Covers:
 """
 
 import pytest
-from switchboard.embeddings.chunks import chunk_message, MIN_CHUNK_LENGTH
+from ouvrage.embeddings.chunks import chunk_message, MIN_CHUNK_LENGTH
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// Foreman Landing View — Project card grid with health indicators
+// Ouvrage Landing View — Project card grid with health indicators
 // Smart attention model: failed + needs-review + stalled + repeated failures + blocked chains
 
 import { h } from 'https://esm.sh/preact@10.25.4';
@@ -177,16 +177,16 @@ function ProjectCard({ project, tasks }) {
         <a
             href=${routes.project(project.id)}
             style=${cardStyle}
-            class="foreman-project-card"
+            class="ouvrage-project-card"
         >
             <div style=${titleRowStyle}>
                 <span
                     style=${dotStyle}
-                    class=${hasAttention ? 'foreman-status-dot-pulse' : ''}
+                    class=${hasAttention ? 'ouvrage-status-dot-pulse' : ''}
                 />
                 <span style=${nameStyle}>${project.id}</span>
                 ${hasAttention ? html`
-                    <span class="foreman-attention-badge">${attentionCount}</span>
+                    <span class="ouvrage-attention-badge">${attentionCount}</span>
                 ` : null}
             </div>
 
@@ -305,7 +305,7 @@ function CardSkeleton() {
     });
 
     return html`
-        <div style=${cardStyle} class="foreman-skeleton">
+        <div style=${cardStyle} class="ouvrage-skeleton">
             <div style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style=${{ width: '8px', height: '8px', borderRadius: '50%', background: colors.surfaceActive }} />
                 <div style=${lineStyle('60%', '14px')} />

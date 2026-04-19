@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from switchboard.git.providers.base import RepoInfo, PRResult
+from ouvrage.git.providers.base import RepoInfo, PRResult
 
 
 def _make_mock_provider(auth_url="https://oauth2:tok@github.com/org/repo.git"):
@@ -46,11 +46,11 @@ class TestResolvePushUrl:
 
     async def test_calls_resolve_credential(self):
         """_resolve_push_url calls resolve_credential, not get_github_pat."""
-        from switchboard.git.operations import _resolve_push_url
+        from ouvrage.git.operations import _resolve_push_url
 
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
+        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+            with patch("ouvrage.git.operations.db.get_project",
                        AsyncMock(return_value=self.project)):
                 url = await _resolve_push_url("proj")
 
@@ -59,11 +59,11 @@ class TestResolvePushUrl:
 
     async def test_calls_provider_build_authenticated_url(self):
         """_resolve_push_url calls provider.build_authenticated_url with repo URL."""
-        from switchboard.git.operations import _resolve_push_url
+        from ouvrage.git.operations import _resolve_push_url
 
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
+        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+            with patch("ouvrage.git.operations.db.get_project",
                        AsyncMock(return_value=self.project)):
                 await _resolve_push_url("proj")
 
@@ -73,20 +73,20 @@ class TestResolvePushUrl:
 
     async def test_raises_if_no_credential(self):
         """_resolve_push_url raises ValueError when resolve_credential fails."""
-        from switchboard.git.operations import _resolve_push_url
+        from ouvrage.git.operations import _resolve_push_url
 
         mock_resolve = AsyncMock(side_effect=ValueError("No credential configured"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
+        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+            with patch("ouvrage.git.operations.db.get_project",
                        AsyncMock(return_value=self.project)):
                 with pytest.raises(ValueError, match="No credential"):
                     await _resolve_push_url("proj")
 
     async def test_raises_if_project_not_found(self):
         """_resolve_push_url raises ValueError when project doesn't exist."""
-        from switchboard.git.operations import _resolve_push_url
+        from ouvrage.git.operations import _resolve_push_url
 
-        with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations.db.get_project", AsyncMock(return_value=None)):
             with pytest.raises(ValueError, match="not found"):
                 await _resolve_push_url("nonexistent")
 
@@ -120,7 +120,7 @@ class TestEnsureBranchPushed:
 
     async def test_uses_provider_url_for_push(self):
         """_ensure_branch_pushed pushes via provider.build_authenticated_url output."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
 
         mock_run = AsyncMock(side_effect=[
             (b"abc123 refs/heads/feature\n", b"", 0),  # ls-remote — branch exists on remote
@@ -129,11 +129,11 @@ class TestEnsureBranchPushed:
         ])
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
 
-        with patch("switchboard.git.operations._run_as_worker", mock_run):
-            with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                with patch("switchboard.git.operations.db.get_project",
+        with patch("ouvrage.git.operations._run_as_worker", mock_run):
+            with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+                with patch("ouvrage.git.operations.db.get_project",
                            AsyncMock(return_value=self.project)):
-                    with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
+                    with patch("ouvrage.git.operations.db.post_task_message", AsyncMock()):
                         result = await _ensure_branch_pushed("proj/t1", self.task)
 
         assert result is True
@@ -144,13 +144,13 @@ class TestEnsureBranchPushed:
 
     async def test_fails_gracefully_when_no_credential(self):
         """_ensure_branch_pushed returns False when credential resolution fails."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
 
         mock_resolve = AsyncMock(side_effect=ValueError("No credential"))
-        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-            with patch("switchboard.git.operations.db.get_project",
+        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+            with patch("ouvrage.git.operations.db.get_project",
                        AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
+                with patch("ouvrage.git.operations.db.post_task_message", AsyncMock()):
                     result = await _ensure_branch_pushed("proj/t1", self.task)
 
         assert result is False
@@ -188,18 +188,18 @@ class TestMaybeCreatePr:
 
     async def test_calls_provider_create_pr(self):
         """_maybe_create_pr calls provider.create_pr with correct args."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
 
-        with patch("switchboard.git.operations.db.get_task", AsyncMock(return_value=self.task)):
-            with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.get_dependents", AsyncMock(return_value=[])):
-                    with patch("switchboard.git.operations.db.get_chain",
+        with patch("ouvrage.git.operations.db.get_task", AsyncMock(return_value=self.task)):
+            with patch("ouvrage.git.operations.db.get_project", AsyncMock(return_value=self.project)):
+                with patch("ouvrage.git.operations.db.get_dependents", AsyncMock(return_value=[])):
+                    with patch("ouvrage.git.operations.db.get_chain",
                                AsyncMock(return_value=[self.task])):
-                        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                            with patch("switchboard.git.operations.db.add_artifact", AsyncMock()):
-                                with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
+                        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+                            with patch("ouvrage.git.operations.db.add_artifact", AsyncMock()):
+                                with patch("ouvrage.git.operations.db.post_task_message", AsyncMock()):
                                     await _maybe_create_pr("proj/t1")
 
         self.mock_provider.create_pr.assert_called_once()
@@ -211,16 +211,16 @@ class TestMaybeCreatePr:
 
     async def test_skips_when_no_credential(self):
         """_maybe_create_pr posts error message when credential resolution fails."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         mock_resolve = AsyncMock(side_effect=ValueError("No credential configured"))
         mock_post = AsyncMock()
 
-        with patch("switchboard.git.operations.db.get_task", AsyncMock(return_value=self.task)):
-            with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.get_dependents", AsyncMock(return_value=[])):
-                    with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                        with patch("switchboard.git.operations.db.post_task_message", mock_post):
+        with patch("ouvrage.git.operations.db.get_task", AsyncMock(return_value=self.task)):
+            with patch("ouvrage.git.operations.db.get_project", AsyncMock(return_value=self.project)):
+                with patch("ouvrage.git.operations.db.get_dependents", AsyncMock(return_value=[])):
+                    with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+                        with patch("ouvrage.git.operations.db.post_task_message", mock_post):
                             await _maybe_create_pr("proj/t1")
 
         # Should post an error message instead of calling create_pr
@@ -231,7 +231,7 @@ class TestMaybeCreatePr:
 
     async def test_pr_url_from_provider_stored(self):
         """_maybe_create_pr stores the URL returned by provider.create_pr."""
-        from switchboard.git.operations import _maybe_create_pr
+        from ouvrage.git.operations import _maybe_create_pr
 
         expected_url = "https://github.com/org/repo/pull/42"
         self.mock_provider.create_pr = AsyncMock(
@@ -240,14 +240,14 @@ class TestMaybeCreatePr:
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
         mock_add_artifact = AsyncMock()
 
-        with patch("switchboard.git.operations.db.get_task", AsyncMock(return_value=self.task)):
-            with patch("switchboard.git.operations.db.get_project", AsyncMock(return_value=self.project)):
-                with patch("switchboard.git.operations.db.get_dependents", AsyncMock(return_value=[])):
-                    with patch("switchboard.git.operations.db.get_chain",
+        with patch("ouvrage.git.operations.db.get_task", AsyncMock(return_value=self.task)):
+            with patch("ouvrage.git.operations.db.get_project", AsyncMock(return_value=self.project)):
+                with patch("ouvrage.git.operations.db.get_dependents", AsyncMock(return_value=[])):
+                    with patch("ouvrage.git.operations.db.get_chain",
                                AsyncMock(return_value=[self.task])):
-                        with patch("switchboard.git.operations.resolve_credential", mock_resolve):
-                            with patch("switchboard.git.operations.db.add_artifact", mock_add_artifact):
-                                with patch("switchboard.git.operations.db.post_task_message", AsyncMock()):
+                        with patch("ouvrage.git.operations.resolve_credential", mock_resolve):
+                            with patch("ouvrage.git.operations.db.add_artifact", mock_add_artifact):
+                                with patch("ouvrage.git.operations.db.post_task_message", AsyncMock()):
                                     await _maybe_create_pr("proj/t1")
 
         mock_add_artifact.assert_called_once_with("proj/t1", "pr_url", expected_url)
@@ -270,11 +270,11 @@ class TestCheckPrStatusProvider:
 
     async def test_calls_provider_get_pr_status(self):
         """_check_pr_status delegates to provider.get_pr_status."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
+        from ouvrage.dispatch.pr_sweep import _check_pr_status
 
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+        with patch("ouvrage.dispatch.pr_sweep.resolve_credential", mock_resolve):
+            with patch("ouvrage.dispatch.pr_sweep.db.get_project",
                        AsyncMock(return_value=self.project)):
                 status = await _check_pr_status(
                     "https://github.com/org/repo/pull/1", "proj"
@@ -285,14 +285,14 @@ class TestCheckPrStatusProvider:
 
     async def test_returns_merged_when_provider_says_merged(self):
         """Status 'merged' is returned when provider reports merged=True."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
+        from ouvrage.dispatch.pr_sweep import _check_pr_status
 
         self.mock_provider.get_pr_status = AsyncMock(
             return_value={"state": "closed", "merged": True}
         )
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+        with patch("ouvrage.dispatch.pr_sweep.resolve_credential", mock_resolve):
+            with patch("ouvrage.dispatch.pr_sweep.db.get_project",
                        AsyncMock(return_value=self.project)):
                 status = await _check_pr_status(
                     "https://github.com/org/repo/pull/1", "proj"
@@ -302,14 +302,14 @@ class TestCheckPrStatusProvider:
 
     async def test_returns_closed_when_provider_says_closed(self):
         """Status 'closed' when provider says state=closed and merged=False."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
+        from ouvrage.dispatch.pr_sweep import _check_pr_status
 
         self.mock_provider.get_pr_status = AsyncMock(
             return_value={"state": "closed", "merged": False}
         )
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+        with patch("ouvrage.dispatch.pr_sweep.resolve_credential", mock_resolve):
+            with patch("ouvrage.dispatch.pr_sweep.db.get_project",
                        AsyncMock(return_value=self.project)):
                 status = await _check_pr_status(
                     "https://github.com/org/repo/pull/1", "proj"
@@ -319,11 +319,11 @@ class TestCheckPrStatusProvider:
 
     async def test_uses_provider_parse_pr_url(self):
         """_check_pr_status uses provider.parse_pr_url to parse the PR URL."""
-        from switchboard.dispatch.pr_sweep import _check_pr_status
+        from ouvrage.dispatch.pr_sweep import _check_pr_status
 
         mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential", mock_resolve):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+        with patch("ouvrage.dispatch.pr_sweep.resolve_credential", mock_resolve):
+            with patch("ouvrage.dispatch.pr_sweep.db.get_project",
                        AsyncMock(return_value=self.project)):
                 await _check_pr_status(
                     "https://github.com/org/repo/pull/99", "proj"
@@ -362,9 +362,9 @@ class TestGitToolsUseProviderInterface:
         self.mock_run = AsyncMock(return_value=(b"", b"", 0))
         self.mock_resolve = AsyncMock(return_value=(self.mock_provider, "tok123"))
         self.patches = [
-            patch("switchboard.server.handlers.git_tools._run_as_worker", self.mock_run),
-            patch("switchboard.server.handlers.git_tools.resolve_credential", self.mock_resolve),
-            patch("switchboard.server.handlers.git_tools.db"),
+            patch("ouvrage.server.handlers.git_tools._run_as_worker", self.mock_run),
+            patch("ouvrage.server.handlers.git_tools.resolve_credential", self.mock_resolve),
+            patch("ouvrage.server.handlers.git_tools.db"),
         ]
         started = [p.start() for p in self.patches]
         self.mock_db = started[2]
@@ -380,7 +380,7 @@ class TestGitToolsUseProviderInterface:
 
     async def test_git_push_calls_resolve_credential(self):
         """git_push calls resolve_credential instead of get_github_pat."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),   # rev-parse HEAD
@@ -396,7 +396,7 @@ class TestGitToolsUseProviderInterface:
 
     async def test_git_push_uses_provider_build_authenticated_url(self):
         """git_push uses the URL from provider.build_authenticated_url."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),   # rev-parse HEAD
@@ -415,7 +415,7 @@ class TestGitToolsUseProviderInterface:
 
     async def test_git_fetch_calls_resolve_credential(self):
         """git_fetch calls resolve_credential instead of get_github_pat."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         result = await _handle_git_fetch({"task_id": "proj/t1"})
 
@@ -424,7 +424,7 @@ class TestGitToolsUseProviderInterface:
 
     async def test_git_fetch_uses_provider_build_authenticated_url(self):
         """git_fetch uses the URL from provider.build_authenticated_url."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         result = await _handle_git_fetch({"task_id": "proj/t1", "ref": "main"})
 
@@ -442,7 +442,7 @@ class TestGitHubProviderParsePrUrl:
     """GitHubProvider.parse_pr_url correctly parses GitHub PR URLs."""
 
     def setup_method(self):
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.providers.github import GitHubProvider
         self.provider = GitHubProvider()
 
     def test_standard_url(self):

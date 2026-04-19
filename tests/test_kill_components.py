@@ -1,7 +1,7 @@
 """Confirm that all component and punchlist MCP tools are removed from the tool registry."""
 
 import pytest
-from switchboard.server.dispatch import TOOL_HANDLERS, _dispatch_tool
+from ouvrage.server.dispatch import TOOL_HANDLERS, _dispatch_tool
 
 
 REMOVED_TOOLS = [
@@ -42,7 +42,7 @@ class TestRemovedToolsNotInSchema:
     """Component and punchlist tools must not appear in the TOOLS list."""
 
     def test_tools_list_excludes_component_tools(self):
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         tool_names = {t.name for t in TOOLS}
         for name in REMOVED_TOOLS:
             assert name not in tool_names, (
@@ -50,25 +50,25 @@ class TestRemovedToolsNotInSchema:
             )
 
     def test_dispatch_task_has_no_component_id(self):
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         dispatch = next(t for t in TOOLS if t.name == "dispatch_task")
         assert "component_id" not in dispatch.inputSchema.get("properties", {}), \
             "dispatch_task should not expose component_id parameter"
 
     def test_update_task_has_no_component_id(self):
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         update = next(t for t in TOOLS if t.name == "update_task")
         assert "component_id" not in update.inputSchema.get("properties", {}), \
             "update_task should not expose component_id parameter"
 
     def test_list_tasks_has_no_component_id(self):
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         list_tasks = next(t for t in TOOLS if t.name == "list_tasks")
         assert "component_id" not in list_tasks.inputSchema.get("properties", {}), \
             "list_tasks should not expose component_id filter"
 
     def test_bulk_update_tasks_has_no_component_id(self):
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         bulk = next(t for t in TOOLS if t.name == "bulk_update_tasks")
         assert "component_id" not in bulk.inputSchema.get("properties", {}), \
             "bulk_update_tasks should not expose component_id parameter"

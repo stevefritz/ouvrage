@@ -25,8 +25,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 @pytest.fixture(autouse=True)
 def reset_middleware_module_vars():
     """Reset module-level config vars in middleware and oauth between tests."""
-    import switchboard.auth.middleware as _mw
-    import switchboard.auth.oauth as _oauth
+    import ouvrage.auth.middleware as _mw
+    import ouvrage.auth.oauth as _oauth
 
     # Save originals
     orig_auth_issuer = _mw.AUTH_ISSUER_URL
@@ -54,8 +54,8 @@ def reset_middleware_module_vars():
 @pytest.fixture
 def local_rsa_key(tmp_path):
     """Generate a fresh RSA keypair and configure it in oauth.py."""
-    import switchboard.auth.oauth as _oauth
-    import switchboard.config.settings as _s
+    import ouvrage.auth.oauth as _oauth
+    import ouvrage.config.settings as _s
 
     key_path = str(tmp_path / "test_key.pem")
     os.environ["OAUTH_RSA_KEY_PATH"] = key_path
@@ -64,7 +64,7 @@ def local_rsa_key(tmp_path):
     _oauth._rsa_private_key = None
     _oauth._rsa_public_jwk = None
 
-    from switchboard.auth.oauth import init_oauth_keys
+    from ouvrage.auth.oauth import init_oauth_keys
     init_oauth_keys()
 
     yield _oauth._rsa_private_key
@@ -75,10 +75,10 @@ def local_rsa_key(tmp_path):
 @pytest.fixture
 def self_issuer_env(local_rsa_key):
     """Configure middleware + oauth for self-issued mode with a test base URL."""
-    import switchboard.auth.middleware as _mw
-    import switchboard.auth.oauth as _oauth
+    import ouvrage.auth.middleware as _mw
+    import ouvrage.auth.oauth as _oauth
 
-    base = "https://switchboard.test"
+    base = "https://ouvrage.test"
     _mw.AUTH_ISSUER_URL = None
     _mw.OAUTH_BASE_URL = base
     _oauth.OAUTH_BASE_URL = base
@@ -91,7 +91,7 @@ def _make_jwt(
     issuer: str,
     audience: str = "claude-mcp",
     exp_offset: int = 3600,
-    kid: str = "switchboard-1",
+    kid: str = "ouvrage-1",
     jti: str | None = None,
     extra_claims: dict | None = None,
 ) -> str:
@@ -126,71 +126,71 @@ def _make_jwt(
 class TestIsSelfIssuer:
 
     def _set(self, auth_issuer=None, oauth_base=None, resource=None):
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = auth_issuer
         _mw.OAUTH_BASE_URL = oauth_base
         _mw.RESOURCE_URL = resource
 
     def test_unset_auth_issuer_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer=None)
         assert _is_self_issuer() is True
 
     def test_localhost_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer="http://localhost:8100")
         assert _is_self_issuer() is True
 
     def test_localhost_no_port_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer="http://localhost")
         assert _is_self_issuer() is True
 
     def test_loopback_ip_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer="http://127.0.0.1:8100")
         assert _is_self_issuer() is True
 
     def test_oauth_base_url_match_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(
-            auth_issuer="https://switchboard.example.dev",
-            oauth_base="https://switchboard.example.dev",
+            auth_issuer="https://ouvrage.example.dev",
+            oauth_base="https://ouvrage.example.dev",
         )
         assert _is_self_issuer() is True
 
     def test_oauth_base_url_match_trailing_slash(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(
-            auth_issuer="https://switchboard.example.dev/",
-            oauth_base="https://switchboard.example.dev",
+            auth_issuer="https://ouvrage.example.dev/",
+            oauth_base="https://ouvrage.example.dev",
         )
         assert _is_self_issuer() is True
 
     def test_resource_url_match_is_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(
-            auth_issuer="https://switchboard.example.dev",
-            resource="https://switchboard.example.dev",
+            auth_issuer="https://ouvrage.example.dev",
+            resource="https://ouvrage.example.dev",
         )
         assert _is_self_issuer() is True
 
     def test_external_issuer_is_not_self(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer="https://auth.example.com")
         assert _is_self_issuer() is False
 
     def test_external_issuer_with_different_oauth_base(self):
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(
             auth_issuer="https://authelia.example.com",
-            oauth_base="https://switchboard.example.com",
+            oauth_base="https://ouvrage.example.com",
         )
         assert _is_self_issuer() is False
 
     def test_https_localhost_is_not_self(self):
         """Only http://localhost counts as self — https may be a proxy."""
-        from switchboard.auth.middleware import _is_self_issuer
+        from ouvrage.auth.middleware import _is_self_issuer
         self._set(auth_issuer="https://localhost")
         # https://localhost doesn't start with http://localhost so → external
         assert _is_self_issuer() is False
@@ -201,15 +201,15 @@ class TestIsSelfIssuer:
 class TestIsAuthEnabled:
 
     def test_always_true_when_unset(self):
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = None
-        from switchboard.auth.middleware import is_auth_enabled
+        from ouvrage.auth.middleware import is_auth_enabled
         assert is_auth_enabled() is True
 
     def test_always_true_when_external(self):
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = "https://external.auth.com"
-        from switchboard.auth.middleware import is_auth_enabled
+        from ouvrage.auth.middleware import is_auth_enabled
         assert is_auth_enabled() is True
 
 
@@ -218,7 +218,7 @@ class TestIsAuthEnabled:
 class TestVerifyTokenSelfIssued:
 
     async def test_valid_self_issued_jwt_returns_claims(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
         base, private_key = self_issuer_env
 
         token = _make_jwt(private_key, issuer=base, jti=str(uuid.uuid4()))
@@ -229,21 +229,21 @@ class TestVerifyTokenSelfIssued:
         assert claims["sub"] == "1"
 
     async def test_expired_jwt_returns_none(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
         base, private_key = self_issuer_env
 
         token = _make_jwt(private_key, issuer=base, exp_offset=-1)
         assert await verify_token(token) is None
 
     async def test_wrong_issuer_returns_none(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
         base, private_key = self_issuer_env
 
         token = _make_jwt(private_key, issuer="https://wrong-issuer.example.com")
         assert await verify_token(token) is None
 
     async def test_wrong_kid_returns_none(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
         base, private_key = self_issuer_env
 
         token = _make_jwt(private_key, issuer=base, kid="not-the-right-kid")
@@ -251,7 +251,7 @@ class TestVerifyTokenSelfIssued:
 
     async def test_no_jti_skips_revocation_check(self, db, self_issuer_env):
         """JWT without jti should still validate — backward compat."""
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
         base, private_key = self_issuer_env
 
         token = _make_jwt(private_key, issuer=base, jti=None)
@@ -259,8 +259,8 @@ class TestVerifyTokenSelfIssued:
         assert claims is not None
 
     async def test_valid_jti_not_revoked_passes(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
-        from switchboard.auth.oauth import issue_tokens, init_oauth_keys, seed_default_client
+        from ouvrage.auth.middleware import verify_token
+        from ouvrage.auth.oauth import issue_tokens, init_oauth_keys, seed_default_client
 
         base, private_key = self_issuer_env
         await seed_default_client()
@@ -274,8 +274,8 @@ class TestVerifyTokenSelfIssued:
         assert claims is not None
 
     async def test_revoked_jti_returns_none(self, db, self_issuer_env):
-        from switchboard.auth.middleware import verify_token
-        from switchboard.auth.oauth import issue_tokens, revoke_token, seed_default_client
+        from ouvrage.auth.middleware import verify_token
+        from ouvrage.auth.oauth import issue_tokens, revoke_token, seed_default_client
 
         base, private_key = self_issuer_env
         await seed_default_client()
@@ -297,14 +297,14 @@ class TestVerifyTokenExternalIssuer:
 
     async def test_external_issuer_uses_http_fetch(self, db):
         """When AUTH_ISSUER_URL is external, _get_remote_jwks() is called."""
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = "https://auth.external.example.com"
         _mw.OAUTH_BASE_URL = None
 
-        from switchboard.auth.middleware import verify_token, _get_remote_jwks
+        from ouvrage.auth.middleware import verify_token, _get_remote_jwks
 
         with patch(
-            "switchboard.auth.middleware._get_remote_jwks",
+            "ouvrage.auth.middleware._get_remote_jwks",
             new_callable=AsyncMock,
         ) as mock_fetch:
             mock_fetch.return_value = {"keys": []}
@@ -315,19 +315,19 @@ class TestVerifyTokenExternalIssuer:
 
     async def test_external_issuer_does_not_use_local_key(self, db, local_rsa_key, self_issuer_env):
         """When AUTH_ISSUER_URL is external, self-issued local key is NOT used."""
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
 
         base, private_key = self_issuer_env
         # Override to an external issuer
         _mw.AUTH_ISSUER_URL = "https://auth.external.example.com"
 
-        from switchboard.auth.middleware import verify_token
+        from ouvrage.auth.middleware import verify_token
 
         # Sign a token with local key but mark as external issuer
         token = _make_jwt(private_key, issuer="https://auth.external.example.com")
 
         with patch(
-            "switchboard.auth.middleware._get_remote_jwks",
+            "ouvrage.auth.middleware._get_remote_jwks",
             new_callable=AsyncMock,
         ) as mock_fetch:
             # Return empty JWKS — local key not consulted
@@ -342,31 +342,31 @@ class TestVerifyTokenExternalIssuer:
 class TestProtectedResourceMetadata:
 
     def test_self_issuer_points_to_self(self, self_issuer_env):
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = None
         base, _ = self_issuer_env
 
-        from switchboard.auth.middleware import _protected_resource_metadata
+        from ouvrage.auth.middleware import _protected_resource_metadata
         meta = _protected_resource_metadata()
         assert base in meta["authorization_servers"]
 
     def test_external_issuer_points_to_external(self):
-        import switchboard.auth.middleware as _mw
+        import ouvrage.auth.middleware as _mw
         _mw.AUTH_ISSUER_URL = "https://auth.external.com"
         _mw.OAUTH_BASE_URL = None
 
-        from switchboard.auth.middleware import _protected_resource_metadata
+        from ouvrage.auth.middleware import _protected_resource_metadata
         meta = _protected_resource_metadata()
         assert "https://auth.external.com" in meta["authorization_servers"]
 
     def test_both_unset_uses_localhost_fallback(self):
-        import switchboard.auth.middleware as _mw
-        import switchboard.auth.oauth as _oauth
+        import ouvrage.auth.middleware as _mw
+        import ouvrage.auth.oauth as _oauth
         _mw.AUTH_ISSUER_URL = None
         _mw.OAUTH_BASE_URL = None
         _oauth.OAUTH_BASE_URL = None
 
-        from switchboard.auth.middleware import _protected_resource_metadata
+        from ouvrage.auth.middleware import _protected_resource_metadata
         meta = _protected_resource_metadata()
         assert len(meta["authorization_servers"]) == 1
         assert "localhost" in meta["authorization_servers"][0]

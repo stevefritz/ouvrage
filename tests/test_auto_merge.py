@@ -17,7 +17,7 @@ class TestResolveBranchTarget:
 
     async def test_depends_on_does_not_affect_branch_target(self, db, sample_project):
         """depends_on must NOT affect branch target — task.base_branch wins."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         parent = await db.create_task(
             id="test-project/parent", project_id="test-project",
@@ -36,7 +36,7 @@ class TestResolveBranchTarget:
 
     async def test_depends_on_resolves_to_project_default(self, db, sample_project):
         """depends_on with no other config falls back to project.default_branch, not parent branch."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         parent = await db.create_task(
             id="test-project/parent-a", project_id="test-project",
@@ -53,7 +53,7 @@ class TestResolveBranchTarget:
 
     async def test_uses_task_base_branch(self, db, sample_project):
         """task.base_branch is used when set."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         task = await db.create_task(
             id="test-project/explicit", project_id="test-project",
@@ -65,7 +65,7 @@ class TestResolveBranchTarget:
 
     async def test_uses_component_base_branch(self, db, sample_project):
         """component.base_branch used when task has none."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         comp = await db.create_component(
             id="test-project/api", project_id="test-project",
@@ -81,7 +81,7 @@ class TestResolveBranchTarget:
 
     async def test_falls_back_to_project_default(self, db, sample_project):
         """Falls back to project.default_branch."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         task = await db.create_task(
             id="test-project/basic", project_id="test-project",
@@ -93,7 +93,7 @@ class TestResolveBranchTarget:
 
     async def test_component_base_branch_wins_over_depends_on(self, db, sample_project):
         """component.base_branch is used even when depends_on is set."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         comp = await db.create_component(
             id="test-project/api", project_id="test-project",
@@ -116,7 +116,7 @@ class TestResolveBranchTarget:
 
     async def test_depends_on_parent_merged_falls_to_project_default(self, db, sample_project):
         """depends_on child with no other config returns project default regardless of parent state."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         parent = await db.create_task(
             id="test-project/merged-parent", project_id="test-project",
@@ -136,7 +136,7 @@ class TestResolveBranchTarget:
 
     async def test_depends_on_parent_with_worktree_still_uses_project_default(self, db, sample_project):
         """depends_on child returns project default even when parent's worktree still exists."""
-        from switchboard.git.operations import resolve_branch_target
+        from ouvrage.git.operations import resolve_branch_target
 
         parent = await db.create_task(
             id="test-project/wt-parent", project_id="test-project",
@@ -169,8 +169,8 @@ class TestAutoMerge:
         self.mock_run = AsyncMock(return_value=(b"", b"", 0))
         self.mock_resolve_url = AsyncMock(return_value="https://oauth2:ghp_test@github.com/acme/widgets.git")
         patches = [
-            patch("switchboard.git.operations._run_as_worker", self.mock_run),
-            patch("switchboard.git.operations._resolve_push_url", self.mock_resolve_url),
+            patch("ouvrage.git.operations._run_as_worker", self.mock_run),
+            patch("ouvrage.git.operations._resolve_push_url", self.mock_resolve_url),
         ]
         for p in patches:
             p.start()
@@ -180,7 +180,7 @@ class TestAutoMerge:
 
     async def test_merge_success(self, db, sample_project):
         """Successful merge: status=merged, pushed_at set."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/merge-ok", project_id="test-project",
@@ -201,7 +201,7 @@ class TestAutoMerge:
 
     async def test_merge_conflict(self, db, sample_project):
         """Merge conflict: status=needs-review, conflict files listed."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/merge-conflict", project_id="test-project",
@@ -235,7 +235,7 @@ class TestAutoMerge:
 
     async def test_merge_sets_branch_target(self, db, sample_project):
         """branch_target is resolved and stored on the task."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/target-test", project_id="test-project",
@@ -252,7 +252,7 @@ class TestAutoMerge:
 
     async def test_detached_head_avoids_branch_conflict(self, db, sample_project):
         """Detached HEAD approach never checks out branch by name — no worktree conflict possible."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/detach-test", project_id="test-project",
@@ -270,7 +270,7 @@ class TestAutoMerge:
 
         self.mock_run.side_effect = mock_run
 
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
+        with patch("ouvrage.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
             result = await _perform_auto_merge("test-project/detach-test")
 
         assert result is True
@@ -289,7 +289,7 @@ class TestAutoMerge:
 
     async def test_push_retry_succeeds(self, db, sample_project):
         """Push retry: fails on first attempt, succeeds on second."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/retry-ok", project_id="test-project",
@@ -322,7 +322,7 @@ class TestAutoMerge:
 
     async def test_push_retry_exhausted(self, db, sample_project):
         """Push retry: fails all 3 attempts → needs-review."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/retry-fail", project_id="test-project",
@@ -354,7 +354,7 @@ class TestAutoMerge:
 
     async def test_merge_posts_message(self, db, sample_project):
         """Auto-merge posts a status message on success."""
-        from switchboard.git.operations import _perform_auto_merge
+        from ouvrage.git.operations import _perform_auto_merge
 
         task = await db.create_task(
             id="test-project/msg-test", project_id="test-project",
@@ -380,7 +380,7 @@ class TestWorktreeLifecycle:
 
     async def test_release_worktree(self, db, sample_project):
         """release_worktree sets worktree_path to NULL."""
-        from switchboard.dispatch.engine import release_worktree
+        from ouvrage.dispatch.engine import release_worktree
 
         task = await db.create_task(
             id="test-project/release-me", project_id="test-project",
@@ -400,7 +400,7 @@ class TestWorktreeLifecycle:
 
     async def test_release_worktree_no_worktree(self, db, sample_project):
         """release_worktree on task with no worktree returns released=False."""
-        from switchboard.dispatch.engine import release_worktree
+        from ouvrage.dispatch.engine import release_worktree
 
         task = await db.create_task(
             id="test-project/no-wt", project_id="test-project",
@@ -412,14 +412,14 @@ class TestWorktreeLifecycle:
 
     async def test_release_worktree_not_found(self, db, sample_project):
         """release_worktree raises for unknown task."""
-        from switchboard.dispatch.engine import release_worktree
+        from ouvrage.dispatch.engine import release_worktree
 
         with pytest.raises(ValueError, match="not found"):
             await release_worktree("test-project/nonexistent")
 
     async def test_auto_release_on_gate_pass(self, db, sample_project):
         """auto_release_worktree=true triggers release after gate pass."""
-        from switchboard.dispatch.engine import _auto_release_worktree
+        from ouvrage.dispatch.engine import _auto_release_worktree
 
         task = await db.create_task(
             id="test-project/auto-release", project_id="test-project",
@@ -427,13 +427,13 @@ class TestWorktreeLifecycle:
         )
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree")
 
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
+        with patch("ouvrage.dispatch.engine.release_worktree", AsyncMock(return_value={"released": True})) as mock_release:
             await _auto_release_worktree("test-project/auto-release")
             mock_release.assert_awaited_once_with("test-project/auto-release", reason="completion")
 
     async def test_no_auto_release_when_disabled(self, db, sample_project):
         """auto_release_worktree=false skips release."""
-        from switchboard.dispatch.engine import _auto_release_worktree
+        from ouvrage.dispatch.engine import _auto_release_worktree
 
         task = await db.create_task(
             id="test-project/keep-wt", project_id="test-project",
@@ -445,7 +445,7 @@ class TestWorktreeLifecycle:
         # let's also update it to make sure the field works via update
         await db.update_task(task["id"], auto_release_worktree=False)
 
-        with patch("switchboard.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
+        with patch("ouvrage.dispatch.engine.release_worktree", AsyncMock()) as mock_release:
             await _auto_release_worktree("test-project/keep-wt")
             mock_release.assert_not_awaited()
 
@@ -459,7 +459,7 @@ class TestBlockingErrors:
 
     async def test_find_branch_holder(self, db, sample_project):
         """_find_branch_holder returns the holding task info."""
-        from switchboard.git.worktree import _find_branch_holder
+        from ouvrage.git.worktree import _find_branch_holder
 
         task = await db.create_task(
             id="test-project/holder", project_id="test-project",
@@ -477,14 +477,14 @@ class TestBlockingErrors:
 
     async def test_find_branch_holder_none(self, db, sample_project):
         """_find_branch_holder returns None when no holder."""
-        from switchboard.git.worktree import _find_branch_holder
+        from ouvrage.git.worktree import _find_branch_holder
 
         result = await _find_branch_holder("feature/nonexistent")
         assert result is None
 
     async def test_find_branch_holder_null_worktree(self, db, sample_project):
         """_find_branch_holder ignores tasks with NULL worktree_path."""
-        from switchboard.git.worktree import _find_branch_holder
+        from ouvrage.git.worktree import _find_branch_holder
 
         task = await db.create_task(
             id="test-project/released", project_id="test-project",
@@ -553,9 +553,9 @@ class TestCheckAndDispatchWithAutoMerge:
         self.mock_drain = AsyncMock()
 
         patches = [
-            patch("switchboard.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
-            patch("switchboard.dispatch.engine._maybe_create_pr", self.mock_pr),
-            patch("switchboard.dispatch.engine._drain_queue", self.mock_drain),
+            patch("ouvrage.dispatch.lifecycle.lifecycle.execute", self.mock_lifecycle_execute),
+            patch("ouvrage.dispatch.engine._maybe_create_pr", self.mock_pr),
+            patch("ouvrage.dispatch.engine._drain_queue", self.mock_drain),
         ]
         for p in patches:
             p.start()
@@ -565,7 +565,7 @@ class TestCheckAndDispatchWithAutoMerge:
 
     async def test_auto_merge_called_on_gate_pass(self, db, sample_project):
         """When auto_merge is true, _perform_auto_merge is called."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/am-gate", project_id="test-project",
@@ -576,14 +576,14 @@ class TestCheckAndDispatchWithAutoMerge:
             worktree_path="/tmp/fake",
         )
 
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)) as mock_merge:
-            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
+        with patch("ouvrage.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)) as mock_merge:
+            with patch("ouvrage.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/am-gate")
                 mock_merge.assert_awaited_once_with("test-project/am-gate")
 
     async def test_mid_chain_skips_merge_dispatches_dependent(self, db, sample_project):
         """Mid-chain task with auto_merge=True skips merge and dispatches dependent."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/am-mid", project_id="test-project",
@@ -598,8 +598,8 @@ class TestCheckAndDispatchWithAutoMerge:
             goal="Dependent", depends_on="test-project/am-mid",
         )
 
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock()) as mock_merge:
-            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
+        with patch("ouvrage.dispatch.engine._perform_auto_merge", AsyncMock()) as mock_merge:
+            with patch("ouvrage.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/am-mid")
 
         # Mid-chain: merge should NOT be called, dependent SHOULD be dispatched
@@ -611,7 +611,7 @@ class TestCheckAndDispatchWithAutoMerge:
 
     async def test_queue_drained_after_chain(self, db, sample_project):
         """_drain_queue is called at the end of _check_and_dispatch_dependents."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/drain-test", project_id="test-project",
@@ -621,8 +621,8 @@ class TestCheckAndDispatchWithAutoMerge:
             status="completed", gate_status="passed", gate_passed_at=db.now_iso(),
         )
 
-        with patch("switchboard.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
-            with patch("switchboard.dispatch.engine._auto_release_worktree", AsyncMock()):
+        with patch("ouvrage.dispatch.engine._perform_auto_merge", AsyncMock(return_value=True)):
+            with patch("ouvrage.dispatch.engine._auto_release_worktree", AsyncMock()):
                 await _check_and_dispatch_dependents("test-project/drain-test")
 
         self.mock_drain.assert_awaited_once()

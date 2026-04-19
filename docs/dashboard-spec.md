@@ -1,20 +1,20 @@
-# Switchboard Dashboard — Implementation Spec
+# Ouvrage Dashboard — Implementation Spec
 
 ## Overview
 
-A read-heavy SPA served from the existing Switchboard server (bare metal, port 8100). Provides real-time visibility into task execution with limited action capabilities (cancel, retry, resume). No build step — vanilla JS, Tailwind via CDN, dark theme.
+A read-heavy SPA served from the existing Ouvrage server (bare metal, port 8100). Provides real-time visibility into task execution with limited action capabilities (cancel, retry, resume). No build step — vanilla JS, Tailwind via CDN, dark theme.
 
 ## Architecture
 
 ```
-Browser → Caddy (basic auth) → Switchboard :8100
+Browser → Caddy (basic auth) → Ouvrage :8100
                                   ├── /mcp          (MCP Streamable HTTP — existing)
                                   ├── /dashboard     (static SPA files)
                                   └── /dashboard/api (JSON REST endpoints)
 ```
 
 - **Auth:** Caddy basic auth covers all `/dashboard*` routes. Dashboard API paths added to `UNPROTECTED_PATHS` in `auth.py` (OAuth not needed — Caddy handles it, and these endpoints are not MCP).
-- **Serving:** Switchboard mounts a Starlette `StaticFiles` for `/dashboard` and API routes alongside the existing MCP app.
+- **Serving:** Ouvrage mounts a Starlette `StaticFiles` for `/dashboard` and API routes alongside the existing MCP app.
 - **Data:** All endpoints read from the same SQLite DB via `database.py`.
 - **Real-time:** Polling at 10s intervals (v1). SSE upgrade path exists since we already have the ASGI infrastructure.
 
@@ -65,12 +65,12 @@ GET /tasks/{task_id}/messages
   Sort: created_at asc
 
 GET /tasks/{task_id}/session-log
-  Returns: Parsed JSONL from .switchboard/session.jsonl
+  Returns: Parsed JSONL from .ouvrage/session.jsonl
   [{timestamp, type, content_preview, tool_name, stop_reason, cost_usd, num_turns}]
   Returns [] if no log file exists
 
 GET /tasks/{task_id}/dispatch-log
-  Returns: Raw text of .switchboard/dispatch.log
+  Returns: Raw text of .ouvrage/dispatch.log
 
 GET /projects
   Returns: [{id, repo, default_branch, working_dir, active_task_count, total_cost}]
@@ -105,7 +105,7 @@ The main landing page. A filterable task table.
 **Layout:**
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  SWITCHBOARD                              [2 active] [$4.23 total]  │
+│  OUVRAGE                              [2 active] [$4.23 total]  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Filters: [All statuses ▾]  [All projects ▾]          Auto-refresh ●│
 ├─────────────────────────────────────────────────────────────────────┤
@@ -116,7 +116,7 @@ The main landing page. A filterable task table.
 │              ▓▓▓░░░░░░ 3/9    $0.00    2m ago              [Cancel] │
 │                                                                     │
 │  ● COMPLETED mcp-switchboard/write-claude-md                        │
-│              Write CLAUDE.md for the Switchboard repo               │
+│              Write CLAUDE.md for the Ouvrage repo               │
 │              ▓▓▓▓▓▓▓▓▓ 9/9    $1.25    47m ago                     │
 │                                                                     │
 │  ✕ FAILED    ym-discount-engine/review-marketing-provider (prev)    │
@@ -250,7 +250,7 @@ Expanded:
 │  14:24:20  TOOL    Read → app/Contracts/MarketingCodeProviderCon... │
 │  ...                                                                │
 │                                                                     │
-│  14:31:45  TOOL    mcp__switchboard__post_task_message → ...        │
+│  14:31:45  TOOL    mcp__ouvrage__post_task_message → ...        │
 │  14:31:46  RESULT  (success)                                        │
 │  14:31:46  DONE    19 turns | 103s | $0.59                          │
 │                                                                     │
@@ -335,7 +335,7 @@ Status colors:
 - Add `/dashboard` prefix to unprotected paths (Caddy handles auth externally)
 
 ### Modified: Caddyfile
-- Add basic auth block for `switchboard.example.dev/dashboard*`
+- Add basic auth block for `ouvrage.example.dev/dashboard*`
 
 ## Implementation Order
 
@@ -349,7 +349,7 @@ Status colors:
 8. **Action buttons** — cancel/retry/resume with confirmation
 9. **Projects view** — simple, last priority
 10. **Caddy config** — basic auth on `/dashboard*`
-11. **Deploy** — copy to `/opt/switchboard/`, restart
+11. **Deploy** — copy to `/opt/ouvrage/`, restart
 
 ## Not In Scope (v1)
 

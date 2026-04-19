@@ -1,8 +1,8 @@
-# Switchboard/Foreman — New Session Handoff
+# Ouvrage — New Session Handoff
 
-## What is Switchboard/Foreman?
+## What is Ouvrage?
 
-Switchboard is an AI task orchestration platform. It dispatches autonomous Claude Code workers to isolated git worktrees, manages test/review gates, tracks everything in SQLite, and surfaces a dashboard (branded "Foreman") via a CDN-loaded Preact SPA. It runs as an MCP server on localhost — both Claude.ai and Claude Code workers connect to it.
+Ouvrage is an AI task orchestration platform. It dispatches autonomous Claude Code workers to isolated git worktrees, manages test/review gates, tracks everything in SQLite, and surfaces a dashboard via a CDN-loaded Preact SPA. It runs as an MCP server on localhost — both Claude.ai and Claude Code workers connect to it.
 
 ## First Steps in a New Session
 
@@ -15,18 +15,18 @@ Switchboard is an AI task orchestration platform. It dispatches autonomous Claud
 
 | Conversation ID | Description |
 |---|---|
-| `switchboard-saas` | Foreman core — feature decisions, task log, primary working thread |
-| `switchboard-roadmap` | Priorities, planned work, what to build next |
+| `ouvrage-saas` | Ouvrage core — feature decisions, task log, primary working thread |
+| `ouvrage-roadmap` | Priorities, planned work, what to build next |
 | `platform-spec` | Control plane specs — auth, MCP protocol, API design |
 | `system-audit` | Latest codebase audit findings (posted by the system-audit task) |
 
-Search for these: `conversations(search="switchboard")` if IDs have changed.
+Search for these: `conversations(search="ouvrage")` if IDs have changed.
 
 ## Key Components (mcp-switchboard project)
 
 | Component ID | Description |
 |---|---|
-| `foreman-hardening` | Dashboard stability, visual polish, auth hardening |
+| `ouvrage-hardening` | Dashboard stability, visual polish, auth hardening |
 | `initial-build` | Original foundational build (historical) |
 
 Components have **zero config at creation** — all fields null, they inherit from the project.
@@ -34,12 +34,12 @@ Components have **zero config at creation** — all fields null, they inherit fr
 ## Dispatch Rules (Read This Before Every Dispatch)
 
 - **Tasks are held by default** (`held=1`). Always explicitly set `held=0` to dispatch immediately, or release manually after review.
-- **Never use `gh` CLI directly.** Set `auto_pr=1` on the task/project and Switchboard handles PR creation.
+- **Never use `gh` CLI directly.** Set `auto_pr=1` on the task/project and Ouvrage handles PR creation.
 - **Check `pr_status`** on a task before telling Stephen about PR state — don't guess.
 - **Dashboard tasks require Playwright screenshots.** Use `python3 scripts/visual-check.py <page>` and attach results with `add_task_file`.
 - **No `kill`/`pkill`/`killall`.** A PreToolUse hook blocks these for worker safety.
 - **Never modify git config** — writes to the shared bare repo and breaks all worktrees.
-- **Never checkout other branches** — your branch is yours. Switchboard handles merging.
+- **Never checkout other branches** — your branch is yours. Ouvrage handles merging.
 
 ## Config Inheritance
 
@@ -67,8 +67,8 @@ Resolution function: `_resolve_limit(task_val, project_val, global_default)` in 
 ## Where Specs Live
 
 - **Control plane / auth / API design** → `platform-spec` conversation (pinned message)
-- **Foreman core / task orchestration** → `switchboard-saas` conversation (pinned message)
-- **Priorities / roadmap** → `switchboard-roadmap` conversation (pinned message)
+- **Ouvrage core / task orchestration** → `ouvrage-saas` conversation (pinned message)
+- **Priorities / roadmap** → `ouvrage-roadmap` conversation (pinned message)
 - **Per-task specs** → pinned message in the task's message log (`get_pinned` or `read_task_messages`)
 
 ## How to Regenerate This Doc
@@ -105,7 +105,7 @@ SPA:  Preact + htm via CDN (esm.sh), no build step, hash routing
 ### Built and running
 - Full MCP server (70+ tools) with session + Bearer JWT auth
 - Task dispatch engine with worktree isolation, gate pipeline, crash recovery
-- Foreman SPA: project grid, project detail, task detail, conversations, settings, files
+- Ouvrage SPA: project grid, project detail, task detail, conversations, settings, files
 - Interactive architecture docs at `#/docs` (this deliverable)
 - OAuth 2.0 server (RS256, PKCE, refresh rotation)
 - Web push notifications (VAPID)
@@ -113,12 +113,12 @@ SPA:  Preact + htm via CDN (esm.sh), no build step, hash routing
 - Semantic search (OpenAI embeddings)
 - Mobile-responsive dashboard (375px verified)
 
-### Actively being built (check switchboard-roadmap)
+### Actively being built (check ouvrage-roadmap)
 - Check `conversations(search="roadmap")` for current priorities
 
 ### Key files for orientation
 - `/work/mcp-switchboard/CLAUDE.md` — full developer guide
 - `/work/mcp-switchboard/dashboard/docs/architecture.jsx` — interactive docs (browse at `#/docs`)
-- `/work/mcp-switchboard/switchboard/dispatch/engine.py` — task lifecycle core
-- `/work/mcp-switchboard/switchboard/server/tools.py` — all 70+ MCP tool schemas
-- `/work/mcp-switchboard/switchboard/db/schema.py` — all 21 database tables
+- `/work/mcp-switchboard/ouvrage/dispatch/engine.py` — task lifecycle core
+- `/work/mcp-switchboard/ouvrage/server/tools.py` — all 70+ MCP tool schemas
+- `/work/mcp-switchboard/ouvrage/db/schema.py` — all 21 database tables

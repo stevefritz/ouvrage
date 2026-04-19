@@ -4,7 +4,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from switchboard.git.operations import normalize_repo_url
+from ouvrage.git.operations import normalize_repo_url
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +79,13 @@ class TestCreateProjectNormalizesUrl:
             return kwargs
 
         self.patches = [
-            patch("switchboard.server.handlers.projects.db.create_project", side_effect=mock_create_project),
-            patch("switchboard.server.handlers.projects.db.list_projects", AsyncMock(return_value=[])),
-            patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)),
-            patch("switchboard.server.handlers.projects.get_request_user_id", return_value=1),
+            patch("ouvrage.server.handlers.projects.db.create_project", side_effect=mock_create_project),
+            patch("ouvrage.server.handlers.projects.db.list_projects", AsyncMock(return_value=[])),
+            patch("ouvrage.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)),
+            patch("ouvrage.server.handlers.projects.get_request_user_id", return_value=1),
             patch("os.path.realpath", side_effect=lambda p: p),
-            patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)),
-            patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"),
+            patch("ouvrage.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)),
+            patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"),
         ]
         for p in self.patches:
             p.start()
@@ -106,7 +106,7 @@ class TestCreateProjectNormalizesUrl:
 
     @pytest.mark.asyncio
     async def test_ssh_url_normalized_to_https(self):
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
         await _handle_create_project({
             "id": "test-proj",
             "repo": "git@github.com:acme/widgets.git",
@@ -117,7 +117,7 @@ class TestCreateProjectNormalizesUrl:
 
     @pytest.mark.asyncio
     async def test_https_url_passthrough(self):
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
         await _handle_create_project({
             "id": "test-proj",
             "repo": "https://github.com/acme/widgets.git",
@@ -148,8 +148,8 @@ class TestUpdateProjectNormalizesUrl:
             return project
 
         self.patches = [
-            patch("switchboard.server.handlers.projects.db.update_project", side_effect=mock_update_project),
-            patch("switchboard.server.handlers.projects._run_project_validation", side_effect=mock_validation),
+            patch("ouvrage.server.handlers.projects.db.update_project", side_effect=mock_update_project),
+            patch("ouvrage.server.handlers.projects._run_project_validation", side_effect=mock_validation),
         ]
         for p in self.patches:
             p.start()
@@ -159,7 +159,7 @@ class TestUpdateProjectNormalizesUrl:
 
     @pytest.mark.asyncio
     async def test_ssh_repo_normalized_on_update(self):
-        from switchboard.server.handlers.projects import _handle_update_project
+        from ouvrage.server.handlers.projects import _handle_update_project
         await _handle_update_project({
             "id": "test-proj",
             "repo": "git@github.com:acme/widgets.git",
@@ -168,7 +168,7 @@ class TestUpdateProjectNormalizesUrl:
 
     @pytest.mark.asyncio
     async def test_no_repo_field_not_normalized(self):
-        from switchboard.server.handlers.projects import _handle_update_project
+        from ouvrage.server.handlers.projects import _handle_update_project
         await _handle_update_project({
             "id": "test-proj",
             "test_command": "pytest",
@@ -177,7 +177,7 @@ class TestUpdateProjectNormalizesUrl:
 
     @pytest.mark.asyncio
     async def test_https_repo_unchanged_on_update(self):
-        from switchboard.server.handlers.projects import _handle_update_project
+        from ouvrage.server.handlers.projects import _handle_update_project
         await _handle_update_project({
             "id": "test-proj",
             "repo": "https://github.com/acme/widgets",
@@ -212,7 +212,7 @@ class TestStartupMigration:
             mock_proc.return_value = mock_instance
             # Ensure bare path does NOT exist so we skip git remote set-url
             with patch("os.path.exists", return_value=False):
-                from switchboard.db.schema import init_db
+                from ouvrage.db.schema import init_db
                 await init_db()
 
         # Verify the URL was updated
@@ -231,7 +231,7 @@ class TestStartupMigration:
             await conn.commit()
 
         with patch("os.path.exists", return_value=False):
-            from switchboard.db.schema import init_db
+            from ouvrage.db.schema import init_db
             await init_db()
 
         async with db.get_db() as conn:
@@ -257,7 +257,7 @@ class TestStartupMigration:
         mock_proc.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-            from switchboard.db.schema import init_db
+            from ouvrage.db.schema import init_db
             await init_db()
 
         # Verify git remote set-url was called with the HTTPS URL
@@ -321,8 +321,8 @@ class TestBareCloneAuth:
         self.mock_get_db = AsyncMock()
 
         self.patches = [
-            patch("switchboard.git.worktree._run_as_worker", self.mock_run),
-            patch("switchboard.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
+            patch("ouvrage.git.worktree._run_as_worker", self.mock_run),
+            patch("ouvrage.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
         ]
         for p in self.patches:
             p.start()
@@ -340,11 +340,11 @@ class TestBareCloneAuth:
     @pytest.mark.asyncio
     async def test_bare_clone_uses_authenticated_url_when_pat_available(self):
         """When PAT is configured, git clone --bare must use the authenticated URL."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
+            with patch("ouvrage.git.worktree.db.get_task", AsyncMock(return_value=None)):
                 try:
                     await setup_worktree(self.project, "test-task", "test-branch")
                 except Exception:
@@ -360,11 +360,11 @@ class TestBareCloneAuth:
     @pytest.mark.asyncio
     async def test_bare_clone_falls_back_to_plain_url_when_no_pat(self):
         """When no PAT is configured, git clone --bare falls back to plain project URL."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(side_effect=ValueError("No GitHub PAT configured"))
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
+            with patch("ouvrage.git.worktree.db.get_task", AsyncMock(return_value=None)):
                 try:
                     await setup_worktree(self.project, "test-task", "test-branch")
                 except Exception:
@@ -379,15 +379,15 @@ class TestBareCloneAuth:
     @pytest.mark.asyncio
     async def test_bare_clone_skipped_when_bare_path_exists(self):
         """When .bare already exists, git clone --bare must NOT be called."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         # Pre-create the bare path to simulate existing project
         bare_path = os.path.join(self.working_dir, ".bare")
         os.makedirs(bare_path)
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
+            with patch("ouvrage.git.worktree.db.get_task", AsyncMock(return_value=None)):
                 try:
                     await setup_worktree(self.project, "test-task", "test-branch")
                 except Exception:
@@ -399,11 +399,11 @@ class TestBareCloneAuth:
     @pytest.mark.asyncio
     async def test_fetch_uses_authenticated_url_when_pat_available(self):
         """The post-clone git fetch must also use the authenticated URL."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
+            with patch("ouvrage.git.worktree.db.get_task", AsyncMock(return_value=None)):
                 try:
                     await setup_worktree(self.project, "test-task", "test-branch")
                 except Exception:
@@ -420,11 +420,11 @@ class TestBareCloneAuth:
     @pytest.mark.asyncio
     async def test_pat_stripped_from_bare_repo_remote_url_after_clone(self):
         """After bare clone, remote.origin.url must be reset to the plain URL (no PAT)."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
-            with patch("switchboard.git.worktree.db.get_task", AsyncMock(return_value=None)):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
+            with patch("ouvrage.git.worktree.db.get_task", AsyncMock(return_value=None)):
                 try:
                     await setup_worktree(self.project, "test-task", "test-branch")
                 except Exception:
@@ -479,8 +479,8 @@ class TestExistingWorktreeFetchFallback:
 
         self.mock_run = AsyncMock()
         self.patches = [
-            patch("switchboard.git.worktree._run_as_worker", self.mock_run),
-            patch("switchboard.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
+            patch("ouvrage.git.worktree._run_as_worker", self.mock_run),
+            patch("ouvrage.git.worktree._get_worker_ids", MagicMock(return_value=(1000, 1000))),
         ]
         for p in self.patches:
             p.start()
@@ -491,7 +491,7 @@ class TestExistingWorktreeFetchFallback:
     @pytest.mark.asyncio
     async def test_fetch_success_no_fallback(self):
         """When fetch origin succeeds, fallback fetch is not attempted."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         self.mock_run.return_value = (b"", b"", 0)  # all git commands succeed
 
@@ -509,7 +509,7 @@ class TestExistingWorktreeFetchFallback:
     @pytest.mark.asyncio
     async def test_fetch_failure_tries_authenticated_url(self):
         """When fetch origin fails, it retries with the authenticated URL."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
 
@@ -521,7 +521,7 @@ class TestExistingWorktreeFetchFallback:
 
         self.mock_run.side_effect = _side_effect
 
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
             await setup_worktree(self.project, self.dir_name, self.branch)
 
         # Authenticated URL should appear in a fetch call
@@ -535,7 +535,7 @@ class TestExistingWorktreeFetchFallback:
     @pytest.mark.asyncio
     async def test_fetch_failure_fallback_also_fails_raises(self):
         """When both fetch origin and authenticated URL fetch fail, RuntimeError is raised."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(return_value=self.AUTH_URL)
 
@@ -546,14 +546,14 @@ class TestExistingWorktreeFetchFallback:
 
         self.mock_run.side_effect = _side_effect
 
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
             with pytest.raises(RuntimeError, match="git fetch failed"):
                 await setup_worktree(self.project, self.dir_name, self.branch)
 
     @pytest.mark.asyncio
     async def test_fetch_failure_no_pat_raises(self):
         """When fetch fails and no PAT is available, RuntimeError is raised."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         mock_resolve = AsyncMock(side_effect=ValueError("No GitHub PAT configured"))
 
@@ -564,6 +564,6 @@ class TestExistingWorktreeFetchFallback:
 
         self.mock_run.side_effect = _side_effect
 
-        with patch("switchboard.git.operations._resolve_push_url", mock_resolve):
+        with patch("ouvrage.git.operations._resolve_push_url", mock_resolve):
             with pytest.raises(RuntimeError, match="no PAT available"):
                 await setup_worktree(self.project, self.dir_name, self.branch)

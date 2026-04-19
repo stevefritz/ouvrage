@@ -9,15 +9,15 @@ class TestMigrateAuth:
     @pytest.fixture(autouse=True)
     def mock_init_oauth_keys(self):
         """Prevent init_oauth_keys from writing RSA key to /data (locked down in test env)."""
-        with patch("switchboard.auth.oauth.init_oauth_keys", return_value=None):
+        with patch("ouvrage.auth.oauth.init_oauth_keys", return_value=None):
             yield
 
     async def test_creates_owner_user(self, db):
         """migrate-auth creates user with provided email and name."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.users import get_user_by_email
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             result = await run_migrate_auth(
                 email="admin@example.com",
                 name="Admin User",
@@ -33,10 +33,10 @@ class TestMigrateAuth:
 
     async def test_creates_instance_with_slug(self, db):
         """migrate-auth updates instance slug and name."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.users import get_instance
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.users import get_instance
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             await run_migrate_auth(
                 email="admin@example.com",
                 name="Admin",
@@ -51,8 +51,8 @@ class TestMigrateAuth:
 
     async def test_seeds_oauth_client(self, db):
         """migrate-auth seeds claude-mcp OAuth client."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.connection import get_db
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.connection import get_db
 
         await run_migrate_auth(
             email="admin@example.com",
@@ -69,10 +69,10 @@ class TestMigrateAuth:
 
     async def test_idempotent_same_email(self, db):
         """Running migrate-auth twice with same email skips on second call."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.users import list_users
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.users import list_users
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             first = await run_migrate_auth(
                 email="admin@example.com",
                 name="Admin",
@@ -96,15 +96,15 @@ class TestMigrateAuth:
 
     async def test_replaces_owner_placeholder(self, db):
         """migrate-auth replaces owner@localhost placeholder, preserving user_id for FK integrity."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.users import get_user_by_email
 
         # Bootstrap creates owner@localhost — confirm it's there
         placeholder = await get_user_by_email("owner@localhost")
         assert placeholder is not None, "Bootstrap should have created owner@localhost"
         placeholder_id = placeholder["id"]
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             result = await run_migrate_auth(
                 email="real@example.com",
                 name="Real Owner",
@@ -124,15 +124,15 @@ class TestMigrateAuth:
 
     async def test_backfills_project_fks(self, db, sample_project):
         """migrate-auth backfills NULL created_by on projects."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.connection import get_db
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.connection import get_db
 
         # Manually null out created_by
         async with get_db() as conn:
             await conn.execute("UPDATE projects SET created_by = NULL")
             await conn.commit()
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             await run_migrate_auth(
                 email="admin@example.com",
                 name="Admin",
@@ -148,7 +148,7 @@ class TestMigrateAuth:
 
     async def test_returns_client_id_and_secret(self, db):
         """run_migrate_auth result includes client_id and client_secret."""
-        from switchboard.migrate import run_migrate_auth
+        from ouvrage.migrate import run_migrate_auth
 
         result = await run_migrate_auth(
             email="admin@example.com",
@@ -163,10 +163,10 @@ class TestMigrateAuth:
 
     async def test_instance_owner_points_to_real_user(self, db):
         """Instance owner_user_id points to the real owner after migration."""
-        from switchboard.migrate import run_migrate_auth
-        from switchboard.db.users import get_instance, get_user_by_email
+        from ouvrage.migrate import run_migrate_auth
+        from ouvrage.db.users import get_instance, get_user_by_email
 
-        with patch("switchboard.auth.oauth.seed_default_client", new=AsyncMock()):
+        with patch("ouvrage.auth.oauth.seed_default_client", new=AsyncMock()):
             result = await run_migrate_auth(
                 email="owner@myco.com",
                 name="Owner",

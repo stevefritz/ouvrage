@@ -1,4 +1,4 @@
-// ProjectCreateView — Register a new git repo as a Switchboard project
+// ProjectCreateView — Register a new git repo as an Ouvrage project
 // All config fields are required (no silent fallthrough to system defaults).
 
 import { h } from 'https://esm.sh/preact@10.25.4';
@@ -694,8 +694,8 @@ export function ProjectCreateView() {
                 box-shadow: 0 0 0 2px ${colors.accent}22;
             }
             button[type="button"]:focus { outline: none; }
-            .foreman-input-mono::placeholder { color: ${colors.textTertiary}; font-family: ${typography.fontMono}; }
-            .foreman-input::placeholder { color: ${colors.textTertiary}; }
+            .ouvrage-input-mono::placeholder { color: ${colors.textTertiary}; font-family: ${typography.fontMono}; }
+            .ouvrage-input::placeholder { color: ${colors.textTertiary}; }
         `}</style>
 
         <div style=${pageStyle}>
@@ -721,7 +721,7 @@ export function ProjectCreateView() {
                     <div style=${fieldStyle}>
                         <${FieldLabel} label="Project ID" required=${true} helpText="Short unique slug used in task IDs and URLs. Lowercase, hyphens only." />
                         <input
-                            class="foreman-input-mono"
+                            class="ouvrage-input-mono"
                             type="text"
                             value=${id}
                             onInput=${e => setId(e.target.value)}
@@ -734,7 +734,7 @@ export function ProjectCreateView() {
                     <div style=${fieldStyle}>
                         <${FieldLabel} label="Repository URL" required=${true} helpText="HTTPS clone URL. SSH URLs are auto-converted on the server." />
                         <input
-                            class="foreman-input-mono"
+                            class="ouvrage-input-mono"
                             type="text"
                             value=${repo}
                             onInput=${e => handleRepoChange(e.target.value)}
@@ -767,7 +767,7 @@ export function ProjectCreateView() {
                 <div style=${fieldStyle}>
                     <${FieldLabel} label="Default Branch" required=${true} helpText="The main branch tasks fork from and merge back into. Also the inherited default for task base_branch and branch_target." />
                     <input
-                        class="foreman-input-mono"
+                        class="ouvrage-input-mono"
                         type="text"
                         value=${defaultBranch}
                         onInput=${e => setDefaultBranch(e.target.value)}
@@ -906,7 +906,7 @@ export function ProjectCreateView() {
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Working Directory Name" helpText="Override the folder name used for this project's worktrees (optional — defaults to repo name). Use this if you need multiple projects from the same repo." />
                                 <input
-                                    class="foreman-input-mono"
+                                    class="ouvrage-input-mono"
                                     type="text"
                                     value=${folderName}
                                     onInput=${e => setFolderName(e.target.value)}
@@ -922,7 +922,7 @@ export function ProjectCreateView() {
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Test Command" helpText="Shell command for the test suite. Example: 'pytest -v', 'npm test'. Leave blank if no automated tests." />
                                 <input
-                                    class="foreman-input-mono"
+                                    class="ouvrage-input-mono"
                                     type="text"
                                     value=${testCommand}
                                     onInput=${e => setTestCommand(e.target.value)}
@@ -937,7 +937,7 @@ export function ProjectCreateView() {
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Setup Command" helpText="Runs in each new worktree after creation. Example: 'npm install', 'pip install -r requirements.txt'." />
                                 <input
-                                    class="foreman-input-mono"
+                                    class="ouvrage-input-mono"
                                     type="text"
                                     value=${setupCommand}
                                     onInput=${e => setSetupCommand(e.target.value)}
@@ -952,7 +952,7 @@ export function ProjectCreateView() {
                             <div style=${fieldStyle}>
                                 <${FieldLabel} label="Review Ignore Patterns" helpText="File glob patterns to exclude from reviewer diffs. Comma-separated. Example: '*.lock, vendor/, node_modules/'" />
                                 <input
-                                    class="foreman-input"
+                                    class="ouvrage-input"
                                     type="text"
                                     value=${ignorePatterns}
                                     onInput=${e => setIgnorePatterns(e.target.value)}
@@ -1058,7 +1058,7 @@ export function ProjectCreateView() {
                                         <div style=${fieldStyle}>
                                             <${FieldLabel} label="Teardown Command" helpText="Runs when a worktree is cleaned up. Only needed for repos that require explicit cleanup (e.g. stopping services, removing containers)." />
                                             <input
-                                                class="foreman-input-mono"
+                                                class="ouvrage-input-mono"
                                                 type="text"
                                                 value=${teardownCommand}
                                                 onInput=${e => setTeardownCommand(e.target.value)}

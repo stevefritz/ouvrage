@@ -58,7 +58,7 @@ class _Capture:
 class TestListTokens:
 
     async def test_list_tokens_empty(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="GET")
         resp = _Capture()
@@ -70,7 +70,7 @@ class TestListTokens:
         assert data["tokens"] == []
 
     async def test_list_tokens_unauthenticated(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="GET")
         del scope["session_user"]
@@ -80,7 +80,7 @@ class TestListTokens:
         assert resp.status == 401
 
     async def test_list_tokens_after_create(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Create a token first
         create_scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
@@ -107,7 +107,7 @@ class TestListTokens:
 class TestCreateToken:
 
     async def test_create_token_success(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         resp = _Capture()
@@ -122,7 +122,7 @@ class TestCreateToken:
         assert data["token_prefix"] == data["token"][:12]
 
     async def test_create_token_no_name(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         resp = _Capture()
@@ -134,7 +134,7 @@ class TestCreateToken:
         assert data["token"].startswith("sb_")
 
     async def test_create_token_empty_name_treated_as_null(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         resp = _Capture()
@@ -145,7 +145,7 @@ class TestCreateToken:
         assert data["name"] is None
 
     async def test_create_token_unauthenticated(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         del scope["session_user"]
@@ -156,7 +156,7 @@ class TestCreateToken:
 
     async def test_create_token_not_returned_in_list(self, db):
         """Raw token must NOT appear in the list endpoint — only prefix."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         create_scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         create_resp = _Capture()
@@ -174,7 +174,7 @@ class TestCreateToken:
 class TestRevokeToken:
 
     async def test_revoke_token_success(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Create
         create_scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
@@ -191,7 +191,7 @@ class TestRevokeToken:
         assert resp.json()["ok"] is True
 
     async def test_revoke_token_removes_from_list(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         create_scope = _make_scope("/dashboard/api/settings/tokens", method="POST")
         create_resp = _Capture()
@@ -211,7 +211,7 @@ class TestRevokeToken:
         assert list_resp.json()["tokens"] == []
 
     async def test_revoke_token_not_found(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens/9999", method="DELETE")
         resp = _Capture()
@@ -220,7 +220,7 @@ class TestRevokeToken:
         assert resp.status == 404
 
     async def test_revoke_token_invalid_id(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens/notanumber", method="DELETE")
         resp = _Capture()
@@ -229,7 +229,7 @@ class TestRevokeToken:
         assert resp.status == 400
 
     async def test_revoke_token_unauthenticated(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/tokens/1", method="DELETE")
         del scope["session_user"]
@@ -240,8 +240,8 @@ class TestRevokeToken:
 
     async def test_revoke_other_users_token_not_found(self, db):
         """Users can only revoke their own tokens."""
-        from switchboard.dashboard.api import handle_request
-        import switchboard.db as sw_db
+        from ouvrage.dashboard.api import handle_request
+        import ouvrage.db as sw_db
 
         # Create a second user
         second_user = await sw_db.create_user(

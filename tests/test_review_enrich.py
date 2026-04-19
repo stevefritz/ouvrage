@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 class TestFilterDiffByIgnorePatterns:
     def setup_method(self):
-        from switchboard.git.operations import _filter_diff_by_ignore_patterns
+        from ouvrage.git.operations import _filter_diff_by_ignore_patterns
         self.fn = _filter_diff_by_ignore_patterns
 
     SAMPLE_DIFF = """\
@@ -30,10 +30,10 @@ index 111..222 100644
 @@ -1,2 +1,3 @@
 +  "version": "2.0.0",
    "name": "myapp"
-diff --git a/.switchboard/session.jsonl b/.switchboard/session.jsonl
+diff --git a/.ouvrage/session.jsonl b/.ouvrage/session.jsonl
 index 333..444 100644
---- a/.switchboard/session.jsonl
-+++ b/.switchboard/session.jsonl
+--- a/.ouvrage/session.jsonl
++++ b/.ouvrage/session.jsonl
 @@ -1 +1,2 @@
 +{"ts": "now"}
  {"ts": "before"}
@@ -47,18 +47,18 @@ index 333..444 100644
         result = self.fn(self.SAMPLE_DIFF, ["package-lock.json"])
         assert "package-lock.json" not in result
         assert "src/app.py" in result
-        assert ".switchboard/" in result
+        assert ".ouvrage/" in result
 
-    def test_strips_switchboard(self):
-        result = self.fn(self.SAMPLE_DIFF, [".switchboard/"])
-        assert ".switchboard/" not in result
+    def test_strips_ouvrage_artifacts(self):
+        result = self.fn(self.SAMPLE_DIFF, [".ouvrage/"])
+        assert ".ouvrage/" not in result
         assert "src/app.py" in result
         assert "package-lock.json" in result
 
     def test_strips_multiple_patterns(self):
-        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".switchboard/"])
+        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".ouvrage/"])
         assert "package-lock.json" not in result
-        assert ".switchboard/" not in result
+        assert ".ouvrage/" not in result
         assert "src/app.py" in result
 
     def test_no_match_returns_full_diff(self):
@@ -70,7 +70,7 @@ index 333..444 100644
         assert result == ""
 
     def test_preserves_content_of_kept_files(self):
-        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".switchboard/"])
+        result = self.fn(self.SAMPLE_DIFF, ["package-lock.json", ".ouvrage/"])
         assert "+import os" in result
         assert "import sys" in result
 
@@ -81,7 +81,7 @@ index 333..444 100644
 
 class TestTagReviewGuidance:
     def setup_method(self):
-        from switchboard.config.constants import _TAG_REVIEW_GUIDANCE, _DEFAULT_REVIEW_GUIDANCE
+        from ouvrage.config.constants import _TAG_REVIEW_GUIDANCE, _DEFAULT_REVIEW_GUIDANCE
         self.tag_guidance = _TAG_REVIEW_GUIDANCE
         self.default_guidance = _DEFAULT_REVIEW_GUIDANCE
 
@@ -141,17 +141,17 @@ def base_project():
 
 async def _run_dispatch_review(task, project, captured, fake_run_subtask):
     """Helper: patches everything and runs _dispatch_review, returns captured prompt."""
-    from switchboard.dispatch.gates import _dispatch_review
+    from ouvrage.dispatch.gates import _dispatch_review
 
-    with patch("switchboard.db.update_task", AsyncMock()), \
-         patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-         patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
-         patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-         patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-         patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-         patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-         patch("switchboard.dispatch.gates._run_subtask", fake_run_subtask), \
-         patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+    with patch("ouvrage.db.update_task", AsyncMock()), \
+         patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+         patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "# Spec\nDo the thing"})), \
+         patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+         patch("ouvrage.db.list_punchlist", AsyncMock(return_value=[])), \
+         patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+         patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+         patch("ouvrage.dispatch.gates._run_subtask", fake_run_subtask), \
+         patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
         await _dispatch_review(task["id"], project, task)
 
     return captured.get("prompt", "")
@@ -159,7 +159,7 @@ async def _run_dispatch_review(task, project, captured, fake_run_subtask):
 
 class TestDispatchReviewComponentContext:
     async def test_no_component_shows_placeholder(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -171,20 +171,20 @@ class TestDispatchReviewComponentContext:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         assert "No component assigned" in captured["prompt"]
 
     async def test_component_context_included(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "auth",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -200,15 +200,15 @@ class TestDispatchReviewComponentContext:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.list_punchlist", AsyncMock(return_value=[])), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -221,7 +221,7 @@ class TestDispatchReviewPromptStructure:
     """Tests for the new reviewer prompt structure: identity, lifecycle, self-run diff."""
 
     async def _run(self, task_overrides=None, project_overrides=None):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -236,14 +236,14 @@ class TestDispatchReviewPromptStructure:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         return captured.get("prompt", "")
@@ -319,12 +319,12 @@ class TestDispatchReviewPromptStructure:
     async def test_ignore_guidance_hardcoded(self, tmp_db):
         prompt = await self._run()
         assert "lockfiles" in prompt
-        assert ".switchboard/" in prompt
+        assert ".ouvrage/" in prompt
 
 
 class TestDispatchReviewPunchlistClaims:
     async def test_punchlist_claims_included(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Fix bugs", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -343,15 +343,15 @@ class TestDispatchReviewPunchlistClaims:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.list_punchlist", AsyncMock(return_value=claimed_items)), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -362,7 +362,7 @@ class TestDispatchReviewPunchlistClaims:
         assert "#2" in prompt
 
     async def test_no_punchlist_shows_none(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": "api",
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -377,15 +377,15 @@ class TestDispatchReviewPunchlistClaims:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.list_punchlist", AsyncMock(return_value=[])), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=fake_component)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value={"gate_status": "test-passed"})), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.list_punchlist", AsyncMock(return_value=[])), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=fake_component)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         assert "None." in captured["prompt"]
@@ -395,7 +395,7 @@ class TestDispatchReviewPriorReviewHistory:
     """Tests for prior review carry-forward in the reviewer prompt."""
 
     async def _run_with_prior_reviews(self, prior_msgs, current_attempt=2):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -417,14 +417,14 @@ class TestDispatchReviewPriorReviewHistory:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         return captured.get("prompt", "")
@@ -448,7 +448,7 @@ class TestDispatchReviewPriorReviewHistory:
         assert "carry-forward requirements" in prompt
 
     async def test_course_corrections_override_language(self, tmp_db):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/wt", "branch": "my-task", "review_model": "opus",
@@ -469,14 +469,14 @@ class TestDispatchReviewPriorReviewHistory:
             captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(side_effect=_read_messages_side_effect)), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         prompt = captured["prompt"]
@@ -489,7 +489,7 @@ class TestDispatchReviewFetchBeforeDiff:
     """Verify that git fetch origin is called before the review prompt is built."""
 
     async def _run_capturing_fetch(self, task_overrides=None):
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
         task = {
             "id": "test-project/my-task", "goal": "Do thing", "component_id": None,
             "worktree_path": "/tmp/fake-worktree", "branch": "my-task", "review_model": "opus",
@@ -509,14 +509,14 @@ class TestDispatchReviewFetchBeforeDiff:
             prompt_captured["prompt"] = prompt
             return {"status": "completed"}
 
-        with patch("switchboard.db.update_task", AsyncMock()), \
-             patch("switchboard.db.get_task", AsyncMock(return_value=task)), \
-             patch("switchboard.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
-             patch("switchboard.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
-             patch("switchboard.db.get_component", AsyncMock(return_value=None)), \
-             patch("switchboard.dispatch.gates._run_as_worker", fake_run_as_worker), \
-             patch("switchboard.dispatch.gates._run_subtask", fake_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()):
+        with patch("ouvrage.db.update_task", AsyncMock()), \
+             patch("ouvrage.db.get_task", AsyncMock(return_value=task)), \
+             patch("ouvrage.db.get_task_pinned", AsyncMock(return_value={"content": "spec"})), \
+             patch("ouvrage.db.read_task_messages", AsyncMock(return_value={"messages": []})), \
+             patch("ouvrage.db.get_component", AsyncMock(return_value=None)), \
+             patch("ouvrage.dispatch.gates._run_as_worker", fake_run_as_worker), \
+             patch("ouvrage.dispatch.gates._run_subtask", fake_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()):
             await _dispatch_review(task["id"], project, task)
 
         return fetch_calls, prompt_captured.get("prompt", "")

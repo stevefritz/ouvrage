@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from switchboard.git.providers.base import ValidationResult
+from ouvrage.git.providers.base import ValidationResult
 
 
 # ── Layer 2: validate_project_access ──────────────────────────────────────
@@ -24,19 +24,19 @@ class TestValidateProjectAccess:
     def _restore_real_validate(self):
         """Override autouse mock with real function so we can test actual behavior."""
         from conftest import _real_validate_project_access
-        with patch("switchboard.git.validation.validate_project_access", _real_validate_project_access):
+        with patch("ouvrage.git.validation.validate_project_access", _real_validate_project_access):
             yield
 
     async def test_validated_with_valid_credential(self, db):
         """Valid credential → status 'validated' with message."""
-        from switchboard.git.validation import validate_project_access
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.validation import validate_project_access
+        from ouvrage.git.providers.github import GitHubProvider
 
         mock_provider = MagicMock(spec=GitHubProvider)
         mock_provider.parse_repo_url.return_value = MagicMock(owner="acme", repo="widgets", hostname="github.com")
         mock_provider.validate_access = AsyncMock(return_value=ValidationResult(valid=True, username="octocat"))
 
-        with patch("switchboard.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
+        with patch("ouvrage.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
             result = await validate_project_access({
                 "id": "test-project",
                 "repo": "https://github.com/acme/widgets.git",
@@ -49,9 +49,9 @@ class TestValidateProjectAccess:
 
     async def test_warning_when_no_credential(self, db):
         """No credential configured → status 'warning'."""
-        from switchboard.git.validation import validate_project_access
+        from ouvrage.git.validation import validate_project_access
 
-        with patch("switchboard.git.validation.resolve_credential", side_effect=ValueError("No github credential configured")):
+        with patch("ouvrage.git.validation.resolve_credential", side_effect=ValueError("No github credential configured")):
             result = await validate_project_access({
                 "id": "test-project",
                 "repo": "https://github.com/acme/widgets.git",
@@ -63,14 +63,14 @@ class TestValidateProjectAccess:
 
     async def test_error_when_credential_invalid(self, db):
         """Credential exists but is invalid → status 'error'."""
-        from switchboard.git.validation import validate_project_access
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.validation import validate_project_access
+        from ouvrage.git.providers.github import GitHubProvider
 
         mock_provider = MagicMock(spec=GitHubProvider)
         mock_provider.parse_repo_url.return_value = MagicMock(owner="acme", repo="widgets", hostname="github.com")
         mock_provider.validate_access = AsyncMock(return_value=ValidationResult(valid=False, error="PAT is invalid or lacks permissions"))
 
-        with patch("switchboard.git.validation.resolve_credential", return_value=(mock_provider, "ghp_bad")):
+        with patch("ouvrage.git.validation.resolve_credential", return_value=(mock_provider, "ghp_bad")):
             result = await validate_project_access({
                 "id": "test-project",
                 "repo": "https://github.com/acme/widgets.git",
@@ -82,13 +82,13 @@ class TestValidateProjectAccess:
 
     async def test_error_when_repo_url_unparseable(self, db):
         """Unparseable repo URL → status 'error'."""
-        from switchboard.git.validation import validate_project_access
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.validation import validate_project_access
+        from ouvrage.git.providers.github import GitHubProvider
 
         mock_provider = MagicMock(spec=GitHubProvider)
         mock_provider.parse_repo_url.side_effect = ValueError("Cannot parse URL")
 
-        with patch("switchboard.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
+        with patch("ouvrage.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
             result = await validate_project_access({
                 "id": "test-project",
                 "repo": "not-a-valid-url",
@@ -100,14 +100,14 @@ class TestValidateProjectAccess:
 
     async def test_error_when_network_failure(self, db):
         """Network error during validation → status 'error'."""
-        from switchboard.git.validation import validate_project_access
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.validation import validate_project_access
+        from ouvrage.git.providers.github import GitHubProvider
 
         mock_provider = MagicMock(spec=GitHubProvider)
         mock_provider.parse_repo_url.return_value = MagicMock(owner="acme", repo="widgets", hostname="github.com")
         mock_provider.validate_access = AsyncMock(side_effect=Exception("Connection refused"))
 
-        with patch("switchboard.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
+        with patch("ouvrage.git.validation.resolve_credential", return_value=(mock_provider, "ghp_test")):
             result = await validate_project_access({
                 "id": "test-project",
                 "repo": "https://github.com/acme/widgets.git",
@@ -126,7 +126,7 @@ class TestProjectCredentialStatusFields:
 
     async def test_create_project_stores_credential_status(self, db):
         """After create + validation, project row has credential_status fields."""
-        from switchboard.server.handlers.projects import _handle_create_project
+        from ouvrage.server.handlers.projects import _handle_create_project
 
         mock_validate = AsyncMock(return_value={
             "status": "warning",
@@ -134,8 +134,8 @@ class TestProjectCredentialStatusFields:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
-            with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"):
+            with patch("ouvrage.git.validation.validate_project_access", mock_validate):
                 result = await _handle_create_project({
                     "id": "cred-status-test",
                     "repo": "https://github.com/acme/test.git",
@@ -156,7 +156,7 @@ class TestProjectCredentialStatusFields:
 
     async def test_update_project_revalidates_on_credential_change(self, db):
         """Updating credential_override triggers re-validation."""
-        from switchboard.server.handlers.projects import _handle_create_project, _handle_update_project
+        from ouvrage.server.handlers.projects import _handle_create_project, _handle_update_project
 
         mock_validate = AsyncMock(return_value={
             "status": "warning",
@@ -164,8 +164,8 @@ class TestProjectCredentialStatusFields:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"):
-            with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"):
+            with patch("ouvrage.git.validation.validate_project_access", mock_validate):
                 await _handle_create_project({
                     "id": "revalidate-test",
                     "repo": "https://github.com/acme/test.git",
@@ -186,7 +186,7 @@ class TestProjectCredentialStatusFields:
             "checked_at": "2026-01-01T00:01:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate_2):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate_2):
             result = await _handle_update_project({
                 "id": "revalidate-test",
                 "credential_override": "ghp_new_token_123456",
@@ -207,7 +207,7 @@ class TestDispatchPreflightGate:
 
     async def test_dispatch_stops_task_on_missing_credential(self, db, sample_project):
         """Missing credential → task stopped with reason=credential_failed."""
-        from switchboard.dispatch.lifecycle import _dispatch_launch_session
+        from ouvrage.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
             id="test-project/preflight-missing",
@@ -222,7 +222,7 @@ class TestDispatchPreflightGate:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate):
             await _dispatch_launch_session(task)
 
         updated = await db.get_task("test-project/preflight-missing")
@@ -237,7 +237,7 @@ class TestDispatchPreflightGate:
 
     async def test_dispatch_stops_task_on_invalid_credential(self, db, sample_project):
         """Invalid credential → task stopped with reason=credential_failed."""
-        from switchboard.dispatch.lifecycle import _dispatch_launch_session
+        from ouvrage.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
             id="test-project/preflight-invalid",
@@ -252,7 +252,7 @@ class TestDispatchPreflightGate:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate):
             await _dispatch_launch_session(task)
 
         updated = await db.get_task("test-project/preflight-invalid")
@@ -261,7 +261,7 @@ class TestDispatchPreflightGate:
 
     async def test_dispatch_proceeds_on_valid_credential(self, db, sample_project):
         """Valid credential → dispatch proceeds past pre-flight (not stopped)."""
-        from switchboard.dispatch.lifecycle import _dispatch_launch_session
+        from ouvrage.dispatch.lifecycle import _dispatch_launch_session
 
         task = await db.create_task(
             id="test-project/preflight-valid",
@@ -276,7 +276,7 @@ class TestDispatchPreflightGate:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate):
             await _dispatch_launch_session(task)
 
         # Task should not be stopped — pre-flight passed
@@ -285,7 +285,7 @@ class TestDispatchPreflightGate:
 
     async def test_retry_stops_task_on_missing_credential(self, db, sample_project):
         """Retry path also gates on credential validation."""
-        from switchboard.dispatch.lifecycle import _retry_launch_session
+        from ouvrage.dispatch.lifecycle import _retry_launch_session
 
         task = await db.create_task(
             id="test-project/retry-preflight",
@@ -300,7 +300,7 @@ class TestDispatchPreflightGate:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate):
             await _retry_launch_session(task)
 
         updated = await db.get_task("test-project/retry-preflight")
@@ -309,7 +309,7 @@ class TestDispatchPreflightGate:
 
     async def test_credential_failed_cancel_works(self, db, sample_project):
         """From stopped/credential_failed, cancel transitions to cancelled."""
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/preflight-cancel",
@@ -323,7 +323,7 @@ class TestDispatchPreflightGate:
 
     async def test_credential_failed_retry_works(self, db, sample_project):
         """From stopped/credential_failed, retry transitions to working."""
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/preflight-retry",
@@ -338,13 +338,13 @@ class TestDispatchPreflightGate:
             "checked_at": "2026-01-01T00:00:00Z",
         })
 
-        with patch("switchboard.git.validation.validate_project_access", mock_validate):
+        with patch("ouvrage.git.validation.validate_project_access", mock_validate):
             result = await lifecycle.execute("test-project/preflight-retry", "retry")
         assert result["status"] == "working"
 
     async def test_credential_failed_state_label(self, db, sample_project):
         """State label for credential_failed shows 'Pre-flight Failed' in red."""
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/preflight-label",
@@ -407,7 +407,7 @@ class TestSettingsTestEndpoint:
 
     async def test_github_classic_pat_with_repo_scope(self, db):
         """GitHub classic PAT with repo scope → ok=True, scopes includes 'repo'."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("github", "ghp_test_token", "github.com")
 
@@ -424,7 +424,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "github")
 
         body = send.json()
@@ -435,7 +435,7 @@ class TestSettingsTestEndpoint:
 
     async def test_github_classic_pat_missing_repo_scope(self, db):
         """GitHub classic PAT without repo scope → ok=False."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("github", "ghp_readonly", "github.com")
 
@@ -452,7 +452,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "github")
 
         body = send.json()
@@ -461,7 +461,7 @@ class TestSettingsTestEndpoint:
 
     async def test_github_fine_grained_token(self, db):
         """GitHub fine-grained token (no X-OAuth-Scopes header) → ok=True, scopes=None."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("github", "github_pat_fine_grained", "github.com")
 
@@ -478,7 +478,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "github")
 
         body = send.json()
@@ -488,7 +488,7 @@ class TestSettingsTestEndpoint:
 
     async def test_gitlab_with_api_scope(self, db):
         """GitLab token with api scope → ok=True."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("gitlab", "glpat_test", "gitlab.com")
 
@@ -508,7 +508,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "gitlab")
 
         body = send.json()
@@ -517,7 +517,7 @@ class TestSettingsTestEndpoint:
 
     async def test_gitlab_missing_scopes(self, db):
         """GitLab token without sufficient scopes → ok=False."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("gitlab", "glpat_readonly", "gitlab.com")
 
@@ -537,7 +537,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "gitlab")
 
         body = send.json()
@@ -547,7 +547,7 @@ class TestSettingsTestEndpoint:
 
     async def test_bitbucket_no_scopes_header(self, db):
         """Bitbucket auth success with no x-oauth-scopes header → ok=True, scopes=None, fallback message."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
 
@@ -564,7 +564,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "bitbucket")
 
         body = send.json()
@@ -575,7 +575,7 @@ class TestSettingsTestEndpoint:
 
     async def test_bitbucket_all_scopes_present(self, db):
         """Bitbucket auth success with all required scopes → ok=True, all scopes listed, success message."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
 
@@ -594,7 +594,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "bitbucket")
 
         body = send.json()
@@ -609,7 +609,7 @@ class TestSettingsTestEndpoint:
 
     async def test_bitbucket_missing_scopes(self, db):
         """Bitbucket auth success but missing some scopes → ok=True, missing_scopes listed in response."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         await db.create_credential("bitbucket", "user@example.com:myapitoken", "bitbucket.org")
 
@@ -628,7 +628,7 @@ class TestSettingsTestEndpoint:
         send = _Capture()
         scope = _make_scope()
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=mock_client):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=mock_client):
             await _handle_test_git_credential(send, scope, "bitbucket")
 
         body = send.json()
@@ -645,7 +645,7 @@ class TestSettingsTestEndpoint:
 
     async def test_no_credential_configured(self, db):
         """No credential configured → ok=False with message."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         send = _Capture()
         scope = _make_scope()
@@ -658,7 +658,7 @@ class TestSettingsTestEndpoint:
 
     async def test_response_shape(self, db):
         """Response always includes ok, username, scopes, message keys."""
-        from switchboard.dashboard.api import _handle_test_git_credential
+        from ouvrage.dashboard.api import _handle_test_git_credential
 
         send = _Capture()
         scope = _make_scope()
@@ -679,23 +679,23 @@ class TestDeadCodeRemoved:
     """Verify legacy GitHub-only functions are removed from operations.py."""
 
     def test_build_authenticated_url_removed(self):
-        import switchboard.git.operations as ops
+        import ouvrage.git.operations as ops
         assert not hasattr(ops, "_build_authenticated_url"), \
             "_build_authenticated_url should be removed — use provider.build_authenticated_url()"
 
     def test_create_github_pr_removed(self):
-        import switchboard.git.operations as ops
+        import ouvrage.git.operations as ops
         assert not hasattr(ops, "create_github_pr"), \
             "create_github_pr should be removed — use provider.create_pr()"
 
     def test_find_existing_pr_removed(self):
-        import switchboard.git.operations as ops
+        import ouvrage.git.operations as ops
         assert not hasattr(ops, "_find_existing_pr"), \
             "_find_existing_pr should be removed — use provider._find_existing_pr()"
 
     def test_parse_repo_url_still_exists(self):
         """parse_repo_url and normalize_repo_url should still exist (used by other code)."""
-        from switchboard.git.operations import parse_repo_url, normalize_repo_url
+        from ouvrage.git.operations import parse_repo_url, normalize_repo_url
         assert callable(parse_repo_url)
         assert callable(normalize_repo_url)
 
@@ -707,23 +707,23 @@ class TestNormalizeRepoUrlPassthrough:
     """normalize_repo_url must not break on non-GitHub URLs."""
 
     def test_gitlab_https_preserved(self):
-        from switchboard.git.operations import normalize_repo_url
+        from ouvrage.git.operations import normalize_repo_url
         url = "https://gitlab.com/acme/project.git"
         assert normalize_repo_url(url) == url
 
     def test_bitbucket_https_preserved(self):
-        from switchboard.git.operations import normalize_repo_url
+        from ouvrage.git.operations import normalize_repo_url
         url = "https://bitbucket.org/workspace/repo.git"
         assert normalize_repo_url(url) == url
 
     def test_github_url_still_normalized(self):
-        from switchboard.git.operations import normalize_repo_url
+        from ouvrage.git.operations import normalize_repo_url
         assert normalize_repo_url("git@github.com:acme/widgets") == "https://github.com/acme/widgets.git"
 
     def test_ssh_gitlab_normalized_to_https(self):
-        from switchboard.git.operations import normalize_repo_url
+        from ouvrage.git.operations import normalize_repo_url
         assert normalize_repo_url("git@gitlab.com:group/project.git") == "https://gitlab.com/group/project.git"
 
     def test_self_hosted_ssh_normalized(self):
-        from switchboard.git.operations import normalize_repo_url
+        from ouvrage.git.operations import normalize_repo_url
         assert normalize_repo_url("git@gl.example.com:team/app") == "https://gl.example.com/team/app.git"

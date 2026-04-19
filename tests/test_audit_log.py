@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-import switchboard.db as db
+import ouvrage.db as db
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class TestChainCancellationIsolation:
 
     async def test_cancel_sibling_a_does_not_affect_sibling_b(self):
         """Cancelling sibling A should NOT cancel sibling B."""
-        from switchboard.dispatch.engine import cancel_task
+        from ouvrage.dispatch.engine import cancel_task
 
         # Put sibling A into working status so it can be cancelled
         await self.db.update_task("chain-proj/sibling-a", status="working")
@@ -125,7 +125,7 @@ class TestChainCancellationIsolation:
 
     async def test_cancel_sibling_a_audit_log_recorded(self):
         """Cancelling sibling A writes an audit log with correct triggered_by."""
-        from switchboard.dispatch.engine import cancel_task
+        from ouvrage.dispatch.engine import cancel_task
 
         await self.db.update_task("chain-proj/sibling-a", status="working")
         await cancel_task("chain-proj/sibling-a")
@@ -143,7 +143,7 @@ class TestChainCancellationIsolation:
         cancel_task only cancels the specific task, not its dependents.
         Children should remain in their current state.
         """
-        from switchboard.dispatch.engine import cancel_task
+        from ouvrage.dispatch.engine import cancel_task
 
         await self.db.update_task("chain-proj/parent", status="working")
         await cancel_task("chain-proj/parent")
@@ -191,7 +191,7 @@ class TestCancelChain:
 
     async def test_cancel_chain_cancels_descendants(self):
         """cancel_chain should cancel the root and all descendants."""
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
 
         result = await cancel_chain("cc-proj/root")
 
@@ -209,7 +209,7 @@ class TestCancelChain:
 
     async def test_cancel_chain_writes_audit_logs(self):
         """cancel_chain should write audit logs for each cancelled task."""
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
 
         await cancel_chain("cc-proj/root")
 
@@ -220,7 +220,7 @@ class TestCancelChain:
 
     async def test_cancel_chain_skips_already_completed(self):
         """cancel_chain skips tasks that are already completed."""
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
 
         await self.db.update_task("cc-proj/child", status="completed")
 
@@ -263,7 +263,7 @@ class TestInvalidateChain:
 
     async def test_invalidate_chain_cancels_working_and_marks_ready_stale(self):
         """Working dependents are cancelled, ready ones get stale gate_status."""
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
 
         await _invalidate_chain("inv-proj/parent")
 
@@ -276,7 +276,7 @@ class TestInvalidateChain:
 
     async def test_invalidate_chain_writes_audit_logs(self):
         """_invalidate_chain writes audit logs with triggered_by=chain-invalidation."""
-        from switchboard.dispatch.engine import _invalidate_chain
+        from ouvrage.dispatch.engine import _invalidate_chain
 
         await _invalidate_chain("inv-proj/parent")
 
@@ -310,7 +310,7 @@ class TestAuditTriggeredBy:
 
     async def test_reopen_task_audit(self):
         """reopen_task writes audit with triggered_by=user."""
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await self.db.create_task(
             id="trig-proj/reopen-test", project_id="trig-proj",
@@ -329,7 +329,7 @@ class TestAuditTriggeredBy:
 
     async def test_skip_gate_audit(self):
         """skip_gate writes audit with triggered_by=user."""
-        from switchboard.dispatch.engine import skip_gate
+        from ouvrage.dispatch.engine import skip_gate
 
         task = await self.db.create_task(
             id="trig-proj/gate-test", project_id="trig-proj",
@@ -338,7 +338,7 @@ class TestAuditTriggeredBy:
         # Put in pending-validation (maps to "validating" effective state)
         await self.db.update_task("trig-proj/gate-test", status="pending-validation")
 
-        with patch("switchboard.dispatch.lifecycle._skip_gate_dispatch_dependents", new_callable=AsyncMock):
+        with patch("ouvrage.dispatch.lifecycle._skip_gate_dispatch_dependents", new_callable=AsyncMock):
             await skip_gate("trig-proj/gate-test")
 
         logs = await self.db.get_audit_log("trig-proj/gate-test")
@@ -349,7 +349,7 @@ class TestAuditTriggeredBy:
 
     async def test_close_task_audit(self):
         """close_task writes audit with triggered_by=user."""
-        from switchboard.dispatch.engine import close_task
+        from ouvrage.dispatch.engine import close_task
 
         task = await self.db.create_task(
             id="trig-proj/close-test", project_id="trig-proj",
@@ -357,7 +357,7 @@ class TestAuditTriggeredBy:
         )
         await self.db.update_task("trig-proj/close-test", status="needs-review")
 
-        with patch("switchboard.dispatch.lifecycle._close_archive_and_cleanup", new_callable=AsyncMock):
+        with patch("ouvrage.dispatch.lifecycle._close_archive_and_cleanup", new_callable=AsyncMock):
             await close_task("trig-proj/close-test")
 
         logs = await self.db.get_audit_log("trig-proj/close-test")
@@ -418,11 +418,11 @@ class TestCrossChainIsolation:
 
     async def test_cancelling_portal_pages_does_not_touch_portal_ui(self):
         """Cancelling portal-pages (old batch) must NOT cancel portal-ui (new chain)."""
-        from switchboard.dispatch.engine import cancel_task
+        from ouvrage.dispatch.engine import cancel_task
 
         # portal-pages is already cancelled, but let's verify
         # that cancel_chain on it doesn't cross-contaminate
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
         await self.db.update_task("fp/portal-pages", status="ready")  # un-cancel for test
         await cancel_chain("fp/portal-pages")
 
@@ -432,7 +432,7 @@ class TestCrossChainIsolation:
 
     async def test_cancelling_siblings_does_not_affect_different_chain(self):
         """Cancelling all old-batch tasks should NOT touch the new chain."""
-        from switchboard.dispatch.engine import cancel_task
+        from ouvrage.dispatch.engine import cancel_task
 
         # Cancel each old batch task individually
         for tid in ("fp/portal-pages", "fp/landing-page"):

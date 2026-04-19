@@ -1,0 +1,89 @@
+// Ouvrage Layout Shell — OuvrageShell + OuvrageHeader
+// Import this in your Ouvrage view entry points.
+// Not wired to the existing app.js — additive foundation only.
+
+import { h } from 'https://esm.sh/preact@10.25.4';
+import htm from 'https://esm.sh/htm@3.1.1';
+import { colors, typography, layout } from './tokens.js';
+import { TrialBanner } from './components/TrialBanner.js';
+import { ProjectLimitBanner } from './components/ProjectLimitBanner.js';
+
+const html = htm.bind(h);
+
+/**
+ * OuvrageHeader — 52px header bar with "Ouvrage" branding and "v5" tag.
+ * Props:
+ *   children — optional right-side content (nav links, user menu, etc.)
+ */
+export function OuvrageHeader({ children }) {
+    return html`
+        <header class="ouvrage-header">
+            <a href="#/" class="ouvrage-header-brand">Ouvrage</a>
+            <span class="ouvrage-header-version">v5</span>
+            <span class="ouvrage-header-spacer"></span>
+            <a href="#/files" class="ouvrage-header-settings">📁 Files</a>
+            <a href="#/settings" class="ouvrage-header-settings">⚙ Settings</a>
+            ${children}
+        </header>
+    `;
+}
+
+/**
+ * OuvrageShell — full-page layout wrapper.
+ * Renders header + scrollable content area (max-width 900px, centered).
+ * Props:
+ *   header    — optional custom header slot (defaults to OuvrageHeader)
+ *   children  — page content
+ */
+export function OuvrageShell({ header, children }) {
+    return html`
+        <div id="ouvrage-app">
+            ${header !== undefined ? header : html`<${OuvrageHeader} />`}
+            <${TrialBanner} />
+            <${ProjectLimitBanner} />
+            <main class="ouvrage-content">
+                ${children}
+            </main>
+        </div>
+    `;
+}
+
+/**
+ * OuvragePage — convenience wrapper for a titled page inside OuvrageShell.
+ * Props:
+ *   title     — page title string
+ *   actions   — optional right-aligned action buttons
+ *   children  — page body
+ */
+export function OuvragePage({ title, actions, children }) {
+    const styles = {
+        header: {
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            marginBottom: layout.spacing?.[6] || '24px',
+            paddingBottom: '16px',
+            borderBottom: `1px solid ${colors.border}`,
+        },
+        title: {
+            fontFamily: typography.fontBody,
+            fontSize: typography.size['2xl'],
+            fontWeight: typography.weight.semibold,
+            color: colors.text,
+            margin: 0,
+            letterSpacing: '-0.02em',
+        },
+    };
+
+    return html`
+        <div>
+            ${title ? html`
+                <div style=${styles.header}>
+                    <h1 style=${styles.title}>${title}</h1>
+                    ${actions ? html`<div>${actions}</div>` : null}
+                </div>
+            ` : null}
+            ${children}
+        </div>
+    `;
+}

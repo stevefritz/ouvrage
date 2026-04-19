@@ -14,7 +14,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
-from switchboard.auth.middleware import auth_middleware
+from ouvrage.auth.middleware import auth_middleware
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ class TestCompareDigest:
 
     def test_internal_api_source_uses_compare_digest(self):
         """_check_auth source must use secrets.compare_digest, not == comparison."""
-        from switchboard.internal import api as internal_api
+        from ouvrage.internal import api as internal_api
         source = inspect.getsource(internal_api._check_auth)
         assert "secrets.compare_digest" in source
         # Must NOT use plain equality for token comparison
@@ -160,13 +160,13 @@ class TestCompareDigest:
 
     async def test_compare_digest_called_on_valid_token(self):
         """secrets.compare_digest is invoked during auth check with correct token."""
-        from switchboard.internal import api as internal_api
+        from ouvrage.internal import api as internal_api
         scope = {
             "headers": [(b"authorization", b"Bearer mysecret")],
         }
-        with patch("switchboard.internal.api.INTERNAL_API_TOKEN", "mysecret"):
+        with patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "mysecret"):
             with patch(
-                "switchboard.internal.api.secrets.compare_digest",
+                "ouvrage.internal.api.secrets.compare_digest",
                 wraps=secrets_module.compare_digest,
             ) as mock_cd:
                 result = internal_api._check_auth(scope)
@@ -175,13 +175,13 @@ class TestCompareDigest:
 
     async def test_compare_digest_called_on_invalid_token(self):
         """secrets.compare_digest is invoked even when token is wrong (timing-safe)."""
-        from switchboard.internal import api as internal_api
+        from ouvrage.internal import api as internal_api
         scope = {
             "headers": [(b"authorization", b"Bearer wrongtoken")],
         }
-        with patch("switchboard.internal.api.INTERNAL_API_TOKEN", "correcttoken"):
+        with patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "correcttoken"):
             with patch(
-                "switchboard.internal.api.secrets.compare_digest",
+                "ouvrage.internal.api.secrets.compare_digest",
                 wraps=secrets_module.compare_digest,
             ) as mock_cd:
                 result = internal_api._check_auth(scope)
@@ -195,21 +195,21 @@ class TestFailClosedRevocation:
 
     async def test_revocation_check_fails_closed_on_db_error(self):
         """_is_token_revoked returns True (token IS revoked) when DB raises."""
-        from switchboard.auth import middleware
+        from ouvrage.auth import middleware
 
         # Simulate a DB connection manager that raises on __aenter__
         bad_cm = MagicMock()
         bad_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("DB down"))
         bad_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("switchboard.db.connection.get_db", return_value=bad_cm):
+        with patch("ouvrage.db.connection.get_db", return_value=bad_cm):
             result = await middleware._is_token_revoked("test-jti")
 
         assert result is True, "DB error must fail closed (return True = revoked)"
 
     async def test_revocation_check_returns_false_for_valid_token(self, db):
         """_is_token_revoked returns False for a JTI not in the revoked table."""
-        from switchboard.auth import middleware
+        from ouvrage.auth import middleware
         # JTI not in table at all → not revoked
         result = await middleware._is_token_revoked("nonexistent-jti")
         assert result is False

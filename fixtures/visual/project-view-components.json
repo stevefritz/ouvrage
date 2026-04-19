@@ -2,8 +2,8 @@
   {
     "id": "mcp-switchboard/foreman-hardening",
     "project_id": "mcp-switchboard",
-    "name": "Foreman Hardening",
-    "description": "Current hardening, polish, and bug fixes for the Foreman dashboard.",
+    "name": "Ouvrage Hardening",
+    "description": "Current hardening, polish, and bug fixes for the Ouvrage dashboard.",
     "phase": "implementing",
     "status": "active",
     "task_count": 2,

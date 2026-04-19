@@ -68,7 +68,7 @@ def _patch_httpx(status_code, json_data):
         async def __aexit__(self, *args):
             return False
 
-    return patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
+    return patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
 
 
 # ── Response shape contract tests ─────────────────────────────────────────────
@@ -77,7 +77,7 @@ class TestUserSettingsResponseContract:
     """Verify the exact JSON structure the Settings UI expects from GET /settings/user."""
 
     async def test_response_has_required_top_level_keys(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"])
@@ -91,7 +91,7 @@ class TestUserSettingsResponseContract:
         assert "notifications" in data, "Missing 'notifications' key"
 
     async def test_profile_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"])
@@ -106,7 +106,7 @@ class TestUserSettingsResponseContract:
         assert "role" in profile
 
     async def test_anthropic_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
         scope = _make_scope("/dashboard/api/settings/user", user_id=owner["id"])
@@ -124,7 +124,7 @@ class TestInstanceSettingsResponseContract:
     """Verify the exact JSON structure the Settings UI expects from GET /settings/instance."""
 
     async def test_response_has_required_top_level_keys(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance")
         resp = _Capture()
@@ -138,7 +138,7 @@ class TestInstanceSettingsResponseContract:
         assert "oauth" in data, "Missing 'oauth' key"
 
     async def test_github_has_connected_field(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance")
         resp = _Capture()
@@ -150,7 +150,7 @@ class TestInstanceSettingsResponseContract:
         assert isinstance(github["connected"], bool)
 
     async def test_instance_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance")
         resp = _Capture()
@@ -169,7 +169,7 @@ class TestSaveThenReadPATWorkflow:
     """Test: save a GitHub PAT → read instance settings → verify it shows up."""
 
     async def test_save_pat_then_read_shows_connected(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Step 1: Save a PAT
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH")
@@ -190,7 +190,7 @@ class TestSaveThenReadPATWorkflow:
         assert data["github"]["username"] == "testbot"
 
     async def test_save_pat_then_test_connection(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Step 1: Save
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH")
@@ -213,7 +213,7 @@ class TestSaveThenReadAnthropicWorkflow:
     """Test: save Anthropic key → read user settings → verify it shows up."""
 
     async def test_save_key_then_read_shows_configured(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
 
@@ -234,7 +234,7 @@ class TestSaveThenReadAnthropicWorkflow:
         assert data["anthropic"]["key_last4"] == "9999"
 
     async def test_save_key_then_test_connection(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
 
@@ -259,7 +259,7 @@ class TestUpdateProfileWorkflow:
     """Test: update profile fields → read back → verify changes persisted."""
 
     async def test_update_all_profile_fields_then_read(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         owner = await db.get_user_by_email("owner@localhost")
 
@@ -293,7 +293,7 @@ class TestChangePasswordWorkflow:
                                     password_hash=ph.hash(password))
 
     async def test_change_password_then_old_fails(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await self._create_user_with_password(db, "flow@test.com", "pass1")
 
@@ -333,7 +333,7 @@ class TestRegenerateOAuthWorkflow:
 
     @pytest.fixture(autouse=True)
     async def reset_oauth_keys(self, tmp_path, monkeypatch):
-        import switchboard.auth.oauth as _oauth
+        import ouvrage.auth.oauth as _oauth
         monkeypatch.setattr(_oauth, "OAUTH_RSA_KEY_PATH", str(tmp_path / "test_key.pem"))
         _oauth._rsa_private_key = None
         _oauth._rsa_public_jwk = None
@@ -342,8 +342,8 @@ class TestRegenerateOAuthWorkflow:
         _oauth._rsa_public_jwk = None
 
     async def test_regenerate_then_read_shows_new_secret(self, db):
-        from switchboard.auth.oauth import init_oauth_keys, seed_default_client
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.auth.oauth import init_oauth_keys, seed_default_client
+        from ouvrage.dashboard.api import handle_request
         init_oauth_keys()
         await seed_default_client()
 
@@ -378,7 +378,7 @@ class TestRoleBasedAccess:
     """Verify the frontend's role-based visibility logic is backed by the API."""
 
     async def test_member_can_access_user_settings(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await db.create_user(email="member@test.com", name="Member",
                                     role="member")
@@ -395,7 +395,7 @@ class TestRoleBasedAccess:
     async def test_member_role_in_response_prevents_instance_access(self, db):
         """The frontend checks profile.role to decide whether to show instance settings.
         Verify that a member's role is returned AND that instance endpoints return 403."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await db.create_user(email="m2@test.com", name="M2", role="member")
 
@@ -414,7 +414,7 @@ class TestRoleBasedAccess:
         assert resp.status == 403
 
     async def test_admin_can_access_both(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         user = await db.create_user(email="admin@test.com", name="Admin",
                                     role="admin")
@@ -436,7 +436,7 @@ class TestRoleBasedAccess:
         assert resp.status == 200
 
     async def test_member_cannot_patch_instance(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance", method="PATCH",
                             role="member")
@@ -445,7 +445,7 @@ class TestRoleBasedAccess:
         assert resp.status == 403
 
     async def test_member_cannot_test_github(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/test-github",
                             method="POST", role="member")
@@ -454,7 +454,7 @@ class TestRoleBasedAccess:
         assert resp.status == 403
 
     async def test_member_cannot_regenerate_secret(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/instance/regenerate-oauth-secret",
                             method="POST", role="member")

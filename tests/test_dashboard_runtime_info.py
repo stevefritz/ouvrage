@@ -56,7 +56,7 @@ class _Capture:
 
 def _mock_run_version(outputs: dict):
     """Return an async mock for _run_version_cmd that returns predefined outputs."""
-    from switchboard.dashboard.api import _RUNTIME_COMMANDS
+    from ouvrage.dashboard.api import _RUNTIME_COMMANDS
 
     async def fake_run(args):
         cmd = args[0]
@@ -70,9 +70,9 @@ def _mock_run_version(outputs: dict):
 class TestRuntimeInfo:
 
     async def test_returns_200(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -80,9 +80,9 @@ class TestRuntimeInfo:
         assert resp.status == 200
 
     async def test_returns_list(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -92,9 +92,9 @@ class TestRuntimeInfo:
         assert len(data) > 0
 
     async def test_all_expected_runtimes_present(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -105,9 +105,9 @@ class TestRuntimeInfo:
         assert expected == keys
 
     async def test_each_entry_has_required_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -120,7 +120,7 @@ class TestRuntimeInfo:
             assert "pkg_manager" in entry
 
     async def test_version_parsed_from_output(self, db):
-        from switchboard.dashboard.api import handle_request, _RUNTIME_COMMANDS
+        from ouvrage.dashboard.api import handle_request, _RUNTIME_COMMANDS
 
         # Return realistic version strings for each command's first argument
         cmd_outputs = {
@@ -138,7 +138,7 @@ class TestRuntimeInfo:
         async def fake_run(args):
             return cmd_outputs.get(args[0], "")
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=fake_run):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=fake_run):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -152,9 +152,9 @@ class TestRuntimeInfo:
         assert by_key["dotnet"]["version"] == "9.0.100"
 
     async def test_not_installed_when_empty_output(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -164,9 +164,9 @@ class TestRuntimeInfo:
             assert entry["version"] == "not installed"
 
     async def test_pkg_manager_values(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
-        with patch("switchboard.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
+        with patch("ouvrage.dashboard.api._run_version_cmd", new=AsyncMock(return_value="")):
             scope = _make_scope("/dashboard/api/runtime-info")
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)

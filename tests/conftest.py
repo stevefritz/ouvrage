@@ -32,4 +32,4 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def disable_notifications(monkeypatch):
-    monkeypatch.setattr('switchboard.notifications.web_push.get_executor', lambda: MagicMock())
+    monkeypatch.setattr('ouvrage.notifications.web_push.get_executor', lambda: MagicMock())

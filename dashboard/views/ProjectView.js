@@ -1,6 +1,6 @@
-// Foreman Project View
+// Ouvrage Project View
 // Layout: Tab bar → Tasks / Conversations / Files / Settings tabs
-// Spec: foreman-design conversation, messages [6-9]
+// Spec: ouvrage-design conversation, messages [6-9]
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.25.4/hooks';
@@ -62,7 +62,7 @@ function ConversationsSection({ conversations }) {
                 <a key=${conv.id}
                    href=${routes.conversation(conv.id)}
                    style=${rowStyle}
-                   class="foreman-conv-row"
+                   class="ouvrage-conv-row"
                 >
                     <span style=${{
                         flex: 1,
@@ -117,7 +117,7 @@ function TaskPanel({ taskId, onClose }) {
         boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
         zIndex: 500,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        animation: `foreman-slide-up ${animation.durationNormal} ${animation.easing}`,
+        animation: `ouvrage-slide-up ${animation.durationNormal} ${animation.easing}`,
     } : {
         position: 'fixed',
         top: 0, right: 0, bottom: 0,
@@ -128,7 +128,7 @@ function TaskPanel({ taskId, onClose }) {
         boxShadow: '-8px 0 40px rgba(0,0,0,0.4)',
         zIndex: 500,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        animation: `foreman-slide-right ${animation.durationNormal} ${animation.easing}`,
+        animation: `ouvrage-slide-right ${animation.durationNormal} ${animation.easing}`,
     };
 
     const headerStyle = {
@@ -154,11 +154,11 @@ function TaskPanel({ taskId, onClose }) {
     return html`
         <div>
             <style>${`
-                @keyframes foreman-slide-right {
+                @keyframes ouvrage-slide-right {
                     from { transform: translateX(100%); opacity: 0; }
                     to   { transform: translateX(0);    opacity: 1; }
                 }
-                @keyframes foreman-slide-up {
+                @keyframes ouvrage-slide-up {
                     from { transform: translateY(100%); opacity: 0; }
                     to   { transform: translateY(0);    opacity: 1; }
                 }
@@ -951,7 +951,7 @@ export function ProjectView({ id, tab }) {
     if (loading) {
         return html`
             <div style=${pageStyle}>
-                <a href=${routes.landing()} style=${backLinkStyle} class="foreman-back-link">← Projects</a>
+                <a href=${routes.landing()} style=${backLinkStyle} class="ouvrage-back-link">← Projects</a>
                 <div style=${loadingStyle}>Loading…</div>
             </div>
         `;
@@ -960,7 +960,7 @@ export function ProjectView({ id, tab }) {
     if (error) {
         return html`
             <div style=${pageStyle}>
-                <a href=${routes.landing()} style=${backLinkStyle} class="foreman-back-link">← Projects</a>
+                <a href=${routes.landing()} style=${backLinkStyle} class="ouvrage-back-link">← Projects</a>
                 <div style=${{
                     ...errorStyle,
                     display: 'flex',
@@ -1023,7 +1023,7 @@ export function ProjectView({ id, tab }) {
     return html`
         <div style=${pageStyle}>
             <!-- Back navigation -->
-            <a href=${routes.landing()} style=${backLinkStyle} class="foreman-back-link">← Projects</a>
+            <a href=${routes.landing()} style=${backLinkStyle} class="ouvrage-back-link">← Projects</a>
 
             <!-- Project header -->
             <div style=${{ marginBottom: '0', paddingBottom: '0' }}>

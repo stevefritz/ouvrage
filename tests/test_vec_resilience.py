@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from switchboard.db.search import (
+from ouvrage.db.search import (
     search_messages_semantic,
     search_tasks_semantic,
     search_message_chunks,
 )
-from switchboard.embeddings.service import encode_vector
+from ouvrage.embeddings.service import encode_vector
 
 
 def _unit_vec(dim: int, index: int) -> list[float]:
@@ -26,23 +26,23 @@ def _unit_vec(dim: int, index: int) -> list[float]:
 class TestVecAvailableFlag:
     async def test_check_vec_tables_sets_true_when_available(self, db):
         """_check_vec_tables() sets VEC_AVAILABLE=True when vec0 tables exist."""
-        import switchboard.db.search as search_mod
-        from switchboard.db.search import _check_vec_tables
+        import ouvrage.db.search as search_mod
+        from ouvrage.db.search import _check_vec_tables
 
         await _check_vec_tables()
         assert search_mod.VEC_AVAILABLE is True
 
     async def test_check_vec_tables_sets_false_on_error(self, db):
         """_check_vec_tables() sets VEC_AVAILABLE=False when query raises."""
-        import switchboard.db.search as search_mod
-        from switchboard.db.search import _check_vec_tables
-        from switchboard.db.connection import get_db
+        import ouvrage.db.search as search_mod
+        from ouvrage.db.search import _check_vec_tables
+        from ouvrage.db.connection import get_db
 
         # Save state and restore after
         original = search_mod.VEC_AVAILABLE
         try:
             # Patch execute_fetchall to raise
-            with patch("switchboard.db.search.get_db") as mock_get_db:
+            with patch("ouvrage.db.search.get_db") as mock_get_db:
                 mock_conn = AsyncMock()
                 mock_conn.execute_fetchall.side_effect = Exception("no such table")
                 mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -56,9 +56,9 @@ class TestVecAvailableFlag:
 
     async def test_handler_uses_fts_only_when_vec_unavailable(self, db, sample_project):
         """_handle_search falls back to FTS-only when VEC_AVAILABLE is False."""
-        import switchboard.db.search as search_mod
-        from switchboard.server.handlers.search import _handle_search
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        import ouvrage.db.search as search_mod
+        from ouvrage.server.handlers.search import _handle_search
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         vec = _unit_vec(1536, 100)
 
@@ -86,8 +86,8 @@ class TestVecAvailableFlag:
 class TestMessagesVecDeleteTrigger:
     async def test_delete_message_removes_vec_entry(self, db):
         """Deleting a message removes the corresponding messages_vec row."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         vec = _unit_vec(1536, 200)
         blob = encode_vector(vec)
@@ -125,8 +125,8 @@ class TestMessagesVecDeleteTrigger:
 
     async def test_delete_nonexistent_message_no_error(self, db):
         """Deleting a message with no vec entry doesn't error."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         async with get_db() as conn:
             cursor = await conn.execute(
@@ -149,7 +149,7 @@ class TestMessagesVecDeleteTrigger:
 class TestTasksVecDeleteTrigger:
     async def test_delete_task_removes_vec_entry(self, db, sample_project):
         """Deleting a task removes the corresponding tasks_vec row."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
 
         task = await db.create_task(
             id="test-project/vec-delete-test",
@@ -198,8 +198,8 @@ class TestTasksVecDeleteTrigger:
 class TestChunksVecDeleteTrigger:
     async def test_delete_chunk_removes_vec_entry(self, db):
         """Deleting a message_chunk removes the corresponding chunks_vec row."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         vec = _unit_vec(1536, 202)
         blob = encode_vector(vec)
@@ -246,8 +246,8 @@ class TestChunksVecDeleteTrigger:
 
     async def test_delete_message_cascade_removes_chunk_vec_entries(self, db):
         """Deleting a message cascades to message_chunks, which fires chunks_vec_delete trigger."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         vec = _unit_vec(1536, 203)
         blob = encode_vector(vec)
@@ -301,8 +301,8 @@ class TestChunksVecDeleteTrigger:
 class TestOrphanReconciliation:
     async def test_reconciliation_removes_orphan_messages_vec(self, db):
         """_backfill_vec_tables() prunes messages_vec rows with no matching message."""
-        from switchboard.db.connection import get_db
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.server.app import _backfill_vec_tables
 
         vec = _unit_vec(1536, 300)
         blob = encode_vector(vec)
@@ -331,8 +331,8 @@ class TestOrphanReconciliation:
 
     async def test_reconciliation_removes_orphan_tasks_vec(self, db, sample_project):
         """_backfill_vec_tables() prunes tasks_vec rows with no matching task."""
-        from switchboard.db.connection import get_db
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.server.app import _backfill_vec_tables
 
         vec = _unit_vec(1536, 301)
         blob = encode_vector(vec)
@@ -360,8 +360,8 @@ class TestOrphanReconciliation:
 
     async def test_reconciliation_removes_orphan_chunks_vec(self, db):
         """_backfill_vec_tables() prunes chunks_vec rows with no matching message_chunk."""
-        from switchboard.db.connection import get_db
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.server.app import _backfill_vec_tables
 
         vec = _unit_vec(1536, 302)
         blob = encode_vector(vec)
@@ -389,9 +389,9 @@ class TestOrphanReconciliation:
 
     async def test_reconciliation_keeps_valid_vec_entries(self, db):
         """_backfill_vec_tables() does not remove vec entries that have matching messages."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
+        from ouvrage.server.app import _backfill_vec_tables
 
         vec = _unit_vec(1536, 303)
         blob = encode_vector(vec)
@@ -430,7 +430,7 @@ class TestVecQuerySafetyNet:
 
         vec = _unit_vec(1536, 400)
 
-        with patch("switchboard.db.search.get_db") as mock_get_db:
+        with patch("ouvrage.db.search.get_db") as mock_get_db:
             mock_conn = AsyncMock()
             mock_conn.execute_fetchall.side_effect = OperationalError("no such table: messages_vec")
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -447,7 +447,7 @@ class TestVecQuerySafetyNet:
 
         vec = _unit_vec(1536, 401)
 
-        with patch("switchboard.db.search.get_db") as mock_get_db:
+        with patch("ouvrage.db.search.get_db") as mock_get_db:
             mock_conn = AsyncMock()
             mock_conn.execute_fetchall.side_effect = OperationalError("no such table: tasks_vec")
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -464,7 +464,7 @@ class TestVecQuerySafetyNet:
 
         vec = _unit_vec(1536, 402)
 
-        with patch("switchboard.db.search.get_db") as mock_get_db:
+        with patch("ouvrage.db.search.get_db") as mock_get_db:
             mock_conn = AsyncMock()
             mock_conn.execute_fetchall.side_effect = OperationalError("no such table: chunks_vec")
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)

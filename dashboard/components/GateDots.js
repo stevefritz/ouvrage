@@ -1,4 +1,4 @@
-// Foreman — GateDots component
+// Ouvrage — GateDots component
 // Compact pipeline visualization: Task → Tests → Review → Advance
 // Each stage is a dot colored by its status.
 
@@ -111,7 +111,7 @@ export function GateDots({ gateStatus, taskStatus, showLabels = false, size = 7 
                         <div key=${stage.key} style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                             ${i > 0 ? html`<div style=${{ ...connectorStyle, alignSelf: 'center', marginBottom: '10px', display: 'none' }} />` : null}
                             <span
-                                class=${isPulsing ? 'foreman-status-dot-pulse' : ''}
+                                class=${isPulsing ? 'ouvrage-status-dot-pulse' : ''}
                                 style=${{
                                     width: `${size}px`,
                                     height: `${size}px`,
@@ -141,7 +141,7 @@ export function GateDots({ gateStatus, taskStatus, showLabels = false, size = 7 
                     ${i > 0 ? html`<span style=${connectorStyle} />` : null}
                     <span
                         key=${stage.key}
-                        class=${isPulsing ? 'foreman-status-dot-pulse' : ''}
+                        class=${isPulsing ? 'ouvrage-status-dot-pulse' : ''}
                         style=${{
                             width: `${size}px`,
                             height: `${size}px`,

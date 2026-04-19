@@ -23,7 +23,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
-from switchboard.auth.sso import handle_sso, get_jwks, _invalidate_jwks_cache
+from ouvrage.auth.sso import handle_sso, get_jwks, _invalidate_jwks_cache
 
 
 # ── Key generation helpers ──────────────────────────────────────────────────
@@ -165,7 +165,7 @@ async def _call_sso(
 def reset_jwks_cache():
     """Reset the JWKS cache before each test."""
     _invalidate_jwks_cache()
-    import switchboard.auth.sso as _sso
+    import ouvrage.auth.sso as _sso
     _sso._jwks_cache = None
     yield
     _invalidate_jwks_cache()
@@ -178,7 +178,7 @@ class TestLocalMode:
 
     @pytest.fixture(autouse=True)
     def local_mode(self):
-        with patch("switchboard.auth.sso.AUTH_MODE", "local"):
+        with patch("ouvrage.auth.sso.AUTH_MODE", "local"):
             yield
 
     async def test_returns_404_in_local_mode(self, db):
@@ -198,9 +198,9 @@ class TestTokenValidation:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.auth.sso.AUTH_MODE", "saas"), \
-             patch("switchboard.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
-             patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
+        with patch("ouvrage.auth.sso.AUTH_MODE", "saas"), \
+             patch("ouvrage.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
+             patch("ouvrage.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
     async def test_missing_token_returns_400(self, db):
@@ -216,7 +216,7 @@ class TestTokenValidation:
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", exp_offset=-100)
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, _, body = await _call_sso(token=token)
 
         assert status == 401
@@ -229,7 +229,7 @@ class TestTokenValidation:
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="wrong-audience")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, _, body = await _call_sso(token=token)
 
         assert status == 401
@@ -244,7 +244,7 @@ class TestTokenValidation:
         jwks = _build_jwks(signing_key)
         token = _make_jwt(different_key, audience="test-instance")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, _, body = await _call_sso(token=token)
 
         assert status == 401
@@ -253,7 +253,7 @@ class TestTokenValidation:
 
     async def test_malformed_jwt_returns_401(self, db):
         """Completely invalid token string → 401."""
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value={"keys": []})):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value={"keys": []})):
             status, _, body = await _call_sso(token="not.a.jwt")
 
         assert status == 401
@@ -265,9 +265,9 @@ class TestValidJwtFlow:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.auth.sso.AUTH_MODE", "saas"), \
-             patch("switchboard.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
-             patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
+        with patch("ouvrage.auth.sso.AUTH_MODE", "saas"), \
+             patch("ouvrage.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
+             patch("ouvrage.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
     async def test_valid_jwt_creates_session_and_redirects(self, db):
@@ -276,14 +276,14 @@ class TestValidJwtFlow:
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, headers, _ = await _call_sso(token=token)
 
         assert status == 302
         assert headers["location"] == "/dashboard"
         assert "set-cookie" in headers
         cookie = headers["set-cookie"] if isinstance(headers["set-cookie"], str) else headers["set-cookie"][0]
-        assert "switchboard_session=" in cookie
+        assert "ouvrage_session=" in cookie
 
     async def test_valid_jwt_redirects_to_redirect_param(self, db):
         """Valid JWT with redirect param → redirects to that path."""
@@ -291,19 +291,19 @@ class TestValidJwtFlow:
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, headers, _ = await _call_sso(token=token, redirect="/dashboard/tasks")
 
         assert status == 302
         assert headers["location"] == "/dashboard/tasks"
 
-    async def test_redirect_absolute_url_falls_back_to_foreman(self, db):
+    async def test_redirect_absolute_url_falls_back_to_dashboard(self, db):
         """Absolute redirect URL → rejected, falls back to /dashboard."""
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="user@example.com")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, headers, _ = await _call_sso(
                 token=token, redirect="https://evil.com/steal"
             )
@@ -318,9 +318,9 @@ class TestUserUpsert:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.auth.sso.AUTH_MODE", "saas"), \
-             patch("switchboard.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
-             patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
+        with patch("ouvrage.auth.sso.AUTH_MODE", "saas"), \
+             patch("ouvrage.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
+             patch("ouvrage.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
     async def test_first_sso_creates_user(self, db):
@@ -330,10 +330,10 @@ class TestUserUpsert:
         token = _make_jwt(key, audience="test-instance", email="newuser@example.com", role="admin")
 
         # Confirm user does not exist yet
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.db.users import get_user_by_email
         assert await get_user_by_email("newuser@example.com") is None
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             status, _, _ = await _call_sso(token=token)
 
         assert status == 302
@@ -344,13 +344,13 @@ class TestUserUpsert:
 
     async def test_second_sso_reuses_existing_user(self, db):
         """Second SSO for same email → user ID is unchanged."""
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.db.users import get_user_by_email
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="existing@example.com")
 
         # First SSO
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             await _call_sso(token=token)
 
         user_after_first = await get_user_by_email("existing@example.com")
@@ -358,7 +358,7 @@ class TestUserUpsert:
 
         # Second SSO — regenerate token but same email
         token2 = _make_jwt(key, audience="test-instance", email="existing@example.com")
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             await _call_sso(token=token2)
 
         user_after_second = await get_user_by_email("existing@example.com")
@@ -366,13 +366,13 @@ class TestUserUpsert:
 
     async def test_role_update_on_subsequent_sso(self, db):
         """Subsequent SSO with changed role → role is updated."""
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.db.users import get_user_by_email
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
 
         # First SSO with role=member
         token1 = _make_jwt(key, audience="test-instance", email="role@example.com", role="member")
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             await _call_sso(token=token1)
 
         user = await get_user_by_email("role@example.com")
@@ -380,7 +380,7 @@ class TestUserUpsert:
 
         # Second SSO with role=admin
         token2 = _make_jwt(key, audience="test-instance", email="role@example.com", role="admin")
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             await _call_sso(token=token2)
 
         user_updated = await get_user_by_email("role@example.com")
@@ -388,12 +388,12 @@ class TestUserUpsert:
 
     async def test_email_is_lowercased(self, db):
         """JWT email is normalized to lowercase before upsert."""
-        from switchboard.db.users import get_user_by_email
+        from ouvrage.db.users import get_user_by_email
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         token = _make_jwt(key, audience="test-instance", email="User@Example.COM")
 
-        with patch("switchboard.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
+        with patch("ouvrage.auth.sso._fetch_jwks", AsyncMock(return_value=jwks)):
             await _call_sso(token=token)
 
         user = await get_user_by_email("user@example.com")
@@ -406,9 +406,9 @@ class TestJwksCaching:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.auth.sso.AUTH_MODE", "saas"), \
-             patch("switchboard.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
-             patch("switchboard.auth.sso.INSTANCE_SLUG", "test-instance"):
+        with patch("ouvrage.auth.sso.AUTH_MODE", "saas"), \
+             patch("ouvrage.auth.sso.CONTROL_PLANE_JWKS", "https://cp.example.com/.well-known/jwks.json"), \
+             patch("ouvrage.auth.sso.INSTANCE_SLUG", "test-instance"):
             yield
 
     async def test_jwks_fetched_only_once_per_ttl(self, db):
@@ -417,7 +417,7 @@ class TestJwksCaching:
         jwks = _build_jwks(key)
         fetch_mock = AsyncMock(return_value=jwks)
 
-        with patch("switchboard.auth.sso._fetch_jwks", fetch_mock):
+        with patch("ouvrage.auth.sso._fetch_jwks", fetch_mock):
             token1 = _make_jwt(key, audience="test-instance", email="a@example.com")
             token2 = _make_jwt(key, audience="test-instance", email="b@example.com")
             await _call_sso(token=token1)
@@ -428,12 +428,12 @@ class TestJwksCaching:
 
     async def test_jwks_cache_refreshed_when_stale(self, db):
         """Stale cache (past TTL) → JWKS re-fetched."""
-        import switchboard.auth.sso as sso_mod
+        import ouvrage.auth.sso as sso_mod
         key = _generate_rsa_key()
         jwks = _build_jwks(key)
         fetch_mock = AsyncMock(return_value=jwks)
 
-        with patch("switchboard.auth.sso._fetch_jwks", fetch_mock):
+        with patch("ouvrage.auth.sso._fetch_jwks", fetch_mock):
             # First request
             token = _make_jwt(key, audience="test-instance", email="c@example.com")
             await _call_sso(token=token)
@@ -453,13 +453,13 @@ class TestJwksCaching:
         fetch_mock = AsyncMock(return_value=jwks)
 
         # Token signed with "test-key-1" but initial cache is empty
-        import switchboard.auth.sso as sso_mod
+        import ouvrage.auth.sso as sso_mod
         sso_mod._jwks_cache = {"keys": []}  # stale/empty cache
         sso_mod._jwks_fetched_at = time.time()  # mark as fresh so TTL won't force refresh
 
         token = _make_jwt(key, kid="test-key-1", audience="test-instance", email="e@example.com")
 
-        with patch("switchboard.auth.sso._fetch_jwks", fetch_mock):
+        with patch("ouvrage.auth.sso._fetch_jwks", fetch_mock):
             status, _, _ = await _call_sso(token=token)
 
         # Should have fetched JWKS once (forced refresh due to kid miss)

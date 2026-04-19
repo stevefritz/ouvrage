@@ -1,9 +1,9 @@
-# Foreman (Switchboard) — production container image
+# Ouvrage — production container image
 # One image, many tenant containers. Each gets its own /data and /work volumes.
 #
 # Build:
-#   docker build -t foreman:latest .                                    # base image (~300MB)
-#   docker build --build-arg WITH_PLAYWRIGHT=true -t foreman:eyes .     # with Playwright+Chromium (~700MB)
+#   docker build -t ouvrage:latest .                                    # base image (~300MB)
+#   docker build --build-arg WITH_PLAYWRIGHT=true -t ouvrage:eyes .     # with Playwright+Chromium (~700MB)
 #
 # Run:    docker compose up -d
 #
@@ -46,9 +46,9 @@ RUN groupadd -r svc-only \
 WORKDIR /app
 
 COPY pyproject.toml ./
-COPY switchboard/ switchboard/
+COPY ouvrage/ ouvrage/
 COPY dashboard/ dashboard/
-COPY foreman.html ./
+COPY index.html ./
 
 RUN pip install --no-cache-dir ".[dev]" sqlite-vec \
     && apt-get update && apt-get install -y --no-install-recommends tmpreaper \
@@ -83,7 +83,7 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # --- Environment defaults ---
-ENV SWITCHBOARD_DB=/data/switchboard.db \
+ENV OUVRAGE_DB=/data/ouvrage.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
     WORKER_USER=switchboard \
     AUTH_MODE=local \
@@ -94,4 +94,4 @@ EXPOSE 8100
 
 # Entrypoint runs as root to fix volume ownership, then drops to switchboard-svc
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python3", "-m", "switchboard"]
+CMD ["python3", "-m", "ouvrage"]

@@ -6,7 +6,7 @@ Covers:
 - get_session_log / get_dispatch_log read from archive when attempt specified
 - get_session_log / get_dispatch_log fall back to archive when worktree is gone
 - list_attempts() returns sorted attempt list with metadata
-- missing .switchboard/ is a no-op (not an error)
+- missing .ouvrage/ is a no-op (not an error)
 """
 
 import asyncio
@@ -30,7 +30,7 @@ async def _fake_run_as_worker(*cmd, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _mock_worker(monkeypatch):
-    import switchboard.dispatch.engine as _engine
+    import ouvrage.dispatch.engine as _engine
     monkeypatch.setattr(_engine, "_run_as_worker", _fake_run_as_worker)
 
 
@@ -61,9 +61,9 @@ def _make_project(tmp_path):
     }
 
 
-def _write_switchboard(worktree: str, session_lines=None, dispatch_text=None):
-    """Create .switchboard/ folder with optional log files."""
-    sb = Path(worktree) / ".switchboard"
+def _write_ouvrage(worktree: str, session_lines=None, dispatch_text=None):
+    """Create .ouvrage/ folder with optional log files."""
+    sb = Path(worktree) / ".ouvrage"
     sb.mkdir(parents=True, exist_ok=True)
     if session_lines is not None:
         (sb / "session.jsonl").write_text("\n".join(json.dumps(l) for l in session_lines) + "\n")
@@ -78,14 +78,14 @@ def _write_switchboard(worktree: str, session_lines=None, dispatch_text=None):
 
 class TestArchiveTaskLogs:
     def setup_method(self):
-        from switchboard.dispatch.engine import archive_task_logs
+        from ouvrage.dispatch.engine import archive_task_logs
         self.archive = archive_task_logs
 
     @pytest.mark.asyncio
     async def test_creates_attempt_folder(self, tmp_path):
         task = _make_task(tmp_path, dispatch_count=1)
         project = _make_project(tmp_path)
-        _write_switchboard(task["worktree_path"], session_lines=[{"type": "text", "content": "hi"}])
+        _write_ouvrage(task["worktree_path"], session_lines=[{"type": "text", "content": "hi"}])
 
         result = await self.archive(task, project, "retry")
 
@@ -97,7 +97,7 @@ class TestArchiveTaskLogs:
     async def test_copies_session_jsonl(self, tmp_path):
         task = _make_task(tmp_path, dispatch_count=2)
         project = _make_project(tmp_path)
-        _write_switchboard(task["worktree_path"], session_lines=[{"type": "text"}, {"type": "tool"}])
+        _write_ouvrage(task["worktree_path"], session_lines=[{"type": "text"}, {"type": "tool"}])
 
         await self.archive(task, project, "retry")
 
@@ -108,7 +108,7 @@ class TestArchiveTaskLogs:
     async def test_copies_dispatch_log(self, tmp_path):
         task = _make_task(tmp_path, dispatch_count=1)
         project = _make_project(tmp_path)
-        _write_switchboard(task["worktree_path"], dispatch_text="[ts] Dispatching task\n")
+        _write_ouvrage(task["worktree_path"], dispatch_text="[ts] Dispatching task\n")
 
         await self.archive(task, project, "close")
 
@@ -119,7 +119,7 @@ class TestArchiveTaskLogs:
     async def test_writes_metadata_json(self, tmp_path):
         task = _make_task(tmp_path, dispatch_count=3)
         project = _make_project(tmp_path)
-        _write_switchboard(task["worktree_path"])
+        _write_ouvrage(task["worktree_path"])
 
         await self.archive(task, project, "detach")
 
@@ -145,11 +145,11 @@ class TestArchiveTaskLogs:
         assert not (Path(project["working_dir"]) / ".task-history").exists()
 
     @pytest.mark.asyncio
-    async def test_noop_when_switchboard_missing(self, tmp_path):
-        """If .switchboard/ doesn't exist in worktree, archive is a no-op."""
+    async def test_noop_when_ouvrage_missing(self, tmp_path):
+        """If .ouvrage/ doesn't exist in worktree, archive is a no-op."""
         task = _make_task(tmp_path)
         project = _make_project(tmp_path)
-        # Create worktree dir but NO .switchboard/
+        # Create worktree dir but NO .ouvrage/
         Path(task["worktree_path"]).mkdir(parents=True, exist_ok=True)
 
         result = await self.archive(task, project, "retry")
@@ -160,7 +160,7 @@ class TestArchiveTaskLogs:
     async def test_uses_dispatch_count_as_attempt_number(self, tmp_path):
         task = _make_task(tmp_path, dispatch_count=5)
         project = _make_project(tmp_path)
-        _write_switchboard(task["worktree_path"])
+        _write_ouvrage(task["worktree_path"])
 
         await self.archive(task, project, "completion")
 
@@ -178,9 +178,9 @@ class TestArchiveCallSites:
     @pytest.mark.asyncio
     async def test_retry_task_archives_before_dispatch(self, tmp_path, db, sample_project):
         """retry_task() should archive current attempt before dispatching."""
-        import switchboard.dispatch.engine as _engine
+        import ouvrage.dispatch.engine as _engine
 
-        # Create a task with a worktree containing .switchboard/
+        # Create a task with a worktree containing .ouvrage/
         task = await db.create_task(
             id="test-project/retry-me",
             project_id="test-project",
@@ -189,20 +189,20 @@ class TestArchiveCallSites:
         )
         task = await db.update_task(task["id"], status="needs-review", dispatch_count=1,
                                     worktree_path=str(tmp_path / "retry-me"))
-        _write_switchboard(str(tmp_path / "retry-me"), dispatch_text="old dispatch log\n")
+        _write_ouvrage(str(tmp_path / "retry-me"), dispatch_text="old dispatch log\n")
 
         archived_calls = []
 
         async def fake_archive(t, p, reason):
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
-        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
-             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "retry-me"))), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / "retry-me" / ".switchboard")), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine.notify.task_dispatched", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
+             patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "retry-me"))), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / "retry-me" / ".ouvrage")), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine.notify.task_dispatched", AsyncMock()):
             await _engine.retry_task("test-project/retry-me")
 
         assert len(archived_calls) == 1
@@ -211,7 +211,7 @@ class TestArchiveCallSites:
     @pytest.mark.asyncio
     async def test_close_task_archives_before_cleanup(self, tmp_path, db, sample_project):
         """close_task() should archive before calling cleanup_worktree."""
-        import switchboard.dispatch.engine as _engine
+        import ouvrage.dispatch.engine as _engine
 
         task = await db.create_task(
             id="test-project/close-me",
@@ -222,7 +222,7 @@ class TestArchiveCallSites:
         # Use "stopped" — close is only valid from stopped state
         task = await db.update_task(task["id"], status="stopped", dispatch_count=2,
                                     worktree_path=str(tmp_path / "close-me"))
-        _write_switchboard(str(tmp_path / "close-me"), dispatch_text="dispatch\n")
+        _write_ouvrage(str(tmp_path / "close-me"), dispatch_text="dispatch\n")
 
         archived_calls = []
 
@@ -235,7 +235,7 @@ class TestArchiveCallSites:
             if project:
                 await fake_archive(task, project, "close")
 
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         tdef = TRANSITIONS[("stopped", "close")]
         orig_effects = tdef.side_effects[:]
         tdef.side_effects = [fake_close_side_effect, tdef.side_effects[-1]]  # keep post_close_message
@@ -250,7 +250,7 @@ class TestArchiveCallSites:
     @pytest.mark.asyncio
     async def test_release_worktree_archives_before_detach(self, tmp_path, db, sample_project):
         """release_worktree() should archive before removing the worktree."""
-        import switchboard.dispatch.engine as _engine
+        import ouvrage.dispatch.engine as _engine
 
         task = await db.create_task(
             id="test-project/release-me",
@@ -260,7 +260,7 @@ class TestArchiveCallSites:
         )
         task = await db.update_task(task["id"], status="completed", dispatch_count=1,
                                     worktree_path=str(tmp_path / "release-me"))
-        _write_switchboard(str(tmp_path / "release-me"), dispatch_text="dispatch\n")
+        _write_ouvrage(str(tmp_path / "release-me"), dispatch_text="dispatch\n")
 
         archived_calls = []
 
@@ -268,8 +268,8 @@ class TestArchiveCallSites:
             archived_calls.append({"task_id": t["id"], "reason": reason})
 
         # Patch subprocess so worktree remove doesn't fail
-        with patch("switchboard.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
-             patch("switchboard.dispatch.engine.asyncio.create_subprocess_exec", AsyncMock(
+        with patch("ouvrage.dispatch.engine.archive_task_logs", side_effect=fake_archive), \
+             patch("ouvrage.dispatch.engine.asyncio.create_subprocess_exec", AsyncMock(
                  return_value=MagicMock(returncode=0, communicate=AsyncMock(return_value=(b"", b"")))
              )):
             await _engine.release_worktree("test-project/release-me")
@@ -280,7 +280,7 @@ class TestArchiveCallSites:
     @pytest.mark.asyncio
     async def test_auto_release_uses_completion_reason(self, tmp_path, db, sample_project):
         """_auto_release_worktree() should pass reason='completion' to release_worktree."""
-        import switchboard.dispatch.engine as _engine
+        import ouvrage.dispatch.engine as _engine
 
         task = await db.create_task(
             id="test-project/auto-release",
@@ -297,7 +297,7 @@ class TestArchiveCallSites:
         async def fake_release(task_id, reason="detach"):
             release_calls.append({"task_id": task_id, "reason": reason})
 
-        with patch("switchboard.dispatch.engine.release_worktree", side_effect=fake_release):
+        with patch("ouvrage.dispatch.engine.release_worktree", side_effect=fake_release):
             await _engine._auto_release_worktree("test-project/auto-release")
 
         assert release_calls[0]["reason"] == "completion"
@@ -309,7 +309,7 @@ class TestArchiveCallSites:
 
 class TestListAttempts:
     def setup_method(self):
-        from switchboard.dispatch.engine import list_attempts
+        from ouvrage.dispatch.engine import list_attempts
         self.list_attempts = list_attempts
 
     @pytest.mark.asyncio
@@ -320,7 +320,7 @@ class TestListAttempts:
             goal="No history",
         )
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value={
+        with patch("ouvrage.db.get_project", AsyncMock(return_value={
             "id": "test-project",
             "working_dir": str(tmp_path / "proj"),
         })):
@@ -331,7 +331,7 @@ class TestListAttempts:
 
     @pytest.mark.asyncio
     async def test_returns_sorted_attempts(self, tmp_path, db, sample_project):
-        from switchboard.dispatch.engine import archive_task_logs
+        from ouvrage.dispatch.engine import archive_task_logs
 
         task_id = "test-project/multi-attempt"
         working_dir = str(tmp_path / "proj")
@@ -349,7 +349,7 @@ class TestListAttempts:
                 "total_input_tokens": attempt_num * 100,
                 "total_output_tokens": attempt_num * 50,
             }
-            _write_switchboard(task["worktree_path"], dispatch_text=f"dispatch {attempt_num}\n")
+            _write_ouvrage(task["worktree_path"], dispatch_text=f"dispatch {attempt_num}\n")
             await archive_task_logs(task, project, "retry")
 
         await db.create_task(
@@ -358,7 +358,7 @@ class TestListAttempts:
             goal="Multi attempt task",
         )
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await self.list_attempts(task_id)
 
         assert len(result["attempts"]) == 3
@@ -369,7 +369,7 @@ class TestListAttempts:
 
     @pytest.mark.asyncio
     async def test_metadata_fields_present(self, tmp_path, db, sample_project):
-        from switchboard.dispatch.engine import archive_task_logs
+        from ouvrage.dispatch.engine import archive_task_logs
 
         task_id = "test-project/metadata-check"
         working_dir = str(tmp_path / "proj")
@@ -385,12 +385,12 @@ class TestListAttempts:
             "total_input_tokens": 500,
             "total_output_tokens": 250,
         }
-        _write_switchboard(task["worktree_path"], dispatch_text="log\n")
+        _write_ouvrage(task["worktree_path"], dispatch_text="log\n")
         await archive_task_logs(task, project, "close")
 
         await db.create_task(id=task_id, project_id="test-project", goal="test")
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await self.list_attempts(task_id)
 
         assert len(result["attempts"]) == 1
@@ -402,7 +402,7 @@ class TestListAttempts:
 
     @pytest.mark.asyncio
     async def test_raises_for_unknown_task(self, tmp_path, db, sample_project):
-        from switchboard.dispatch.engine import list_attempts
+        from ouvrage.dispatch.engine import list_attempts
         with pytest.raises(ValueError, match="not found"):
             await list_attempts("test-project/does-not-exist")
 
@@ -413,7 +413,7 @@ class TestListAttempts:
 
 class TestFindArchivePath:
     def setup_method(self):
-        from switchboard.dispatch.engine import _find_archive_path
+        from ouvrage.dispatch.engine import _find_archive_path
         self.fn = _find_archive_path
 
     def test_finds_specific_attempt(self, tmp_path):
@@ -453,7 +453,7 @@ class TestHistoricalLogReading:
 
     @pytest.mark.asyncio
     async def test_get_session_log_reads_from_archive(self, tmp_path, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_get_session_log
+        from ouvrage.server.handlers.tasks import _handle_get_session_log
 
         task_id = "test-project/archived-task"
         working_dir = str(tmp_path / "proj")
@@ -469,7 +469,7 @@ class TestHistoricalLogReading:
         # No worktree
         await db.update_task(task_id, worktree_path=None)
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _handle_get_session_log({"task_id": task_id, "attempt": 1})
 
         assert "error" not in result
@@ -478,7 +478,7 @@ class TestHistoricalLogReading:
 
     @pytest.mark.asyncio
     async def test_get_session_log_falls_back_to_archive_when_no_worktree(self, tmp_path, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_get_session_log
+        from ouvrage.server.handlers.tasks import _handle_get_session_log
 
         task_id = "test-project/fallback-task"
         working_dir = str(tmp_path / "proj")
@@ -493,7 +493,7 @@ class TestHistoricalLogReading:
         task = await db.create_task(id=task_id, project_id="test-project", goal="test")
         await db.update_task(task_id, worktree_path=None)
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             # No attempt specified — should fall back to highest archive
             result = await _handle_get_session_log({"task_id": task_id})
 
@@ -503,7 +503,7 @@ class TestHistoricalLogReading:
 
     @pytest.mark.asyncio
     async def test_get_dispatch_log_reads_from_archive(self, tmp_path, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_get_dispatch_log
+        from ouvrage.server.handlers.tasks import _handle_get_dispatch_log
 
         task_id = "test-project/dispatch-archived"
         working_dir = str(tmp_path / "proj")
@@ -516,7 +516,7 @@ class TestHistoricalLogReading:
         task = await db.create_task(id=task_id, project_id="test-project", goal="test")
         await db.update_task(task_id, worktree_path=None)
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _handle_get_dispatch_log({"task_id": task_id, "attempt": 1})
 
         assert "error" not in result
@@ -525,7 +525,7 @@ class TestHistoricalLogReading:
 
     @pytest.mark.asyncio
     async def test_get_session_log_error_when_no_archive_exists(self, tmp_path, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_get_session_log
+        from ouvrage.server.handlers.tasks import _handle_get_session_log
 
         task_id = "test-project/no-archive"
         working_dir = str(tmp_path / "proj")
@@ -534,7 +534,7 @@ class TestHistoricalLogReading:
         task = await db.create_task(id=task_id, project_id="test-project", goal="test")
         await db.update_task(task_id, worktree_path=None)
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _handle_get_session_log({"task_id": task_id})
 
         assert "error" in result
@@ -549,10 +549,10 @@ class TestResolveDashboardLogDir:
 
     @pytest.mark.asyncio
     async def test_returns_live_worktree_when_no_attempt(self, tmp_path, db):
-        from switchboard.dashboard.api import _resolve_dashboard_log_dir
+        from ouvrage.dashboard.api import _resolve_dashboard_log_dir
 
         wt = tmp_path / "my-task"
-        sb = wt / ".switchboard"
+        sb = wt / ".ouvrage"
         sb.mkdir(parents=True)
 
         task = {
@@ -562,14 +562,14 @@ class TestResolveDashboardLogDir:
         }
         project = {"id": "proj", "working_dir": str(tmp_path / "proj")}
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _resolve_dashboard_log_dir(task, attempt=None)
 
         assert result == sb
 
     @pytest.mark.asyncio
     async def test_returns_archive_when_attempt_specified(self, tmp_path, db):
-        from switchboard.dashboard.api import _resolve_dashboard_log_dir
+        from ouvrage.dashboard.api import _resolve_dashboard_log_dir
 
         working_dir = tmp_path / "proj"
         dest = working_dir / ".task-history" / "my-task" / "attempt-1"
@@ -582,14 +582,14 @@ class TestResolveDashboardLogDir:
         }
         project = {"id": "proj", "working_dir": str(working_dir)}
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _resolve_dashboard_log_dir(task, attempt=1)
 
         assert result == dest
 
     @pytest.mark.asyncio
     async def test_falls_back_to_highest_archive_when_worktree_gone(self, tmp_path, db):
-        from switchboard.dashboard.api import _resolve_dashboard_log_dir
+        from ouvrage.dashboard.api import _resolve_dashboard_log_dir
 
         working_dir = tmp_path / "proj"
         for n in (1, 2):
@@ -603,14 +603,14 @@ class TestResolveDashboardLogDir:
         }
         project = {"id": "proj", "working_dir": str(working_dir)}
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _resolve_dashboard_log_dir(task, attempt=None)
 
         assert result == working_dir / ".task-history" / "my-task" / "attempt-2"
 
     @pytest.mark.asyncio
     async def test_returns_none_when_nothing_exists(self, tmp_path, db):
-        from switchboard.dashboard.api import _resolve_dashboard_log_dir
+        from ouvrage.dashboard.api import _resolve_dashboard_log_dir
 
         task = {
             "id": "proj/no-archive",
@@ -619,14 +619,14 @@ class TestResolveDashboardLogDir:
         }
         project = {"id": "proj", "working_dir": str(tmp_path / "proj")}
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _resolve_dashboard_log_dir(task, attempt=None)
 
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_missing_attempt(self, tmp_path, db):
-        from switchboard.dashboard.api import _resolve_dashboard_log_dir
+        from ouvrage.dashboard.api import _resolve_dashboard_log_dir
 
         working_dir = tmp_path / "proj"
         # only attempt-1 exists, but we ask for attempt-5
@@ -640,7 +640,7 @@ class TestResolveDashboardLogDir:
         }
         project = {"id": "proj", "working_dir": str(working_dir)}
 
-        with patch("switchboard.db.get_project", AsyncMock(return_value=project)):
+        with patch("ouvrage.db.get_project", AsyncMock(return_value=project)):
             result = await _resolve_dashboard_log_dir(task, attempt=5)
 
         assert result is None
@@ -654,7 +654,7 @@ class TestFilterEmptyTextEntries:
     """Unit tests for dashboard_api._filter_empty_text_entries."""
 
     def test_removes_empty_text_assistant_message(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         entries = [
             {"type": "AssistantMessage", "content": [{"type": "text", "text": ""}]},
@@ -662,7 +662,7 @@ class TestFilterEmptyTextEntries:
         assert _filter_empty_text_entries(entries) == []
 
     def test_removes_whitespace_only_text(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         entries = [
             {"type": "AssistantMessage", "content": [{"type": "text", "text": "   \n  "}]},
@@ -670,13 +670,13 @@ class TestFilterEmptyTextEntries:
         assert _filter_empty_text_entries(entries) == []
 
     def test_keeps_non_empty_text_assistant_message(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         entry = {"type": "AssistantMessage", "content": [{"type": "text", "text": "hello"}]}
         assert _filter_empty_text_entries([entry]) == [entry]
 
     def test_keeps_tool_use_assistant_message_even_with_empty_text(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         # Has a tool_use block alongside an empty text block — classified as TOOL, not filtered
         entry = {
@@ -689,7 +689,7 @@ class TestFilterEmptyTextEntries:
         assert _filter_empty_text_entries([entry]) == [entry]
 
     def test_keeps_non_assistant_message_types(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         entries = [
             {"type": "UserMessage", "content": [{"type": "tool_result", "preview": ""}]},
@@ -699,14 +699,14 @@ class TestFilterEmptyTextEntries:
         assert _filter_empty_text_entries(entries) == entries
 
     def test_removes_empty_content_list(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         # AssistantMessage with no content blocks at all — treated as empty
         entries = [{"type": "AssistantMessage", "content": []}]
         assert _filter_empty_text_entries(entries) == []
 
     def test_mixed_entries_filters_only_empty_text(self):
-        from switchboard.dashboard.api import _filter_empty_text_entries
+        from ouvrage.dashboard.api import _filter_empty_text_entries
 
         empty_text = {"type": "AssistantMessage", "content": [{"type": "text", "text": ""}]}
         real_text = {"type": "AssistantMessage", "content": [{"type": "text", "text": "doing work"}]}

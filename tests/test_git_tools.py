@@ -38,9 +38,9 @@ class TestGitPush:
             "working_dir": str(tmp_path),
         }
         self.patches = [
-            patch("switchboard.server.handlers.git_tools._run_as_worker", self.mock_run),
-            patch("switchboard.server.handlers.git_tools.resolve_credential", self.mock_resolve),
-            patch("switchboard.server.handlers.git_tools.db"),
+            patch("ouvrage.server.handlers.git_tools._run_as_worker", self.mock_run),
+            patch("ouvrage.server.handlers.git_tools.resolve_credential", self.mock_resolve),
+            patch("ouvrage.server.handlers.git_tools.db"),
         ]
         mocks = [p.start() for p in self.patches]
         self.mock_db = mocks[2]
@@ -52,7 +52,7 @@ class TestGitPush:
 
     async def test_push_success_with_commits(self):
         """git_push returns success when there are commits to push."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         # rev-parse returns task branch
         # log returns unpushed commits
@@ -75,7 +75,7 @@ class TestGitPush:
 
     async def test_push_nothing_to_push(self):
         """git_push returns message when nothing to push."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),  # rev-parse
@@ -89,7 +89,7 @@ class TestGitPush:
 
     async def test_push_rejects_wrong_branch(self):
         """git_push rejects push when current branch doesn't match task branch."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"other-branch\n", b"", 0),  # rev-parse — wrong branch
@@ -103,7 +103,7 @@ class TestGitPush:
 
     async def test_push_divergence_error(self):
         """git_push returns structured error on push rejection (divergence)."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),                        # rev-parse
@@ -119,7 +119,7 @@ class TestGitPush:
 
     async def test_push_task_not_found(self):
         """git_push returns error for unknown task."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_db.get_task = AsyncMock(return_value=None)
 
@@ -130,7 +130,7 @@ class TestGitPush:
 
     async def test_push_no_credential(self):
         """git_push returns error when no credential is configured."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_resolve.side_effect = ValueError("No credential configured")
         self.mock_run.side_effect = [
@@ -145,7 +145,7 @@ class TestGitPush:
 
     async def test_push_when_remote_branch_missing(self):
         """git_push pushes even when origin/branch doesn't exist yet."""
-        from switchboard.server.handlers.git_tools import _handle_git_push
+        from ouvrage.server.handlers.git_tools import _handle_git_push
 
         self.mock_run.side_effect = [
             (b"my-branch\n", b"", 0),            # rev-parse --abbrev-ref HEAD
@@ -194,9 +194,9 @@ class TestGitFetch:
             "working_dir": str(tmp_path),
         }
         self.patches = [
-            patch("switchboard.server.handlers.git_tools._run_as_worker", self.mock_run),
-            patch("switchboard.server.handlers.git_tools.resolve_credential", self.mock_resolve),
-            patch("switchboard.server.handlers.git_tools.db"),
+            patch("ouvrage.server.handlers.git_tools._run_as_worker", self.mock_run),
+            patch("ouvrage.server.handlers.git_tools.resolve_credential", self.mock_resolve),
+            patch("ouvrage.server.handlers.git_tools.db"),
         ]
         mocks = [p.start() for p in self.patches]
         self.mock_db = mocks[2]
@@ -208,7 +208,7 @@ class TestGitFetch:
 
     async def test_fetch_specific_ref(self):
         """git_fetch with ref fetches specific branch."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         result = await _handle_git_fetch({"task_id": "proj/task1", "ref": "main"})
 
@@ -223,7 +223,7 @@ class TestGitFetch:
 
     async def test_fetch_all(self):
         """git_fetch without ref fetches all branches."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         result = await _handle_git_fetch({"task_id": "proj/task1"})
 
@@ -238,7 +238,7 @@ class TestGitFetch:
 
     async def test_fetch_task_not_found(self):
         """git_fetch returns error for unknown task."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         self.mock_db.get_task = AsyncMock(return_value=None)
 
@@ -249,7 +249,7 @@ class TestGitFetch:
 
     async def test_fetch_no_credential(self):
         """git_fetch returns error when no credential is configured."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         self.mock_resolve.side_effect = ValueError("No credential configured")
 
@@ -260,7 +260,7 @@ class TestGitFetch:
 
     async def test_fetch_failure(self):
         """git_fetch returns error when fetch command fails."""
-        from switchboard.server.handlers.git_tools import _handle_git_fetch
+        from ouvrage.server.handlers.git_tools import _handle_git_fetch
 
         self.mock_run.return_value = (b"", b"fatal: could not read\n", 128)
 
@@ -351,19 +351,19 @@ class TestToolRegistration:
 
     def test_tools_in_worker_allowlist(self):
         """git_push and git_fetch are in WORKER_TOOL_ALLOWLIST."""
-        from switchboard.server.tools import WORKER_TOOL_ALLOWLIST
+        from ouvrage.server.tools import WORKER_TOOL_ALLOWLIST
         assert "git_push" in WORKER_TOOL_ALLOWLIST
         assert "git_fetch" in WORKER_TOOL_ALLOWLIST
 
     def test_tools_in_worker_tools(self):
         """git_push and git_fetch are in WORKER_TOOLS."""
-        from switchboard.server.tools import WORKER_TOOLS
+        from ouvrage.server.tools import WORKER_TOOLS
         names = {t.name for t in WORKER_TOOLS}
         assert "git_push" in names
         assert "git_fetch" in names
 
     def test_handlers_registered(self):
         """git_push and git_fetch handlers are registered in TOOL_HANDLERS."""
-        from switchboard.server.dispatch import TOOL_HANDLERS
+        from ouvrage.server.dispatch import TOOL_HANDLERS
         assert "git_push" in TOOL_HANDLERS
         assert "git_fetch" in TOOL_HANDLERS

@@ -13,7 +13,7 @@ Covers:
 import json
 import pytest
 
-from switchboard.auth.middleware import auth_middleware
+from ouvrage.auth.middleware import auth_middleware
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -83,28 +83,28 @@ async def _call_middleware(path, cookie=None, client=("10.0.0.1", 12345),
     return status, resp_headers, body, inner_scope
 
 
-# ── Foreman: no session → redirect ─────────────────────────────────────────
+# ── Ouvrage: no session → redirect ─────────────────────────────────────────
 
-class TestForemanSessionRequired:
+class TestOuvrageSessionRequired:
 
-    async def test_foreman_root_no_session_redirects(self, db):
+    async def test_ouvrage_root_no_session_redirects(self, db):
         status, headers, _, _ = await _call_middleware("/dashboard/")
         assert status == 302
         assert headers["location"].startswith("/dashboard/login?next=")
 
-    async def test_foreman_nested_no_session_redirects(self, db):
+    async def test_ouvrage_nested_no_session_redirects(self, db):
         status, headers, _, _ = await _call_middleware("/dashboard/tasks")
         assert status == 302
         assert "/dashboard/login?next=" in headers["location"]
 
-    async def test_foreman_redirect_encodes_next_path(self, db):
+    async def test_ouvrage_redirect_encodes_next_path(self, db):
         status, headers, _, _ = await _call_middleware("/dashboard/tasks")
         location = headers["location"]
         assert "next=" in location
         # next= should contain the original path (URL-encoded)
         assert "dashboard" in location
 
-    async def test_foreman_redirect_includes_query_string(self, db):
+    async def test_ouvrage_redirect_includes_query_string(self, db):
         status, headers, _, _ = await _call_middleware(
             "/dashboard/tasks", query_string=b"status=working"
         )
@@ -112,27 +112,27 @@ class TestForemanSessionRequired:
         # The query string should be included in next=
         assert "status" in location or "working" in location
 
-    async def test_foreman_login_is_public(self, db):
+    async def test_ouvrage_login_is_public(self, db):
         """GET /dashboard/login should pass through without session."""
         status, _, body, _ = await _call_middleware("/dashboard/login")
         assert status == 200
         assert body == b"OK"
 
-    async def test_foreman_with_valid_session_passes(self, db):
-        from switchboard.auth.sessions import create_session
+    async def test_ouvrage_with_valid_session_passes(self, db):
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="fore@test.com", name="Fore")
         sid = await create_session(user["id"])
-        cookie = f"switchboard_session={sid}"
+        cookie = f"ouvrage_session={sid}"
 
         status, _, body, _ = await _call_middleware("/dashboard/", cookie=cookie)
         assert status == 200
         assert body == b"OK"
 
-    async def test_foreman_with_session_injects_user(self, db):
-        from switchboard.auth.sessions import create_session
+    async def test_ouvrage_with_session_injects_user(self, db):
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="fore2@test.com", name="Fore2")
         sid = await create_session(user["id"])
-        cookie = f"switchboard_session={sid}"
+        cookie = f"ouvrage_session={sid}"
 
         _, _, _, inner_scope = await _call_middleware("/dashboard/", cookie=cookie)
         assert inner_scope is not None
@@ -156,20 +156,20 @@ class TestDashboardApiSessionRequired:
         assert status == 401
 
     async def test_dashboard_api_with_valid_session_passes(self, db):
-        from switchboard.auth.sessions import create_session
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="dash@test.com", name="Dash")
         sid = await create_session(user["id"])
-        cookie = f"switchboard_session={sid}"
+        cookie = f"ouvrage_session={sid}"
 
         status, _, body, _ = await _call_middleware("/dashboard/api/tasks", cookie=cookie)
         assert status == 200
         assert body == b"OK"
 
     async def test_dashboard_api_with_session_injects_user(self, db):
-        from switchboard.auth.sessions import create_session
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="dash2@test.com", name="Dash2")
         sid = await create_session(user["id"])
-        cookie = f"switchboard_session={sid}"
+        cookie = f"ouvrage_session={sid}"
 
         _, _, _, inner_scope = await _call_middleware("/dashboard/api/tasks", cookie=cookie)
         assert inner_scope is not None
@@ -205,9 +205,9 @@ class TestDashboardSPARequiresAuth:
         assert status == 200
 
 
-# ── Legacy /foreman redirect ──────────────────────────────────────────────
+# ── Legacy /foreman redirect (kept for backward compat) ──────────────────────────────────────────────
 
-class TestLegacyForemanRedirect:
+class TestLegacyForemanRedirectBasic:
 
     async def test_foreman_redirects_to_dashboard(self, db):
         """Legacy /foreman paths redirect to /dashboard equivalent."""
@@ -225,7 +225,7 @@ class TestLegacyForemanRedirect:
 
 class TestLocalhostBypass:
 
-    async def test_localhost_bypasses_foreman_auth(self, db):
+    async def test_localhost_bypasses_ouvrage_auth(self, db):
         """127.0.0.1 does NOT skip session check on /dashboard/ (bypass scoped to /mcp/worker)."""
         status, _, body, _ = await _call_middleware(
             "/dashboard/", client=("127.0.0.1", 5000)
@@ -234,7 +234,7 @@ class TestLocalhostBypass:
         # /dashboard/ requires a valid session → redirect to login.
         assert status == 302
 
-    async def test_localhost_ipv6_bypasses_foreman_auth(self, db):
+    async def test_localhost_ipv6_bypasses_ouvrage_auth(self, db):
         status, _, body, _ = await _call_middleware(
             "/dashboard/", client=("::1", 5000)
         )
@@ -250,7 +250,7 @@ class TestLocalhostBypass:
         assert status == 401
 
 
-# ── Legacy /foreman redirect ──────────────────────────────────────────────
+# ── Legacy /foreman redirect (kept for backward compat) ──────────────────────────────────────────────
 
 class TestLegacyForemanRedirect:
 

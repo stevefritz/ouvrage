@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-import switchboard.db as db
+import ouvrage.db as db
 
 
 class TestSetupWorktreeReopenedTask:
@@ -39,11 +39,11 @@ class TestSetupWorktreeReopenedTask:
             return b"", b"", 0
 
         self.run_mock = AsyncMock(side_effect=fake_run)
-        self.patcher = patch("switchboard.git.worktree._run_as_worker", self.run_mock)
+        self.patcher = patch("ouvrage.git.worktree._run_as_worker", self.run_mock)
         self.patcher.start()
         # Patch _resolve_push_url to avoid DB lookups
         self.push_url_patcher = patch(
-            "switchboard.git.operations._resolve_push_url",
+            "ouvrage.git.operations._resolve_push_url",
             AsyncMock(side_effect=ValueError("no PAT")),
         )
         self.push_url_patcher.start()
@@ -63,7 +63,7 @@ class TestSetupWorktreeReopenedTask:
 
     async def test_reopened_task_uses_remote_branch(self, tmp_path):
         """Branch exists on origin → base_ref should be origin/{branch}."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         project = self._project(tmp_path)
         await setup_worktree(project, "existing-branch", "existing-branch")
@@ -80,7 +80,7 @@ class TestSetupWorktreeReopenedTask:
 
     async def test_new_task_uses_default_branch(self, tmp_path):
         """Branch does NOT exist on origin → base_ref should be origin/main."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         project = self._project(tmp_path)
         await setup_worktree(project, "new-branch", "new-branch")
@@ -95,7 +95,7 @@ class TestSetupWorktreeReopenedTask:
 
     async def test_depends_on_overrides_remote_branch(self, db, sample_project, tmp_path):
         """Even if origin/{branch} exists, depends_on takes priority."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         # Create parent task with a branch
         await db.create_task(

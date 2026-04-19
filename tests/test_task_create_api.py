@@ -50,7 +50,7 @@ class TestCreateTaskEndpoint:
 
     async def test_create_held_task_success(self, db, sample_project, mock_git):
         """Happy path: creates a held task, returns 201 with task_id."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {
             "project_id": "test-project",
@@ -78,7 +78,7 @@ class TestCreateTaskEndpoint:
 
     async def test_create_task_with_spec_and_checklist(self, db, sample_project, mock_git):
         """Task can be created with spec and checklist items."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {
             "project_id": "test-project",
@@ -105,7 +105,7 @@ class TestCreateTaskEndpoint:
 
     async def test_missing_project_id_returns_400(self, db, sample_project):
         """Missing project_id → 400 error."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {"id": "test-project/task-x", "goal": "Do something"}
         scope = _make_scope()
@@ -119,7 +119,7 @@ class TestCreateTaskEndpoint:
 
     async def test_missing_goal_returns_400(self, db, sample_project):
         """Missing goal → 400 error."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {"project_id": "test-project", "id": "test-project/task-x"}
         scope = _make_scope()
@@ -133,7 +133,7 @@ class TestCreateTaskEndpoint:
 
     async def test_missing_task_id_returns_400(self, db, sample_project):
         """Missing task id → 400 error."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {"project_id": "test-project", "goal": "Do something"}
         scope = _make_scope()
@@ -147,7 +147,7 @@ class TestCreateTaskEndpoint:
 
     async def test_duplicate_task_id_returns_409(self, db, sample_project, sample_task, mock_git):
         """Creating a task with an ID that already exists → 409."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {
             "project_id": "test-project",
@@ -166,7 +166,7 @@ class TestCreateTaskEndpoint:
 
     async def test_unknown_project_returns_error(self, db):
         """Project doesn't exist → error from dispatch_task."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         body = {
             "project_id": "nonexistent-project",
@@ -185,7 +185,7 @@ class TestCreateTaskEndpoint:
 
     async def test_empty_body_returns_400(self, db, sample_project):
         """Empty request body → 400."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope()
         receive = _make_receive(b"")
@@ -197,7 +197,7 @@ class TestCreateTaskEndpoint:
 
     async def test_get_tasks_still_works(self, db, sample_project):
         """GET /dashboard/api/tasks is not broken by the new POST route."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(method="GET")
         receive = _make_receive()

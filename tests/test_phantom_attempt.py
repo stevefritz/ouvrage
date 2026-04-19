@@ -16,11 +16,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from switchboard.dispatch.engine import retry_task
+from ouvrage.dispatch.engine import retry_task
 
 
 # Path where _retry_launch_session imports setup_task_worktree
-_INTERNALS = "switchboard.dispatch.internals"
+_INTERNALS = "ouvrage.dispatch.internals"
 
 
 class TestPhantomAttemptBugFix:
@@ -30,9 +30,9 @@ class TestPhantomAttemptBugFix:
     def _base_patches(self):
         """Suppress log archiving, punchlist, notifications, and SDK launch."""
         patches = [
-            patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
-            patch("switchboard.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()),
+            patch("ouvrage.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
             # Also patch at lifecycle level since retry side effects import from there
             patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
         ]

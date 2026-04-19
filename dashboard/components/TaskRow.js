@@ -126,7 +126,7 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
     return html`
         <div style=${overlayStyle} onClick=${(e) => { e.stopPropagation(); onClose(); }}>
             <style>${`
-                @keyframes foreman-chain-dot-pulse {
+                @keyframes ouvrage-chain-dot-pulse {
                     0%, 100% { opacity: 1; transform: scale(1); }
                     50%       { opacity: 0.5; transform: scale(0.75); }
                 }
@@ -164,7 +164,7 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
                                             flexShrink: 0,
                                             marginTop: '11px',
                                             ...(isActive ? {
-                                                animation: 'foreman-chain-dot-pulse 1.4s ease-in-out infinite',
+                                                animation: 'ouvrage-chain-dot-pulse 1.4s ease-in-out infinite',
                                             } : {}),
                                         }} />
                                         ${i < chain.length - 1 ? html`
@@ -195,7 +195,7 @@ function ChainOverlay({ chainIds, anchorTaskId, allTasks, onClose }) {
                                            width: '100%',
                                            boxSizing: 'border-box',
                                        }}
-                                       class="foreman-chain-node"
+                                       class="ouvrage-chain-node"
                                        onClick=${onClose}
                                     >
                                         <div style=${{
@@ -312,14 +312,14 @@ export function TaskRow({ task, chainMap, allTasks, conversations, onSelect }) {
     };
 
     return html`
-        <div style=${rowStyle} class="foreman-task-row" onClick=${handleRowClick}>
+        <div style=${rowStyle} class="ouvrage-task-row" onClick=${handleRowClick}>
             <${StatusDot} status=${task.status} />
 
             <span style=${goalStyle}>
                 ${task.goal || task.id}
             </span>
 
-            <div style=${tagsRowStyle} class="foreman-task-row-tags">
+            <div style=${tagsRowStyle} class="ouvrage-task-row-tags">
                 <span style=${{
                     fontFamily: typography.fontMono,
                     fontSize: typography.size.xs,

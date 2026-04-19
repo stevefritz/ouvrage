@@ -9,8 +9,8 @@ Covers:
 
 import pytest
 
-import switchboard.db as db_module
-from switchboard.db.search import search_messages_fts, search_tasks_fts
+import ouvrage.db as db_module
+from ouvrage.db.search import search_messages_fts, search_tasks_fts
 
 
 # ---------------------------------------------------------------------------
@@ -28,8 +28,8 @@ async def _insert_message(db, conversation_id=None, task_id=None, content="hello
         )
         return row
     # For task messages, use direct insert since post_message only supports conversation_id
-    from switchboard.db.connection import get_db
-    from switchboard.db._helpers import now_iso
+    from ouvrage.db.connection import get_db
+    from ouvrage.db._helpers import now_iso
     async with get_db() as conn:
         cursor = await conn.execute(
             """INSERT INTO messages (conversation_id, task_id, author, type, content, created_at)
@@ -143,7 +143,7 @@ class TestSearchMessagesFts:
         assert len(results_old) > 0
 
         # Update the message content directly
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await conn.execute(
                 "UPDATE messages SET content = ? WHERE id = ?",
@@ -167,7 +167,7 @@ class TestSearchMessagesFts:
         results_before = await search_messages_fts("delete_me_unique_fts_token")
         assert any(r["message_id"] == msg["id"] for r in results_before)
 
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await conn.execute("DELETE FROM messages WHERE id = ?", (msg["id"],))
             await conn.commit()
@@ -255,7 +255,7 @@ class TestSearchTasksFts:
         results_old = await search_tasks_fts("old_goal_fts_phrase")
         assert any(r["task_id"] == task["id"] for r in results_old)
 
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await conn.execute(
                 "UPDATE tasks SET goal = ? WHERE id = ?",
@@ -280,7 +280,7 @@ class TestSearchTasksFts:
         results_before = await search_tasks_fts("delete_task_unique_fts_token")
         assert any(r["task_id"] == task["id"] for r in results_before)
 
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             # Must delete checklist items first due to FK
             await conn.execute("DELETE FROM task_checklist WHERE task_id = ?", (task["id"],))

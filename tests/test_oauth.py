@@ -14,7 +14,7 @@ import time
 import jwt as pyjwt
 import pytest
 
-from switchboard.auth.oauth import (
+from ouvrage.auth.oauth import (
     init_oauth_keys,
     get_openid_configuration,
     get_jwks,
@@ -41,15 +41,15 @@ from switchboard.auth.oauth import (
 @pytest.fixture(autouse=True)
 def oauth_env(tmp_path):
     """Set up OAuth env vars for tests."""
-    os.environ["OAUTH_BASE_URL"] = "https://switchboard.test"
+    os.environ["OAUTH_BASE_URL"] = "https://ouvrage.test"
     os.environ["OAUTH_RSA_KEY_PATH"] = str(tmp_path / "test_rsa_key.pem")
     # Reload settings module to pick up new env vars
-    import switchboard.config.settings as _s
+    import ouvrage.config.settings as _s
     _s.OAUTH_BASE_URL = os.environ["OAUTH_BASE_URL"]
     _s.OAUTH_RSA_KEY_PATH = os.environ["OAUTH_RSA_KEY_PATH"]
 
     # Also patch the module-level references in oauth.py
-    import switchboard.auth.oauth as _oauth
+    import ouvrage.auth.oauth as _oauth
     _oauth.OAUTH_BASE_URL = os.environ["OAUTH_BASE_URL"]
     _oauth.OAUTH_RSA_KEY_PATH = os.environ["OAUTH_RSA_KEY_PATH"]
     # Reset cached keys
@@ -90,11 +90,11 @@ async def test_user(db):
 class TestOIDCDiscovery:
     def test_discovery_has_required_fields(self, rsa_keys):
         config = get_openid_configuration()
-        assert config["issuer"] == "https://switchboard.test"
-        assert config["authorization_endpoint"] == "https://switchboard.test/oauth/authorize"
-        assert config["token_endpoint"] == "https://switchboard.test/oauth/token"
-        assert config["revocation_endpoint"] == "https://switchboard.test/oauth/revoke"
-        assert config["jwks_uri"] == "https://switchboard.test/jwks"
+        assert config["issuer"] == "https://ouvrage.test"
+        assert config["authorization_endpoint"] == "https://ouvrage.test/oauth/authorize"
+        assert config["token_endpoint"] == "https://ouvrage.test/oauth/token"
+        assert config["revocation_endpoint"] == "https://ouvrage.test/oauth/revoke"
+        assert config["jwks_uri"] == "https://ouvrage.test/jwks"
 
     def test_discovery_code_challenge_methods(self, rsa_keys):
         config = get_openid_configuration()
@@ -135,7 +135,7 @@ class TestJWKS:
         """Key should be loadable from disk on second init."""
         jwks1 = get_jwks()
         # Re-init (should load from disk)
-        import switchboard.auth.oauth as _oauth
+        import ouvrage.auth.oauth as _oauth
         _oauth._rsa_private_key = None
         _oauth._rsa_public_jwk = None
         init_oauth_keys()
@@ -174,7 +174,7 @@ class TestClientManagement:
 
     async def test_validate_client_secret(self, seeded_client):
         """Seeded client should have a valid encrypted secret."""
-        from switchboard.crypto import decrypt_value
+        from ouvrage.crypto import decrypt_value
         secret = decrypt_value(seeded_client["client_secret_encrypted"])
         assert await validate_client_secret("claude-mcp", secret)
         assert not await validate_client_secret("claude-mcp", "wrong-secret")
@@ -236,7 +236,7 @@ class TestAuthorizationCode:
         """Expired codes should be rejected."""
         code = secrets.token_urlsafe(32)
         # Insert with past expiry
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as db:
             await db.execute(
                 """INSERT INTO oauth_authorization_codes
@@ -308,7 +308,7 @@ class TestTokenIssuance:
             audience="claude-mcp",
         )
 
-        assert claims["iss"] == "https://switchboard.test"
+        assert claims["iss"] == "https://ouvrage.test"
         assert claims["sub"] == str(test_user["id"])
         assert claims["aud"] == "claude-mcp"
         assert claims["scope"] == "openid profile email"
@@ -457,14 +457,14 @@ class TestASGIHandlers:
         return status, headers, response_body
 
     async def test_openid_configuration_endpoint(self, rsa_keys):
-        from switchboard.auth.oauth import handle_openid_configuration
+        from ouvrage.auth.oauth import handle_openid_configuration
         status, headers, body = await self._call_handler(handle_openid_configuration)
         assert status == 200
         data = json.loads(body)
-        assert data["issuer"] == "https://switchboard.test"
+        assert data["issuer"] == "https://ouvrage.test"
 
     async def test_jwks_endpoint(self, rsa_keys):
-        from switchboard.auth.oauth import handle_jwks
+        from ouvrage.auth.oauth import handle_jwks
         status, headers, body = await self._call_handler(handle_jwks)
         assert status == 200
         data = json.loads(body)
@@ -472,7 +472,7 @@ class TestASGIHandlers:
         assert data["keys"][0]["kid"] == RSA_KID
 
     async def test_authorize_no_session_redirects_to_login(self, seeded_client):
-        from switchboard.auth.oauth import handle_authorize
+        from ouvrage.auth.oauth import handle_authorize
         query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid"
         status, headers, body = await self._call_handler(
             handle_authorize, path="/oauth/authorize", query=query
@@ -485,7 +485,7 @@ class TestASGIHandlers:
         assert "oauth" in location and "authorize" in location
 
     async def test_authorize_with_session(self, seeded_client, test_user):
-        from switchboard.auth.oauth import handle_authorize
+        from ouvrage.auth.oauth import handle_authorize
         query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid&state=xyz"
 
         scope = {
@@ -521,7 +521,7 @@ class TestASGIHandlers:
         assert location.startswith("https://claude.ai/oauth/callback")
 
     async def test_authorize_invalid_client(self, db, rsa_keys):
-        from switchboard.auth.oauth import handle_authorize
+        from ouvrage.auth.oauth import handle_authorize
         query = "response_type=code&client_id=bogus&redirect_uri=https://example.com&scope=openid"
         status, _, body = await self._call_handler(
             handle_authorize, path="/oauth/authorize", query=query
@@ -530,7 +530,7 @@ class TestASGIHandlers:
         assert json.loads(body)["error"] == "invalid_client"
 
     async def test_authorize_invalid_redirect_uri(self, seeded_client):
-        from switchboard.auth.oauth import handle_authorize
+        from ouvrage.auth.oauth import handle_authorize
         query = "response_type=code&client_id=claude-mcp&redirect_uri=https://evil.com/callback&scope=openid"
         status, _, body = await self._call_handler(
             handle_authorize, path="/oauth/authorize", query=query
@@ -540,8 +540,8 @@ class TestASGIHandlers:
 
     async def test_token_exchange_full_flow(self, seeded_client, test_user, rsa_keys):
         """Full auth code → token exchange flow."""
-        from switchboard.auth.oauth import handle_token
-        from switchboard.crypto import decrypt_value
+        from ouvrage.auth.oauth import handle_token
+        from ouvrage.crypto import decrypt_value
 
         # Create auth code
         code = await create_authorization_code(
@@ -573,8 +573,8 @@ class TestASGIHandlers:
 
     async def test_token_exchange_with_pkce(self, seeded_client, test_user, rsa_keys):
         """Auth code flow with PKCE S256."""
-        from switchboard.auth.oauth import handle_token
-        from switchboard.crypto import decrypt_value
+        from ouvrage.auth.oauth import handle_token
+        from ouvrage.crypto import decrypt_value
 
         # Generate PKCE
         verifier = secrets.token_urlsafe(32)
@@ -609,8 +609,8 @@ class TestASGIHandlers:
 
     async def test_token_exchange_pkce_missing_verifier(self, seeded_client, test_user, rsa_keys):
         """PKCE code without verifier should fail."""
-        from switchboard.auth.oauth import handle_token
-        from switchboard.crypto import decrypt_value
+        from ouvrage.auth.oauth import handle_token
+        from ouvrage.crypto import decrypt_value
 
         verifier = secrets.token_urlsafe(32)
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
@@ -642,7 +642,7 @@ class TestASGIHandlers:
         assert json.loads(resp_body)["error"] == "invalid_request"
 
     async def test_token_invalid_client_secret(self, seeded_client, test_user, rsa_keys):
-        from switchboard.auth.oauth import handle_token
+        from ouvrage.auth.oauth import handle_token
 
         code = await create_authorization_code(
             client_id="claude-mcp",
@@ -663,7 +663,7 @@ class TestASGIHandlers:
         assert json.loads(resp_body)["error"] == "invalid_client"
 
     async def test_revoke_endpoint(self, seeded_client, test_user, rsa_keys):
-        from switchboard.auth.oauth import handle_revoke
+        from ouvrage.auth.oauth import handle_revoke
 
         tokens = await issue_tokens(
             client_id="claude-mcp",
@@ -679,7 +679,7 @@ class TestASGIHandlers:
         assert status == 200
 
     async def test_revoke_unknown_token_still_200(self, db, rsa_keys):
-        from switchboard.auth.oauth import handle_revoke
+        from ouvrage.auth.oauth import handle_revoke
 
         body = b"token=nonexistent-token"
         status, _, _ = await self._call_handler(

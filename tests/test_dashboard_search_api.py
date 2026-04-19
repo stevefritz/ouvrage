@@ -56,7 +56,7 @@ class TestSearchApiMissingQuery:
     """Validates input validation — missing q param."""
 
     async def test_missing_q_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/search", query={})
         resp = _Capture()
@@ -66,7 +66,7 @@ class TestSearchApiMissingQuery:
         assert "q" in resp.json()["error"].lower()
 
     async def test_empty_q_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/search", query={"q": ""})
         resp = _Capture()
@@ -79,11 +79,11 @@ class TestSearchApiEmbedFailure:
     """Validates graceful error when embeddings are unavailable."""
 
     async def test_embed_failure_returns_503(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         error_result = {"error": "Failed to embed query — OPENAI_API_KEY must be set"}
         with patch(
-            "switchboard.server.handlers.search._handle_search",
+            "ouvrage.server.handlers.search._handle_search",
             new=AsyncMock(return_value=error_result),
         ):
             scope = _make_scope("/dashboard/api/search", query={"q": "authentication"})
@@ -98,7 +98,7 @@ class TestSearchApiSuccess:
     """Validates successful search responses."""
 
     async def test_returns_results_array(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         mock_results = [
             {
@@ -109,7 +109,7 @@ class TestSearchApiSuccess:
             }
         ]
         with patch(
-            "switchboard.server.handlers.search._handle_search",
+            "ouvrage.server.handlers.search._handle_search",
             new=AsyncMock(return_value={"results": mock_results, "total_candidates": 1}),
         ):
             scope = _make_scope("/dashboard/api/search", query={"q": "auth"})
@@ -123,7 +123,7 @@ class TestSearchApiSuccess:
         assert data["results"][0]["id"] == "my-proj/task-1"
 
     async def test_project_id_passed_through(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         captured = {}
 
@@ -131,7 +131,7 @@ class TestSearchApiSuccess:
             captured.update(arguments)
             return {"results": [], "total_candidates": 0}
 
-        with patch("switchboard.server.handlers.search._handle_search", new=mock_search):
+        with patch("ouvrage.server.handlers.search._handle_search", new=mock_search):
             scope = _make_scope(
                 "/dashboard/api/search",
                 query={"q": "auth", "project_id": "my-project"},
@@ -143,7 +143,7 @@ class TestSearchApiSuccess:
         assert captured["query"] == "auth"
 
     async def test_default_limit_is_10(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         captured = {}
 
@@ -151,7 +151,7 @@ class TestSearchApiSuccess:
             captured.update(arguments)
             return {"results": [], "total_candidates": 0}
 
-        with patch("switchboard.server.handlers.search._handle_search", new=mock_search):
+        with patch("ouvrage.server.handlers.search._handle_search", new=mock_search):
             scope = _make_scope("/dashboard/api/search", query={"q": "test"})
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -159,7 +159,7 @@ class TestSearchApiSuccess:
         assert captured["limit"] == 10
 
     async def test_custom_limit_passed_through(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         captured = {}
 
@@ -167,7 +167,7 @@ class TestSearchApiSuccess:
             captured.update(arguments)
             return {"results": [], "total_candidates": 0}
 
-        with patch("switchboard.server.handlers.search._handle_search", new=mock_search):
+        with patch("ouvrage.server.handlers.search._handle_search", new=mock_search):
             scope = _make_scope("/dashboard/api/search", query={"q": "test", "limit": "5"})
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -175,7 +175,7 @@ class TestSearchApiSuccess:
         assert captured["limit"] == 5
 
     async def test_no_project_id_passes_none(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         captured = {}
 
@@ -183,7 +183,7 @@ class TestSearchApiSuccess:
             captured.update(arguments)
             return {"results": [], "total_candidates": 0}
 
-        with patch("switchboard.server.handlers.search._handle_search", new=mock_search):
+        with patch("ouvrage.server.handlers.search._handle_search", new=mock_search):
             scope = _make_scope("/dashboard/api/search", query={"q": "auth"})
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)
@@ -192,14 +192,14 @@ class TestSearchApiSuccess:
 
     async def test_returns_task_objects(self, db):
         """Search API passes through task objects returned by the handler."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         mock_results = [
             {"id": "proj/t1", "goal": "Task goal", "status": "working", "last_activity": "2026-01-01T00:00:00Z"},
             {"id": "proj/t2", "goal": "Another task", "status": "completed", "last_activity": "2026-01-02T00:00:00Z"},
         ]
         with patch(
-            "switchboard.server.handlers.search._handle_search",
+            "ouvrage.server.handlers.search._handle_search",
             new=AsyncMock(return_value={"results": mock_results, "total_candidates": 2}),
         ):
             scope = _make_scope("/dashboard/api/search", query={"q": "test"})
@@ -213,7 +213,7 @@ class TestSearchApiSuccess:
         assert data["results"][0]["goal"] == "Task goal"
 
     async def test_invalid_limit_defaults_to_10(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         captured = {}
 
@@ -221,7 +221,7 @@ class TestSearchApiSuccess:
             captured.update(arguments)
             return {"results": [], "total_candidates": 0}
 
-        with patch("switchboard.server.handlers.search._handle_search", new=mock_search):
+        with patch("ouvrage.server.handlers.search._handle_search", new=mock_search):
             scope = _make_scope("/dashboard/api/search", query={"q": "test", "limit": "abc"})
             resp = _Capture()
             await handle_request(scope, _make_receive(), resp)

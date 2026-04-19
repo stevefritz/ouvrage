@@ -27,7 +27,7 @@ class TestReadLastJsonlTimestamp:
     """_read_last_jsonl_timestamp reads last timestamp from session JSONL."""
 
     def setup_method(self):
-        from switchboard.dispatch.gates import _read_last_jsonl_timestamp
+        from ouvrage.dispatch.gates import _read_last_jsonl_timestamp
         self.fn = _read_last_jsonl_timestamp
 
     def test_nonexistent_file_returns_none(self, tmp_path):
@@ -95,11 +95,11 @@ class TestReadLastJsonlTimestamp:
 
 class TestReviewInactivityConstant:
     def test_constant_exists_and_is_300(self):
-        from switchboard.config.constants import REVIEW_INACTIVITY_TIMEOUT_SECONDS
+        from ouvrage.config.constants import REVIEW_INACTIVITY_TIMEOUT_SECONDS
         assert REVIEW_INACTIVITY_TIMEOUT_SECONDS == 300
 
     def test_constant_is_reasonable(self):
-        from switchboard.config.constants import REVIEW_INACTIVITY_TIMEOUT_SECONDS
+        from ouvrage.config.constants import REVIEW_INACTIVITY_TIMEOUT_SECONDS
         # Must be positive and at least a minute
         assert REVIEW_INACTIVITY_TIMEOUT_SECONDS >= 60
 
@@ -160,7 +160,7 @@ class TestRunSubtaskInactivityWatchdog:
     def _setup_worktree(self, tmp_path):
         self.worktree = tmp_path / "worktree"
         self.worktree.mkdir()
-        (self.worktree / ".switchboard").mkdir()
+        (self.worktree / ".ouvrage").mkdir()
 
     @pytest.fixture(autouse=True)
     def _patch_worker_user(self):
@@ -168,7 +168,7 @@ class TestRunSubtaskInactivityWatchdog:
         import pwd
         mock_pw = MagicMock()
         mock_pw.pw_dir = str(Path.home())
-        with patch("switchboard.dispatch.gates.pwd.getpwnam", return_value=mock_pw):
+        with patch("ouvrage.dispatch.gates.pwd.getpwnam", return_value=mock_pw):
             yield
 
     async def _make_task(self, db, sample_project):
@@ -187,9 +187,9 @@ class TestRunSubtaskInactivityWatchdog:
         mock_update_usage = AsyncMock()
         hanging_client = _make_hanging_sdk_client()
 
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=hanging_client), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
+        with patch("ouvrage.dispatch.gates.ClaudeSDKClient", return_value=hanging_client), \
+             patch("ouvrage.dispatch.engine._update_usage", mock_update_usage):
+            from ouvrage.dispatch.gates import _run_subtask
             subtask = await _run_subtask(
                 task_id="test-project/stall-task",
                 subtask_type="review",
@@ -223,10 +223,10 @@ class TestRunSubtaskInactivityWatchdog:
         stale_ts = datetime.now(timezone.utc) - timedelta(seconds=10)
         mock_update_usage = AsyncMock()
 
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=mock_client), \
-             patch("switchboard.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
+        with patch("ouvrage.dispatch.gates.ClaudeSDKClient", return_value=mock_client), \
+             patch("ouvrage.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
+             patch("ouvrage.dispatch.engine._update_usage", mock_update_usage):
+            from ouvrage.dispatch.gates import _run_subtask
             subtask = await _run_subtask(
                 task_id="test-project/stall-task",
                 subtask_type="review",
@@ -244,9 +244,9 @@ class TestRunSubtaskInactivityWatchdog:
         mock_update_usage = AsyncMock()
         completing_client = _make_completing_sdk_client()
 
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=completing_client), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
+        with patch("ouvrage.dispatch.gates.ClaudeSDKClient", return_value=completing_client), \
+             patch("ouvrage.dispatch.engine._update_usage", mock_update_usage):
+            from ouvrage.dispatch.gates import _run_subtask
             subtask = await _run_subtask(
                 task_id="test-project/stall-task",
                 subtask_type="review",
@@ -270,10 +270,10 @@ class TestRunSubtaskInactivityWatchdog:
             captured_options.append(options)
             return completing_client
 
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", side_effect=capture_options), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
+        with patch("ouvrage.dispatch.gates.ClaudeSDKClient", side_effect=capture_options), \
+             patch("ouvrage.dispatch.engine._update_usage", mock_update_usage):
             from importlib import reload
-            import switchboard.dispatch.gates as gates_mod
+            import ouvrage.dispatch.gates as gates_mod
             # Reload to get fresh import
             subtask = await gates_mod._run_subtask(
                 task_id="test-project/stall-task",
@@ -294,10 +294,10 @@ class TestRunSubtaskInactivityWatchdog:
         # Use stale timestamp to fast-track the watchdog
         stale_ts = datetime.now(timezone.utc) - timedelta(seconds=100)
 
-        with patch("switchboard.dispatch.gates.ClaudeSDKClient", return_value=_make_hanging_sdk_client()), \
-             patch("switchboard.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
-             patch("switchboard.dispatch.engine._update_usage", mock_update_usage):
-            from switchboard.dispatch.gates import _run_subtask
+        with patch("ouvrage.dispatch.gates.ClaudeSDKClient", return_value=_make_hanging_sdk_client()), \
+             patch("ouvrage.dispatch.gates._read_last_jsonl_timestamp", return_value=stale_ts), \
+             patch("ouvrage.dispatch.engine._update_usage", mock_update_usage):
+            from ouvrage.dispatch.gates import _run_subtask
             subtask = await _run_subtask(
                 task_id="test-project/stall-task",
                 subtask_type="review",
@@ -358,12 +358,12 @@ class TestDispatchReviewStrikeLogic:
             # Second call: complete normally
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", AsyncMock()):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         assert len(run_subtask_calls) == 2
@@ -388,12 +388,12 @@ class TestDispatchReviewStrikeLogic:
                 return {"status": "stalled", "_captured_session_id": None}
             return {"status": "completed"}
 
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", AsyncMock()):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         msgs = await db.read_task_messages("test-project/review-task")
@@ -410,12 +410,12 @@ class TestDispatchReviewStrikeLogic:
             return {"status": "stalled", "_captured_session_id": "ses_abc"}
 
         mock_notify = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", mock_notify):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", mock_notify):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         updated = await db.get_task("test-project/review-task")
@@ -431,12 +431,12 @@ class TestDispatchReviewStrikeLogic:
         async def mock_run_subtask(*args, **kwargs):
             return {"status": "stalled", "_captured_session_id": None}
 
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", mock_process), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", mock_process), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", AsyncMock()):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         mock_process.assert_not_called()
@@ -449,12 +449,12 @@ class TestDispatchReviewStrikeLogic:
         async def mock_run_subtask(*args, **kwargs):
             return {"status": "stalled", "_captured_session_id": None}
 
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", AsyncMock()):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         msgs = await db.read_task_messages("test-project/review-task")
@@ -472,12 +472,12 @@ class TestDispatchReviewStrikeLogic:
             return {"status": "stalled", "_captured_session_id": None}
 
         mock_notify = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", mock_notify):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", mock_notify):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         mock_notify.assert_called_once()
@@ -491,12 +491,12 @@ class TestDispatchReviewStrikeLogic:
             return {"status": "completed"}
 
         mock_process = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_subtask", mock_run_subtask), \
-             patch("switchboard.dispatch.gates._process_review_result_inline", mock_process), \
-             patch("switchboard.dispatch.gates._run_as_worker",
+        with patch("ouvrage.dispatch.gates._run_subtask", mock_run_subtask), \
+             patch("ouvrage.dispatch.gates._process_review_result_inline", mock_process), \
+             patch("ouvrage.dispatch.gates._run_as_worker",
                    AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.notify.task_needs_review", AsyncMock()):
-            from switchboard.dispatch.gates import _dispatch_review
+             patch("ouvrage.dispatch.gates.notify.task_needs_review", AsyncMock()):
+            from ouvrage.dispatch.gates import _dispatch_review
             await _dispatch_review("test-project/review-task", project, task)
 
         mock_process.assert_called_once_with("test-project/review-task")
@@ -532,8 +532,8 @@ class TestRetryTaskGatePipeline:
         task = await self._make_stalled_task(db, sample_project, "needs-review")
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
         # Should have dispatched CC, NOT re-run the gate pipeline
@@ -551,8 +551,8 @@ class TestRetryTaskGatePipeline:
         task = await self._make_stalled_task(db, sample_project, "review-failed")
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
         # Should NOT delegate to _resume_gate_pipeline, should dispatch CC instead
@@ -571,8 +571,8 @@ class TestRetryTaskGatePipeline:
         await db.update_task("test-project/stalled-gate-task", gate_status=None)
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             result = await retry_task("test-project/stalled-gate-task")
 
         # Gate pipeline should NOT have been called — normal dispatch path instead
@@ -585,7 +585,7 @@ class TestRetryTaskGatePipeline:
         task = await self._make_stalled_task(db, sample_project, "needs-review")
         await db.update_task("test-project/stalled-gate-task", gate_retries=2)
 
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await retry_task("test-project/stalled-gate-task")
 
         updated = await db.get_task("test-project/stalled-gate-task")
@@ -595,7 +595,7 @@ class TestRetryTaskGatePipeline:
         """retry_task posts an 'Attempt N starting' message when dispatching CC for needs-review."""
         task = await self._make_stalled_task(db, sample_project, "needs-review")
 
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await retry_task("test-project/stalled-gate-task")
 
         msgs = await db.read_task_messages("test-project/stalled-gate-task")
@@ -616,8 +616,8 @@ class TestRetryTaskGatePipeline:
                              worktree_path="/tmp/fake-worktree")
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/normal-retry")
 
         # For non-completed task, gate should NOT be re-triggered
@@ -640,8 +640,8 @@ class TestRetryTaskGatePipeline:
         )
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/passed-task")
 
         mock_resume_pipeline.assert_not_called()

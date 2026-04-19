@@ -10,7 +10,7 @@ import pytest
 
 
 TASK_ID = "test-project/implement-feature"
-BASE_URL = "https://switchboard.example.dev"
+BASE_URL = "https://ouvrage.example.dev"
 EXPECTED_URL = f"{BASE_URL}/dashboard#/task/{TASK_ID}"
 
 
@@ -20,7 +20,7 @@ EXPECTED_URL = f"{BASE_URL}/dashboard#/task/{TASK_ID}"
 
 def _set_base_url(url):
     """Set the request base URL in context for the current async task."""
-    from switchboard.server.context import _REQUEST_BASE_URL
+    from ouvrage.server.context import _REQUEST_BASE_URL
     _REQUEST_BASE_URL.set(url)
 
 
@@ -33,17 +33,17 @@ class TestTaskUrlHelper:
 
     def test_returns_url_when_base_set(self):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _task_url
+        from ouvrage.server.handlers.tasks import _task_url
         assert _task_url(TASK_ID) == EXPECTED_URL
 
     def test_returns_none_when_no_base(self):
         _set_base_url(None)
-        from switchboard.server.handlers.tasks import _task_url
+        from ouvrage.server.handlers.tasks import _task_url
         assert _task_url(TASK_ID) is None
 
     def test_strips_trailing_slash_in_base(self):
-        _set_base_url("https://switchboard.example.dev/")
-        from switchboard.server.handlers.tasks import _task_url
+        _set_base_url("https://ouvrage.example.dev/")
+        from ouvrage.server.handlers.tasks import _task_url
         result = _task_url(TASK_ID)
         assert result is not None
         # _task_url strips trailing slash so no double-slash appears
@@ -51,9 +51,9 @@ class TestTaskUrlHelper:
 
     def test_url_format(self):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _task_url
+        from ouvrage.server.handlers.tasks import _task_url
         url = _task_url("my-project/some-task")
-        assert url == "https://switchboard.example.dev/dashboard#/task/my-project/some-task"
+        assert url == "https://ouvrage.example.dev/dashboard#/task/my-project/some-task"
 
 
 # ===========================================================================
@@ -65,19 +65,19 @@ class TestGetTaskStatusUrl:
 
     async def test_slim_includes_url(self, db, sample_project, sample_task):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status({"task_id": TASK_ID})
         assert result.get("url") == EXPECTED_URL
 
     async def test_slim_omits_url_when_no_base(self, db, sample_project, sample_task):
         _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status({"task_id": TASK_ID})
         assert "url" not in result
 
     async def test_detail_includes_url(self, db, sample_project, sample_task):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": TASK_ID, "include_detail": True}
         )
@@ -85,7 +85,7 @@ class TestGetTaskStatusUrl:
 
     async def test_detail_omits_url_when_no_base(self, db, sample_project, sample_task):
         _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": TASK_ID, "include_detail": True}
         )
@@ -101,7 +101,7 @@ class TestListTasksUrl:
 
     async def test_each_task_has_url(self, db, sample_project, sample_task):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _handle_list_tasks
+        from ouvrage.server.handlers.tasks import _handle_list_tasks
         result = await _handle_list_tasks({"project_id": "test-project", "active_only": False})
         assert len(result) > 0
         for task in result:
@@ -110,7 +110,7 @@ class TestListTasksUrl:
 
     async def test_no_url_when_no_base(self, db, sample_project, sample_task):
         _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_list_tasks
+        from ouvrage.server.handlers.tasks import _handle_list_tasks
         result = await _handle_list_tasks({"project_id": "test-project", "active_only": False})
         for task in result:
             assert "url" not in task
@@ -125,13 +125,13 @@ class TestDispatchTaskUrl:
 
     @pytest.fixture(autouse=True)
     def _patches(self, mock_git, monkeypatch):
-        monkeypatch.setattr("switchboard.server.handlers.tasks.SKIP_CREDENTIAL_CHECK", True)
-        monkeypatch.setattr("switchboard.config.settings.SKIP_CREDENTIAL_CHECK", True)
+        monkeypatch.setattr("ouvrage.server.handlers.tasks.SKIP_CREDENTIAL_CHECK", True)
+        monkeypatch.setattr("ouvrage.config.settings.SKIP_CREDENTIAL_CHECK", True)
 
     async def test_dispatch_includes_url(self, db, sample_project):
         _set_base_url(BASE_URL)
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
-        from switchboard.server.context import _REQUEST_USER_ID
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.context import _REQUEST_USER_ID
         _REQUEST_USER_ID.set(None)
 
         # held=True → task stays in "ready", no session launched
@@ -147,8 +147,8 @@ class TestDispatchTaskUrl:
 
     async def test_dispatch_omits_url_when_no_base(self, db, sample_project):
         _set_base_url(None)
-        from switchboard.server.handlers.tasks import _handle_dispatch_task
-        from switchboard.server.context import _REQUEST_USER_ID
+        from ouvrage.server.handlers.tasks import _handle_dispatch_task
+        from ouvrage.server.context import _REQUEST_USER_ID
         _REQUEST_USER_ID.set(None)
 
         # held=True → task stays in "ready", no session launched
@@ -170,8 +170,8 @@ class TestResolveBaseUrl:
     """_resolve_base_url prefers OAUTH_BASE_URL over Host header."""
 
     def test_uses_oauth_base_url_when_set(self):
-        with patch("switchboard.server.app.OAUTH_BASE_URL", "https://configured.example.com"):
-            from switchboard.server.app import _resolve_base_url
+        with patch("ouvrage.server.app.OAUTH_BASE_URL", "https://configured.example.com"):
+            from ouvrage.server.app import _resolve_base_url
             scope = {
                 "headers": [(b"host", b"runtime.example.com")],
                 "scheme": "http",
@@ -179,8 +179,8 @@ class TestResolveBaseUrl:
             assert _resolve_base_url(scope) == "https://configured.example.com"
 
     def test_falls_back_to_host_header(self):
-        with patch("switchboard.server.app.OAUTH_BASE_URL", None):
-            from switchboard.server.app import _resolve_base_url
+        with patch("ouvrage.server.app.OAUTH_BASE_URL", None):
+            from ouvrage.server.app import _resolve_base_url
             scope = {
                 "headers": [(b"host", b"myserver.local:8080")],
                 "scheme": "https",
@@ -188,13 +188,13 @@ class TestResolveBaseUrl:
             assert _resolve_base_url(scope) == "https://myserver.local:8080"
 
     def test_returns_none_when_no_host_and_no_config(self):
-        with patch("switchboard.server.app.OAUTH_BASE_URL", None):
-            from switchboard.server.app import _resolve_base_url
+        with patch("ouvrage.server.app.OAUTH_BASE_URL", None):
+            from ouvrage.server.app import _resolve_base_url
             scope = {"headers": [], "scheme": "https"}
             assert _resolve_base_url(scope) is None
 
     def test_strips_trailing_slash_from_oauth_base_url(self):
-        with patch("switchboard.server.app.OAUTH_BASE_URL", "https://configured.example.com/"):
-            from switchboard.server.app import _resolve_base_url
+        with patch("ouvrage.server.app.OAUTH_BASE_URL", "https://configured.example.com/"):
+            from ouvrage.server.app import _resolve_base_url
             scope = {"headers": [], "scheme": "https"}
             assert _resolve_base_url(scope) == "https://configured.example.com"

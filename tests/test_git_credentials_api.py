@@ -86,7 +86,7 @@ def _patch_httpx(status_code: int = 0, json_data: dict = None, headers=None, res
         async def __aexit__(self, *args):
             return False
 
-    return patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
+    return patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
 
 
 def _patch_httpx_multi(responses):
@@ -102,7 +102,7 @@ def _patch_httpx_multi(responses):
         async def __aexit__(self, *args):
             return False
 
-    return patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
+    return patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx())
 
 
 # ── GET /settings/git-credentials ────────────────────────────────────────────
@@ -110,7 +110,7 @@ def _patch_httpx_multi(responses):
 class TestGetGitCredentials:
 
     async def test_returns_three_providers_unconfigured(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials")
         resp = _Capture()
@@ -128,7 +128,7 @@ class TestGetGitCredentials:
             assert creds[provider]["hostname_is_default"] is True
 
     async def test_returns_default_hostnames(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials")
         resp = _Capture()
@@ -141,7 +141,7 @@ class TestGetGitCredentials:
         assert creds["bitbucket"]["hostname"] == "bitbucket.org"
 
     async def test_shows_configured_provider_last4(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_credential("github", "ghp_abcdefghij1234", "github.com", credential_last4="1234")
 
@@ -155,8 +155,8 @@ class TestGetGitCredentials:
         assert creds["github"]["credential_last4"] == "1234"
 
     async def test_shows_encrypted_credential_last4(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         encrypted = encrypt_value("ghp_abcdefghij5678")
         await db.create_credential("github", encrypted, "github.com", credential_last4="5678")
@@ -170,7 +170,7 @@ class TestGetGitCredentials:
         assert creds["github"]["credential_last4"] == "5678"
 
     async def test_custom_hostname_flagged_non_default(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_credential("gitlab", "glpat-xxxx", "gl.mycompany.com")
 
@@ -184,7 +184,7 @@ class TestGetGitCredentials:
         assert creds["gitlab"]["hostname_is_default"] is False
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials", role="member")
         resp = _Capture()
@@ -193,7 +193,7 @@ class TestGetGitCredentials:
         assert resp.status == 403
 
     async def test_admin_can_access(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials", role="admin")
         resp = _Capture()
@@ -207,8 +207,8 @@ class TestGetGitCredentials:
 class TestPutGitCredential:
 
     async def test_save_github_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import decrypt_value, is_fernet_token
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import decrypt_value, is_fernet_token
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
         resp = _Capture()
@@ -224,7 +224,7 @@ class TestPutGitCredential:
         assert decrypt_value(raw) == "ghp_mytoken12345"
 
     async def test_save_gitlab_credential_with_custom_hostname(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/gitlab", method="PUT")
         resp = _Capture()
@@ -236,8 +236,8 @@ class TestPutGitCredential:
         assert cred["hostname"] == "gl.internal.io"
 
     async def test_update_existing_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import decrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import decrypt_value
 
         await db.create_credential("github", "ghp_old", "github.com")
 
@@ -250,7 +250,7 @@ class TestPutGitCredential:
         assert decrypt_value(cred["credential"]) == "ghp_new99999"
 
     async def test_invalid_provider_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/notreal", method="PUT")
         resp = _Capture()
@@ -259,7 +259,7 @@ class TestPutGitCredential:
         assert resp.status == 400
 
     async def test_missing_credential_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
         resp = _Capture()
@@ -268,7 +268,7 @@ class TestPutGitCredential:
         assert resp.status == 400
 
     async def test_defaults_to_default_hostname(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/bitbucket", method="PUT")
         resp = _Capture()
@@ -279,7 +279,7 @@ class TestPutGitCredential:
         assert cred["hostname"] == "bitbucket.org"
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT", role="member")
         resp = _Capture()
@@ -289,7 +289,7 @@ class TestPutGitCredential:
 
     async def test_save_with_valid_token_returns_username(self, db):
         """Save with a valid token — response includes username (no warning)."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
         resp = _Capture()
@@ -308,7 +308,7 @@ class TestPutGitCredential:
 
     async def test_save_with_bad_token_returns_warning(self, db):
         """Save with a bad token — credential saved but warning returned."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
         resp = _Capture()
@@ -327,7 +327,7 @@ class TestPutGitCredential:
 
     async def test_save_with_missing_scopes_returns_warning(self, db):
         """Save with token that lacks 'repo' scope — saved but warning returned."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="PUT")
         resp = _Capture()
@@ -350,7 +350,7 @@ class TestPutGitCredential:
 class TestDeleteGitCredential:
 
     async def test_delete_existing_credential(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_credential("github", "ghp_token", "github.com")
 
@@ -365,7 +365,7 @@ class TestDeleteGitCredential:
         assert remaining is None
 
     async def test_delete_nonexistent_returns_404(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/gitlab", method="DELETE")
         resp = _Capture()
@@ -374,7 +374,7 @@ class TestDeleteGitCredential:
         assert resp.status == 404
 
     async def test_invalid_provider_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/notreal", method="DELETE")
         resp = _Capture()
@@ -383,7 +383,7 @@ class TestDeleteGitCredential:
         assert resp.status == 400
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github", method="DELETE", role="member")
         resp = _Capture()
@@ -397,7 +397,7 @@ class TestDeleteGitCredential:
 class TestTestGitCredential:
 
     async def test_no_credential_returns_invalid(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST")
         resp = _Capture()
@@ -409,8 +409,8 @@ class TestTestGitCredential:
         assert "No github credential" in data["message"]
 
     async def test_github_valid_credential_with_repo_scope(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_test1234"), "github.com")
 
@@ -428,8 +428,8 @@ class TestTestGitCredential:
 
     async def test_github_fine_grained_token(self, db):
         """Fine-grained token has no X-OAuth-Scopes header."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_fine1234"), "github.com")
 
@@ -447,8 +447,8 @@ class TestTestGitCredential:
         assert "Fine-grained" in data["message"]
 
     async def test_github_invalid_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_bad"), "github.com")
 
@@ -465,8 +465,8 @@ class TestTestGitCredential:
 
     async def test_github_auth_failure_specific_message(self, db):
         """401/403 returns specific auth-failed message, not generic 'returned 401'."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_bad"), "github.com")
 
@@ -484,8 +484,8 @@ class TestTestGitCredential:
 
     async def test_github_missing_repo_scope_specific_message(self, db):
         """Auth succeeds but 'repo' scope missing — specific message required."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_norepo"), "github.com")
 
@@ -504,8 +504,8 @@ class TestTestGitCredential:
     async def test_network_error_returns_specific_message(self, db):
         """ConnectError returns 'Could not reach {provider}' message."""
         import httpx as _httpx
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("github", encrypt_value("ghp_test"), "github.com")
 
@@ -519,7 +519,7 @@ class TestTestGitCredential:
             async def __aenter__(self): return mock_client
             async def __aexit__(self, *args): return False
 
-        with patch("switchboard.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx()):
+        with patch("ouvrage.dashboard.api.httpx.AsyncClient", return_value=_FakeCtx()):
             await handle_request(scope, _make_receive(), resp)
 
         assert resp.status == 200
@@ -530,8 +530,8 @@ class TestTestGitCredential:
 
     async def test_gitlab_missing_scopes_specific_message(self, db):
         """GitLab auth OK but scopes missing — specific message."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("gitlab", encrypt_value("glpat-weak"), "gitlab.com")
 
@@ -551,8 +551,8 @@ class TestTestGitCredential:
         assert "api" in data["message"]
 
     async def test_gitlab_valid_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("gitlab", encrypt_value("glpat-xxxx"), "gitlab.com")
 
@@ -573,8 +573,8 @@ class TestTestGitCredential:
         assert "api" in data["scopes"]
 
     async def test_bitbucket_valid_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         await db.create_credential("bitbucket", encrypt_value("alice@example.com:myapitoken"), "bitbucket.org")
 
@@ -590,8 +590,8 @@ class TestTestGitCredential:
         assert data["username"] == "alice"
 
     async def test_bitbucket_missing_colon_in_credential(self, db):
-        from switchboard.dashboard.api import handle_request
-        from switchboard.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value
 
         # credential without colon is invalid for Bitbucket
         await db.create_credential("bitbucket", encrypt_value("nocoLonatall"), "bitbucket.org")
@@ -606,7 +606,7 @@ class TestTestGitCredential:
         assert "email:api_token" in data["message"]
 
     async def test_invalid_provider_returns_400(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/notreal/test", method="POST")
         resp = _Capture()
@@ -615,7 +615,7 @@ class TestTestGitCredential:
         assert resp.status == 400
 
     async def test_member_gets_403(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/settings/git-credentials/github/test", method="POST", role="member")
         resp = _Capture()
@@ -624,7 +624,7 @@ class TestTestGitCredential:
         assert resp.status == 403
 
     async def test_unencrypted_credential_also_works(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Credential stored without encryption (edge case — legacy data)
         await db.create_credential("github", "ghp_plaintext1234", "github.com")

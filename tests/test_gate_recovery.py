@@ -15,10 +15,10 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dispatch._state import _running_gates
-from switchboard.dispatch.gates import _resume_gate_pipeline
-from switchboard.dispatch.recovery import (
+import ouvrage.db as db
+from ouvrage.dispatch._state import _running_gates
+from ouvrage.dispatch.gates import _resume_gate_pipeline
+from ouvrage.dispatch.recovery import (
     recover_orphaned_tasks,
     mark_working_for_recovery,
     check_stalled_tasks,
@@ -79,35 +79,35 @@ class TestRunningGatesTestGate:
 
     async def test_running_gates_populated_during_test(self, db, sample_project):
         """task_id is in _running_gates while _run_test_gate_inner executes."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         captured = []
 
         async def _fake_inner(tid, proj, task):
             captured.append(tid in _running_gates)
 
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._run_test_gate_inner", _fake_inner):
             await _run_test_gate("test-project/t1", sample_project, {})
 
         assert captured == [True]
 
     async def test_running_gates_cleared_after_test(self, db, sample_project):
         """task_id is removed from _running_gates after _run_test_gate completes."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", AsyncMock()):
+        with patch("ouvrage.dispatch.gates._run_test_gate_inner", AsyncMock()):
             await _run_test_gate("test-project/t1", sample_project, {})
 
         assert "test-project/t1" not in _running_gates
 
     async def test_running_gates_cleared_on_exception(self, db, sample_project):
         """task_id is removed from _running_gates even if _run_test_gate_inner raises."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         async def _raises(*_):
             raise RuntimeError("boom")
 
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _raises):
+        with patch("ouvrage.dispatch.gates._run_test_gate_inner", _raises):
             with pytest.raises(RuntimeError):
                 await _run_test_gate("test-project/t1", sample_project, {})
 
@@ -115,7 +115,7 @@ class TestRunningGatesTestGate:
 
     async def test_duplicate_guard_skips_second_call(self, db, sample_project):
         """If task_id is already in _running_gates, _run_test_gate returns immediately."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         inner_called = []
 
@@ -123,7 +123,7 @@ class TestRunningGatesTestGate:
             inner_called.append(tid)
 
         _running_gates.add("test-project/t1")
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._run_test_gate_inner", _fake_inner):
             await _run_test_gate("test-project/t1", sample_project, {})
 
         assert inner_called == []
@@ -144,35 +144,35 @@ class TestRunningGatesDispatchReview:
 
     async def test_running_gates_populated_during_review(self, db, sample_project):
         """task_id is in _running_gates while _dispatch_review_inner executes."""
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         captured = []
 
         async def _fake_inner(tid, proj, task):
             captured.append(tid in _running_gates)
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/t1", sample_project, {})
 
         assert captured == [True]
 
     async def test_running_gates_cleared_after_review(self, db, sample_project):
         """task_id is removed from _running_gates after _dispatch_review completes."""
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", AsyncMock()):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", AsyncMock()):
             await _dispatch_review("test-project/t1", sample_project, {})
 
         assert "test-project/t1" not in _running_gates
 
     async def test_running_gates_cleared_on_exception(self, db, sample_project):
         """task_id is removed from _running_gates even if _dispatch_review_inner raises."""
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         async def _raises(*_):
             raise RuntimeError("review boom")
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _raises):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _raises):
             with pytest.raises(RuntimeError):
                 await _dispatch_review("test-project/t1", sample_project, {})
 
@@ -185,7 +185,7 @@ class TestRunningGatesDispatchReview:
         because _dispatch_review is called from within _run_test_gate_inner which
         still holds the task in _running_gates.
         """
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         # Create a task with gate_status=reviewing to trigger duplicate guard
         task = await db.create_task(
@@ -198,7 +198,7 @@ class TestRunningGatesDispatchReview:
         async def _fake_inner(tid, proj, task):
             inner_called.append(tid)
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/t1", sample_project, {})
 
         assert inner_called == []
@@ -232,15 +232,15 @@ class TestResumeGatePipeline:
             return _real_exists(p)
 
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("ouvrage.dispatch.gates._run_test_gate", self.mock_run_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", self.mock_dispatch_review),
             # _ensure_branch_pushed is lazily imported from git.operations inside _resume_gate_pipeline
-            patch("switchboard.git.operations._ensure_branch_pushed", self.mock_ensure_pushed),
-            patch("switchboard.dispatch.gates.notify", self.mock_notify),
+            patch("ouvrage.git.operations._ensure_branch_pushed", self.mock_ensure_pushed),
+            patch("ouvrage.dispatch.gates.notify", self.mock_notify),
             # retry_task and _check_and_dispatch_dependents are lazily imported from engine
-            patch("switchboard.dispatch.engine.retry_task", self.mock_retry_task),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_dependents),
-            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+            patch("ouvrage.dispatch.engine.retry_task", self.mock_retry_task),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", self.mock_check_dependents),
+            patch("ouvrage.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()
@@ -520,13 +520,13 @@ class TestStartupRecoveryUnifiedSweep:
 
         patches = [
             # _resume_gate_pipeline is defined in gates.py and lazily imported in recovery.py
-            patch("switchboard.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", self.mock_check_dependents),
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", self.mock_check_dependents),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -671,9 +671,9 @@ class TestBackgroundOrphanDetection:
 
         patches = [
             # _resume_gate_pipeline is defined in gates.py and lazily imported in check_stalled_tasks
-            patch("switchboard.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
-            patch("switchboard.dispatch.engine.retry_task", self.mock_retry_task),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
+            patch("ouvrage.dispatch.engine.retry_task", self.mock_retry_task),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -830,7 +830,7 @@ class TestMarkWorkingForRecovery:
         import logging
         _running_gates.add("test-project/task-in-gate")
 
-        with caplog.at_level(logging.INFO, logger="switchboard.dispatch.recovery"):
+        with caplog.at_level(logging.INFO, logger="ouvrage.dispatch.recovery"):
             await mark_working_for_recovery()
 
         assert "test-project/task-in-gate" in caplog.text
@@ -840,7 +840,7 @@ class TestMarkWorkingForRecovery:
         import logging
         await _make_task(db, status="completed", gate_status="testing")
 
-        with caplog.at_level(logging.INFO, logger="switchboard.dispatch.recovery"):
+        with caplog.at_level(logging.INFO, logger="ouvrage.dispatch.recovery"):
             await mark_working_for_recovery()
 
         assert "test-project/gate-task-1" in caplog.text
@@ -870,8 +870,8 @@ class TestRetryTaskGateReentry:
         self.mock_resume_pipeline = AsyncMock(return_value=True)
 
         patches = [
-            patch("switchboard.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates._resume_gate_pipeline", self.mock_resume_pipeline),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -886,23 +886,23 @@ class TestRetryTaskGateReentry:
         needs-review is a rejection state, not an interrupted gate. Re-entering the gate
         pipeline would cause an infinite loop because the same rejected code would fail again.
         """
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await _make_task(db, status="completed", gate_status="needs-review")
 
-        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
             await retry_task("test-project/gate-task-1")
 
         self.mock_resume_pipeline.assert_not_called()
 
     async def test_completed_testing_delegates_to_pipeline(self, db, sample_project):
         """completed + testing gate_status → _resume_gate_pipeline called."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await _make_task(db, status="completed", gate_status="testing")
 
         await retry_task("test-project/gate-task-1")
@@ -913,7 +913,7 @@ class TestRetryTaskGateReentry:
 
     async def test_turns_exhausted_any_gate_delegates_to_pipeline(self, db, sample_project):
         """turns-exhausted + any non-None gate_status → _resume_gate_pipeline called."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await _make_task(db, status="turns-exhausted", gate_status="reviewing")
 
         await retry_task("test-project/gate-task-1")
@@ -924,15 +924,15 @@ class TestRetryTaskGateReentry:
 
     async def test_completed_none_gate_does_not_delegate(self, db, sample_project):
         """completed + gate_status=None → normal retry path (dispatch new CC session)."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         await _make_task(db, status="completed", gate_status=None)
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})) as mock_dispatch:
-            with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
-                with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-                    with patch("switchboard.dispatch.engine.notify", AsyncMock()):
-                        with patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})) as mock_dispatch:
+            with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
+                with patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
+                    with patch("ouvrage.dispatch.engine.notify", AsyncMock()):
+                        with patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()):
                             await retry_task("test-project/gate-task-1")
 
         # _resume_gate_pipeline should NOT be called
@@ -940,15 +940,15 @@ class TestRetryTaskGateReentry:
 
     async def test_gate_passed_at_set_does_not_delegate(self, db, sample_project):
         """If gate_passed_at is set, the gate re-entry check is skipped (gate already passed)."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await _make_task(db, status="completed", gate_status="needs-review",
                          gate_passed_at=db.now_iso())
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})):
-            with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
-                with patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
-                    with patch("switchboard.dispatch.engine.notify", AsyncMock()):
-                        with patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"id": "t1"})):
+            with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp")):
+                with patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
+                    with patch("ouvrage.dispatch.engine.notify", AsyncMock()):
+                        with patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()):
                             await retry_task("test-project/gate-task-1")
 
         self.mock_resume_pipeline.assert_not_called()

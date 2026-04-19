@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from switchboard.dispatch.recovery import (
+from ouvrage.dispatch.recovery import (
     _classify_orphan,
     _classify_with_dependents,
     _verify_worktree,
@@ -16,15 +16,15 @@ from switchboard.dispatch.recovery import (
     _recover_with_resume,
     _recover_with_retry,
 )
-from switchboard.config.settings import (
+from ouvrage.config.settings import (
     RECOVERY_STAGGER_SECONDS,
     MAX_RECOVERY_ATTEMPTS,
     RECOVERY_ENABLED,
 )
-from switchboard.config.constants import STALL_THRESHOLD_SECONDS
-from switchboard.dispatch._state import _active_clients
-from switchboard.dispatch.engine import resume_task, retry_task
-import switchboard.db as _db
+from ouvrage.config.constants import STALL_THRESHOLD_SECONDS
+from ouvrage.dispatch._state import _active_clients
+from ouvrage.dispatch.engine import resume_task, retry_task
+import ouvrage.db as _db
 
 
 # ---------------------------------------------------------------------------
@@ -96,14 +96,14 @@ class TestRecoverWithResume:
         self.mock_setup_worktree = AsyncMock(return_value="/tmp/fake-worktree")
         self.mock_run_setup = AsyncMock()
         self.mock_run_sdk = AsyncMock()
-        self.mock_verify = patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True))
+        self.mock_verify = patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True))
 
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", self.mock_setup_worktree),
-            patch("switchboard.dispatch.engine.run_setup_command", self.mock_run_setup),
-            patch("switchboard.dispatch.engine._run_sdk_session", self.mock_run_sdk),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.git.validation.validate_project_access", AsyncMock(return_value={
+            patch("ouvrage.dispatch.engine.setup_worktree", self.mock_setup_worktree),
+            patch("ouvrage.dispatch.engine.run_setup_command", self.mock_run_setup),
+            patch("ouvrage.dispatch.engine._run_sdk_session", self.mock_run_sdk),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.git.validation.validate_project_access", AsyncMock(return_value={
                 "status": "validated", "message": "OK", "checked_at": "2024-01-01T00:00:00Z",
                 "detail": {"clone": True, "push": True, "pr": True},
             })),
@@ -131,7 +131,7 @@ class TestRecoverWithResume:
     async def test_resume_fallback_to_retry_on_bad_worktree(self, db, sample_project):
         """If worktree is missing, falls back to retry."""
         # Override worktree check to return False
-        with patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=False)):
+        with patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=False)):
             orphan = await _create_orphan(db, session_id="sess-123")
             await recover_orphaned_tasks()
 
@@ -151,10 +151,10 @@ class TestRecoverWithRetry:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -193,11 +193,11 @@ class TestRecoverGateSubtask:
             return _real_exists(p)
 
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
-            patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+            patch("ouvrage.dispatch.gates._run_test_gate", self.mock_run_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()
@@ -257,11 +257,11 @@ class TestStaggerRecovery:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -280,7 +280,7 @@ class TestStaggerRecovery:
         async def mock_sleep(seconds):
             sleep_calls.append(seconds)
 
-        with patch("switchboard.dispatch.recovery.asyncio.sleep", side_effect=mock_sleep):
+        with patch("ouvrage.dispatch.recovery.asyncio.sleep", side_effect=mock_sleep):
             await recover_orphaned_tasks()
 
         # First task: no sleep. Second: sleep with stagger delay.
@@ -298,10 +298,10 @@ class TestFlapDetection:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -369,14 +369,14 @@ class TestRecoveryPriority:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
-            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
         ]
         for p in patches:
             p.start()
@@ -406,8 +406,8 @@ class TestRecoveryPriority:
         await _create_orphan(db, "test-project/gate-sub", session_id="s2",
                              parent_task_id="test-project/gate-parent")  # prio 0
 
-        with patch("switchboard.dispatch.recovery._recover_task", side_effect=tracking_recover), \
-             patch("switchboard.dispatch.recovery.asyncio.sleep", AsyncMock()):
+        with patch("ouvrage.dispatch.recovery._recover_task", side_effect=tracking_recover), \
+             patch("ouvrage.dispatch.recovery.asyncio.sleep", AsyncMock()):
             await recover_orphaned_tasks()
 
         # Gate subtask first, then resumable, then retryable
@@ -427,8 +427,8 @@ class TestRecoveryDisabled:
         """When disabled, orphans are parked as stopped/recovery_pending."""
         await _create_orphan(db)
 
-        with patch("switchboard.dispatch.recovery.RECOVERY_ENABLED", False), \
-             patch("switchboard.dispatch.engine.notify", AsyncMock()):
+        with patch("ouvrage.dispatch.recovery.RECOVERY_ENABLED", False), \
+             patch("ouvrage.dispatch.engine.notify", AsyncMock()):
             await recover_orphaned_tasks()
 
         task = await db.get_task("test-project/orphan-1")
@@ -446,11 +446,11 @@ class TestConcurrencyDuringRecovery:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -526,7 +526,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("ouvrage.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
     async def test_dirty_worktree_passes(self, tmp_path):
@@ -537,7 +537,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b" M tasks.py\n", b""))
 
-        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("ouvrage.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is True
 
     async def test_corrupted_worktree_fails(self, tmp_path):
@@ -548,7 +548,7 @@ class TestWorktreeVerification:
         mock_proc.returncode = 128
         mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: not a git repository"))
 
-        with patch("switchboard.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        with patch("ouvrage.dispatch.recovery.asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             assert await _verify_worktree({"worktree_path": str(tmp_path)}) is False
 
 
@@ -562,11 +562,11 @@ class TestResumeFailureFallback:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -589,8 +589,8 @@ class TestResumeFailureFallback:
             call_count["retry"] += 1
             return await original_retry(task_id, clean=clean)
 
-        with patch("switchboard.dispatch.engine.resume_task", side_effect=failing_resume), \
-             patch("switchboard.dispatch.engine.retry_task", side_effect=tracking_retry):
+        with patch("ouvrage.dispatch.engine.resume_task", side_effect=failing_resume), \
+             patch("ouvrage.dispatch.engine.retry_task", side_effect=tracking_retry):
             await recover_orphaned_tasks()
 
         assert call_count["resume"] == 1
@@ -610,11 +610,11 @@ class TestRecoveryStatusMessages:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -665,11 +665,11 @@ class TestRecoverSingleTask:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -688,7 +688,7 @@ class TestRecoverSingleTask:
             status_at_resume["status"] = t["status"]
             status_at_resume["reason"] = t.get("reason")
 
-        with patch("switchboard.dispatch.engine.resume_task", side_effect=capturing_resume):
+        with patch("ouvrage.dispatch.engine.resume_task", side_effect=capturing_resume):
             await _recover_single_task(task)
 
         assert status_at_resume.get("status") == "stopped", (
@@ -708,7 +708,7 @@ class TestRecoverSingleTask:
             status_at_retry["status"] = t["status"]
             status_at_retry["reason"] = t.get("reason")
 
-        with patch("switchboard.dispatch.engine.retry_task", side_effect=capturing_retry):
+        with patch("ouvrage.dispatch.engine.retry_task", side_effect=capturing_retry):
             await _recover_single_task(task)
 
         assert status_at_retry.get("status") == "stopped", (
@@ -726,7 +726,7 @@ class TestRecoverSingleTask:
             t = await db.get_task(task_id)
             resume_called.append(t.get("recovery_count"))
 
-        with patch("switchboard.dispatch.engine.retry_task", side_effect=capturing_retry):
+        with patch("ouvrage.dispatch.engine.retry_task", side_effect=capturing_retry):
             await _recover_single_task(task)
 
         assert resume_called == [2]
@@ -748,7 +748,7 @@ class TestRecoverSingleTask:
             # Simulate successful dispatch by setting status=working
             await db.update_task(task_id, status="working")
 
-        with patch("switchboard.dispatch.engine.resume_task", side_effect=capturing_resume):
+        with patch("ouvrage.dispatch.engine.resume_task", side_effect=capturing_resume):
             await _recover_single_task(task)
 
         # Must have been called on this first invocation — not deferred
@@ -761,7 +761,7 @@ class TestRecoverSingleTask:
         task = await _create_orphan(db, recovery_count=MAX_RECOVERY_ATTEMPTS)
 
         resume_called = []
-        with patch("switchboard.dispatch.engine.resume_task", side_effect=lambda _: resume_called.append(True)):
+        with patch("ouvrage.dispatch.engine.resume_task", side_effect=lambda _: resume_called.append(True)):
             await _recover_single_task(task)
 
         assert resume_called == [], "resume_task must not be called when flap limit reached"
@@ -781,11 +781,11 @@ class TestRecoveryThroughLifecycle:
     @pytest.fixture(autouse=True)
     def _setup_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
-            patch("switchboard.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.recovery._verify_worktree", AsyncMock(return_value=True)),
         ]
         for p in patches:
             p.start()
@@ -796,7 +796,7 @@ class TestRecoveryThroughLifecycle:
     async def test_no_direct_status_calls_in_recovery_module(self):
         """Static check: recovery.py must not contain db.update_task(status=...)."""
         import inspect
-        import switchboard.dispatch.recovery as recovery_mod
+        import ouvrage.dispatch.recovery as recovery_mod
         source = inspect.getsource(recovery_mod)
         # Allow db.update_task calls but NOT ones with status= parameter
         import re
@@ -864,7 +864,7 @@ class TestRecoveryThroughLifecycle:
 
     async def test_gate_subtask_cancel_via_lifecycle(self, db, sample_project):
         """Gate subtask cancellation goes through lifecycle.execute('recover_cancel')."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
         parent = await db.create_task(id="test-project/parent", project_id="test-project",
                                        goal="Parent task")
         await db.update_task("test-project/parent", status="completed",
@@ -875,10 +875,10 @@ class TestRecoveryThroughLifecycle:
                              parent_task_id="test-project/parent",
                              session_id="sess-sub")
 
-        with patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()), \
-             patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()), \
-             patch("switchboard.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
-             patch("switchboard.dispatch.gates.os.path.exists", return_value=True):
+        with patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()), \
+             patch("ouvrage.dispatch.gates._run_as_worker", AsyncMock(return_value=(b"", b"", 0))), \
+             patch("ouvrage.dispatch.gates.os.path.exists", return_value=True):
             await recover_orphaned_tasks()
 
         log = await db.get_audit_log("test-project/gate-sub")
@@ -891,7 +891,7 @@ class TestRecoveryThroughLifecycle:
         task = await _create_orphan(db, session_id=None)
 
         lifecycle_actions = []
-        from switchboard.dispatch.lifecycle import lifecycle as lc
+        from ouvrage.dispatch.lifecycle import lifecycle as lc
         original_execute = lc.execute
 
         async def tracking_execute(task_id, action, **ctx):
@@ -899,7 +899,7 @@ class TestRecoveryThroughLifecycle:
             return await original_execute(task_id, action, **ctx)
 
         with patch.object(lc, "execute", side_effect=tracking_execute), \
-             patch("switchboard.dispatch.engine.retry_task", AsyncMock()):
+             patch("ouvrage.dispatch.engine.retry_task", AsyncMock()):
             await _recover_single_task(task)
 
         assert "recover_park" in lifecycle_actions, (

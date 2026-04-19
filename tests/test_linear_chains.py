@@ -26,9 +26,9 @@ class TestDispatchTaskLinearChain:
     def _mock_git(self):
         """Patch git/worktree ops so dispatch_task doesn't need a real repo."""
         patches = [
-            patch("switchboard.dispatch.engine._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")),
-            patch("switchboard.dispatch.engine.cleanup_worktree", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")),
+            patch("ouvrage.dispatch.engine.cleanup_worktree", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -38,7 +38,7 @@ class TestDispatchTaskLinearChain:
 
     async def test_first_dependent_allowed(self, db, sample_project):
         """First task with depends_on pointing to parent succeeds."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         parent = await db.create_task(
             id="test-project/parent-a",
@@ -60,7 +60,7 @@ class TestDispatchTaskLinearChain:
 
     async def test_second_dependent_rejected(self, db, sample_project):
         """A second task trying to depend on the same parent is rejected."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         parent = await db.create_task(
             id="test-project/parent-b",
@@ -88,7 +88,7 @@ class TestDispatchTaskLinearChain:
 
     async def test_error_message_contains_expected_info(self, db, sample_project):
         """Error message names the existing dependent and states chains are linear."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         parent = await db.create_task(
             id="test-project/parent-c",
@@ -119,7 +119,7 @@ class TestDispatchTaskLinearChain:
 
     async def test_no_depends_on_still_works(self, db, sample_project):
         """Tasks without depends_on are not affected by the constraint."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         result = await dispatch_task(
             project_id="test-project",
@@ -131,7 +131,7 @@ class TestDispatchTaskLinearChain:
 
     async def test_redispatch_existing_task_not_blocked(self, db, sample_project):
         """Re-dispatching an existing task (task already in DB) is not blocked by the check."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         parent = await db.create_task(
             id="test-project/parent-d",
@@ -167,12 +167,12 @@ class TestUpdateTaskLinearChain:
     @pytest.fixture(autouse=True)
     def _set_context(self):
         """Set request context for handler calls (simulates non-worker, non-token request)."""
-        from switchboard.server.context import set_request_context
+        from ouvrage.server.context import set_request_context
         set_request_context(user_id=None, is_token_auth=False, is_worker=False)
 
     async def test_update_depends_on_to_free_parent_allowed(self, db, sample_project):
         """Updating depends_on to a parent with no dependents succeeds."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         parent = await db.create_task(
             id="test-project/upd-parent-a",
@@ -194,7 +194,7 @@ class TestUpdateTaskLinearChain:
 
     async def test_update_depends_on_to_taken_parent_rejected(self, db, sample_project):
         """Updating depends_on to a parent that already has a dependent is rejected."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         parent = await db.create_task(
             id="test-project/upd-parent-b",
@@ -221,7 +221,7 @@ class TestUpdateTaskLinearChain:
 
     async def test_update_resetting_same_parent_allowed(self, db, sample_project):
         """Re-setting a task's depends_on to its current parent is allowed (not fan-out)."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         parent = await db.create_task(
             id="test-project/upd-parent-c",

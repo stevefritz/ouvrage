@@ -18,7 +18,7 @@ class TestConfigResolution:
     """_resolve_limit uses task > project > global fallback chain."""
 
     def setup_method(self):
-        from switchboard.dispatch.engine import _resolve_limit
+        from ouvrage.dispatch.engine import _resolve_limit
         self.resolve = _resolve_limit
 
     def test_task_value_wins(self):
@@ -48,9 +48,9 @@ class TestPromptBuilding:
         self.mock_read_msgs = AsyncMock(return_value={"messages": []})
         self.mock_list_files = AsyncMock(return_value=[])
         patches = [
-            patch("switchboard.db.get_task", self.mock_get_task),
-            patch("switchboard.db.read_task_messages", self.mock_read_msgs),
-            patch("switchboard.db.list_files", self.mock_list_files),
+            patch("ouvrage.db.get_task", self.mock_get_task),
+            patch("ouvrage.db.read_task_messages", self.mock_read_msgs),
+            patch("ouvrage.db.list_files", self.mock_list_files),
         ]
         for p in patches:
             p.start()
@@ -70,22 +70,22 @@ class TestPromptBuilding:
         return base
 
     async def test_prompt_includes_goal(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "The spec")
         assert "Do stuff" in result
 
     async def test_prompt_includes_spec(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "Build the widget")
         assert "Build the widget" in result
 
     async def test_prompt_includes_project_id(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), None)
         assert "test-proj" in result
 
     async def test_prompt_includes_checklist(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         checklist = [
             {"id": 1, "item": "Step one", "done": False},
             {"id": 2, "item": "Step two", "done": True},
@@ -98,7 +98,7 @@ class TestPromptBuilding:
         assert "✅" in result
 
     async def test_revision_prompt_includes_feedback(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         feedback = [{"author": "reviewer", "title": "CHANGES REQUESTED",
                       "content": "Fix the imports"}]
         result = await _build_task_prompt(
@@ -107,18 +107,18 @@ class TestPromptBuilding:
         assert "Fix the imports" in result
 
     async def test_auto_test_flag_in_prompt(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(
             self._project(), self._task(auto_test=True), "spec")
         assert "automatically" in result.lower()
 
     async def test_push_instruction_present(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "spec")
         assert "push your branch" in result.lower()
 
     async def test_prompt_includes_result_summary_instruction(self):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         result = await _build_task_prompt(self._project(), self._task(), "spec")
         assert "result" in result.lower()
         assert "post_task_message" in result or "post a" in result.lower()

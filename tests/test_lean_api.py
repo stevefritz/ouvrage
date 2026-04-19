@@ -15,20 +15,20 @@ class TestEmbeddingStripping:
     """_strip_embedding removes embedding field from message dicts."""
 
     def test_strip_embedding_removes_field(self):
-        from switchboard.db._helpers import _strip_embedding
+        from ouvrage.db._helpers import _strip_embedding
         msg = {"id": 1, "content": "hello", "embedding": b"\x00\x01\x02\x03"}
         result = _strip_embedding(msg)
         assert "embedding" not in result
         assert result["content"] == "hello"
 
     def test_strip_embedding_noop_when_absent(self):
-        from switchboard.db._helpers import _strip_embedding
+        from ouvrage.db._helpers import _strip_embedding
         msg = {"id": 1, "content": "hello"}
         result = _strip_embedding(msg)
         assert result == {"id": 1, "content": "hello"}
 
     def test_strip_embedding_modifies_in_place_and_returns(self):
-        from switchboard.db._helpers import _strip_embedding
+        from ouvrage.db._helpers import _strip_embedding
         msg = {"id": 1, "embedding": "blob"}
         returned = _strip_embedding(msg)
         assert returned is msg  # same object
@@ -80,7 +80,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_returns_slim_keys(self, db, sample_project, sample_task):
         """Default response contains expected slim fields."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
@@ -94,7 +94,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_excludes_detail_fields(self, db, sample_project, sample_task):
         """Summary mode must not include last_test_output, resolved_config, or recent_messages."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
@@ -104,7 +104,7 @@ class TestGetTaskStatusSummaryMode:
         assert "checklist" not in result
 
     async def test_summary_mode_correct_task_id(self, db, sample_project, sample_task):
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
@@ -112,7 +112,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_checklist_counts(self, db, sample_project, sample_task):
         """Checklist counts are correct in summary mode."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         # Mark 2 items done (sample_task has 4 items)
         checklist = await db.get_checklist("test-project/implement-feature")
         await db.update_checklist_item(checklist[0]["id"], done=True)
@@ -126,7 +126,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_last_message_excerpt(self, db, sample_project, sample_task):
         """last_message_excerpt is populated from most recent message."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         long_content = "This is a very long progress message. " * 10
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -143,7 +143,7 @@ class TestGetTaskStatusSummaryMode:
 
     async def test_summary_mode_no_messages_excerpt_is_none(self, db, sample_project, sample_task):
         """When no messages exist, excerpt and timestamp are None."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature"}
         )
@@ -156,7 +156,7 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_recent_messages(self, db, sample_project, sample_task):
         """Detail mode includes recent_messages."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",
@@ -170,7 +170,7 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_checklist(self, db, sample_project, sample_task):
         """Detail mode includes full checklist."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
@@ -179,7 +179,7 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_state_definition(self, db, sample_project, sample_task):
         """Detail mode includes state_definition for dashboard rendering."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
@@ -187,7 +187,7 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_includes_alive_and_stale(self, db, sample_project, sample_task):
         """Detail mode still includes liveness fields."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
@@ -196,7 +196,7 @@ class TestGetTaskStatusDetailMode:
 
     async def test_detail_mode_no_embedding_in_messages(self, db, sample_project, sample_task):
         """Detail mode recent_messages never contain embedding field."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",
@@ -326,7 +326,7 @@ class TestListTasksActiveOnly:
 
     async def test_mcp_handler_defaults_to_active_only(self, db, sample_project):
         """The MCP handler uses active_only=True by default."""
-        from switchboard.server.handlers.tasks import _handle_list_tasks
+        from ouvrage.server.handlers.tasks import _handle_list_tasks
         await db.create_task(
             id="test-project/mcp-cancelled",
             project_id="test-project",
@@ -340,7 +340,7 @@ class TestListTasksActiveOnly:
 
     async def test_mcp_handler_active_only_false_shows_all(self, db, sample_project):
         """The MCP handler respects active_only=False."""
-        from switchboard.server.handlers.tasks import _handle_list_tasks
+        from ouvrage.server.handlers.tasks import _handle_list_tasks
         await db.create_task(
             id="test-project/mcp-cancelled-visible",
             project_id="test-project",
@@ -364,7 +364,7 @@ class TestMessageTruncation:
 
     async def test_long_message_truncated_to_200_chars(self, db, sample_project, sample_task):
         """Regular messages over 200 chars are truncated with '…' appended."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         long_content = "x" * 400
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -381,7 +381,7 @@ class TestMessageTruncation:
 
     async def test_short_message_not_truncated(self, db, sample_project, sample_task):
         """Messages under 200 chars are returned unchanged."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         short_content = "Short message."
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -396,7 +396,7 @@ class TestMessageTruncation:
 
     async def test_spec_pinned_message_never_truncated(self, db, sample_project, sample_task):
         """Pinned spec messages are never truncated regardless of length."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         spec_content = "# Spec\n\n" + "Detail " * 100
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -413,7 +413,7 @@ class TestMessageTruncation:
 
     async def test_review_message_truncated_to_verdict_plus_first_para(self, db, sample_project, sample_task):
         """Review messages are truncated to verdict line + first paragraph."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         review_content = (
             "## CHANGES REQUESTED\n"
             "\n"
@@ -438,7 +438,7 @@ class TestMessageTruncation:
 
     async def test_review_message_approved_verdict_extracted(self, db, sample_project, sample_task):
         """APPROVED verdict is preserved in truncated review."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         review_content = "## APPROVED\n\nLooks good. Ship it.\n\nLong detailed analysis follows here. " * 20
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -455,7 +455,7 @@ class TestMessageTruncation:
 
     async def test_checklist_strips_updated_at(self, db, sample_project, sample_task):
         """Checklist items in include_detail mode only have id, item, done fields."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {"task_id": "test-project/implement-feature", "include_detail": True}
         )
@@ -465,7 +465,7 @@ class TestMessageTruncation:
 
     async def test_include_full_messages_bypasses_truncation(self, db, sample_project, sample_task):
         """include_full_messages=True returns full untruncated content."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         long_content = "y" * 500
         await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -486,7 +486,7 @@ class TestMessageTruncation:
 
     async def test_include_full_messages_preserves_checklist_fields(self, db, sample_project, sample_task):
         """include_full_messages=True returns all checklist fields including updated_at."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status(
             {
                 "task_id": "test-project/implement-feature",
@@ -508,7 +508,7 @@ class TestReadTaskMessageById:
 
     async def test_fetch_single_message_by_id(self, db, sample_project, sample_task):
         """Providing message_id returns that single message with full content."""
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
         long_content = "z" * 1000
         posted = await db.post_task_message(
             task_id="test-project/implement-feature",
@@ -526,7 +526,7 @@ class TestReadTaskMessageById:
 
     async def test_fetch_message_not_found_returns_error(self, db, sample_project, sample_task):
         """Nonexistent message_id returns an error dict."""
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
         result = await _handle_read_task_messages(
             {"task_id": "test-project/implement-feature", "message_id": 99999}
         )
@@ -534,7 +534,7 @@ class TestReadTaskMessageById:
 
     async def test_message_id_bypasses_cursor(self, db, sample_project, sample_task):
         """When message_id is provided, after/last_n are ignored."""
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
         posted = await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",
@@ -554,7 +554,7 @@ class TestReadTaskMessageById:
 
     async def test_without_message_id_returns_cursor_list(self, db, sample_project, sample_task):
         """Without message_id, normal cursor behavior is unchanged."""
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
         await db.post_task_message(
             task_id="test-project/implement-feature",
             author="cc-worker",

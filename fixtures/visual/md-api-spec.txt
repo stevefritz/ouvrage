@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the Switchboard REST API for task orchestration.
+This document describes the Ouvrage REST API for task orchestration.
 
 ## Authentication
 

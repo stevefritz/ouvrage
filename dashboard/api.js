@@ -16,7 +16,7 @@ async function request(path, options = {}) {
     return resp.text();
 }
 
-// Encode task IDs that contain slashes (e.g. "mcp-switchboard/code-roast")
+// Encode task IDs that contain slashes (e.g. "mcp-ouvrage/code-roast")
 const eid = (id) => encodeURIComponent(id);
 
 export const api = {

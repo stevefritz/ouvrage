@@ -1,4 +1,4 @@
-"""Schema validation and CRUD tests for the switchboard database.
+"""Schema validation and CRUD tests for the ouvrage database.
 
 Tests run against in-memory SQLite via init_db(). Never touches the
 production database.

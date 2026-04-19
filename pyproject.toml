@@ -1,7 +1,7 @@
 [project]
-name = "switchboard"
+name = "ouvrage"
 version = "0.1.0"
-description = "Shared message board MCP server for async communication between Claude AI and Claude Code"
+description = "AI task orchestration platform — dispatches autonomous Claude Code workers to git repos with test/review gates"
 requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.2.0",

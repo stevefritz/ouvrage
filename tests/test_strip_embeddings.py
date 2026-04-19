@@ -5,7 +5,7 @@ search. It must never appear in responses returned to callers.
 """
 
 import pytest
-from switchboard.db.connection import get_db
+from ouvrage.db.connection import get_db
 
 
 async def _set_task_embedding(task_id: str, blob: bytes) -> None:

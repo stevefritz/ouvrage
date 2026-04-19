@@ -1,11 +1,11 @@
-// Foreman Task View — The Most Important View
+// Ouvrage Task View — The Most Important View
 // Answers: "Did it work? What did CC say?"
 //
 // Layout: Status line → Git flow bar → Blocked-by → Actions + checklist →
 //         ATTEMPT GROUPS (hero) → Gate dots → Details drawer
 //
 // Full page view with conversation thread.
-// Compact slide-out panel mode will be added by foreman-panel-2 (task 5).
+// Compact slide-out panel mode will be added by ouvrage-panel-2 (task 5).
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import htm from 'https://esm.sh/htm@3.1.1';
@@ -171,7 +171,7 @@ function StatusLine({ task, taskState, onEdit }) {
                     <button
                         onClick=${onEdit}
                         title="Edit task metadata"
-                        class="foreman-edit-task-btn"
+                        class="ouvrage-edit-task-btn"
                         style=${{
                             background: 'transparent',
                             border: `1px solid ${colors.borderSubtle}`,
@@ -304,7 +304,7 @@ function GitFlowLineage({ task, chain }) {
                 <!-- Left pill -->
                 <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     ${leftHref ? html`
-                        <a href=${leftHref} style=${sidePill(leftHref)} class="foreman-lineage-pill">
+                        <a href=${leftHref} style=${sidePill(leftHref)} class="ouvrage-lineage-pill">
                             ← ${leftBranch}
                         </a>
                     ` : html`
@@ -333,7 +333,7 @@ function GitFlowLineage({ task, chain }) {
                 <!-- Right pill -->
                 <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     ${rightHref ? html`
-                        <a href=${rightHref} style=${sidePill(rightHref)} class="foreman-lineage-pill">
+                        <a href=${rightHref} style=${sidePill(rightHref)} class="ouvrage-lineage-pill">
                             ${rightBranch} →
                         </a>
                     ` : html`
@@ -355,7 +355,7 @@ function GitFlowLineage({ task, chain }) {
                             : task.pr_status === 'closed'
                                 ? linkPillStyle('rgba(92, 94, 102, 0.12)', colors.textTertiary)
                                 : linkPillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
-                        class="foreman-task-pr-link">
+                        class="ouvrage-task-pr-link">
                         ${task.pr_status === 'merged'
                             ? `PR ${prNumber ? `#${prNumber}` : ''} merged ↗`
                             : `PR ${prNumber ? `#${prNumber}` : ''} ↗`}
@@ -372,7 +372,7 @@ function GitFlowLineage({ task, chain }) {
                 ${task.conversation_id ? html`
                     <a href=${routes.conversation(task.conversation_id)}
                         style=${linkPillStyle('rgba(99, 102, 241, 0.12)', '#818cf8')}
-                        class="foreman-task-conv-link">
+                        class="ouvrage-task-conv-link">
                         💬 ${task.conversation_id}
                     </a>
                 ` : null}
@@ -380,7 +380,7 @@ function GitFlowLineage({ task, chain }) {
                 ${task.claude_chat_url && safeUrl(task.claude_chat_url) ? html`
                     <a href=${safeUrl(task.claude_chat_url)} target="_blank" rel="noopener"
                         style=${linkPillStyle('rgba(249, 115, 22, 0.12)', '#fb923c')}
-                        class="foreman-task-claude-link">
+                        class="ouvrage-task-claude-link">
                         Claude ↗
                     </a>
                 ` : null}
@@ -413,7 +413,7 @@ function BlockedBy({ task, blockerTask }) {
             <span style=${{ color: colors.yellow }}>Blocked by</span>
             <a href=${routes.task(task.depends_on)}
                 style=${{ color: colors.text, textDecoration: 'none', fontFamily: typography.fontMono, fontSize: typography.size.xs }}
-                class="foreman-task-goal-link">
+                class="ouvrage-task-goal-link">
                 ${shortId(task.depends_on)}
             </a>
             <${StatusDot} status=${blockerStatus} size=${6} />
@@ -476,7 +476,7 @@ const GERUND_MAP = {
 
 function ActionErrorToast({ message }) {
     if (!message) return null;
-    return html`<div class="foreman-error-toast">⚠ ${message}</div>`;
+    return html`<div class="ouvrage-error-toast">⚠ ${message}</div>`;
 }
 
 function ActionToolbar({ task, chain, apiActions, onAction, overLimit, activeAction }) {
@@ -504,9 +504,9 @@ function ActionToolbar({ task, chain, apiActions, onAction, overLimit, activeAct
                     opacity: isBlocked ? 0.4 : (isLoading ? 0.75 : 1),
                     display: 'inline-flex', alignItems: 'center', gap: '6px',
                 }}
-                class="foreman-action-btn">
+                class="ouvrage-action-btn">
                 ${isLoading
-                    ? html`<span class="foreman-action-spinner"></span>${GERUND_MAP[action] || label}`
+                    ? html`<span class="ouvrage-action-spinner"></span>${GERUND_MAP[action] || label}`
                     : label}
             </button>
         `;
@@ -598,7 +598,7 @@ function HaikuLine({ msg, isExpanded, onToggle }) {
                     background: bgTint,
                     transition: 'background 120ms',
                 }}
-                class="foreman-haiku-line"
+                class="ouvrage-haiku-line"
             >
                 <span style=${{ fontSize: '13px', flexShrink: 0, width: '18px', textAlign: 'center' }}>
                     ${meta.icon}
@@ -823,7 +823,7 @@ function AttemptSessionLog({ taskId, attemptNumber, isLive }) {
                     transition: 'background 120ms',
                     flexWrap: 'wrap',
                 }}
-                class="foreman-session-log-toggle"
+                class="ouvrage-session-log-toggle"
             >
                 <span style=${{ fontSize: '11px', color: colors.textTertiary }}>
                     ${isOpen ? '▾' : '▸'}
@@ -944,7 +944,7 @@ function SessionLogEntry({ badge, ts, preview, entry, cls }) {
                 borderRadius: '3px',
             }}
             onClick=${isExpandable ? () => setExpanded(!expanded) : undefined}
-            class=${isExpandable ? 'foreman-log-entry' : ''}
+            class=${isExpandable ? 'ouvrage-log-entry' : ''}
         >
             <span style=${{ color: colors.textTertiary, flexShrink: 0, width: '55px' }}>${ts}</span>
             <span style=${{
@@ -1012,7 +1012,7 @@ function AttemptGroup({ attempt, isLatest, isExpanded: defaultExpanded, taskId, 
                     background: isLatest ? 'rgba(124, 90, 246, 0.04)' : 'transparent',
                     transition: 'background 120ms',
                 }}
-                class="foreman-attempt-header"
+                class="ouvrage-attempt-header"
             >
                 <span style=${{
                     fontSize: '10px', color: colors.textTertiary,
@@ -1185,12 +1185,12 @@ function GateActivityPanel({ task }) {
                     display: 'flex', alignItems: 'center', gap: '8px',
                     padding: '10px 14px', cursor: 'pointer',
                 }}
-                class="foreman-attempt-header"
+                class="ouvrage-attempt-header"
             >
                 <span style=${{
                     width: '8px', height: '8px', borderRadius: '50%',
                     background: dotColor, flexShrink: 0,
-                }} class="foreman-status-dot-pulse" />
+                }} class="ouvrage-status-dot-pulse" />
                 <span style=${{
                     fontFamily: typography.fontMono, fontSize: typography.size.sm,
                     fontWeight: typography.weight.semibold,
@@ -1308,7 +1308,7 @@ function ChecklistDrawer({ task }) {
                     display: 'flex', alignItems: 'center', gap: '8px',
                     padding: '8px 14px', cursor: 'pointer',
                 }}
-                class="foreman-attempt-header"
+                class="ouvrage-attempt-header"
             >
                 <span style=${{ fontSize: '10px', color: colors.textTertiary }}>
                     ${isOpen ? '▾' : '▸'}
@@ -1477,7 +1477,7 @@ function FilesDrawer({ taskId, projectId, pollTick }) {
                     display: 'flex', alignItems: 'center', gap: '8px',
                     padding: '8px 14px', cursor: 'pointer',
                 }}
-                class="foreman-attempt-header"
+                class="ouvrage-attempt-header"
             >
                 <span style=${{ fontSize: '10px', color: colors.textTertiary }}>
                     ${isOpen ? '▾' : '▸'}
@@ -1676,7 +1676,7 @@ function DetailsDrawer({ task }) {
                     display: 'flex', alignItems: 'center', gap: '8px',
                     padding: '8px 14px', cursor: 'pointer',
                 }}
-                class="foreman-attempt-header"
+                class="ouvrage-attempt-header"
             >
                 <span style=${{ fontSize: '10px', color: colors.textTertiary }}>
                     ${isOpen ? '▾' : '▸'}
@@ -2468,7 +2468,7 @@ function EditTaskPanel({ task, onClose, onSaved }) {
                     <button
                         onClick=${handleSave}
                         disabled=${saving}
-                        class="foreman-save-task-btn"
+                        class="ouvrage-save-task-btn"
                         style=${{
                             background: colors.accent,
                             border: 'none',
@@ -2766,7 +2766,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         return html`
             <div style=${{ padding: layout.contentPadding }}>
                 <a href="#/" style=${{ color: colors.textTertiary, textDecoration: 'none', fontSize: typography.size.sm }}
-                    class="foreman-back-link">← Projects</a>
+                    class="ouvrage-back-link">← Projects</a>
                 <div style=${{
                     textAlign: 'center', padding: '40px 20px',
                     color: colors.red, fontSize: typography.size.sm,
@@ -2788,7 +2788,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
         return html`
             <div style=${{ padding: layout.contentPadding }}>
                 <a href="#/" style=${{ color: colors.textTertiary, textDecoration: 'none', fontSize: typography.size.sm }}
-                    class="foreman-back-link">← Projects</a>
+                    class="ouvrage-back-link">← Projects</a>
                 <div style=${{ textAlign: 'center', padding: '40px', color: colors.textTertiary }}>
                     Loading task...
                 </div>
@@ -2909,7 +2909,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                                 style=${pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
                                 onClick=${(e) => { e.stopPropagation(); setShowSpec(true); }}
                                 title="View task spec"
-                                class="foreman-view-spec-btn"
+                                class="ouvrage-view-spec-btn"
                             >View Spec</button>
                             ${showSpec ? html`
                                 <${MarkdownLightbox}
@@ -2955,14 +2955,14 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                                 <a href=${routes.task(prevId)} style=${{
                                     color: colors.accent, textDecoration: 'none',
                                     fontSize: typography.size.sm,
-                                }} class="foreman-chain-nav">←</a>
+                                }} class="ouvrage-chain-nav">←</a>
                             ` : html`<span style=${{ color: colors.borderSubtle }}>←</span>`}
                             <span style=${{ fontFamily: typography.fontMono }}>Step ${pos} of ${chain.length}</span>
                             ${nextId ? html`
                                 <a href=${routes.task(nextId)} style=${{
                                     color: colors.accent, textDecoration: 'none',
                                     fontSize: typography.size.sm,
-                                }} class="foreman-chain-nav">→</a>
+                                }} class="ouvrage-chain-nav">→</a>
                             ` : html`<span style=${{ color: colors.borderSubtle }}>→</span>`}
                         </div>
                     ` : null;
@@ -3012,7 +3012,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                                     : task.pr_status === 'closed'
                                         ? pillStyle('rgba(92, 94, 102, 0.12)', colors.textTertiary)
                                         : pillStyle('rgba(124, 90, 246, 0.15)', colors.accent)}
-                                class="foreman-task-pr-link"
+                                class="ouvrage-task-pr-link"
                                 onClick=${e => e.stopPropagation()}>
                                 ${task.pr_status === 'merged' ? 'PR merged ↗' : 'PR ↗'}
                             </a>
@@ -3043,7 +3043,7 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
                         textDecoration: 'none', whiteSpace: 'nowrap',
                         alignSelf: 'flex-start',
                     }}
-                    class="foreman-open-full-link">
+                    class="ouvrage-open-full-link">
                     Open full page →
                 </a>
 
@@ -3060,14 +3060,14 @@ export function TaskView({ id, mode = 'expanded', onClose }) {
     const backLabel = task.project_id ? `← ${shortId(task.project_id)}` : '← Projects';
 
     return html`
-        <div class="foreman-content" style=${{ padding: '0' }}>
+        <div class="ouvrage-content" style=${{ padding: '0' }}>
             <a href=${backHref}
                 style=${{
                     color: colors.textTertiary, textDecoration: 'none',
                     fontSize: typography.size.sm, display: 'inline-block',
                     marginBottom: '8px',
                 }}
-                class="foreman-back-link">
+                class="ouvrage-back-link">
                 ${backLabel}
             </a>
 

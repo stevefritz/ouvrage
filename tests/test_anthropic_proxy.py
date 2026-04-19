@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-import switchboard.db as db
-from switchboard.server.proxy import handle_anthropic_proxy
+import ouvrage.db as db
+from ouvrage.server.proxy import handle_anthropic_proxy
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ def _mock_httpx_stream(captured_request, status_code=200, response_headers=None,
                        response_chunks=None):
     """Build a mock httpx.AsyncClient that captures requests and returns canned responses.
 
-    Returns a patch context manager for ``switchboard.server.proxy.httpx.AsyncClient``.
+    Returns a patch context manager for ``ouvrage.server.proxy.httpx.AsyncClient``.
     """
     if response_headers is None:
         response_headers = [("content-type", "application/json")]
@@ -115,7 +115,7 @@ def _mock_httpx_stream(captured_request, status_code=200, response_headers=None,
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     return patch(
-        "switchboard.server.proxy.httpx.AsyncClient",
+        "ouvrage.server.proxy.httpx.AsyncClient",
         return_value=mock_client,
     )
 
@@ -289,13 +289,13 @@ class TestWorkerEnvAnthropicProxy:
                 captured_env.update(kwargs["env"])
             return MagicMock()
 
-        with patch("switchboard.dispatch.sdk_session.ClaudeAgentOptions", side_effect=capture_options), \
-             patch("switchboard.dispatch.sdk_session._run_as_worker", new_callable=AsyncMock) as mock_run, \
-             patch("switchboard.dispatch.sdk_session.SKIP_CREDENTIAL_CHECK", False), \
-             patch("switchboard.dispatch.sdk_session.WORKER_USER", "nobody"):
+        with patch("ouvrage.dispatch.sdk_session.ClaudeAgentOptions", side_effect=capture_options), \
+             patch("ouvrage.dispatch.sdk_session._run_as_worker", new_callable=AsyncMock) as mock_run, \
+             patch("ouvrage.dispatch.sdk_session.SKIP_CREDENTIAL_CHECK", False), \
+             patch("ouvrage.dispatch.sdk_session.WORKER_USER", "nobody"):
             mock_run.return_value = (b"no", b"", 0)
 
-            from switchboard.dispatch.sdk_session import _run_sdk_session
+            from ouvrage.dispatch.sdk_session import _run_sdk_session
             try:
                 await _run_sdk_session(
                     task_id=task_id,
@@ -338,12 +338,12 @@ class TestWorkerEnvAnthropicProxy:
                 captured_env.update(kwargs["env"])
             return MagicMock()
 
-        with patch("switchboard.dispatch.gates.ClaudeAgentOptions", side_effect=capture_options), \
-             patch("switchboard.dispatch.gates.SKIP_CREDENTIAL_CHECK", False), \
-             patch("switchboard.dispatch.gates.WORKER_USER", "nobody"), \
-             patch("switchboard.dispatch.gates.pwd") as mock_pwd, \
-             patch("switchboard.dispatch.gates._open_shared", return_value=MagicMock()), \
-             patch("switchboard.dispatch.gates.ClaudeSDKClient") as mock_client_cls:
+        with patch("ouvrage.dispatch.gates.ClaudeAgentOptions", side_effect=capture_options), \
+             patch("ouvrage.dispatch.gates.SKIP_CREDENTIAL_CHECK", False), \
+             patch("ouvrage.dispatch.gates.WORKER_USER", "nobody"), \
+             patch("ouvrage.dispatch.gates.pwd") as mock_pwd, \
+             patch("ouvrage.dispatch.gates._open_shared", return_value=MagicMock()), \
+             patch("ouvrage.dispatch.gates.ClaudeSDKClient") as mock_client_cls:
             mock_pwd.getpwnam.return_value = MagicMock(pw_dir="/tmp/fake-home")
 
             mock_client = MagicMock()
@@ -352,7 +352,7 @@ class TestWorkerEnvAnthropicProxy:
             mock_client.process_streaming = MagicMock(return_value=AsyncMock(return_value=[])())
             mock_client_cls.return_value = mock_client
 
-            from switchboard.dispatch.gates import _run_subtask
+            from ouvrage.dispatch.gates import _run_subtask
             try:
                 await _run_subtask(
                     task_id=task_id,

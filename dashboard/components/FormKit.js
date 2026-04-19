@@ -1,4 +1,4 @@
-// Foreman FormKit — shared form components and style primitives
+// Ouvrage FormKit — shared form components and style primitives
 // Import from here for all form/settings pages.
 //
 // Usage:
