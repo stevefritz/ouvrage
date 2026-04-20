@@ -27,28 +27,28 @@ class TestDocsPagePurged:
             "dashboard/docs/architecture.js still exists — it should have been deleted"
         )
 
-    def test_foreman_app_has_no_architecture_import(self):
-        app_path = os.path.join(DASHBOARD_DIR, "foreman-app.js")
+    def test_ouvrage_app_has_no_architecture_import(self):
+        app_path = os.path.join(DASHBOARD_DIR, "ouvrage-app.js")
         content = open(app_path).read()
         assert "architecture" not in content, (
-            "foreman-app.js still imports from docs/architecture.js"
+            "ouvrage-app.js still imports from docs/architecture.js"
         )
         assert "ArchitectureDocs" not in content, (
-            "foreman-app.js still references ArchitectureDocs"
+            "ouvrage-app.js still references ArchitectureDocs"
         )
 
-    def test_foreman_app_has_no_docs_route(self):
-        app_path = os.path.join(DASHBOARD_DIR, "foreman-app.js")
+    def test_ouvrage_app_has_no_docs_route(self):
+        app_path = os.path.join(DASHBOARD_DIR, "ouvrage-app.js")
         content = open(app_path).read()
         assert "view === 'docs'" not in content, (
-            "foreman-app.js still has a 'docs' view branch"
+            "ouvrage-app.js still has a 'docs' view branch"
         )
 
-    def test_foreman_shell_has_no_docs_nav_link(self):
-        shell_path = os.path.join(DASHBOARD_DIR, "foreman-shell.js")
+    def test_ouvrage_shell_has_no_docs_nav_link(self):
+        shell_path = os.path.join(DASHBOARD_DIR, "ouvrage-shell.js")
         content = open(shell_path).read()
         assert "#/docs" not in content, (
-            "foreman-shell.js still has a #/docs nav link"
+            "ouvrage-shell.js still has a #/docs nav link"
         )
 
     def test_router_has_no_docs_helper(self):

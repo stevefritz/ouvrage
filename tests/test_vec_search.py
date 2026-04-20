@@ -13,12 +13,12 @@ Covers:
 import pytest
 import struct
 
-from switchboard.db.search import (
+from ouvrage.db.search import (
     search_messages_semantic,
     search_tasks_semantic,
     search_message_chunks,
 )
-from switchboard.embeddings.service import encode_vector, decode_vector
+from ouvrage.embeddings.service import encode_vector, decode_vector
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ def _similar_vec(base: list[float], noise: float = 0.01) -> list[float]:
 
 async def _insert_message_with_embedding(conn, content, embedding_vec, task_id=None, conversation_id=None):
     """Insert a message with an embedding blob directly into messages and messages_vec."""
-    from switchboard.db._helpers import now_iso
+    from ouvrage.db._helpers import now_iso
     blob = encode_vector(embedding_vec)
     cursor = await conn.execute(
         """INSERT INTO messages (conversation_id, task_id, author, type, content, embedding, created_at)
@@ -65,7 +65,7 @@ async def _insert_message_with_embedding(conn, content, embedding_vec, task_id=N
 
 class TestVec0Schema:
     async def test_messages_vec_table_exists(self, db):
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='messages_vec'"
@@ -73,7 +73,7 @@ class TestVec0Schema:
         assert len(rows) == 1
 
     async def test_tasks_vec_table_exists(self, db):
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks_vec'"
@@ -81,7 +81,7 @@ class TestVec0Schema:
         assert len(rows) == 1
 
     async def test_chunks_vec_table_exists(self, db):
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
@@ -90,7 +90,7 @@ class TestVec0Schema:
 
     async def test_vec0_is_queryable(self, db):
         """sqlite-vec extension is loaded and vec0 tables accept MATCH queries."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         blob = encode_vector([0.0] * 1536)
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
@@ -111,7 +111,7 @@ class TestSearchMessagesSemantic:
         vec_b = _unit_vec(1536, 1)
         query = _unit_vec(1536, 0)  # identical to vec_a
 
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             id_a = await _insert_message_with_embedding(conn, "message A", vec_a)
             id_b = await _insert_message_with_embedding(conn, "message B", vec_b)
@@ -124,7 +124,7 @@ class TestSearchMessagesSemantic:
     async def test_similarity_in_range(self, db):
         """All similarity scores are in [0, 1]."""
         vec = _unit_vec(1536, 5)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await _insert_message_with_embedding(conn, "test message", vec)
 
@@ -135,7 +135,7 @@ class TestSearchMessagesSemantic:
     async def test_exact_match_similarity_near_one(self, db):
         """Querying with the same vector gives similarity close to 1.0."""
         vec = _unit_vec(1536, 3)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             msg_id = await _insert_message_with_embedding(conn, "exact match message", vec)
 
@@ -147,7 +147,7 @@ class TestSearchMessagesSemantic:
     async def test_returns_expected_fields(self, db):
         """Result dicts contain all required fields."""
         vec = _unit_vec(1536, 7)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await _insert_message_with_embedding(conn, "field check message", vec)
 
@@ -161,7 +161,7 @@ class TestSearchMessagesSemantic:
     async def test_filters_by_conversation_id(self, db, sample_conversation):
         """conversation_id filter scopes results."""
         vec = _unit_vec(1536, 10)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             # Message in the sample_conversation
             in_id = await _insert_message_with_embedding(
@@ -180,7 +180,7 @@ class TestSearchMessagesSemantic:
     async def test_filters_by_project_id(self, db, sample_project, sample_task):
         """project_id filter scopes results to messages linked to that project."""
         vec = _unit_vec(1536, 12)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             in_id = await _insert_message_with_embedding(
                 conn, "task message in project", vec, task_id=sample_task["id"]
@@ -203,7 +203,7 @@ class TestSearchMessagesSemantic:
     async def test_returns_up_to_limit_times_three(self, db):
         """Returns at most limit*3 results for caller re-ranking."""
         vec = _unit_vec(1536, 4)
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             for i in range(20):
                 await _insert_message_with_embedding(conn, f"message {i}", vec)
@@ -230,7 +230,7 @@ class TestSearchTasksSemantic:
             id="test-project/vec-task-b", project_id="test-project", goal="Task B"
         )
 
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows_a = await conn.execute_fetchall("SELECT rowid FROM tasks WHERE id = ?", (task_a["id"],))
             rows_b = await conn.execute_fetchall("SELECT rowid FROM tasks WHERE id = ?", (task_b["id"],))
@@ -250,7 +250,7 @@ class TestSearchTasksSemantic:
         task = await db.create_task(
             id="test-project/vec-shape", project_id="test-project", goal="Shape test"
         )
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall("SELECT rowid FROM tasks WHERE id = ?", (task["id"],))
             await conn.execute("INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
@@ -269,7 +269,7 @@ class TestSearchTasksSemantic:
         task = await db.create_task(
             id="test-project/vec-exact", project_id="test-project", goal="Exact task"
         )
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall("SELECT rowid FROM tasks WHERE id = ?", (task["id"],))
             await conn.execute("INSERT OR REPLACE INTO tasks_vec(rowid, embedding) VALUES (?, ?)",
@@ -294,7 +294,7 @@ class TestSearchTasksSemantic:
         task_other = await db.create_task(
             id="other-proj/theirs-vec", project_id="other-proj", goal="Theirs"
         )
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             for task in [task_mine, task_other]:
                 rows = await conn.execute_fetchall("SELECT rowid FROM tasks WHERE id = ?", (task["id"],))
@@ -330,8 +330,8 @@ class TestSearchMessageChunks:
         vec_b = _unit_vec(1536, 1)
         query = _unit_vec(1536, 0)
 
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
         async with get_db() as conn:
             # Insert parent message
             cursor = await conn.execute(
@@ -370,8 +370,8 @@ class TestSearchMessageChunks:
     async def test_returns_expected_fields(self, db):
         """Result dicts contain required fields."""
         vec = _unit_vec(1536, 9)
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
         async with get_db() as conn:
             cursor = await conn.execute(
                 "INSERT INTO messages (author, type, content, created_at) VALUES (?, ?, ?, ?)",
@@ -411,10 +411,10 @@ class TestSearchMessageChunks:
 class TestWritePath:
     async def test_message_vec_written_on_embed(self, db):
         """messages_vec entry is created when _embed_message_async runs."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-        from switchboard.server.handlers.common import _embed_message_async
-        from switchboard.db._helpers import now_iso
-        from switchboard.db.connection import get_db
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.server.handlers.common import _embed_message_async
+        from ouvrage.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
 
         embed_vec = _unit_vec(1536, 30)
 
@@ -446,9 +446,9 @@ class TestWritePath:
 
     async def test_task_vec_written_on_embed(self, db, sample_project):
         """tasks_vec entry is created when _embed_task_goal_async runs."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-        from switchboard.dispatch.engine import _embed_task_goal_async
-        from switchboard.db.connection import get_db
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.dispatch.engine import _embed_task_goal_async
+        from ouvrage.db.connection import get_db
 
         embed_vec = _unit_vec(1536, 40)
 
@@ -483,9 +483,9 @@ class TestWritePath:
 class TestBackfillVecTables:
     async def test_backfill_populates_messages_vec(self, db):
         """_backfill_vec_tables inserts existing message embeddings into messages_vec."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
+        from ouvrage.server.app import _backfill_vec_tables
 
         vec = _unit_vec(1536, 50)
         blob = encode_vector(vec)
@@ -508,8 +508,8 @@ class TestBackfillVecTables:
 
     async def test_backfill_populates_tasks_vec(self, db, sample_project):
         """_backfill_vec_tables inserts existing task embeddings into tasks_vec."""
-        from switchboard.db.connection import get_db
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.db.connection import get_db
+        from ouvrage.server.app import _backfill_vec_tables
 
         task = await db.create_task(
             id="test-project/backfill-vec-task",
@@ -532,6 +532,6 @@ class TestBackfillVecTables:
 
     async def test_backfill_is_idempotent(self, db):
         """Running _backfill_vec_tables twice does not raise errors."""
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.server.app import _backfill_vec_tables
         await _backfill_vec_tables()
         await _backfill_vec_tables()  # Should not raise

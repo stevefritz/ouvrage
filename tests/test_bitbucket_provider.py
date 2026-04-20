@@ -36,7 +36,7 @@ def _make_async_client(get_responses=None, post_responses=None) -> MagicMock:
 
 class TestBitbucketParseRepoUrl:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
         self.provider = BitbucketProvider()
 
     def test_https_with_git_suffix(self):
@@ -93,7 +93,7 @@ class TestBitbucketParseRepoUrl:
 
 class TestBitbucketBuildAuthenticatedUrl:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
         self.provider = BitbucketProvider()
 
     def test_basic(self):
@@ -141,8 +141,8 @@ class TestBitbucketBuildAuthenticatedUrl:
 
 class TestBitbucketValidateAccess:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
         self.credential = "user@example.com:myapitoken"
@@ -257,8 +257,8 @@ class TestBitbucketValidateAccess:
 
 class TestBitbucketCreatePR:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
         self.credential = "user@example.com:myapitoken"
@@ -383,8 +383,8 @@ class TestBitbucketCreatePR:
 
 class TestBitbucketGetPrStatus:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = BitbucketProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="bitbucket.org")
         self.credential = "user@example.com:myapitoken"
@@ -455,7 +455,7 @@ class TestBitbucketGetPrStatus:
 
 class TestBitbucketParsePrUrl:
     def setup_method(self):
-        from switchboard.git.providers.bitbucket import BitbucketProvider
+        from ouvrage.git.providers.bitbucket import BitbucketProvider
         self.provider = BitbucketProvider()
 
     def test_valid_pr_url(self):
@@ -501,14 +501,14 @@ class TestBitbucketParsePrUrl:
 
 class TestBitbucketRegistry:
     def test_provider_registered(self):
-        from switchboard.git.providers import get_provider
+        from ouvrage.git.providers import get_provider
         provider = get_provider("bitbucket")
         assert provider.name == "bitbucket"
 
     def test_detect_provider_bitbucket_org(self):
-        from switchboard.git.providers import _DEFAULT_HOSTNAMES
+        from ouvrage.git.providers import _DEFAULT_HOSTNAMES
         assert _DEFAULT_HOSTNAMES.get("bitbucket.org") == "bitbucket"
 
     def test_provider_in_all(self):
-        from switchboard.git.providers import BitbucketProvider
+        from ouvrage.git.providers import BitbucketProvider
         assert BitbucketProvider is not None

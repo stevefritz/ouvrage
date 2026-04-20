@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from switchboard.dispatch.lifecycle import (
+from ouvrage.dispatch.lifecycle import (
     IllegalTransition,
     TaskLifecycle,
     TransitionDef,
@@ -299,7 +299,7 @@ class TestExecuteValidTransitions:
     async def test_working_complete(self):
         from unittest.mock import AsyncMock, patch
         await self._make_task("t/17", status="working", worktree_path="/tmp/test-wt")
-        with patch("switchboard.dispatch.gates._dispatch_review", new_callable=AsyncMock):
+        with patch("ouvrage.dispatch.gates._dispatch_review", new_callable=AsyncMock):
             result = await self.lifecycle.execute("t/17", "complete")
         assert result["status"] == "validating"
 
@@ -448,7 +448,7 @@ class TestAttemptFinalization:
         return task
 
     async def _get_attempt(self, task_id, attempt=1):
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT * FROM task_attempts WHERE task_id = ? AND attempt_number = ?",
@@ -518,7 +518,7 @@ class TestAttemptFinalization:
         # (mirrors the pattern in test_gate_pass_finalizes_attempt)
         await self._make_working_task("t/fin-8")
         await self.db.update_task("t/fin-8", status="validating")
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await conn.execute(
                 "UPDATE task_attempts SET finished_at = ?, outcome = ? WHERE task_id = ? AND attempt_number = ?",
@@ -537,7 +537,7 @@ class TestAttemptFinalization:
         # Then verify gate_pass overwrites with "gate_passed".
         await self._make_working_task("t/fin-9")
         await self.db.update_task("t/fin-9", status="validating")
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         async with get_db() as conn:
             await conn.execute(
                 "UPDATE task_attempts SET finished_at = ?, outcome = ? WHERE task_id = ? AND attempt_number = ?",
@@ -952,7 +952,7 @@ class TestTransitionTableCompleteness:
 
 class TestImportability:
     def test_lifecycle_module_imports(self):
-        from switchboard.dispatch import lifecycle
+        from ouvrage.dispatch import lifecycle
         assert hasattr(lifecycle, "TaskLifecycle")
         assert hasattr(lifecycle, "TRANSITIONS")
         assert hasattr(lifecycle, "STATE_LABELS")
@@ -967,7 +967,7 @@ class TestImportability:
         assert callable(lc._effective_state)
 
     def test_singleton_exists(self):
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
         assert isinstance(lifecycle, TaskLifecycle)
 
 
@@ -1048,7 +1048,7 @@ class TestCloseBehavior:
             pass
 
     async def test_close_from_stopped(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         tdef = TRANSITIONS[("stopped", "close")]
         orig = tdef.side_effects[:]
         # Replace archive/cleanup side effect with no-op
@@ -1064,7 +1064,7 @@ class TestCloseBehavior:
             tdef.side_effects = orig
 
     async def test_close_from_stopped_writes_audit(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("stopped", "close")]
         orig = tdef.side_effects[:]
@@ -1092,7 +1092,7 @@ class TestCloseBehavior:
 
     async def test_close_from_needs_review(self):
         """needs-review maps to stopped, so close should work."""
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("stopped", "close")]
         orig = tdef.side_effects[:]
@@ -1123,7 +1123,7 @@ class TestSkipGateBehavior:
             pass
 
     async def test_skip_gate_from_validating(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("validating", "skip_gate")]
         orig = tdef.side_effects[:]
@@ -1142,7 +1142,7 @@ class TestSkipGateBehavior:
             tdef.side_effects = orig
 
     async def test_skip_gate_from_stopped(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("stopped", "skip_gate")]
         orig = tdef.side_effects[:]
@@ -1167,7 +1167,7 @@ class TestSkipGateBehavior:
             await self.lifecycle.execute(TASK_ID, "skip_gate")
 
     async def test_skip_gate_writes_audit(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("validating", "skip_gate")]
         orig = tdef.side_effects[:]
@@ -1184,7 +1184,7 @@ class TestSkipGateBehavior:
             tdef.side_effects = orig
 
     async def test_skip_gate_posts_message(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS
+        from ouvrage.dispatch.lifecycle import TRANSITIONS
         from unittest.mock import AsyncMock
         tdef = TRANSITIONS[("validating", "skip_gate")]
         orig = tdef.side_effects[:]
@@ -1229,7 +1229,7 @@ class TestCancelChainBehavior:
         )
 
     async def test_cancel_chain_cancels_all(self):
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
         result = await cancel_chain("chain-proj/root")
         assert "chain-proj/root" in result["cancelled"]
         assert "chain-proj/child" in result["cancelled"]
@@ -1239,7 +1239,7 @@ class TestCancelChainBehavior:
             assert task["status"] == "cancelled"
 
     async def test_cancel_chain_skips_completed(self):
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
         await self.db.update_task("chain-proj/child", status="completed")
         result = await cancel_chain("chain-proj/root")
         assert "chain-proj/child" not in result["cancelled"]
@@ -1247,7 +1247,7 @@ class TestCancelChainBehavior:
         assert "chain-proj/grandchild" in result["cancelled"]
 
     async def test_cancel_chain_writes_audit_via_lifecycle(self):
-        from switchboard.dispatch.engine import cancel_chain
+        from ouvrage.dispatch.engine import cancel_chain
         await cancel_chain("chain-proj/root")
         logs = await self.db.get_audit_log("chain-proj/root")
         cancel_logs = [l for l in logs if l["action"] == "cancel"]
@@ -1346,7 +1346,7 @@ class TestStopBehavior:
         """Stop from working should call _drain_queue (via side effect)."""
         from unittest.mock import AsyncMock, patch
         await _seed(self.db, status="working")
-        with patch("switchboard.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
+        with patch("ouvrage.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
             await self.lifecycle.execute(TASK_ID, "stop")
             mock_drain.assert_called_once()
 
@@ -1397,7 +1397,7 @@ class TestStopBehavior:
 
     async def test_stop_validating_cancels_gate_task(self):
         """Stop from validating should cancel the gate asyncio task via _gate_tasks."""
-        from switchboard.dispatch._state import _gate_tasks
+        from ouvrage.dispatch._state import _gate_tasks
         await _seed(self.db, status="pending-validation", gate_status="testing")
         # Create a mock gate asyncio task
         mock_task = asyncio.Future()
@@ -1413,7 +1413,7 @@ class TestStopBehavior:
         """Stop from validating should also drain the queue."""
         from unittest.mock import AsyncMock, patch
         await _seed(self.db, status="pending-validation", gate_status="testing")
-        with patch("switchboard.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
+        with patch("ouvrage.dispatch.queue._drain_queue", new_callable=AsyncMock) as mock_drain:
             await self.lifecycle.execute(TASK_ID, "stop")
             mock_drain.assert_called_once()
 
@@ -1464,7 +1464,7 @@ class TestActionsFiltered:
         assert names == {"approve", "cancel"}
 
     async def test_ready_queued(self):
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db._helpers import now_iso
         await self._make("f/r3", queued_at=now_iso())
         names = await self._names("f/r3")
         assert names == {"cancel"}
@@ -1748,7 +1748,7 @@ class TestDashboardActionsEndpoint:
         )
 
     async def test_actions_200_shape(self):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
         scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
         resp = _ApiCapture()
         await handle_request(scope, _make_api_receive(), resp)
@@ -1774,7 +1774,7 @@ class TestDashboardActionsEndpoint:
             assert "confirm" in action
 
     async def test_actions_404_nonexistent(self):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
         scope = _make_api_scope("/dashboard/api/tasks/nonexistent%2Ftask/actions")
         resp = _ApiCapture()
         await handle_request(scope, _make_api_receive(), resp)
@@ -1782,7 +1782,7 @@ class TestDashboardActionsEndpoint:
 
     async def test_actions_hyphenated_names(self):
         """Action names returned by endpoint use hyphens, not underscores."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
         # Set task to stopped with awaiting_feedback to get cancel_reopen action
         await self.db.update_task("api-act-proj/t1", status="stopped", reason="awaiting_feedback")
         scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
@@ -1796,8 +1796,8 @@ class TestDashboardActionsEndpoint:
 
     async def test_actions_state_matches_task(self):
         """State label in response matches lifecycle.get_state_label output."""
-        from switchboard.dashboard.api import handle_request
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dashboard.api import handle_request
+        from ouvrage.dispatch.lifecycle import lifecycle
         await self.db.update_task("api-act-proj/t1", status="working")
         scope = _make_api_scope("/dashboard/api/tasks/api-act-proj%2Ft1/actions")
         resp = _ApiCapture()
@@ -1895,7 +1895,7 @@ class TestTransitionTableFixes:
 
     def test_recover_park_includes_stop_cc_session(self):
         """recover_park from working state must stop the CC session."""
-        from switchboard.dispatch.lifecycle import _stop_cc_session
+        from ouvrage.dispatch.lifecycle import _stop_cc_session
         tdef = TRANSITIONS[("working", "recover_park")]
         assert _stop_cc_session in tdef.side_effects, (
             "recover_park must include _stop_cc_session to kill the running session"
@@ -1903,7 +1903,7 @@ class TestTransitionTableFixes:
 
     def test_recover_park_stop_session_is_first(self):
         """_stop_cc_session should run before other side effects in recover_park."""
-        from switchboard.dispatch.lifecycle import _stop_cc_session
+        from ouvrage.dispatch.lifecycle import _stop_cc_session
         tdef = TRANSITIONS[("working", "recover_park")]
         assert tdef.side_effects[0] is _stop_cc_session, (
             "_stop_cc_session should be the first side effect in recover_park"

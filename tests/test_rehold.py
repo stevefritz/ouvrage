@@ -7,7 +7,7 @@ class TestReHoldTask:
     """update_task(held=True) re-holds ready tasks and rejects all others."""
 
     async def test_rehold_works_on_ready_task(self, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-ready",
@@ -23,7 +23,7 @@ class TestReHoldTask:
 
     async def test_rehold_works_on_ready_task_with_depends_on(self, db, sample_project):
         """A ready task waiting on a parent can also be re-held."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         parent = await db.create_task(
             id="test-project/rehold-parent",
@@ -44,7 +44,7 @@ class TestReHoldTask:
 
     async def test_rehold_returns_full_task_state(self, db, sample_project):
         """update_task returns the full updated task dict."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-return",
@@ -58,7 +58,7 @@ class TestReHoldTask:
 
     async def test_rehold_persists_to_db(self, db, sample_project):
         """held=True is actually stored in the database."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-persist",
@@ -72,7 +72,7 @@ class TestReHoldTask:
 
     async def test_rehold_errors_on_working_task(self, db, sample_project):
         """Cannot re-hold a working task — suggests cancel_task."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-working",
@@ -86,7 +86,7 @@ class TestReHoldTask:
 
     async def test_rehold_errors_on_completed_task(self, db, sample_project):
         """Cannot re-hold a completed task — suggests reopen_task."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-completed",
@@ -100,7 +100,7 @@ class TestReHoldTask:
 
     async def test_rehold_errors_on_cancelled_task(self, db, sample_project):
         """Cannot re-hold a cancelled task."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-cancelled",
@@ -114,7 +114,7 @@ class TestReHoldTask:
 
     async def test_rehold_errors_on_failed_task(self, db, sample_project):
         """Cannot re-hold a failed task — only ready tasks allowed."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-failed",
@@ -128,7 +128,7 @@ class TestReHoldTask:
 
     async def test_set_held_false_on_ready_task_has_no_restriction(self, db, sample_project):
         """held=False (clearing hold) on a ready task requires no validation."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-clear",
@@ -141,7 +141,7 @@ class TestReHoldTask:
 
     async def test_rehold_already_held_task_is_idempotent(self, db, sample_project):
         """Re-holding an already-held ready task succeeds without error."""
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         task = await db.create_task(
             id="test-project/rehold-idempotent",

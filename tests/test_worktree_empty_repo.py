@@ -44,7 +44,7 @@ class TestSeedEmptyRepo:
     def _patches(self):
         self.run_calls = []
         self.run_mock = AsyncMock(side_effect=_make_fake_run(self.run_calls))
-        with patch("switchboard.git.worktree._run_as_worker", self.run_mock), \
+        with patch("ouvrage.git.worktree._run_as_worker", self.run_mock), \
              patch("builtins.open", side_effect=self._fake_open):
             yield
 
@@ -58,7 +58,7 @@ class TestSeedEmptyRepo:
 
     async def test_empty_repo_triggers_seeding(self, tmp_path):
         """rev-parse HEAD returns rc=128 → seeding path runs."""
-        from switchboard.git.worktree import _seed_empty_repo
+        from ouvrage.git.worktree import _seed_empty_repo
 
         self.run_mock.side_effect = _make_fake_run(self.run_calls, empty_repo=True)
 
@@ -72,7 +72,7 @@ class TestSeedEmptyRepo:
 
     async def test_existing_repo_skips_seeding(self, tmp_path):
         """rev-parse HEAD returns rc=0 → no seeding happens."""
-        from switchboard.git.worktree import _seed_empty_repo
+        from ouvrage.git.worktree import _seed_empty_repo
 
         self.run_mock.side_effect = _make_fake_run(self.run_calls, empty_repo=False)
 
@@ -86,7 +86,7 @@ class TestSeedEmptyRepo:
 
     async def test_push_uses_auth_url(self, tmp_path):
         """When auth_url is provided, push uses it (not 'origin')."""
-        from switchboard.git.worktree import _seed_empty_repo
+        from ouvrage.git.worktree import _seed_empty_repo
 
         auth_url = "https://oauth2:TOKEN@github.com/org/repo.git"
         self.run_mock.side_effect = _make_fake_run(self.run_calls, empty_repo=True)
@@ -102,7 +102,7 @@ class TestSeedEmptyRepo:
 
     async def test_push_uses_origin_when_no_auth_url(self, tmp_path):
         """When auth_url is None, push falls back to 'origin'."""
-        from switchboard.git.worktree import _seed_empty_repo
+        from ouvrage.git.worktree import _seed_empty_repo
 
         self.run_mock.side_effect = _make_fake_run(self.run_calls, empty_repo=True)
 
@@ -117,7 +117,7 @@ class TestSeedEmptyRepo:
 
     async def test_readme_contains_project_id(self, tmp_path):
         """README.md written during seeding contains the project ID."""
-        from switchboard.git.worktree import _seed_empty_repo
+        from ouvrage.git.worktree import _seed_empty_repo
 
         written_content = {}
 
@@ -171,8 +171,8 @@ class TestSetupWorktreeWithEmptyRepo:
 
         self.run_mock = AsyncMock(side_effect=fake_run)
 
-        with patch("switchboard.git.worktree._run_as_worker", self.run_mock), \
-             patch("switchboard.git.operations._resolve_push_url",
+        with patch("ouvrage.git.worktree._run_as_worker", self.run_mock), \
+             patch("ouvrage.git.operations._resolve_push_url",
                    AsyncMock(side_effect=ValueError("no PAT"))), \
              patch("builtins.open", side_effect=self._fake_open):
             yield
@@ -196,7 +196,7 @@ class TestSetupWorktreeWithEmptyRepo:
 
     async def test_empty_repo_seeds_before_worktree_add(self, tmp_path):
         """For an empty bare repo, seeding (clone+commit+push) happens before worktree add."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         project = self._project(tmp_path)
         await setup_worktree(project, "my-task", "my-task")
@@ -211,7 +211,7 @@ class TestSetupWorktreeWithEmptyRepo:
 
     async def test_existing_repo_no_seeding(self, tmp_path):
         """For a repo with commits, no seeding clone is issued."""
-        from switchboard.git.worktree import setup_worktree
+        from ouvrage.git.worktree import setup_worktree
 
         async def fake_run_with_commits(*cmd, **kwargs):
             self.run_calls.append(cmd)

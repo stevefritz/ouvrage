@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ouvrage</title>
+
+    <!-- Fonts: DM Sans (body) + JetBrains Mono (mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- Markdown + sanitizer (needed for message rendering) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+
+    <!-- Ouvrage + shared dashboard styles -->
+    <link rel="stylesheet" href="/dashboard/style.css" />
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #101114;
+            min-height: 100vh;
+        }
+
+        /* Hover style for project cards — CSS can't do this with inline styles */
+        .ouvrage-project-card:hover {
+            background: #21262d !important;
+            border-color: #30363d !important;
+        }
+
+        /* Attention badge */
+        .ouvrage-attention-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 9px;
+            background: rgba(245, 166, 35, 0.18);
+            border: 1px solid rgba(245, 166, 35, 0.4);
+            color: #f5a623;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        /* Skeleton shimmer */
+        .ouvrage-skeleton {
+            background: linear-gradient(90deg, #18191d 25%, #22242a 50%, #18191d 75%);
+            background-size: 200% 100%;
+            animation: ouvrage-shimmer 1.5s ease-in-out infinite;
+        }
+        @keyframes ouvrage-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Back link hover */
+        .ouvrage-back-link:hover { color: #9899a1 !important; }
+
+        /* Activity link hover */
+        .ouvrage-activity-link:hover { color: #7c5af6 !important; }
+
+        /* Component card header hover */
+        .ouvrage-component-header:hover { background: #1e2025; }
+
+        /* Conversation row hover */
+        .ouvrage-conv-row:hover { background: #1e2025 !important; }
+
+        /* Task row hover */
+        .ouvrage-task-row:hover { background: rgba(255, 255, 255, 0.04); }
+
+        /* Task goal link hover */
+        .ouvrage-task-goal-link:hover { color: #7c5af6 !important; }
+
+        /* Chain overlay task row hover */
+        .ouvrage-chain-task-row:hover { background: #2a2c32 !important; }
+
+        /* Task view: haiku line hover */
+        .ouvrage-haiku-line:hover { background: rgba(255,255,255,0.03) !important; }
+
+        /* Task view: attempt header hover */
+        .ouvrage-attempt-header:hover { background: rgba(255,255,255,0.03) !important; }
+
+        /* Task view: session log toggle hover */
+        .ouvrage-session-log-toggle:hover { background: #1e2025 !important; }
+
+        /* Task view: session log entry hover */
+        .ouvrage-log-entry:hover { background: rgba(255,255,255,0.02) !important; }
+
+        /* Task view: action button hover */
+        .ouvrage-action-btn:hover { opacity: 0.85; }
+
+        /* Task view: PR/conv/claude link hover */
+        .ouvrage-task-pr-link:hover { opacity: 0.8; }
+        .ouvrage-task-conv-link:hover { opacity: 0.8; }
+        .ouvrage-task-claude-link:hover { opacity: 0.8; }
+
+        /* Prose styling inside task view expanded messages */
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] h1,
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] h2,
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] h3 {
+            margin: 8px 0 4px;
+            color: #e8e9ea;
+        }
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] code {
+            background: rgba(255,255,255,0.06);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] pre {
+            background: rgba(0,0,0,0.3);
+            padding: 8px 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 11px;
+        }
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] pre code {
+            background: transparent;
+            padding: 0;
+        }
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] ul,
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] ol {
+            padding-left: 20px;
+            margin: 4px 0;
+        }
+        #ouvrage-app .ouvrage-content div[dangerouslysetinnerhtml] p {
+            margin: 4px 0;
+        }
+
+        /* Focus-visible ring for keyboard accessibility */
+        #ouvrage-app a:focus-visible,
+        #ouvrage-app button:focus-visible,
+        #ouvrage-app select:focus-visible {
+            outline: 2px solid #7c5af6;
+            outline-offset: 2px;
+        }
+
+        /* Smooth transitions on all interactive ouvrage elements */
+        .ouvrage-project-card,
+        .ouvrage-task-row,
+        .ouvrage-conv-row,
+        .ouvrage-haiku-line,
+        .ouvrage-action-btn,
+        .ouvrage-back-link {
+            transition: background 150ms ease, color 150ms ease, opacity 150ms ease;
+        }
+
+        /* Conversation message hover */
+        .ouvrage-conv-message:hover { background: rgba(255,255,255,0.02); }
+
+        /* Conversation post input textarea focus */
+        .ouvrage-content textarea:focus {
+            outline: none;
+            border-color: #7c5af6 !important;
+        }
+
+        /* Select focus */
+        .ouvrage-content select:focus {
+            outline: none;
+            border-color: #7c5af6;
+        }
+
+        /* ── Mobile responsive ── */
+
+        /* Phone: 375px */
+        @media (max-width: 480px) {
+            .ouvrage-content {
+                padding: 20px 12px !important;
+                max-width: 100% !important;
+            }
+
+            .ouvrage-header {
+                padding: 0 12px !important;
+            }
+
+            /* Task row: tighter on narrow */
+            .ouvrage-task-row {
+                flex-wrap: wrap;
+                gap: 4px !important;
+                padding: 10px 0 !important;
+            }
+
+            /* Chain overlay: full width on mobile */
+            .ouvrage-chain-overlay-panel {
+                min-width: auto !important;
+                width: 95% !important;
+                max-height: 85vh !important;
+            }
+
+            /* Conversation messages: reduce padding */
+            .ouvrage-conv-message {
+                padding: 10px 12px !important;
+                gap: 8px !important;
+            }
+
+            /* Component drawer grid: single column */
+            .ouvrage-component-card {
+                min-width: 0 !important;
+            }
+
+            /* Pre blocks scroll on mobile */
+            #ouvrage-app pre {
+                max-width: calc(100vw - 48px);
+            }
+        }
+
+        /* Tablet: 768px */
+        @media (max-width: 768px) {
+            .ouvrage-content {
+                padding: 20px 16px !important;
+            }
+
+            /* Slightly tighter spacing */
+            .ouvrage-task-row {
+                gap: 6px !important;
+            }
+        }
+
+        /* Desktop zoom — 20% scale up on screens >= 768px, mobile untouched */
+        @media (min-width: 768px) {
+            #ouvrage-app {
+                zoom: 1.2;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Ouvrage root mount point. OuvrageShell renders #ouvrage-app inside here. -->
+    <div id="ouvrage-root"></div>
+
+    <script type="module" src="/dashboard/ouvrage-app.js"></script>
+</body>
+</html>

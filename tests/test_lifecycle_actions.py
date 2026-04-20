@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dispatch.lifecycle import (
+import ouvrage.db as db
+from ouvrage.dispatch.lifecycle import (
     IllegalTransition,
     TaskLifecycle,
 )
@@ -26,7 +26,7 @@ from switchboard.dispatch.lifecycle import (
 
 PROJECT_ID = "action-test-proj"
 TASK_PREFIX = "action-test-proj"
-_INTERNALS = "switchboard.dispatch.internals"
+_INTERNALS = "ouvrage.dispatch.internals"
 
 
 async def _seed(db_mod, task_suffix, status="ready", **extra):
@@ -58,12 +58,12 @@ def _mock_launch_patches():
         patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
         patch(f"{_INTERNALS}.collect_reopen_feedback", AsyncMock(return_value="user feedback")),
         patch(f"{_INTERNALS}.setup_hook_config", AsyncMock()),
-        patch("switchboard.notifications.slack.task_dispatched", AsyncMock()),
-        patch("switchboard.notifications.slack.task_attempt_starting", AsyncMock()),
-        patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
-        patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()),
-        patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="resume prompt")),
-        patch("switchboard.git.operations._sync_branch_with_base", AsyncMock()),
+        patch("ouvrage.notifications.slack.task_dispatched", AsyncMock()),
+        patch("ouvrage.notifications.slack.task_attempt_starting", AsyncMock()),
+        patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()),
+        patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()),
+        patch("ouvrage.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="resume prompt")),
+        patch("ouvrage.git.operations._sync_branch_with_base", AsyncMock()),
     ]
 
 
@@ -323,7 +323,7 @@ class TestRetryAction:
         task_id = await _seed(self.db_mod, "retry-gate-interrupt",
                               status="stopped", reason="paused_by_user",
                               gate_status="testing", worktree_path="/tmp/wt")
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline",
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline",
                     AsyncMock()) as mock_gate:
             await self.lifecycle.execute(task_id, "retry")
             mock_gate.assert_called_once_with(task_id, reason="retry")
@@ -534,7 +534,7 @@ class TestGateAndQueueCallers:
 
     async def test_gate_retry_uses_lifecycle(self):
         """gates.py retry path should call lifecycle.execute, not retry_task() directly."""
-        import switchboard.dispatch.gates as gates_mod
+        import ouvrage.dispatch.gates as gates_mod
         source = open(gates_mod.__file__).read()
         assert "lifecycle.execute" in source
         # retry_task may appear in error messages/strings, but should not be called as a function
@@ -545,6 +545,6 @@ class TestGateAndQueueCallers:
 
     async def test_queue_drain_uses_lifecycle(self):
         """queue.py should call lifecycle.execute('dispatch'), not dispatch_task."""
-        import switchboard.dispatch.queue as queue_mod
+        import ouvrage.dispatch.queue as queue_mod
         source = open(queue_mod.__file__).read()
         assert "lifecycle.execute" in source

@@ -1,6 +1,6 @@
 {
-  "id": "foreman-design",
-  "goal": "Foreman dashboard design system and UI spec",
+  "id": "ouvrage-design",
+  "goal": "Ouvrage dashboard design system and UI spec",
   "project": "mcp-switchboard",
   "archived": false,
   "created_at": "2026-03-15T10:00:00Z",
@@ -9,18 +9,18 @@
   "messages": [
     {
       "id": "msg-001",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "user",
       "type": "spec",
       "title": "Design tokens: Copper Forge amber palette",
-      "content": "# Foreman Design System\n\nThis conversation tracks the UI spec for the Foreman dashboard.\n\n## Color Palette\n\nCopper Forge uses warm amber on dark brown backgrounds:\n\n- `bg: #0f0d0b` — deepest background\n- `surface: #1e1a14` — card surface\n- `accent: #d97706` — amber highlight\n- `text: #ede8e3` — warm white\n\n## Typography\n\nDM Sans for body, JetBrains Mono for code:\n\n```css\nfont-family: 'DM Sans', -apple-system, sans-serif;\nfont-family: 'JetBrains Mono', monospace;\n```\n\n## Component Patterns\n\n### Badges\n\nStatus badges use colored pill shapes with transparent backgrounds.\n\n### Cards\n\nCards use `surface` background with `border` outline and `borderRadius.md` corners.",
+      "content": "# Ouvrage Design System\n\nThis conversation tracks the UI spec for the Ouvrage dashboard.\n\n## Color Palette\n\nCopper Forge uses warm amber on dark brown backgrounds:\n\n- `bg: #0f0d0b` — deepest background\n- `surface: #1e1a14` — card surface\n- `accent: #d97706` — amber highlight\n- `text: #ede8e3` — warm white\n\n## Typography\n\nDM Sans for body, JetBrains Mono for code:\n\n```css\nfont-family: 'DM Sans', -apple-system, sans-serif;\nfont-family: 'JetBrains Mono', monospace;\n```\n\n## Component Patterns\n\n### Badges\n\nStatus badges use colored pill shapes with transparent backgrounds.\n\n### Cards\n\nCards use `surface` background with `border` outline and `borderRadius.md` corners.",
       "pinned": true,
       "_pinned_marker": true,
       "created_at": "2026-03-15T10:00:00Z"
     },
     {
       "id": "msg-002",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "cc-worker",
       "type": "progress",
       "title": null,
@@ -30,7 +30,7 @@
     },
     {
       "id": "msg-003",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "user",
       "type": "note",
       "title": "Tab bar spec",
@@ -40,7 +40,7 @@
     },
     {
       "id": "msg-004",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "cc-worker",
       "type": "result",
       "title": "Tab bar implementation complete",
@@ -50,7 +50,7 @@
     },
     {
       "id": "msg-005",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "user",
       "type": "question",
       "title": null,
@@ -60,7 +60,7 @@
     },
     {
       "id": "msg-006",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "cc-worker",
       "type": "answer",
       "title": null,
@@ -70,17 +70,17 @@
     },
     {
       "id": "msg-007",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "cc-worker",
       "type": "plan",
       "title": "Conversation index implementation plan",
-      "content": "## Plan\n\nImplement `ConversationIndex` view:\n\n1. `api.getConversations({ project })` on mount\n2. Group into pinned / unpinned sections\n3. Debounced search via `api.search({ q, project_id })`\n4. Cards with amber border for pinned-containing conversations\n\n**Files to change:**\n- `dashboard/views/ConversationIndex.js` (new)\n- `dashboard/views/ProjectView.js` (wire up tab)\n- `switchboard/db/_helpers.py` (add `pinned_title`)",
+      "content": "## Plan\n\nImplement `ConversationIndex` view:\n\n1. `api.getConversations({ project })` on mount\n2. Group into pinned / unpinned sections\n3. Debounced search via `api.search({ q, project_id })`\n4. Cards with amber border for pinned-containing conversations\n\n**Files to change:**\n- `dashboard/views/ConversationIndex.js` (new)\n- `dashboard/views/ProjectView.js` (wire up tab)\n- `ouvrage/db/_helpers.py` (add `pinned_title`)",
       "pinned": false,
       "created_at": "2026-03-19T08:00:00Z"
     },
     {
       "id": "msg-008",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "user",
       "type": "review",
       "title": "Review: conversation index",
@@ -90,7 +90,7 @@
     },
     {
       "id": "msg-009",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "cc-worker",
       "type": "handoff",
       "title": "Handoff: conversation index → detail",
@@ -100,7 +100,7 @@
     },
     {
       "id": "msg-010",
-      "conversation_id": "foreman-design",
+      "conversation_id": "ouvrage-design",
       "author": "user",
       "type": "status",
       "title": "Tab bar spec finalized",

@@ -54,30 +54,30 @@ class TestRetryTaskReviewFailed:
 
         mock_test_gate = AsyncMock()
         mock_run_sdk = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._run_test_gate", mock_test_gate), \
+             patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", mock_run_sdk):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
         mock_test_gate.assert_not_called()
         mock_run_sdk.assert_called_once()
 
-    async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
+    async def test_review_failed_does_not_call_resume_gate_pipeline(self, db, sample_project, mock_git):
         """review-failed must NOT delegate to _resume_gate_pipeline (that re-runs gates)."""
         await _make_completed_task(db, "review-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
+             patch("ouvrage.dispatch.engine.dispatch_task", mock_dispatch):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         mock_resume_pipeline.assert_not_called()
@@ -96,30 +96,30 @@ class TestRetryTaskTestFailed:
 
         mock_test_gate = AsyncMock()
         mock_run_sdk = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._run_test_gate", mock_test_gate), \
+             patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", mock_run_sdk):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
         mock_test_gate.assert_not_called()
         mock_run_sdk.assert_called_once()
 
-    async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project):
+    async def test_test_failed_does_not_call_resume_gate_pipeline(self, db, sample_project, mock_git):
         """test-failed must NOT delegate to _resume_gate_pipeline."""
         await _make_completed_task(db, "test-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
         mock_dispatch = AsyncMock(return_value={"status": "working"})
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline), \
+             patch("ouvrage.dispatch.engine.dispatch_task", mock_dispatch):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         mock_resume_pipeline.assert_not_called()
@@ -138,9 +138,9 @@ class TestRetryTaskTesting:
 
         mock_test_gate = AsyncMock()
         mock_dispatch = AsyncMock()
-        with patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._run_test_gate", mock_test_gate), \
+             patch("ouvrage.dispatch.engine.dispatch_task", mock_dispatch):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
@@ -163,9 +163,9 @@ class TestRetryTaskReviewing:
 
         mock_dispatch_review = AsyncMock()
         mock_dispatch = AsyncMock()
-        with patch("switchboard.dispatch.gates._dispatch_review", mock_dispatch_review), \
-             patch("switchboard.dispatch.engine.dispatch_task", mock_dispatch):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._dispatch_review", mock_dispatch_review), \
+             patch("ouvrage.dispatch.engine.dispatch_task", mock_dispatch):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/reentry-task")
 
         await asyncio.sleep(0)
@@ -185,7 +185,7 @@ class TestResumePipelineReturnValues:
     @pytest.fixture(autouse=True)
     def _setup(self):
         import os as _os
-        from switchboard.dispatch._state import _running_gates
+        from ouvrage.dispatch._state import _running_gates
         _running_gates.clear()
 
         _real_exists = _os.path.exists
@@ -196,12 +196,12 @@ class TestResumePipelineReturnValues:
             return _real_exists(p)
 
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.dispatch.gates.notify", AsyncMock()),
-            patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
-            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+            patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.dispatch.gates.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.retry_task", AsyncMock()),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            patch("ouvrage.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         self._patches = [p.start() for p in patches]
         yield
@@ -228,7 +228,7 @@ class TestResumePipelineReturnValues:
         """Spec test 5a: _resume_gate_pipeline returns False for review-failed."""
         await self._make_task(db, "review-failed", gate_retries=1)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is False
@@ -237,7 +237,7 @@ class TestResumePipelineReturnValues:
         """Spec test 5b: _resume_gate_pipeline returns False for test-failed."""
         await self._make_task(db, "test-failed", gate_retries=1)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is False
@@ -246,7 +246,7 @@ class TestResumePipelineReturnValues:
         """_resume_gate_pipeline returns False for needs-review (terminal state)."""
         await self._make_task(db, "needs-review", gate_retries=3)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is False
@@ -255,7 +255,7 @@ class TestResumePipelineReturnValues:
         """Spec test 6a: _resume_gate_pipeline returns True for testing (interrupted)."""
         await self._make_task(db, "testing")
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is True
@@ -264,7 +264,7 @@ class TestResumePipelineReturnValues:
         """Spec test 6b: _resume_gate_pipeline returns True for reviewing (interrupted)."""
         await self._make_task(db, "reviewing")
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is True
@@ -273,7 +273,7 @@ class TestResumePipelineReturnValues:
         """_resume_gate_pipeline returns True for test-passed (interrupted before review)."""
         await self._make_task(db, "test-passed")
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is True
@@ -282,7 +282,7 @@ class TestResumePipelineReturnValues:
         """review-failed at max retries → sets needs-review and still returns False."""
         await self._make_task(db, "review-failed", gate_retries=3)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is False
@@ -293,7 +293,7 @@ class TestResumePipelineReturnValues:
         """test-failed at max retries → sets needs-review and still returns False."""
         await self._make_task(db, "test-failed", gate_retries=3)
 
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
         result = await _resume_gate_pipeline("test-project/return-val-task")
 
         assert result is False

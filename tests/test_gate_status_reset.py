@@ -15,7 +15,7 @@ class TestRetryResetsGateStatus:
 
     async def test_retry_resets_gate_status(self, db, sample_project):
         """gate_status must be null after retry_task starts a new attempt."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-gate-reset",
@@ -24,8 +24,8 @@ class TestRetryResetsGateStatus:
         )
         await db.update_task(task["id"], status="failed", gate_status="test-failed", gate_retries=2)
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()):
                 await retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
@@ -35,7 +35,7 @@ class TestRetryResetsGateStatus:
 
     async def test_retry_resets_gate_retries(self, db, sample_project):
         """gate_retries must be 0 after retry_task starts a new attempt."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-gate-retries-reset",
@@ -44,8 +44,8 @@ class TestRetryResetsGateStatus:
         )
         await db.update_task(task["id"], status="failed", gate_status="test-failed", gate_retries=2)
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()):
                 await retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
@@ -64,7 +64,7 @@ class TestResumeResetsGateStatus:
 
     async def test_resume_preserves_gate_status(self, db, sample_project):
         """gate_status is preserved (not cleared) after resume_task."""
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         task = await db.create_task(
             id="test-project/resume-gate-reset",
@@ -75,13 +75,13 @@ class TestResumeResetsGateStatus:
         # no gate_passed_at so it goes through the session-launch path.
         await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
 
-        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
             await resume_task(task["id"])
 
         updated = await db.get_task(task["id"])
@@ -91,7 +91,7 @@ class TestResumeResetsGateStatus:
 
     async def test_resume_preserves_gate_retries(self, db, sample_project):
         """gate_retries is preserved (not cleared) after resume_task."""
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         task = await db.create_task(
             id="test-project/resume-gate-retries-reset",
@@ -100,13 +100,13 @@ class TestResumeResetsGateStatus:
         )
         await db.update_task(task["id"], status="needs-review", gate_status="test-failed", gate_retries=1)
 
-        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="prompt")), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()):
             await resume_task(task["id"])
 
         updated = await db.get_task(task["id"])

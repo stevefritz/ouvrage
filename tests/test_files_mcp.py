@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-import switchboard.db as db
-from switchboard.server.context import set_request_context
+import ouvrage.db as db
+from ouvrage.server.context import set_request_context
 
 
 def _set_worker_context():
@@ -25,13 +25,13 @@ class TestAddProjectFileWorktreeValidation:
     def setup_uploads(self, tmp_path):
         uploads_dir = str(tmp_path / "uploads")
         os.makedirs(uploads_dir, exist_ok=True)
-        with patch("switchboard.server.handlers.files_handler._uploads_dir",
+        with patch("ouvrage.server.handlers.files_handler._uploads_dir",
                    return_value=Path(uploads_dir)):
             yield uploads_dir
 
     async def test_rejects_path_outside_worktree(self, db, sample_project, tmp_path):
         """Worker cannot upload /etc/passwd or other paths outside worktree."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -57,7 +57,7 @@ class TestAddProjectFileWorktreeValidation:
 
     async def test_rejects_symlink_escape(self, db, sample_project, tmp_path):
         """Symlinks that escape the worktree are rejected after resolve()."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -86,7 +86,7 @@ class TestAddProjectFileWorktreeValidation:
 
     async def test_accepts_path_inside_worktree(self, db, sample_project, tmp_path):
         """Worker can upload files that genuinely live inside the worktree."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -113,7 +113,7 @@ class TestAddProjectFileWorktreeValidation:
 
     async def test_worker_requires_task_id(self, db, sample_project, tmp_path):
         """Worker call without task_id is rejected."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         _set_worker_context()
         with pytest.raises(ValueError, match="task_id is required"):
@@ -124,7 +124,7 @@ class TestAddProjectFileWorktreeValidation:
 
     async def test_non_worker_rejected(self, db, sample_project):
         """add_project_file is only available on the worker endpoint."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         _set_non_worker_context()
         with pytest.raises(ValueError, match="only available on the worker endpoint"):
@@ -136,7 +136,7 @@ class TestAddProjectFileWorktreeValidation:
 
     async def test_rejects_task_with_no_worktree(self, db, sample_project, tmp_path):
         """If the task has no worktree_path set, reject rather than skip validation."""
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         task = await db.create_task(
             id="test-project/no-worktree-task",

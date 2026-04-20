@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from switchboard.db.search import sanitize_fts_query
+from ouvrage.db.search import sanitize_fts_query
 
 
 # ---------------------------------------------------------------------------
@@ -55,9 +55,9 @@ class TestSanitizeFtsQuery:
 class TestFtsSafetyNet:
     async def test_messages_fts_returns_empty_on_operational_error(self, db):
         """search_messages_fts returns [] and logs error when FTS query raises."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
-        with patch("switchboard.db.search.get_db") as mock_get_db:
+        with patch("ouvrage.db.search.get_db") as mock_get_db:
             mock_conn = AsyncMock()
             mock_conn.execute_fetchall.side_effect = sqlite3.OperationalError("fts error")
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -69,9 +69,9 @@ class TestFtsSafetyNet:
 
     async def test_tasks_fts_returns_empty_on_operational_error(self, db):
         """search_tasks_fts returns [] and logs error when FTS query raises."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
-        with patch("switchboard.db.search.get_db") as mock_get_db:
+        with patch("ouvrage.db.search.get_db") as mock_get_db:
             mock_conn = AsyncMock()
             mock_conn.execute_fetchall.side_effect = sqlite3.OperationalError("fts error")
             mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -83,14 +83,14 @@ class TestFtsSafetyNet:
 
     async def test_messages_fts_empty_query_returns_empty(self, db):
         """search_messages_fts with empty query returns [] without hitting DB."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
         result = await search_mod.search_messages_fts("")
         assert result == []
 
     async def test_tasks_fts_empty_query_returns_empty(self, db):
         """search_tasks_fts with empty query returns [] without hitting DB."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
         result = await search_mod.search_tasks_fts("")
         assert result == []
@@ -103,21 +103,21 @@ class TestFtsSafetyNet:
 class TestFtsSpecialCharsNocrash:
     async def test_messages_fts_cpp_query_no_crash(self, db):
         """C++ (advanced) query should not raise OperationalError."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
         result = await search_mod.search_messages_fts("C++ (advanced)")
         assert isinstance(result, list)
 
     async def test_messages_fts_quote_query_no_crash(self, db):
         """Unclosed quote query should not raise OperationalError."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
         result = await search_mod.search_messages_fts('"hello')
         assert isinstance(result, list)
 
     async def test_tasks_fts_operators_no_crash(self, db):
         """AND/OR/NOT keywords should not crash tasks FTS."""
-        from switchboard.db import search as search_mod
+        from ouvrage.db import search as search_mod
 
         result = await search_mod.search_tasks_fts("AND OR NOT")
         assert isinstance(result, list)
@@ -130,7 +130,7 @@ class TestFtsSpecialCharsNocrash:
 class TestFtsInsertNullContent:
     async def test_fts_insert_trigger_has_when_clause(self, db):
         """messages_fts_insert trigger SQL contains WHEN new.content IS NOT NULL."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
 
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
@@ -145,8 +145,8 @@ class TestFtsInsertNullContent:
 
     async def test_non_null_content_message_indexed_in_fts(self, db):
         """Inserting a message with non-NULL content should add an FTS row."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         async with get_db() as conn:
             cursor = await conn.execute(
@@ -173,8 +173,8 @@ class TestFtsInsertNullContent:
 class TestFtsUpdateTriggerScoping:
     async def test_messages_fts_update_fires_on_content_change(self, db):
         """Updating message content should update FTS index."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         async with get_db() as conn:
             cursor = await conn.execute(
@@ -209,8 +209,8 @@ class TestFtsUpdateTriggerScoping:
 
     async def test_messages_fts_update_does_not_fire_on_non_content_column(self, db):
         """Updating a non-content column (author) should NOT fire the FTS update trigger."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         unique_word = "xyztriggercheck12345"
         async with get_db() as conn:
@@ -250,8 +250,8 @@ class TestFtsUpdateTriggerScoping:
 
     async def test_tasks_fts_update_fires_on_goal_change(self, db, sample_project):
         """Updating task goal should update FTS index."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
         import uuid
 
         task_id = f"test-task-{uuid.uuid4().hex[:8]}"
@@ -298,10 +298,10 @@ class TestFtsUpdateTriggerScoping:
 class TestVec0InsertFailureLogging:
     async def test_set_message_embedding_logs_warning_on_vec0_failure(self, db):
         """set_message_embedding logs a warning when vec0 insert fails."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
-        from switchboard.embeddings.service import encode_vector
-        import switchboard.db.tasks as tasks_mod
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
+        from ouvrage.embeddings.service import encode_vector
+        import ouvrage.db.tasks as tasks_mod
 
         vec = [0.1] * 1536
         blob = encode_vector(vec)
@@ -315,7 +315,7 @@ class TestVec0InsertFailureLogging:
             msg_id = cursor.lastrowid
 
         with patch.object(tasks_mod.log, "warning") as mock_warn:
-            with patch("switchboard.db.tasks.get_db") as mock_get_db:
+            with patch("ouvrage.db.tasks.get_db") as mock_get_db:
                 mock_conn = AsyncMock()
                 mock_conn.execute = AsyncMock(side_effect=[
                     AsyncMock(),  # UPDATE messages SET embedding
@@ -326,7 +326,7 @@ class TestVec0InsertFailureLogging:
                 mock_conn.__aexit__ = AsyncMock(return_value=False)
                 mock_get_db.return_value = mock_conn
 
-                from switchboard.db.tasks import set_message_embedding
+                from ouvrage.db.tasks import set_message_embedding
                 try:
                     await set_message_embedding(msg_id, blob)
                 except Exception:
@@ -342,15 +342,15 @@ class TestVec0InsertFailureLogging:
 
     async def test_set_task_embedding_logs_warning_on_vec0_failure(self, db, sample_project):
         """set_task_embedding logs a warning when vec0 insert fails."""
-        from switchboard.db._helpers import now_iso
-        from switchboard.embeddings.service import encode_vector
-        import switchboard.db.search as search_mod
+        from ouvrage.db._helpers import now_iso
+        from ouvrage.embeddings.service import encode_vector
+        import ouvrage.db.search as search_mod
 
         vec = [0.1] * 1536
         blob = encode_vector(vec)
 
         with patch.object(search_mod.log, "warning") as mock_warn:
-            with patch("switchboard.db.search.get_db") as mock_get_db:
+            with patch("ouvrage.db.search.get_db") as mock_get_db:
                 mock_conn = AsyncMock()
                 # Simulate: UPDATE succeeds, SELECT rowid succeeds, INSERT OR REPLACE raises
                 rowid_row = MagicMock()
@@ -376,7 +376,7 @@ class TestVec0InsertFailureLogging:
                 mock_conn.__aexit__ = AsyncMock(return_value=False)
                 mock_get_db.return_value = mock_conn
 
-                from switchboard.db.search import set_task_embedding
+                from ouvrage.db.search import set_task_embedding
                 try:
                     await set_task_embedding("some-task-id", blob)
                 except Exception:
@@ -392,7 +392,7 @@ class TestVec0InsertFailureLogging:
 class TestBatchedBackfill:
     async def test_backfill_uses_limit_offset(self):
         """_backfill_vec_tables uses LIMIT/OFFSET pagination instead of loading all rows."""
-        from switchboard.server.app import _backfill_vec_tables
+        from ouvrage.server.app import _backfill_vec_tables
 
         executed_sqls = []
 
@@ -407,8 +407,8 @@ class TestBatchedBackfill:
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-        # _backfill_vec_tables imports get_db from switchboard.db.connection locally
-        with patch("switchboard.db.connection.get_db", return_value=mock_conn):
+        # _backfill_vec_tables imports get_db from ouvrage.db.connection locally
+        with patch("ouvrage.db.connection.get_db", return_value=mock_conn):
             await _backfill_vec_tables()
 
         # All SELECT queries should include LIMIT and OFFSET
@@ -420,8 +420,8 @@ class TestBatchedBackfill:
 
     async def test_backfill_loops_until_empty(self):
         """_backfill_vec_tables calls SELECT repeatedly until empty result."""
-        from switchboard.server.app import _backfill_vec_tables
-        from switchboard.embeddings.service import encode_vector
+        from ouvrage.server.app import _backfill_vec_tables
+        from ouvrage.embeddings.service import encode_vector
 
         blob = encode_vector([0.1] * 1536)
 
@@ -445,7 +445,7 @@ class TestBatchedBackfill:
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("switchboard.db.connection.get_db", return_value=mock_conn):
+        with patch("ouvrage.db.connection.get_db", return_value=mock_conn):
             await _backfill_vec_tables()
 
         # Should have called SELECT for messages twice (1 row + empty)

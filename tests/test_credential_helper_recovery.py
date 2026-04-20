@@ -32,7 +32,7 @@ class TestSetupHookConfig:
 
     async def test_writes_hook_config_to_empty_dir(self, tmp_path):
         """setup_hook_config creates .claude/settings.json with hook entries."""
-        from switchboard.dispatch.internals import setup_hook_config
+        from ouvrage.dispatch.internals import setup_hook_config
 
         worktree = str(tmp_path / "wt")
         os.makedirs(worktree)
@@ -49,12 +49,12 @@ class TestSetupHookConfig:
         assert len(hooks) == 1
         assert hooks[0]["matcher"] == "Bash"
         hook_cmds = [h["command"] for h in hooks[0]["hooks"]]
-        assert "/opt/switchboard/hooks/block-git-push.sh" in hook_cmds
-        assert "/opt/switchboard/hooks/block-git-fetch.sh" in hook_cmds
+        assert "/opt/ouvrage/hooks/block-git-push.sh" in hook_cmds
+        assert "/opt/ouvrage/hooks/block-git-fetch.sh" in hook_cmds
 
     async def test_merges_with_existing_settings(self, tmp_path):
         """setup_hook_config overwrites existing settings — repo hooks are discarded."""
-        from switchboard.dispatch.internals import setup_hook_config
+        from ouvrage.dispatch.internals import setup_hook_config
 
         worktree = str(tmp_path / "wt")
         claude_dir = os.path.join(worktree, ".claude")
@@ -95,12 +95,12 @@ class TestSetupHookConfig:
         assert "existing-hook.sh" not in all_cmds
 
         # Ouvrage blocking hooks are present
-        assert "/opt/switchboard/hooks/block-git-push.sh" in all_cmds
-        assert "/opt/switchboard/hooks/block-git-fetch.sh" in all_cmds
+        assert "/opt/ouvrage/hooks/block-git-push.sh" in all_cmds
+        assert "/opt/ouvrage/hooks/block-git-fetch.sh" in all_cmds
 
     async def test_idempotent_called_twice(self, tmp_path):
         """Calling setup_hook_config twice does not duplicate hooks."""
-        from switchboard.dispatch.internals import setup_hook_config
+        from ouvrage.dispatch.internals import setup_hook_config
 
         worktree = str(tmp_path / "wt")
         os.makedirs(worktree)
@@ -121,7 +121,7 @@ class TestSetupHookConfig:
 
     async def test_handles_corrupt_settings_json(self, tmp_path):
         """setup_hook_config recovers from corrupt settings.json."""
-        from switchboard.dispatch.internals import setup_hook_config
+        from ouvrage.dispatch.internals import setup_hook_config
 
         worktree = str(tmp_path / "wt")
         claude_dir = os.path.join(worktree, ".claude")
@@ -154,13 +154,13 @@ class TestHookConfigOnResume:
         self.tmp_path = tmp_path
         self.mock_hook_config = AsyncMock()
         self.common_patches = [
-            patch("switchboard.dispatch.internals.setup_hook_config", self.mock_hook_config),
-                        patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="resume prompt")),
-            patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")),
-            patch("switchboard.dispatch.engine._write_dispatch_log", lambda *a, **k: None),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.internals.setup_hook_config", self.mock_hook_config),
+                        patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.sdk_session._build_resume_prompt", AsyncMock(return_value="resume prompt")),
+            patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")),
+            patch("ouvrage.dispatch.engine._write_dispatch_log", lambda *a, **k: None),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
         ]
         for p in self.common_patches:
             p.start()
@@ -170,7 +170,7 @@ class TestHookConfigOnResume:
 
     async def test_resume_with_existing_worktree_calls_hook_config(self, db, sample_project):
         """Hook config is written even when worktree already exists on disk."""
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         # Create a real directory so os.path.exists returns True
         worktree = str(self.tmp_path / "existing-wt")
@@ -208,15 +208,15 @@ class TestHookConfigOnRetry:
         self.tmp_path = tmp_path
         self.mock_hook_config = AsyncMock()
         self.common_patches = [
-            patch("switchboard.dispatch.internals.setup_hook_config", self.mock_hook_config),
-                        patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
-            patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()),
-            patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")),
-            patch("switchboard.dispatch.engine._write_dispatch_log", lambda *a, **k: None),
-            patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine._build_task_prompt", AsyncMock(return_value="prompt")),
+            patch("ouvrage.dispatch.internals.setup_hook_config", self.mock_hook_config),
+                        patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()),
+            patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()),
+            patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")),
+            patch("ouvrage.dispatch.engine._write_dispatch_log", lambda *a, **k: None),
+            patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()),
+            patch("ouvrage.dispatch.engine._build_task_prompt", AsyncMock(return_value="prompt")),
         ]
         for p in self.common_patches:
             p.start()
@@ -226,7 +226,7 @@ class TestHookConfigOnRetry:
 
     async def test_retry_with_existing_worktree_calls_hook_config(self, db, sample_project):
         """Hook config is written on retry even when worktree already exists."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         worktree = str(self.tmp_path / "existing-retry-wt")
         os.makedirs(worktree)
@@ -260,7 +260,7 @@ class TestHookConfigOnDispatch:
 
     async def test_dispatch_calls_hook_config(self, db, sample_project, tmp_path):
         """Normal dispatch must call setup_hook_config."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         mock_hook_config = AsyncMock()
 
@@ -271,14 +271,14 @@ class TestHookConfigOnDispatch:
         )
         await db.update_task(task["id"], status="ready")
 
-        with patch("switchboard.dispatch.internals.setup_hook_config", mock_hook_config), \
-             patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log", lambda *a, **k: None), \
-             patch("switchboard.dispatch.engine._run_sdk_session", AsyncMock()), \
-             patch("switchboard.dispatch.engine._build_task_prompt", AsyncMock(return_value="prompt")):
-            from switchboard.dispatch.lifecycle import TaskLifecycle
+        with patch("ouvrage.dispatch.internals.setup_hook_config", mock_hook_config), \
+             patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value=str(tmp_path / "wt"))), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value=tmp_path / ".sb")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log", lambda *a, **k: None), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._build_task_prompt", AsyncMock(return_value="prompt")):
+            from ouvrage.dispatch.lifecycle import TaskLifecycle
             lifecycle = TaskLifecycle()
             await lifecycle.execute(task["id"], "dispatch")
 

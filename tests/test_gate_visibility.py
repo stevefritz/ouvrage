@@ -18,19 +18,19 @@ class TestRunTestStreaming:
     """Verify that _run_test_streaming writes output to test-output.log in real time."""
 
     async def test_streams_output_to_file(self, tmp_path):
-        """Output should appear in .switchboard/test-output.log."""
+        """Output should appear in .ouvrage/test-output.log."""
         worktree = str(tmp_path)
-        (tmp_path / ".switchboard").mkdir()
+        (tmp_path / ".ouvrage").mkdir()
 
-        with patch("switchboard.dispatch.gates.pwd") as mock_pwd, \
-             patch("switchboard.dispatch.gates.WORKER_USER", "nobody"):
+        with patch("ouvrage.dispatch.gates.pwd") as mock_pwd, \
+             patch("ouvrage.dispatch.gates.WORKER_USER", "nobody"):
             pw = MagicMock()
             pw.pw_uid = os.getuid()
             pw.pw_gid = os.getgid()
             pw.pw_dir = str(tmp_path)
             mock_pwd.getpwnam.return_value = pw
 
-            from switchboard.dispatch.gates import _run_test_streaming
+            from ouvrage.dispatch.gates import _run_test_streaming
             output, rc = await _run_test_streaming(worktree, "echo hello && echo world")
 
         assert rc == 0
@@ -38,7 +38,7 @@ class TestRunTestStreaming:
         assert "world" in output
 
         # Verify the file was written
-        log_file = tmp_path / ".switchboard" / "test-output.log"
+        log_file = tmp_path / ".ouvrage" / "test-output.log"
         assert log_file.exists()
         content = log_file.read_text()
         assert "hello" in content
@@ -47,17 +47,17 @@ class TestRunTestStreaming:
     async def test_captures_exit_code(self, tmp_path):
         """Non-zero exit code should be returned."""
         worktree = str(tmp_path)
-        (tmp_path / ".switchboard").mkdir()
+        (tmp_path / ".ouvrage").mkdir()
 
-        with patch("switchboard.dispatch.gates.pwd") as mock_pwd, \
-             patch("switchboard.dispatch.gates.WORKER_USER", "nobody"):
+        with patch("ouvrage.dispatch.gates.pwd") as mock_pwd, \
+             patch("ouvrage.dispatch.gates.WORKER_USER", "nobody"):
             pw = MagicMock()
             pw.pw_uid = os.getuid()
             pw.pw_gid = os.getgid()
             pw.pw_dir = str(tmp_path)
             mock_pwd.getpwnam.return_value = pw
 
-            from switchboard.dispatch.gates import _run_test_streaming
+            from ouvrage.dispatch.gates import _run_test_streaming
             output, rc = await _run_test_streaming(worktree, "echo failing && exit 1")
 
         assert rc == 1
@@ -78,7 +78,7 @@ class TestReadSessionLog:
                    for i in range(10)]
         log_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
 
-        from switchboard.server.handlers.tasks import _read_session_log
+        from ouvrage.server.handlers.tasks import _read_session_log
         result = await _read_session_log(str(log_path), {"tail": 3}, "test-source")
 
         assert result["count"] == 3
@@ -96,7 +96,7 @@ class TestReadSessionLog:
         ]
         log_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
 
-        from switchboard.server.handlers.tasks import _read_session_log
+        from ouvrage.server.handlers.tasks import _read_session_log
         result = await _read_session_log(str(log_path), {"types": "UserMessage"}, "test")
 
         assert result["count"] == 1
@@ -108,7 +108,7 @@ class TestReadSessionLog:
         entry = {"type": "AssistantMessage", "content": [{"type": "text", "text": "x" * 1000}]}
         log_path.write_text(json.dumps(entry) + "\n")
 
-        from switchboard.server.handlers.tasks import _read_session_log
+        from ouvrage.server.handlers.tasks import _read_session_log
         result = await _read_session_log(str(log_path), {}, "test")
 
         text = result["entries"][0]["content"][0]["text"]
@@ -144,13 +144,13 @@ class TestSubtaskSessionLog:
         )
 
         # Write subtask session log
-        log_dir = Path(worktree) / ".switchboard"
+        log_dir = Path(worktree) / ".ouvrage"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "review-1-session.jsonl"
         entry = {"type": "AssistantMessage", "content": [{"type": "text", "text": "reviewing code"}]}
         log_file.write_text(json.dumps(entry) + "\n")
 
-        from switchboard.server.handlers.tasks import _handle_get_session_log
+        from ouvrage.server.handlers.tasks import _handle_get_session_log
         result = await _handle_get_session_log({
             "task_id": "test-project/subtask-test/review-1",
             "tail": 50,
@@ -162,7 +162,7 @@ class TestSubtaskSessionLog:
 
     async def test_nonexistent_subtask_returns_error(self, db, sample_project):
         """Non-existent task/subtask ID returns an error."""
-        from switchboard.server.handlers.tasks import _handle_get_session_log
+        from ouvrage.server.handlers.tasks import _handle_get_session_log
         result = await _handle_get_session_log({
             "task_id": "test-project/nonexistent/review-1",
         })
@@ -187,11 +187,11 @@ class TestDashboardGateEndpoints:
         )
         await db.update_task(task["id"], worktree_path=worktree)
 
-        log_dir = Path(worktree) / ".switchboard"
+        log_dir = Path(worktree) / ".ouvrage"
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "test-output.log").write_text("PASSED: test_foo\nPASSED: test_bar\n")
 
-        from switchboard.dashboard.api import _handle_test_output
+        from ouvrage.dashboard.api import _handle_test_output
 
         # Mock the ASGI send
         responses = []
@@ -226,12 +226,12 @@ class TestDashboardGateEndpoints:
         )
 
         # Write the subtask session log
-        log_dir = Path(worktree) / ".switchboard"
+        log_dir = Path(worktree) / ".ouvrage"
         log_dir.mkdir(parents=True, exist_ok=True)
         entry = {"type": "AssistantMessage", "content": [{"type": "text", "text": "looks good"}]}
         (log_dir / "review-1-session.jsonl").write_text(json.dumps(entry) + "\n")
 
-        from switchboard.dashboard.api import _handle_gate_session_log
+        from ouvrage.dashboard.api import _handle_gate_session_log
 
         responses = []
         async def mock_send(msg):

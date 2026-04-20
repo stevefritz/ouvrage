@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from switchboard.config.constants import STALL_THRESHOLD_SECONDS
-from switchboard.server.handlers.ops import _handle_get_guide
-from switchboard.server.handlers.tasks import _handle_get_task_status, _handle_list_tasks
+from ouvrage.config.constants import STALL_THRESHOLD_SECONDS
+from ouvrage.server.handlers.ops import _handle_get_guide
+from ouvrage.server.handlers.tasks import _handle_get_task_status, _handle_list_tasks
 
 
 # ===========================================================================
@@ -400,7 +400,7 @@ class TestStallChecker:
         await db.update_task("test-project/stall-warn", status="working", last_activity=old_time)
 
         # Mock notify to prevent actual Slack calls
-        with patch("switchboard.notifications.slack.task_heartbeat", new_callable=AsyncMock) as mock_heartbeat:
+        with patch("ouvrage.notifications.slack.task_heartbeat", new_callable=AsyncMock) as mock_heartbeat:
 
             # Run one iteration of the check (not the infinite loop)
             working_tasks = await db.list_tasks(status="working")

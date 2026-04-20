@@ -35,7 +35,7 @@ async def test_migration_adds_embedding_column_to_tasks(db):
 @pytest.mark.asyncio
 async def test_set_task_embedding_stores_blob(db, sample_task):
     """set_task_embedding persists a blob that can be read back."""
-    from switchboard.embeddings.service import encode_vector, decode_vector
+    from ouvrage.embeddings.service import encode_vector, decode_vector
 
     vector = [float(i) / 1536 for i in range(1536)]
     blob = encode_vector(vector)
@@ -63,7 +63,7 @@ async def test_get_tasks_needing_embedding_returns_unembedded(db, sample_task):
 @pytest.mark.asyncio
 async def test_get_tasks_needing_embedding_excludes_embedded(db, sample_task):
     """Tasks that already have an embedding are excluded."""
-    from switchboard.embeddings.service import encode_vector
+    from ouvrage.embeddings.service import encode_vector
 
     blob = encode_vector([0.1] * 1536)
     await db.set_task_embedding(sample_task["id"], blob)
@@ -100,7 +100,7 @@ def _unit_vector(dim: int, index: int) -> list[float]:
 @pytest.mark.asyncio
 async def test_search_tasks_semantic_returns_ranked_results(db, sample_project):
     """search_tasks_semantic ranks tasks by cosine similarity."""
-    from switchboard.embeddings.service import encode_vector
+    from ouvrage.embeddings.service import encode_vector
 
     task_a = await db.create_task(
         id="test-project/search-a",
@@ -128,7 +128,7 @@ async def test_search_tasks_semantic_returns_ranked_results(db, sample_project):
 @pytest.mark.asyncio
 async def test_search_tasks_semantic_result_shape(db, sample_project):
     """search_tasks_semantic returns dicts with required fields."""
-    from switchboard.embeddings.service import encode_vector
+    from ouvrage.embeddings.service import encode_vector
 
     task = await db.create_task(
         id="test-project/shape-task",
@@ -152,7 +152,7 @@ async def test_search_tasks_semantic_result_shape(db, sample_project):
 @pytest.mark.asyncio
 async def test_search_tasks_semantic_filters_by_project(db, sample_project):
     """project_id filter scopes results to that project."""
-    from switchboard.embeddings.service import encode_vector
+    from ouvrage.embeddings.service import encode_vector
 
     await db.create_project(
         id="other-project", repo="https://github.com/x/y.git",
@@ -203,7 +203,7 @@ async def test_search_tasks_semantic_empty_when_no_embeddings(db, sample_project
 @pytest.mark.asyncio
 async def test_goal_embedded_on_dispatch(db, sample_project, mock_git, mock_sdk):
     """Dispatching a task fires the goal embedding asynchronously."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
     embed_calls = []
 
@@ -215,7 +215,7 @@ async def test_goal_embedded_on_dispatch(db, sample_project, mock_git, mock_sdk)
     set_embedding_service(TrackingService())
 
     try:
-        from switchboard.dispatch import engine as task_engine
+        from ouvrage.dispatch import engine as task_engine
         result = await task_engine.dispatch_task(
             project_id="test-project",
             task_id="test-project/embed-dispatch-test",
@@ -244,7 +244,7 @@ async def test_goal_embedded_on_dispatch(db, sample_project, mock_git, mock_sdk)
 @pytest.mark.asyncio
 async def test_short_goal_is_embedded(db, sample_project, mock_git, mock_sdk):
     """Short goals (under 50 chars) are still embedded — no minimum length for goals."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
     embed_calls = []
 
@@ -256,7 +256,7 @@ async def test_short_goal_is_embedded(db, sample_project, mock_git, mock_sdk):
     set_embedding_service(TrackingService())
 
     try:
-        from switchboard.dispatch import engine as task_engine
+        from ouvrage.dispatch import engine as task_engine
         await task_engine.dispatch_task(
             project_id="test-project",
             task_id="test-project/short-goal-test",
@@ -276,7 +276,7 @@ async def test_short_goal_is_embedded(db, sample_project, mock_git, mock_sdk):
 @pytest.mark.asyncio
 async def test_embed_no_op_when_openai_key_missing(db, sample_project, mock_git, mock_sdk):
     """When OPENAI_API_KEY is not set, embed_safe returns None gracefully — no error."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
     class NoKeyService(EmbeddingService):
         async def embed(self, text):
@@ -289,7 +289,7 @@ async def test_embed_no_op_when_openai_key_missing(db, sample_project, mock_git,
     set_embedding_service(NoKeyService())
 
     try:
-        from switchboard.dispatch import engine as task_engine
+        from ouvrage.dispatch import engine as task_engine
         # Should not raise
         await task_engine.dispatch_task(
             project_id="test-project",
@@ -318,8 +318,8 @@ async def test_embed_no_op_when_openai_key_missing(db, sample_project, mock_git,
 @pytest.mark.asyncio
 async def test_backfill_task_goals_embeds_unembedded_tasks(db, sample_project):
     """_backfill_task_goals processes tasks with NULL embeddings."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-    from switchboard.server.app import _backfill_task_goals
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
+    from ouvrage.server.app import _backfill_task_goals
 
     task_a = await db.create_task(
         id="test-project/backfill-a",
@@ -356,8 +356,8 @@ async def test_backfill_task_goals_embeds_unembedded_tasks(db, sample_project):
 @pytest.mark.asyncio
 async def test_backfill_task_goals_skips_already_embedded(db, sample_project):
     """_backfill_task_goals skips tasks that already have an embedding."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-    from switchboard.server.app import _backfill_task_goals
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+    from ouvrage.server.app import _backfill_task_goals
 
     task = await db.create_task(
         id="test-project/already-embedded",
@@ -389,8 +389,8 @@ async def test_backfill_task_goals_skips_already_embedded(db, sample_project):
 @pytest.mark.asyncio
 async def test_backfill_task_goals_no_op_when_embed_fails(db, sample_project):
     """_backfill_task_goals continues processing when embedding fails for a task."""
-    from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-    from switchboard.server.app import _backfill_task_goals
+    from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
+    from ouvrage.server.app import _backfill_task_goals
 
     task_a = await db.create_task(
         id="test-project/fail-task",

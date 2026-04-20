@@ -1,8 +1,8 @@
 [
   {
-    "id": "foreman-design",
+    "id": "ouvrage-design",
     "project": "mcp-switchboard",
-    "goal": "Foreman dashboard design system and UI spec",
+    "goal": "Ouvrage dashboard design system and UI spec",
     "archived": false,
     "created_at": "2026-03-15T10:00:00Z",
     "updated_at": "2026-04-03T18:30:00Z",

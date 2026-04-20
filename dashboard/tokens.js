@@ -1,4 +1,4 @@
-// Foreman Design System — Design Tokens
+// Ouvrage Design System — Design Tokens
 // Copper Forge palette: warm amber on dark brown. Import these constants into any view.
 
 export const colors = {

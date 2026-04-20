@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dispatch.lifecycle import (
+import ouvrage.db as db
+from ouvrage.dispatch.lifecycle import (
     IllegalTransition,
     TaskLifecycle,
 )
@@ -58,17 +58,17 @@ def _mock_result_msg(**overrides):
 def _system_event_patches():
     """Patches to suppress real side-effect operations in system event handlers."""
     return [
-        patch("switchboard.git.operations._ensure_branch_pushed", AsyncMock(return_value=True)),
-        patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-        patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-        patch("switchboard.dispatch.gates._process_review_result", AsyncMock()),
-        patch("switchboard.dispatch.engine._update_usage", AsyncMock()),
-        patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
-        patch("switchboard.dispatch.queue._drain_queue", AsyncMock()),
-        patch("switchboard.notifications.slack.task_completed", AsyncMock()),
-        patch("switchboard.notifications.slack.task_failed", AsyncMock()),
-        patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
-        patch("switchboard.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)),
+        patch("ouvrage.git.operations._ensure_branch_pushed", AsyncMock(return_value=True)),
+        patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+        patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+        patch("ouvrage.dispatch.gates._process_review_result", AsyncMock()),
+        patch("ouvrage.dispatch.engine._update_usage", AsyncMock()),
+        patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+        patch("ouvrage.dispatch.queue._drain_queue", AsyncMock()),
+        patch("ouvrage.notifications.slack.task_completed", AsyncMock()),
+        patch("ouvrage.notifications.slack.task_failed", AsyncMock()),
+        patch("ouvrage.notifications.slack.task_needs_review", AsyncMock()),
+        patch("ouvrage.db.resolve_punchlist_items_for_task", AsyncMock(return_value=0)),
     ]
 
 
@@ -115,9 +115,9 @@ class TestCompleteEvent:
             p.start()
 
         # Override specific mocks
-        with patch("switchboard.git.operations._ensure_branch_pushed", push_mock), \
-             patch("switchboard.dispatch.gates._run_test_gate", gate_mock), \
-             patch("switchboard.dispatch.engine._update_usage", usage_mock):
+        with patch("ouvrage.git.operations._ensure_branch_pushed", push_mock), \
+             patch("ouvrage.dispatch.gates._run_test_gate", gate_mock), \
+             patch("ouvrage.dispatch.engine._update_usage", usage_mock):
             await self.lifecycle.execute(task_id, "complete",
                 triggered_by="system", result_msg=result_msg)
 
@@ -139,7 +139,7 @@ class TestCompleteEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.git.operations._ensure_branch_pushed", push_mock):
+        with patch("ouvrage.git.operations._ensure_branch_pushed", push_mock):
             await self.lifecycle.execute(task_id, "complete",
                 triggered_by="system", result_msg=result_msg)
 
@@ -160,7 +160,7 @@ class TestCompleteEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock):
+        with patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", deps_mock):
             await self.lifecycle.execute(task_id, "complete",
                 triggered_by="system", result_msg=result_msg)
 
@@ -260,7 +260,7 @@ class TestTimeoutEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.dispatch.queue._drain_queue", drain_mock):
+        with patch("ouvrage.dispatch.queue._drain_queue", drain_mock):
             task = await self.lifecycle.execute(task_id, "timeout",
                 triggered_by="system", max_wall_clock_minutes=120)
 
@@ -416,7 +416,7 @@ class TestErrorEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.dispatch.queue._drain_queue", drain_mock):
+        with patch("ouvrage.dispatch.queue._drain_queue", drain_mock):
             await self.lifecycle.execute(task_id, "error",
                 triggered_by="system", error_message="fail")
 
@@ -490,8 +490,8 @@ class TestGatePassEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock), \
-             patch("switchboard.dispatch.queue._drain_queue", drain_mock):
+        with patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", deps_mock), \
+             patch("ouvrage.dispatch.queue._drain_queue", drain_mock):
             task = await self.lifecycle.execute(task_id, "gate_pass",
                 triggered_by="gate-pipeline")
 
@@ -528,7 +528,7 @@ class TestGatePassEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.dispatch.engine._check_and_dispatch_dependents", deps_mock):
+        with patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", deps_mock):
             await self.lifecycle.execute(task_id, "gate_pass",
                 triggered_by="gate-pipeline")
 
@@ -546,7 +546,7 @@ class TestGatePassEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.db.resolve_punchlist_items_for_task", resolve_mock):
+        with patch("ouvrage.db.resolve_punchlist_items_for_task", resolve_mock):
             await self.lifecycle.execute(task_id, "gate_pass",
                 triggered_by="gate-pipeline")
 
@@ -612,7 +612,7 @@ class TestGateFailEvent:
         for p in patches:
             p.start()
 
-        with patch("switchboard.notifications.slack.task_needs_review", notify_mock):
+        with patch("ouvrage.notifications.slack.task_needs_review", notify_mock):
             await self.lifecycle.execute(task_id, "gate_fail",
                 triggered_by="gate-pipeline", reason="max_test_retries")
 
@@ -633,7 +633,7 @@ class TestNoDirectStatusUpdates:
     def test_sdk_session_no_status_updates(self):
         """sdk_session.py should not set task status directly."""
         import inspect
-        from switchboard.dispatch import sdk_session
+        from ouvrage.dispatch import sdk_session
         source = inspect.getsource(sdk_session)
         # Find db.update_task calls with status= parameter
         import re
@@ -643,7 +643,7 @@ class TestNoDirectStatusUpdates:
     def test_gates_no_task_status_updates(self):
         """gates.py should not set task-level status directly (gate_status is OK)."""
         import inspect
-        from switchboard.dispatch import gates
+        from ouvrage.dispatch import gates
         source = inspect.getsource(gates)
         import re
         # Match db.update_task(...status=...) but exclude gate_status= and pr_status=
@@ -657,7 +657,7 @@ class TestNoDirectStatusUpdates:
     def test_engine_check_dispatch_dependents_no_status(self):
         """_check_and_dispatch_dependents should not set status directly."""
         import inspect
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
         source = inspect.getsource(_check_and_dispatch_dependents)
         import re
         matches = re.findall(r'db\.update_task\([^)]*\bstatus\s*=', source)

@@ -1,4 +1,4 @@
-"""Tests for switchboard.logging_config — RotatingFileHandler setup."""
+"""Tests for ouvrage.logging_config — RotatingFileHandler setup."""
 
 import logging
 import logging.handlers
@@ -10,8 +10,8 @@ import pytest
 class TestConfigureLogging:
     @pytest.fixture(autouse=True)
     def reset_logger(self):
-        """Reset the switchboard logger after each test."""
-        logger = logging.getLogger("switchboard")
+        """Reset the ouvrage logger after each test."""
+        logger = logging.getLogger("ouvrage")
         original_handlers = logger.handlers[:]
         original_level = logger.level
         original_propagate = logger.propagate
@@ -26,9 +26,9 @@ class TestConfigureLogging:
     def test_file_handler_created(self, tmp_path, monkeypatch):
         """configure_logging() adds a RotatingFileHandler."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         file_handlers = [
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)
@@ -36,23 +36,23 @@ class TestConfigureLogging:
         assert len(file_handlers) == 1
 
     def test_file_handler_path(self, tmp_path, monkeypatch):
-        """File handler writes to LOG_DIR/switchboard.log."""
+        """File handler writes to LOG_DIR/ouvrage.log."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         fh = next(
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)
         )
-        assert fh.baseFilename == str(tmp_path / "switchboard.log")
+        assert fh.baseFilename == str(tmp_path / "ouvrage.log")
 
     def test_rotation_config(self, tmp_path, monkeypatch):
         """Rotation configured for 10 MB max size and 5 backups."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         fh = next(
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)
@@ -63,9 +63,9 @@ class TestConfigureLogging:
     def test_file_handler_level_debug(self, tmp_path, monkeypatch):
         """File handler captures DEBUG and above."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         fh = next(
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)
@@ -75,9 +75,9 @@ class TestConfigureLogging:
     def test_console_handler_level_info(self, tmp_path, monkeypatch):
         """Console handler captures INFO and above only."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         stream_handlers = [
             h for h in logger.handlers
             if isinstance(h, logging.StreamHandler)
@@ -87,34 +87,34 @@ class TestConfigureLogging:
         assert stream_handlers[0].level == logging.INFO
 
     def test_logger_level_debug(self, tmp_path, monkeypatch):
-        """Switchboard logger itself is set to DEBUG."""
+        """Ouvrage logger itself is set to DEBUG."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        assert logging.getLogger("switchboard").level == logging.DEBUG
+        assert logging.getLogger("ouvrage").level == logging.DEBUG
 
     def test_propagate_false(self, tmp_path, monkeypatch):
-        """Switchboard logger does not propagate to root (no double output via uvicorn)."""
+        """Ouvrage logger does not propagate to root (no double output via uvicorn)."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        assert logging.getLogger("switchboard").propagate is False
+        assert logging.getLogger("ouvrage").propagate is False
 
     def test_log_dir_created(self, tmp_path, monkeypatch):
         """configure_logging() creates the log directory if missing."""
         new_dir = tmp_path / "logs" / "sub"
         monkeypatch.setenv("LOG_DIR", str(new_dir))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
         assert new_dir.exists()
 
     def test_idempotent(self, tmp_path, monkeypatch):
         """Calling configure_logging() twice doesn't add duplicate handlers."""
         monkeypatch.setenv("LOG_DIR", str(tmp_path))
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         file_handlers = [
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)
@@ -128,9 +128,9 @@ class TestConfigureLogging:
         blocker.write_text("I am a file")
         bad_dir = str(blocker / "logs")  # can't mkdir inside a file
         monkeypatch.setenv("LOG_DIR", bad_dir)
-        from switchboard.logging_config import configure_logging
+        from ouvrage.logging_config import configure_logging
         configure_logging()
-        logger = logging.getLogger("switchboard")
+        logger = logging.getLogger("ouvrage")
         file_handlers = [
             h for h in logger.handlers
             if isinstance(h, logging.handlers.RotatingFileHandler)

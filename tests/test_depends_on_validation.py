@@ -23,13 +23,13 @@ class TestValidateDependsOn:
     """Direct tests for the validate_depends_on function."""
 
     async def test_missing_task_rejected(self, db, sample_project):
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         with pytest.raises(ValueError, match="not found"):
             await validate_depends_on("nonexistent-task", "test-project", "test-project/my-task")
 
     async def test_wrong_project_rejected(self, db, sample_project):
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         # Create a task in the right project
         await db.create_task(
@@ -42,7 +42,7 @@ class TestValidateDependsOn:
             )
 
     async def test_already_has_dependent_rejected(self, db, sample_project):
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         parent = await db.create_task(
             id="test-project/dep-parent", project_id="test-project", goal="Parent",
@@ -58,7 +58,7 @@ class TestValidateDependsOn:
             )
 
     async def test_self_reference_rejected(self, db, sample_project):
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         await db.create_task(
             id="test-project/self-ref", project_id="test-project", goal="Self ref task",
@@ -71,7 +71,7 @@ class TestValidateDependsOn:
 
     async def test_shorthand_resolved(self, db, sample_project):
         """Bare slug (no /) is prepended with project_id."""
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         await db.create_task(
             id="test-project/short-parent", project_id="test-project", goal="Parent",
@@ -84,7 +84,7 @@ class TestValidateDependsOn:
 
     async def test_case_insensitive_match(self, db, sample_project):
         """Validation is case-insensitive for comparison."""
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         await db.create_task(
             id="test-project/Case-Parent", project_id="test-project", goal="Parent",
@@ -98,7 +98,7 @@ class TestValidateDependsOn:
 
     async def test_valid_depends_on_returns_id(self, db, sample_project):
         """Happy path: valid depends_on returns the resolved task ID."""
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         parent = await db.create_task(
             id="test-project/valid-parent", project_id="test-project", goal="Parent",
@@ -111,7 +111,7 @@ class TestValidateDependsOn:
 
     async def test_resetting_same_parent_allowed(self, db, sample_project):
         """A task can re-set depends_on to its current parent (not a fork)."""
-        from switchboard.dispatch.engine import validate_depends_on
+        from ouvrage.dispatch.engine import validate_depends_on
 
         parent = await db.create_task(
             id="test-project/resame-parent", project_id="test-project", goal="Parent",
@@ -138,9 +138,9 @@ class TestDispatchTaskValidation:
     @pytest.fixture(autouse=True)
     def _mock_git(self):
         patches = [
-            patch("switchboard.dispatch.engine._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")),
-            patch("switchboard.dispatch.engine.cleanup_worktree", AsyncMock()),
+            patch("ouvrage.dispatch.engine._run_as_worker", AsyncMock(return_value=(b"", b"", 0))),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")),
+            patch("ouvrage.dispatch.engine.cleanup_worktree", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -149,7 +149,7 @@ class TestDispatchTaskValidation:
             p.stop()
 
     async def test_dispatch_rejects_nonexistent_depends_on(self, db, sample_project):
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         with pytest.raises(ValueError, match="not found"):
             await dispatch_task(
@@ -161,7 +161,7 @@ class TestDispatchTaskValidation:
             )
 
     async def test_dispatch_rejects_cross_project_depends_on(self, db, sample_project):
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         with pytest.raises(ValueError, match="same project"):
             await dispatch_task(
@@ -173,7 +173,7 @@ class TestDispatchTaskValidation:
             )
 
     async def test_dispatch_rejects_self_reference(self, db, sample_project):
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         with pytest.raises(ValueError, match="cannot reference the task itself"):
             await dispatch_task(
@@ -185,7 +185,7 @@ class TestDispatchTaskValidation:
             )
 
     async def test_dispatch_resolves_shorthand(self, db, sample_project):
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
 
         await db.create_task(
             id="test-project/short-parent-d", project_id="test-project", goal="Parent",
@@ -211,11 +211,11 @@ class TestMCPUpdateTaskValidation:
 
     @pytest.fixture(autouse=True)
     def _set_context(self):
-        from switchboard.server.context import set_request_context
+        from ouvrage.server.context import set_request_context
         set_request_context(user_id=None, is_token_auth=False, is_worker=False)
 
     async def test_update_rejects_nonexistent_depends_on(self, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         await db.create_task(
             id="test-project/upd-task", project_id="test-project", goal="Task",
@@ -228,7 +228,7 @@ class TestMCPUpdateTaskValidation:
             })
 
     async def test_update_rejects_cross_project(self, db, sample_project):
-        from switchboard.server.handlers.tasks import _handle_update_task
+        from ouvrage.server.handlers.tasks import _handle_update_task
 
         await db.create_task(
             id="test-project/upd-task-cross", project_id="test-project", goal="Task",
@@ -285,7 +285,7 @@ class TestDependsOnCandidatesEndpoint:
 
     async def test_returns_candidates_without_dependents(self, db, sample_project, mock_git):
         """Tasks without existing dependents are returned as candidates."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Create tasks: parent has a dependent, standalone does not
         await db.create_task(
@@ -315,7 +315,7 @@ class TestDependsOnCandidatesEndpoint:
 
     async def test_returns_id_goal_status(self, db, sample_project, mock_git):
         """Each candidate has id, goal, status fields."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_task(
             id="test-project/cand-fields", project_id="test-project",
@@ -335,7 +335,7 @@ class TestDependsOnCandidatesEndpoint:
 
     async def test_missing_project_id_returns_error(self, db, sample_project, mock_git):
         """Missing project_id query param returns an error."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(query=b"")
         send = _Capture()
@@ -345,7 +345,7 @@ class TestDependsOnCandidatesEndpoint:
 
     async def test_all_statuses_included(self, db, sample_project, mock_git):
         """Tasks of all statuses are included as candidates."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_task(
             id="test-project/cand-completed", project_id="test-project",

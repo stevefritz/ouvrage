@@ -51,7 +51,7 @@ class _Capture:
 class TestComponentEndpointsRemoved:
 
     async def test_get_components_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components", method="GET")
         scope["query_string"] = f"project_id={sample_project['id']}".encode()
@@ -60,7 +60,7 @@ class TestComponentEndpointsRemoved:
         assert resp.status == 404
 
     async def test_post_components_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components", method="POST")
         resp = _Capture()
@@ -72,7 +72,7 @@ class TestComponentEndpointsRemoved:
         assert resp.status == 404
 
     async def test_get_component_detail_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components/some-comp", method="GET")
         resp = _Capture()
@@ -80,7 +80,7 @@ class TestComponentEndpointsRemoved:
         assert resp.status == 404
 
     async def test_patch_component_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components/some-comp", method="PATCH")
         resp = _Capture()
@@ -88,7 +88,7 @@ class TestComponentEndpointsRemoved:
         assert resp.status == 404
 
     async def test_component_pause_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components/some-comp/pause", method="POST")
         resp = _Capture()
@@ -96,7 +96,7 @@ class TestComponentEndpointsRemoved:
         assert resp.status == 404
 
     async def test_component_stop_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/components/some-comp/stop", method="POST")
         resp = _Capture()
@@ -109,7 +109,7 @@ class TestComponentEndpointsRemoved:
 class TestPunchlistEndpointsRemoved:
 
     async def test_get_punchlist_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/punchlist/some-comp", method="GET")
         resp = _Capture()
@@ -117,7 +117,7 @@ class TestPunchlistEndpointsRemoved:
         assert resp.status == 404
 
     async def test_post_punchlist_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/punchlist/some-comp", method="POST")
         resp = _Capture()
@@ -125,7 +125,7 @@ class TestPunchlistEndpointsRemoved:
         assert resp.status == 404
 
     async def test_patch_punchlist_item_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/punchlist/some-comp/42", method="PATCH")
         resp = _Capture()
@@ -133,7 +133,7 @@ class TestPunchlistEndpointsRemoved:
         assert resp.status == 404
 
     async def test_dispatch_punchlist_item_returns_404(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/punchlist/some-comp/42/dispatch", method="POST")
         resp = _Capture()

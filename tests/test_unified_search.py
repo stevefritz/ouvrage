@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from switchboard.server.handlers.search import _handle_search
+from ouvrage.server.handlers.search import _handle_search
 
 
 def _encode_vector(v: list[float]) -> bytes:
@@ -36,7 +36,7 @@ def _unit_vec(dim: int, index: int) -> list[float]:
 class TestSearchEmbedError:
     async def test_falls_back_to_fts_when_embed_fails(self, db, sample_project):
         """When embedding fails, search falls back to FTS-only and returns results (not an error)."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class FailService(EmbeddingService):
             async def embed(self, text):
@@ -59,7 +59,7 @@ class TestSearchEmbedError:
 
 class TestSearchTaskResults:
     async def test_task_card_returned(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -84,7 +84,7 @@ class TestSearchTaskResults:
             set_embedding_service(None)
 
     async def test_task_result_has_compact_fields(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 1)
 
@@ -115,7 +115,7 @@ class TestSearchTaskResults:
             set_embedding_service(None)
 
     async def test_task_snippet_is_from_goal(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 2)
 
@@ -148,7 +148,7 @@ class TestSearchTaskResults:
 class TestSearchMessageResults:
     async def test_task_message_returns_message_card(self, db, sample_project):
         """A match in a task message returns a task_message card, not a task object."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 3)
 
@@ -180,7 +180,7 @@ class TestSearchMessageResults:
             set_embedding_service(None)
 
     async def test_message_card_has_author_and_message_type(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -220,7 +220,7 @@ class TestSearchMessageResults:
 
 class TestSearchSnippet:
     async def test_snippet_max_200_chars(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -257,7 +257,7 @@ class TestSearchSnippet:
 
 class TestSearchProjectScoping:
     async def test_project_id_filters_task_results(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -294,7 +294,7 @@ class TestSearchProjectScoping:
             set_embedding_service(None)
 
     async def test_project_id_filters_message_results(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 1)
 
@@ -351,7 +351,7 @@ class TestSearchProjectScoping:
 
 class TestSearchLimit:
     async def test_limit_capped_at_30(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -376,7 +376,7 @@ class TestSearchLimit:
             set_embedding_service(None)
 
     async def test_default_limit_is_10(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -406,7 +406,7 @@ class TestSearchLimit:
 
 class TestSearchRanking:
     async def test_results_sorted_by_relevance_descending(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         query_vec = _unit_vec(4, 0)
         other_vec = _unit_vec(4, 1)
@@ -441,7 +441,7 @@ class TestSearchRanking:
             set_embedding_service(None)
 
     async def test_total_candidates_in_response(self, db, sample_project):
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class MockService(EmbeddingService):
             async def embed(self, text):

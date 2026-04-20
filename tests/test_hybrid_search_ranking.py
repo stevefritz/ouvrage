@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from switchboard.server.handlers.search import _handle_search, _recency_mult, _TYPE_BOOST
+from ouvrage.server.handlers.search import _handle_search, _recency_mult, _TYPE_BOOST
 
 
 # ---------------------------------------------------------------------------
@@ -86,11 +86,11 @@ class TestTypeBoostConstants:
         assert _TYPE_BOOST["review"] == 1.4
 
     def test_pinned_boost_applied(self):
-        from switchboard.server.handlers.search import _PINNED_BOOST
+        from ouvrage.server.handlers.search import _PINNED_BOOST
         assert _PINNED_BOOST == 1.3
 
     def test_dual_match_boost(self):
-        from switchboard.server.handlers.search import _DUAL_MATCH_BOOST
+        from ouvrage.server.handlers.search import _DUAL_MATCH_BOOST
         assert _DUAL_MATCH_BOOST == 1.3
 
 
@@ -101,7 +101,7 @@ class TestTypeBoostConstants:
 class TestFtsFallback:
     async def test_fts_only_returns_results_not_error(self, db, sample_project):
         """When embed_safe returns None, FTS-only mode runs without error."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class NoKeyService(EmbeddingService):
             async def embed(self, text):
@@ -126,7 +126,7 @@ class TestFtsFallback:
 
     async def test_fts_fallback_no_dual_match_boost(self, db, sample_project):
         """FTS-only mode doesn't crash; dual-match boost is simply not applied."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class NoKeyService(EmbeddingService):
             async def embed(self, text):
@@ -156,7 +156,7 @@ class TestFtsFallback:
 class TestHybridParallelSearch:
     async def test_fts_and_vec_both_run(self, db, sample_project):
         """In hybrid mode both FTS and vec results are merged."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -190,7 +190,7 @@ class TestHybridParallelSearch:
 
     async def test_dual_match_gets_higher_score(self, db, sample_project):
         """A result matching both FTS and vec gets a higher score than FTS-only."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -232,7 +232,7 @@ class TestHybridParallelSearch:
 class TestScoreNormalization:
     async def test_all_scores_are_0_to_1(self, db, sample_project):
         """All relevance_score values in results are in [0, ~2] range (boosts can push > 1)."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -266,7 +266,7 @@ class TestScoreNormalization:
 class TestTypeBoost:
     async def test_spec_message_scores_higher_than_status(self, db, sample_project):
         """A 'spec' type message scores higher than a 'status' type message with same vec similarity."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -315,8 +315,8 @@ class TestTypeBoost:
 class TestPinnedBoost:
     async def test_pinned_message_scores_higher(self, db, sample_project):
         """A pinned message scores 1.3x higher than the same non-pinned message."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
-        from switchboard.db.connection import get_db
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.db.connection import get_db
 
         vec = _unit_vec(4, 1)
 
@@ -370,9 +370,9 @@ class TestPinnedBoost:
 class TestRecencyDecay:
     async def test_recent_task_scores_higher_than_old(self, db, sample_project):
         """A very old task should score lower than a recent one with same FTS match."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
 
         class NoKeyService(EmbeddingService):
             async def embed(self, text):
@@ -417,7 +417,7 @@ class TestRecencyDecay:
 class TestMergeAndDeduplicate:
     async def test_deduplication_keeps_highest_score(self, db, sample_project):
         """If same entity_id appears in multiple result pools, keep highest score."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -445,7 +445,7 @@ class TestMergeAndDeduplicate:
 
     async def test_chunk_suppresses_message_hit(self, db, sample_project):
         """If a message has a chunk hit, the message should not appear separately."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -485,7 +485,7 @@ class TestMergeAndDeduplicate:
 
         set_embedding_service(MockService())
         try:
-            with patch("switchboard.db.search_message_chunks", return_value=chunk_hit if False else [chunk_hit]):
+            with patch("ouvrage.db.search_message_chunks", return_value=chunk_hit if False else [chunk_hit]):
                 result = await _handle_search({"query": "chunk suppression", "limit": 10})
                 types_for_msg = [r["type"] for r in result["results"] if r["entity_id"] == str(msg["id"])]
                 # Should only appear as chunk, not as task_message
@@ -502,7 +502,7 @@ class TestMergeAndDeduplicate:
 class TestTopN:
     async def test_returns_at_most_limit_results(self, db, sample_project):
         """Results are capped at the requested limit."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -528,7 +528,7 @@ class TestTopN:
 
     async def test_results_sorted_descending_by_score(self, db, sample_project):
         """Results are sorted by relevance_score descending."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -554,7 +554,7 @@ class TestTopN:
 
     async def test_total_candidates_reflects_all_before_limit(self, db, sample_project):
         """total_candidates is the count before limit is applied."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
 
         vec = _unit_vec(4, 0)
 
@@ -585,13 +585,13 @@ class TestTopN:
 class TestWeights:
     async def test_task_fts_weight_exceeds_vec_weight(self, db, sample_project):
         """For task results, FTS weight (0.6) > vec weight (0.4)."""
-        from switchboard.server.handlers.search import _TASK_FTS_WEIGHT, _TASK_VEC_WEIGHT
+        from ouvrage.server.handlers.search import _TASK_FTS_WEIGHT, _TASK_VEC_WEIGHT
         assert _TASK_FTS_WEIGHT == 0.6
         assert _TASK_VEC_WEIGHT == 0.4
 
     async def test_message_vec_weight_exceeds_fts_weight(self, db, sample_project):
         """For message results, vec weight (0.6) > FTS weight (0.4)."""
-        from switchboard.server.handlers.search import _MSG_FTS_WEIGHT, _MSG_VEC_WEIGHT
+        from ouvrage.server.handlers.search import _MSG_FTS_WEIGHT, _MSG_VEC_WEIGHT
         assert _MSG_VEC_WEIGHT == 0.6
         assert _MSG_FTS_WEIGHT == 0.4
 
@@ -603,7 +603,7 @@ class TestWeights:
 class TestResultShapeFields:
     async def test_task_result_has_task_id(self, db, sample_project):
         """Task results include task_id equal to entity_id for dashboard hydration."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class NoKeyService(EmbeddingService):
             async def embed(self, text):
@@ -631,7 +631,7 @@ class TestResultShapeFields:
 
     async def test_message_result_has_task_id_and_conversation_id(self, db, sample_project):
         """Message results include task_id and conversation_id fields."""
-        from switchboard.embeddings.service import set_embedding_service, EmbeddingService
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService
 
         class NoKeyService(EmbeddingService):
             async def embed(self, text):

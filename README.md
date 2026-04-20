@@ -1,4 +1,4 @@
-# Switchboard
+# Ouvrage
 
 An MCP server that turns Claude.ai into a dispatch center for autonomous Claude Code agents. Describe work in conversation, dispatch it as a task, and a CC instance on your VPS picks it up — working in its own git branch, reading code, making changes, committing, and reporting back through the same MCP protocol.
 
@@ -6,13 +6,13 @@ Three ways to interact with running work:
 
 - **Claude.ai** — dispatch tasks, check status, post course corrections, retry — all through natural conversation via MCP tools
 - **Dashboard** — web UI with live session logs (every tool call, file read, API response), message threads, checklist progress, and direct task actions
-- **Any MCP client** — Claude Code, Cursor, custom agents — anything that speaks MCP can connect and participate. CC workers talk back to Switchboard through the same MCP endpoint that dispatches them
+- **Any MCP client** — Claude Code, Cursor, custom agents — anything that speaks MCP can connect and participate. CC workers talk back to Ouvrage through the same MCP endpoint that dispatches them
 
 Workers can have their own MCP servers (loaded from user config), so a task can use tools like Shopify AI or Jira alongside standard code tools. The conversation layer (project threads, task messages, pinned specs) means context from planning carries through to execution and back.
 
 ## Deployment
 
-Switchboard runs as a bare process (not Docker) because the task engine needs host-level access to the `claude` CLI, git, and the filesystem for worktrees.
+Ouvrage runs as a bare process (not Docker) because the task engine needs host-level access to the `claude` CLI, git, and the filesystem for worktrees.
 
 ### Requirements
 
@@ -22,19 +22,6 @@ Switchboard runs as a bare process (not Docker) because the task engine needs ho
 - `claude-agent-sdk` Python package
 - Git
 
-### Quick Install
-
-```bash
-# On the VPS, from the repo directory:
-sudo ./install.sh
-```
-
-This will:
-1. Copy files to `/opt/switchboard`
-2. Install Python dependencies
-3. Migrate data from Docker container (if one exists)
-4. Install and start a systemd service
-
 ### Manual Install
 
 ```bash
@@ -42,35 +29,35 @@ This will:
 pip3 install .
 
 # Create directories
-sudo mkdir -p /opt/switchboard/data /work
-sudo chown $USER:$USER /opt/switchboard /work
+sudo mkdir -p /opt/ouvrage/data /work
+sudo chown $USER:$USER /opt/ouvrage /work
 
 # Copy files
-cp server.py database.py tasks.py auth.py /opt/switchboard/
+cp server.py database.py tasks.py auth.py /opt/ouvrage/
 
 # Run
-SWITCHBOARD_DB=/opt/switchboard/data/switchboard.db python3 /opt/switchboard/server.py
+OUVRAGE_DB=/opt/ouvrage/data/ouvrage.db python3 /opt/ouvrage/server.py
 ```
 
 ### Systemd Service
 
 ```bash
-sudo cp switchboard.service /etc/systemd/system/
+sudo cp ouvrage.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now switchboard
+sudo systemctl enable --now ouvrage
 ```
 
 ```bash
 # Manage
-systemctl status switchboard
-journalctl -u switchboard -f     # live logs
+systemctl status ouvrage
+journalctl -u ouvrage -f     # live logs
 curl http://localhost:8100/health # health check
 ```
 
 ### Directory Layout
 
 ```
-/opt/switchboard/           # Application code
+/opt/ouvrage/           # Application code
   ├── server.py             # MCP server, ASGI app, tool definitions
   ├── tasks.py              # Task engine — Agent SDK, gate pipeline, subtasks
   ├── database.py           # SQLite models and queries (aiosqlite)
@@ -79,7 +66,7 @@ curl http://localhost:8100/health # health check
   ├── auth.py               # OAuth JWT middleware (Authelia)
   ├── dashboard/            # Static SPA (HTML, JS, CSS)
   └── data/
-      └── switchboard.db    # SQLite database
+      └── ouvrage.db    # SQLite database
 /work/                      # Task worktrees
   └── {project-id}/
       ├── .bare/            # Bare git clone
@@ -90,7 +77,7 @@ Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint 
 
 ### Why Not Docker?
 
-The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. Deployment is via `install.sh` (bare metal with systemd).
+The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. Deployment is via bare metal with systemd.
 
 ## Client Configuration
 
@@ -100,7 +87,7 @@ The task engine dispatches Claude Code sessions via the Agent SDK, which spawns 
 // ~/.claude.json
 {
   "mcpServers": {
-    "switchboard": {
+    "ouvrage": {
       "type": "http",
       "url": "http://localhost:8100/mcp"
     }
@@ -174,14 +161,14 @@ Before dispatching tasks, register a project. Projects define the repo, environm
 
 ## Task Execution System
 
-The task system dispatches autonomous Claude Code sessions that work in isolated git worktrees. Each task gets its own branch, its own working directory, and reports progress back to the switchboard.
+The task system dispatches autonomous Claude Code sessions that work in isolated git worktrees. Each task gets its own branch, its own working directory, and reports progress back to the Ouvrage server.
 
 ### How It Works
 
 1. `dispatch_task` creates a task record, sets up a git worktree (bare clone + `git worktree add`), and runs any project setup commands.
 2. A Claude Code session is launched via the Agent SDK in the background — the call returns immediately with the task ID.
 3. CC works autonomously: reading code, editing files, running tests, committing to its branch.
-4. CC reports progress via switchboard MCP tools (checklist updates, phase changes, messages).
+4. CC reports progress via Ouvrage MCP tools (checklist updates, phase changes, messages).
 5. When CC finishes, the branch is auto-pushed to origin.
 6. The gate pipeline runs (test → review → pass), then dependents are dispatched or a PR is created.
 
@@ -245,7 +232,7 @@ Subtasks show in the parent task's detail view via the API (`task.subtasks` arra
 
 ### Push Enforcement
 
-After CC completes, Switchboard automatically pushes the task branch to origin (with `--force-with-lease`) before the gate pipeline runs. This ensures work is never stranded in an unpushed worktree. The CC prompt also instructs the agent to push, as belt-and-suspenders.
+After CC completes, Ouvrage automatically pushes the task branch to origin (with `--force-with-lease`) before the gate pipeline runs. This ensures work is never stranded in an unpushed worktree. The CC prompt also instructs the agent to push, as belt-and-suspenders.
 
 ### Dispatch & Lifecycle Tools
 
@@ -281,7 +268,7 @@ After CC completes, Switchboard automatically pushes the task branch to origin (
 
 ### CC-Side Tools
 
-These tools are available to the CC worker session via the switchboard MCP connection:
+These tools are available to the CC worker session via the Ouvrage MCP connection:
 
 | Tool | Purpose |
 |---|---|
@@ -293,7 +280,7 @@ These tools are available to the CC worker session via the switchboard MCP conne
 
 ### Session Persistence
 
-When a task is resumed, the dispatcher reuses the same `session_id`. The Agent SDK picks up the full conversation history, so CC retains context from its previous run. No re-explanation needed — just "check the switchboard for answers and keep going."
+When a task is resumed, the dispatcher reuses the same `session_id`. The Agent SDK picks up the full conversation history, so CC retains context from its previous run. No re-explanation needed — just "check Ouvrage for answers and keep going."
 
 ### Resource Limits
 
@@ -307,7 +294,7 @@ Limits resolve in order: task override > project default > global default.
 
 ### Logging
 
-Each task's worktree contains a `.switchboard/` directory with:
+Each task's worktree contains a `.ouvrage/` directory with:
 
 - `session.jsonl` — Structured session log. Every tool call, result, and message as JSONL entries.
 - `dispatch.log` — Dispatch metadata, session IDs, limits, timestamps, result summaries.
@@ -388,7 +375,7 @@ SPA at `/dashboard` (basic auth via Caddy, bypasses OAuth).
 
 ### User MCP Servers
 
-CC worker sessions automatically load MCP servers from the switchboard user's `~/.claude.json`. This means global MCPs (e.g. `shopify-ai`, `shopify-dev-mcp`) are available to tasks without per-project configuration.
+CC worker sessions automatically load MCP servers from the worker user's `~/.claude.json`. This means global MCPs (e.g. `shopify-ai`, `shopify-dev-mcp`) are available to tasks without per-project configuration.
 
 ## Author Convention
 
@@ -397,7 +384,7 @@ CC worker sessions automatically load MCP servers from the switchboard user's `~
 | `claude-code` | Claude Code (CLI) |
 | `claude-ai` | Claude AI (web/desktop) |
 | `cc-worker` | Autonomous CC task worker |
-| `dispatcher` | Switchboard task engine |
+| `dispatcher` | Ouvrage task engine |
 | `dashboard` | Dashboard web UI |
 | `human` / name | Human operator (freeform) |
 
@@ -409,8 +396,8 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 
 | Variable | Required | Description |
 |---|---|---|
-| `SWITCHBOARD_DB` | Yes | Path to SQLite database |
-| `SWITCHBOARD_PORT` | No | Server port (default: 8100) |
+| `OUVRAGE_DB` | Yes | Path to SQLite database |
+| `OUVRAGE_PORT` | No | Server port (default: 8100) |
 | `AUTH_ISSUER_URL` | No | Authelia/OIDC issuer URL (omit to disable OAuth) |
 | `RESOURCE_URL` | No | OAuth resource indicator |
 | `PUBLIC_HOST` | No | Public hostname for DNS rebinding protection |
@@ -430,4 +417,4 @@ Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`,
 - **Dashboard**: Vanilla JS SPA with REST API, real-time polling
 - **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)
 - **Notifications**: Slack outbound only (task dispatched/completed/failed/heartbeat)
-- **Deployment**: Bare metal via `install.sh` + systemd
+- **Deployment**: Bare metal with systemd

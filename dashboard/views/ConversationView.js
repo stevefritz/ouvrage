@@ -1,4 +1,4 @@
-// Foreman Conversation View — TOC sidebar, scoped search, newest-first, markdown
+// Ouvrage Conversation View — TOC sidebar, scoped search, newest-first, markdown
 // Routes:
 //   #/conversation/:id            (standalone, back → #/)
 //   #/project/:pid/conversation/:id  (project-scoped, back → #/project/:pid/conversations)
@@ -28,17 +28,17 @@ function injectConvStyles() {
     const style = document.createElement('style');
     style.textContent = `
 /* TOC responsive: sidebar on desktop, accordion on mobile */
-.foreman-toc-sidebar { display: flex; }
-.foreman-toc-mobile  { display: none; }
+.ouvrage-toc-sidebar { display: flex; }
+.ouvrage-toc-mobile  { display: none; }
 
 @media (max-width: 767px) {
-    .foreman-toc-sidebar { display: none !important; }
-    .foreman-toc-mobile  { display: block !important; }
+    .ouvrage-toc-sidebar { display: none !important; }
+    .ouvrage-toc-mobile  { display: block !important; }
 }
 
 /* Permalink button — visible on message hover */
-.foreman-conv-message { position: relative; }
-.foreman-permalink {
+.ouvrage-conv-message { position: relative; }
+.ouvrage-permalink {
     position: absolute;
     top: 10px;
     right: 10px;
@@ -53,30 +53,30 @@ function injectConvStyles() {
     transition: opacity 120ms, color 120ms, background 120ms;
     line-height: 1;
 }
-.foreman-conv-message:hover .foreman-permalink {
+.ouvrage-conv-message:hover .ouvrage-permalink {
     opacity: 1;
 }
-.foreman-permalink:hover {
+.ouvrage-permalink:hover {
     color: ${colors.accent};
     background: ${colors.surfaceActive};
 }
 
 /* Permalink flash animation for hash-targeted messages */
-@keyframes foreman-permalink-flash {
+@keyframes ouvrage-permalink-flash {
     0%   { background: rgba(217, 119, 6, 0.25); }
     60%  { background: rgba(217, 119, 6, 0.12); }
     100% { background: transparent; }
 }
-.foreman-permalink-flash {
-    animation: foreman-permalink-flash 1.2s ease-out forwards;
+.ouvrage-permalink-flash {
+    animation: ouvrage-permalink-flash 1.2s ease-out forwards;
 }
 
 /* Accordion TOC styling */
-.foreman-toc-accordion {
+.ouvrage-toc-accordion {
     border-bottom: 1px solid ${colors.border};
     background: ${colors.surface};
 }
-.foreman-toc-accordion summary {
+.ouvrage-toc-accordion summary {
     list-style: none;
     cursor: pointer;
     padding: 9px 16px;
@@ -88,22 +88,22 @@ function injectConvStyles() {
     font-family: ${typography.fontBody};
     user-select: none;
 }
-.foreman-toc-accordion summary::-webkit-details-marker { display: none; }
-.foreman-toc-accordion summary .toc-chevron {
+.ouvrage-toc-accordion summary::-webkit-details-marker { display: none; }
+.ouvrage-toc-accordion summary .toc-chevron {
     margin-left: auto;
     font-size: 10px;
     color: ${colors.textTertiary};
     transition: transform 120ms;
 }
-.foreman-toc-accordion[open] summary .toc-chevron {
+.ouvrage-toc-accordion[open] summary .toc-chevron {
     transform: rotate(180deg);
 }
-.foreman-toc-accordion-body {
+.ouvrage-toc-accordion-body {
     padding: 4px 0 8px;
     max-height: 280px;
     overflow-y: auto;
 }
-.foreman-toc-accordion-label {
+.ouvrage-toc-accordion-label {
     padding: 4px 16px 2px;
     font-size: ${typography.size.xs};
     font-weight: ${typography.weight.semibold};
@@ -111,7 +111,7 @@ function injectConvStyles() {
     text-transform: uppercase;
     color: ${colors.textTertiary};
 }
-.foreman-toc-accordion-item {
+.ouvrage-toc-accordion-item {
     display: block;
     width: 100%;
     text-align: left;
@@ -127,30 +127,30 @@ function injectConvStyles() {
     white-space: nowrap;
     line-height: 1.4;
 }
-.foreman-toc-accordion-item:hover {
+.ouvrage-toc-accordion-item:hover {
     color: ${colors.text};
     background: ${colors.surfaceHover};
 }
 
 /* Scroll spy active item */
-.foreman-toc-item.toc-active {
+.ouvrage-toc-item.toc-active {
     color: ${colors.accent} !important;
     font-weight: ${typography.weight.medium};
 }
 
 /* Code blocks: horizontal scroll within block, not page */
-.foreman-conv-message pre,
-.foreman-conv-message code {
+.ouvrage-conv-message pre,
+.ouvrage-conv-message code {
     overflow-x: auto;
     max-width: 100%;
 }
 
 /* Heading anchor links in pinned messages */
-.foreman-conv-message h2,
-.foreman-conv-message h3 {
+.ouvrage-conv-message h2,
+.ouvrage-conv-message h3 {
     position: relative;
 }
-.foreman-heading-anchor {
+.ouvrage-heading-anchor {
     position: absolute;
     left: -18px;
     top: 50%;
@@ -163,13 +163,13 @@ function injectConvStyles() {
     transition: opacity 120ms;
     padding: 0 4px;
 }
-.foreman-conv-message h2:hover .foreman-heading-anchor,
-.foreman-conv-message h3:hover .foreman-heading-anchor {
+.ouvrage-conv-message h2:hover .ouvrage-heading-anchor,
+.ouvrage-conv-message h3:hover .ouvrage-heading-anchor {
     opacity: 1;
 }
 
 /* Collapsed message preview fade */
-.foreman-msg-preview-fade {
+.ouvrage-msg-preview-fade {
     position: absolute;
     bottom: 0; left: 0; right: 0;
     height: 32px;
@@ -177,12 +177,12 @@ function injectConvStyles() {
 }
 
 /* Compact message row hover */
-.foreman-msg-compact:hover {
+.ouvrage-msg-compact:hover {
     background: ${colors.surfaceHover} !important;
 }
 
 /* Search results panel mark highlighting */
-.foreman-search-results mark {
+.ouvrage-search-results mark {
     background: rgba(255, 220, 50, 0.35);
     color: inherit;
     border-radius: 2px;
@@ -190,7 +190,7 @@ function injectConvStyles() {
 }
 
 /* Search nav button */
-.foreman-search-nav-btn {
+.ouvrage-search-nav-btn {
     background: none;
     border: 1px solid ${colors.border};
     color: ${colors.textSecondary};
@@ -205,11 +205,11 @@ function injectConvStyles() {
     flex-shrink: 0;
     transition: color 120ms, border-color 120ms;
 }
-.foreman-search-nav-btn:hover {
+.ouvrage-search-nav-btn:hover {
     color: ${colors.text};
     border-color: ${colors.borderHover};
 }
-.foreman-search-nav-btn:disabled {
+.ouvrage-search-nav-btn:disabled {
     opacity: 0.35;
     cursor: default;
 }
@@ -380,7 +380,7 @@ function ConversationMessage({ msg, isPinned, isCurrentMatch, isMatch, isSearchA
             <div
                 id=${'msg-' + msg.id}
                 data-msg-id=${String(msg.id)}
-                class="foreman-msg-compact"
+                class="ouvrage-msg-compact"
                 style=${{
                     display: 'flex',
                     alignItems: 'center',
@@ -438,12 +438,12 @@ function ConversationMessage({ msg, isPinned, isCurrentMatch, isMatch, isSearchA
                 ...(leftBorder ? { borderLeft: leftBorder } : {}),
                 ...(bg ? { background: bg } : {}),
             }}
-            class="foreman-conv-message"
+            class="ouvrage-conv-message"
             onClick=${isPinned ? null : onToggle}
         >
             ${!isPinned ? html`
                 <button
-                    class="foreman-permalink"
+                    class="ouvrage-permalink"
                     onClick=${handleCopyLink}
                     title="Copy link to this message"
                     aria-label="Copy link"
@@ -518,7 +518,7 @@ function ConversationMessage({ msg, isPinned, isCurrentMatch, isMatch, isSearchA
                         overflowWrap: 'break-word',
                     }}>${firstLineText}</div>
                     <div
-                        class="foreman-msg-preview-fade"
+                        class="ouvrage-msg-preview-fade"
                         style=${{ background: `linear-gradient(to bottom, transparent, ${bg || colors.surface})` }}
                     />
                 </div>
@@ -540,7 +540,7 @@ function SearchResultsPanel({ results, matchList, currentMatchIndex, searchQuery
 
     return html`
         <div
-            class="foreman-search-results"
+            class="ouvrage-search-results"
             style=${{
                 maxHeight: '200px',
                 overflowY: 'auto',
@@ -657,14 +657,14 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
     };
 
     return html`
-        <nav style=${sidebarStyle} class="foreman-toc-sidebar" aria-label="Table of contents">
+        <nav style=${sidebarStyle} class="ouvrage-toc-sidebar" aria-label="Table of contents">
             ${pinnedHeadings.length > 0 ? html`
                 <div style=${sectionLabelStyle}>Pinned</div>
                 ${pinnedHeadings.map((h, i) => html`
                     <button
                         key=${i}
                         style=${tocItemStyle(true, false, null)}
-                        class="foreman-toc-item"
+                        class="ouvrage-toc-item"
                         onClick=${() => onScrollToHeading(h)}
                         title=${h.text}
                     >${h.level === 3 ? '  · ' : ''}${h.text}</button>
@@ -681,7 +681,7 @@ function TocSidebar({ pinnedHeadings, messages, activeId, onScrollToHeading, onS
                         <button
                             key=${msg.id}
                             style=${tocItemStyle(false, isActive, msg.id)}
-                            class=${'foreman-toc-item' + (isActive ? ' toc-active' : '')}
+                            class=${'ouvrage-toc-item' + (isActive ? ' toc-active' : '')}
                             onClick=${() => onScrollToMsg(msg.id)}
                             title=${label}
                         >
@@ -718,28 +718,28 @@ function MobileTocAccordion({ pinnedHeadings, messages, onScrollToHeading, onScr
     }, []);
 
     return html`
-        <details class="foreman-toc-accordion foreman-toc-mobile" ref=${detailsRef}>
+        <details class="ouvrage-toc-accordion ouvrage-toc-mobile" ref=${detailsRef}>
             <summary>
                 ☰ Contents (${totalSections} section${totalSections !== 1 ? 's' : ''})
                 <span class="toc-chevron">▼</span>
             </summary>
-            <div class="foreman-toc-accordion-body">
+            <div class="ouvrage-toc-accordion-body">
                 ${pinnedHeadings.length > 0 ? html`
-                    <div class="foreman-toc-accordion-label">Pinned</div>
+                    <div class="ouvrage-toc-accordion-label">Pinned</div>
                     ${pinnedHeadings.map((h, i) => html`
                         <button
                             key=${i}
-                            class="foreman-toc-accordion-item"
+                            class="ouvrage-toc-accordion-item"
                             onClick=${() => handleItemClick(() => onScrollToHeading(h))}
                         >${h.level === 3 ? '  · ' : ''}${h.text}</button>
                     `)}
                 ` : null}
                 ${messages.length > 0 ? html`
-                    <div class="foreman-toc-accordion-label">Messages</div>
+                    <div class="ouvrage-toc-accordion-label">Messages</div>
                     ${visibleMsgs.map(msg => html`
                         <button
                             key=${msg.id}
-                            class="foreman-toc-accordion-item"
+                            class="ouvrage-toc-accordion-item"
                             style=${{ display: 'flex', alignItems: 'center', gap: '5px' }}
                             onClick=${() => handleItemClick(() => onScrollToMsg(msg.id))}
                         >
@@ -749,7 +749,7 @@ function MobileTocAccordion({ pinnedHeadings, messages, onScrollToHeading, onScr
                     `)}
                     ${!showAll && hiddenCount > 0 ? html`
                         <button
-                            class="foreman-toc-accordion-item"
+                            class="ouvrage-toc-accordion-item"
                             style=${{ color: colors.accent }}
                             onClick=${() => setShowAll(true)}
                         >+${hiddenCount} more</button>
@@ -955,8 +955,8 @@ export function ConversationView({ id, projectId }) {
             if (el) {
                 el.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 if (targetId.startsWith('msg-')) {
-                    el.classList.add('foreman-permalink-flash');
-                    setTimeout(() => el.classList.remove('foreman-permalink-flash'), 1400);
+                    el.classList.add('ouvrage-permalink-flash');
+                    setTimeout(() => el.classList.remove('ouvrage-permalink-flash'), 1400);
                 }
             }
         }, 150);
@@ -1002,9 +1002,9 @@ export function ConversationView({ id, projectId }) {
                 h.id = 'heading-' + slug;
                 h.style.position = 'relative';
                 h.style.paddingLeft = '4px';
-                if (!h.querySelector('.foreman-heading-anchor')) {
+                if (!h.querySelector('.ouvrage-heading-anchor')) {
                     const a = document.createElement('a');
-                    a.className = 'foreman-heading-anchor';
+                    a.className = 'ouvrage-heading-anchor';
                     a.href = '#heading-' + slug;
                     a.textContent = '¶';
                     a.title = 'Link to this section';
@@ -1233,15 +1233,15 @@ export function ConversationView({ id, projectId }) {
             <div style=${pageStyle}>
                 <div style=${headerStyle}>
                     <a href=${backHref} style=${backLinkStyle}>${backLabel}</a>
-                    <div style=${{ height: '22px', width: '55%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '6px' }} class="foreman-skeleton" />
-                    <div style=${{ height: '12px', width: '30%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
+                    <div style=${{ height: '22px', width: '55%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '6px' }} class="ouvrage-skeleton" />
+                    <div style=${{ height: '12px', width: '30%', background: colors.surfaceActive, borderRadius: '4px' }} class="ouvrage-skeleton" />
                 </div>
                 <div style=${bodyStyle}>
                     <div style=${{ flex: 1 }}>
                         ${[1,2,3].map(i => html`
                             <div key=${i} style=${{ padding: '14px 16px', borderBottom: `1px solid ${colors.border}22` }}>
-                                <div style=${{ height: '12px', width: '40%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '8px' }} class="foreman-skeleton" />
-                                <div style=${{ height: '12px', width: '70%', background: colors.surfaceActive, borderRadius: '4px' }} class="foreman-skeleton" />
+                                <div style=${{ height: '12px', width: '40%', background: colors.surfaceActive, borderRadius: '4px', marginBottom: '8px' }} class="ouvrage-skeleton" />
+                                <div style=${{ height: '12px', width: '70%', background: colors.surfaceActive, borderRadius: '4px' }} class="ouvrage-skeleton" />
                             </div>
                         `)}
                     </div>
@@ -1254,7 +1254,7 @@ export function ConversationView({ id, projectId }) {
         <div style=${pageStyle}>
             <!-- Sticky header -->
             <div style=${headerStyle}>
-                <a href=${backHref} style=${backLinkStyle} class="foreman-back-link">${backLabel}</a>
+                <a href=${backHref} style=${backLinkStyle} class="ouvrage-back-link">${backLabel}</a>
                 <h1 style=${titleStyle}>${convGoal}</h1>
                 <div style=${metaRowStyle}>
                     <span>${messages.length} message${messages.length !== 1 ? 's' : ''}</span>
@@ -1281,12 +1281,12 @@ export function ConversationView({ id, projectId }) {
                             outline: 'none',
                             minWidth: 0,
                         }}
-                        class="foreman-conv-scoped-search"
+                        class="ouvrage-conv-scoped-search"
                     />
                     ${isSearchActive ? html`
                         <!-- Navigation controls -->
                         <button
-                            class="foreman-search-nav-btn"
+                            class="ouvrage-search-nav-btn"
                             onClick=${() => navigateMatch(-1)}
                             disabled=${!hasMatches}
                             title="Previous match (Shift+Enter)"
@@ -1303,14 +1303,14 @@ export function ConversationView({ id, projectId }) {
                             ${searchLoading ? '…' : hasMatches ? `${currentMatchIndex + 1} of ${matchList.length}` : '0 of 0'}
                         </span>
                         <button
-                            class="foreman-search-nav-btn"
+                            class="ouvrage-search-nav-btn"
                             onClick=${() => navigateMatch(1)}
                             disabled=${!hasMatches}
                             title="Next match (Enter)"
                             aria-label="Next match"
                         >↓</button>
                         <button
-                            class="foreman-search-nav-btn"
+                            class="ouvrage-search-nav-btn"
                             onClick=${() => handleSearch('')}
                             title="Clear search"
                             aria-label="Clear search"

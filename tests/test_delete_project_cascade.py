@@ -12,8 +12,8 @@ Covers:
 import os
 import pytest
 
-from switchboard.db._helpers import now_iso
-from switchboard.db.connection import get_db
+from ouvrage.db._helpers import now_iso
+from ouvrage.db.connection import get_db
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ class TestDeleteProjectFKViolation:
 
     async def test_project_file_no_task_id_does_not_block_delete(self, db, tmp_path):
         """After fix: delete_project succeeds even with a file linked via project_id only."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "fk-test-project"
         await db.create_project(
@@ -206,7 +206,7 @@ class TestDeleteProjectCascade:
 
     async def test_full_cascade_no_orphans(self, db):
         """Create a project with all child data types; delete it; verify zero orphans."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "cascade-project"
         task1, task2 = await _create_full_project(db, project_id)
@@ -248,7 +248,7 @@ class TestDeleteProjectCascade:
 
     async def test_task2_children_also_cleaned(self, db):
         """Verify that children of ALL tasks (not just task1) are cleaned up."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "cascade-task2-project"
         task1, task2 = await _create_full_project(db, project_id)
@@ -268,7 +268,7 @@ class TestDeleteProjectCascade:
 
     async def test_conversations_deleted(self, db):
         """Conversations linked to project via project text field are deleted."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "conv-cleanup-project"
         await db.create_project(
@@ -299,7 +299,7 @@ class TestDeleteProjectCascade:
 
     async def test_fts_entries_cleaned_up(self, db):
         """FTS entries for tasks and messages are cleaned up via delete triggers."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "fts-cleanup-project"
         await db.create_project(
@@ -338,7 +338,7 @@ class TestDeleteProjectCascade:
 
     async def test_punchlist_cleaned_up(self, db):
         """Punchlist items linked to project components are cleaned up."""
-        from switchboard.db.projects import delete_project
+        from ouvrage.db.projects import delete_project
 
         project_id = "punchlist-cleanup-project"
         ts = now_iso()
@@ -396,7 +396,7 @@ class TestDeleteProjectPrecondition:
         )
         await db.update_task(task["id"], status="working")
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "working-proj"})
 
@@ -421,7 +421,7 @@ class TestDeleteProjectPrecondition:
         )
         await db.update_task(task["id"], status="validating")
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "validating-proj"})
 
@@ -447,7 +447,7 @@ class TestDeleteProjectPrecondition:
             )
             await db.update_task(task["id"], status=status)
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "done-proj"})
         assert result.get("deleted") is True
@@ -475,7 +475,7 @@ class TestDeleteProjectPrecondition:
         )
         await db.update_task(active_task["id"], status="validating")
 
-        from switchboard.server.handlers.projects import _handle_delete_project
+        from ouvrage.server.handlers.projects import _handle_delete_project
 
         result = await _handle_delete_project({"project_id": "mixed-proj"})
         assert "error" in result

@@ -89,32 +89,32 @@ async def user_with_password(db):
 
 class TestSessionCRUD:
     async def test_create_session(self, db):
-        from switchboard.auth.sessions import create_session
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="u@test.com", name="U")
         session_id = await create_session(user["id"])
         assert isinstance(session_id, str)
         assert len(session_id) > 20
 
     async def test_create_session_unique(self, db):
-        from switchboard.auth.sessions import create_session
+        from ouvrage.auth.sessions import create_session
         user = await db.create_user(email="u2@test.com", name="U2")
         sid1 = await create_session(user["id"])
         sid2 = await create_session(user["id"])
         assert sid1 != sid2
 
     async def test_delete_session(self, db):
-        from switchboard.auth.sessions import create_session, delete_session, get_session_user
+        from ouvrage.auth.sessions import create_session, delete_session, get_session_user
         user = await db.create_user(email="u3@test.com", name="U3")
         sid = await create_session(user["id"])
 
-        scope = _make_scope(f"switchboard_session={sid}")
+        scope = _make_scope(f"ouvrage_session={sid}")
         assert await get_session_user(scope) is not None
 
         await delete_session(sid)
         assert await get_session_user(scope) is None
 
     async def test_delete_nonexistent_session(self, db):
-        from switchboard.auth.sessions import delete_session
+        from ouvrage.auth.sessions import delete_session
         # Should not raise
         await delete_session("nonexistent-session-id")
 
@@ -123,11 +123,11 @@ class TestSessionCRUD:
 
 class TestGetSessionUser:
     async def test_valid_session_returns_user(self, db):
-        from switchboard.auth.sessions import create_session, get_session_user
+        from ouvrage.auth.sessions import create_session, get_session_user
         user = await db.create_user(email="v@test.com", name="V")
         sid = await create_session(user["id"])
 
-        scope = _make_scope(f"switchboard_session={sid}")
+        scope = _make_scope(f"ouvrage_session={sid}")
         result = await get_session_user(scope)
         assert result is not None
         assert result["id"] == user["id"]
@@ -135,18 +135,18 @@ class TestGetSessionUser:
         assert result["name"] == "V"
 
     async def test_no_cookie_returns_none(self, db):
-        from switchboard.auth.sessions import get_session_user
+        from ouvrage.auth.sessions import get_session_user
         scope = _make_scope(None)
         assert await get_session_user(scope) is None
 
     async def test_invalid_cookie_returns_none(self, db):
-        from switchboard.auth.sessions import get_session_user
-        scope = _make_scope("switchboard_session=bogus-session-id-not-in-db")
+        from ouvrage.auth.sessions import get_session_user
+        scope = _make_scope("ouvrage_session=bogus-session-id-not-in-db")
         assert await get_session_user(scope) is None
 
     async def test_expired_session_returns_none(self, db):
-        from switchboard.auth.sessions import get_session_user
-        from switchboard.db.connection import get_db as _get_db
+        from ouvrage.auth.sessions import get_session_user
+        from ouvrage.db.connection import get_db as _get_db
 
         user = await db.create_user(email="exp@test.com", name="Exp")
 
@@ -161,13 +161,13 @@ class TestGetSessionUser:
             )
             await conn.commit()
 
-        scope = _make_scope("switchboard_session=expired-session")
+        scope = _make_scope("ouvrage_session=expired-session")
         assert await get_session_user(scope) is None
 
     async def test_inactive_session_returns_none(self, db):
         """Session older than 24h inactivity should be rejected."""
-        from switchboard.auth.sessions import get_session_user
-        from switchboard.db.connection import get_db as _get_db
+        from ouvrage.auth.sessions import get_session_user
+        from ouvrage.db.connection import get_db as _get_db
 
         user = await db.create_user(email="inactive@test.com", name="Inactive")
 
@@ -186,13 +186,13 @@ class TestGetSessionUser:
             )
             await conn.commit()
 
-        scope = _make_scope("switchboard_session=inactive-session")
+        scope = _make_scope("ouvrage_session=inactive-session")
         assert await get_session_user(scope) is None
 
     async def test_recent_session_passes_inactivity(self, db):
         """Session active 23h ago is still valid."""
-        from switchboard.auth.sessions import get_session_user
-        from switchboard.db.connection import get_db as _get_db
+        from ouvrage.auth.sessions import get_session_user
+        from ouvrage.db.connection import get_db as _get_db
 
         user = await db.create_user(email="recent@test.com", name="Recent")
 
@@ -211,7 +211,7 @@ class TestGetSessionUser:
             )
             await conn.commit()
 
-        scope = _make_scope("switchboard_session=recent-session")
+        scope = _make_scope("ouvrage_session=recent-session")
         result = await get_session_user(scope)
         assert result is not None
         assert result["id"] == user["id"]
@@ -221,7 +221,7 @@ class TestGetSessionUser:
 
 class TestHandleLogin:
     async def test_login_success(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
         status, resp_headers, resp_body = await _call_handler(handle_login, body=body, headers=headers)
 
@@ -232,13 +232,13 @@ class TestHandleLogin:
 
         # Cookie should be set
         set_cookie = resp_headers.get("set-cookie", "")
-        assert "switchboard_session=" in set_cookie
+        assert "ouvrage_session=" in set_cookie
         assert "HttpOnly" in set_cookie
         assert "Secure" in set_cookie
         assert "SameSite=Lax" in set_cookie
 
     async def test_login_with_next_param(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         next_url = "/oauth/authorize?client_id=test"
         body, headers = _json_body({
             "email": "alice@example.com",
@@ -251,7 +251,7 @@ class TestHandleLogin:
         assert data["redirect"] == next_url
 
     async def test_login_wrong_password(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "alice@example.com", "password": "wrongpassword"})
         status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
         assert status == 401
@@ -259,7 +259,7 @@ class TestHandleLogin:
         assert data["error"] == "invalid_credentials"
 
     async def test_login_unknown_email(self, db):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "nobody@example.com", "password": "anything"})
         status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
         assert status == 401
@@ -268,7 +268,7 @@ class TestHandleLogin:
 
     async def test_login_generic_error_message(self, db, user_with_password):
         """Error should not reveal whether email exists or password is wrong."""
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "alice@example.com", "password": "wrong"})
         status, _, resp_body = await _call_handler(handle_login, body=body, headers=headers)
         data = json.loads(resp_body)
@@ -276,14 +276,14 @@ class TestHandleLogin:
         assert "Invalid email or password" in data.get("message", "")
 
     async def test_login_missing_fields(self, db):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "alice@example.com"})
         status, _, _ = await _call_handler(handle_login, body=body, headers=headers)
         assert status == 400
 
     async def test_login_sets_session_in_db(self, db, user_with_password):
         """After successful login, a session row should exist."""
-        from switchboard.auth.sessions import handle_login, get_session_user
+        from ouvrage.auth.sessions import handle_login, get_session_user
         from http.cookies import SimpleCookie
 
         body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
@@ -295,20 +295,20 @@ class TestHandleLogin:
         # Extract session ID from Set-Cookie header
         cookie = SimpleCookie()
         cookie.load(set_cookie)
-        morsel = cookie.get("switchboard_session")
+        morsel = cookie.get("ouvrage_session")
         assert morsel is not None
         sid = morsel.value
 
         # Verify session is valid
-        scope = _make_scope(f"switchboard_session={sid}")
+        scope = _make_scope(f"ouvrage_session={sid}")
         user = await get_session_user(scope)
         assert user is not None
         assert user["email"] == "alice@example.com"
 
     async def test_login_resets_failed_count(self, db, user_with_password):
         """Successful login resets failed_login_count to 0."""
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import update_user
+        from ouvrage.auth.sessions import handle_login
+        from ouvrage.db.users import update_user
 
         # Pre-set some failed attempts
         await update_user(user_with_password["id"], failed_login_count=3)
@@ -318,13 +318,13 @@ class TestHandleLogin:
         assert status == 200
 
         # Check count was reset
-        from switchboard.db.users import get_user_by_email_with_auth
+        from ouvrage.db.users import get_user_by_email_with_auth
         user = await get_user_by_email_with_auth("alice@example.com")
         assert user["failed_login_count"] == 0
 
     async def test_login_no_password_hash(self, db):
         """User with no password_hash should be denied."""
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         # Bootstrap user has no password_hash
         user = await db.create_user(email="nohash@example.com", name="NoHash")
         body, headers = _json_body({"email": "nohash@example.com", "password": "anything"})
@@ -332,7 +332,7 @@ class TestHandleLogin:
         assert status == 401
 
     async def test_login_invalid_json(self, db):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body = b"not json at all"
         headers = [(b"content-type", b"application/json")]
         status, _, _ = await _call_handler(handle_login, body=body, headers=headers)
@@ -340,7 +340,7 @@ class TestHandleLogin:
 
     async def test_login_open_redirect_blocked(self, db, user_with_password):
         """next= with external URL should be ignored, fallback to /dashboard/."""
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({
             "email": "alice@example.com",
             "password": "correcthorse",
@@ -356,8 +356,8 @@ class TestHandleLogin:
 
 class TestRateLimiting:
     async def test_failed_attempts_increment_count(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import get_user_by_email_with_auth
+        from ouvrage.auth.sessions import handle_login
+        from ouvrage.db.users import get_user_by_email_with_auth
 
         for _ in range(3):
             body, headers = _json_body({"email": "alice@example.com", "password": "wrong"})
@@ -367,8 +367,8 @@ class TestRateLimiting:
         assert user["failed_login_count"] == 3
 
     async def test_lockout_after_5_failures(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import get_user_by_email_with_auth
+        from ouvrage.auth.sessions import handle_login
+        from ouvrage.db.users import get_user_by_email_with_auth
 
         # 5 failures → locked
         for _ in range(5):
@@ -387,8 +387,8 @@ class TestRateLimiting:
         assert user["locked_until"] is not None
 
     async def test_correct_password_during_lockout_rejected(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import update_user
+        from ouvrage.auth.sessions import handle_login
+        from ouvrage.db.users import update_user
 
         # Pre-lock the account
         future = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -403,8 +403,8 @@ class TestRateLimiting:
         assert data["error"] == "account_locked"
 
     async def test_expired_lockout_allows_login(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
-        from switchboard.db.users import update_user
+        from ouvrage.auth.sessions import handle_login
+        from ouvrage.db.users import update_user
 
         # Set a past lockout
         past = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -420,31 +420,31 @@ class TestRateLimiting:
 
 class TestHandleLogout:
     async def test_logout_clears_session(self, db):
-        from switchboard.auth.sessions import create_session, handle_logout, get_session_user
+        from ouvrage.auth.sessions import create_session, handle_logout, get_session_user
 
         user = await db.create_user(email="logout@test.com", name="Logout")
         sid = await create_session(user["id"])
 
-        cookie = f"switchboard_session={sid}"
+        cookie = f"ouvrage_session={sid}"
         status, resp_headers, _ = await _call_handler(handle_logout, cookie=cookie)
         assert status == 200
 
         # Cookie should be cleared
         set_cookie = resp_headers.get("set-cookie", "")
-        assert "switchboard_session=" in set_cookie
+        assert "ouvrage_session=" in set_cookie
         assert "Max-Age=0" in set_cookie
 
         # Session should no longer be valid
-        scope = _make_scope(f"switchboard_session={sid}")
+        scope = _make_scope(f"ouvrage_session={sid}")
         assert await get_session_user(scope) is None
 
     async def test_logout_without_cookie_is_ok(self, db):
-        from switchboard.auth.sessions import handle_logout
+        from ouvrage.auth.sessions import handle_logout
         status, _, _ = await _call_handler(handle_logout)
         assert status == 200
 
     async def test_logout_returns_ok_json(self, db):
-        from switchboard.auth.sessions import handle_logout
+        from ouvrage.auth.sessions import handle_logout
         status, _, body = await _call_handler(handle_logout)
         assert status == 200
         data = json.loads(body)
@@ -455,7 +455,7 @@ class TestHandleLogout:
 
 class TestCookieSafety:
     async def test_cookie_attributes(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login
+        from ouvrage.auth.sessions import handle_login
         body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
         _, resp_headers, _ = await _call_handler(handle_login, body=body, headers=headers)
 
@@ -467,7 +467,7 @@ class TestCookieSafety:
         assert "Path=/" in set_cookie
 
     async def test_cookie_max_age_is_7_days(self, db, user_with_password):
-        from switchboard.auth.sessions import handle_login, SESSION_TTL_DAYS
+        from ouvrage.auth.sessions import handle_login, SESSION_TTL_DAYS
         body, headers = _json_body({"email": "alice@example.com", "password": "correcthorse"})
         _, resp_headers, _ = await _call_handler(handle_login, body=body, headers=headers)
 
@@ -481,24 +481,24 @@ class TestCookieSafety:
 class TestOAuthLoginRedirect:
     @pytest.fixture(autouse=True)
     def oauth_env(self, tmp_path):
-        os.environ["OAUTH_BASE_URL"] = "https://switchboard.test"
+        os.environ["OAUTH_BASE_URL"] = "https://ouvrage.test"
         os.environ["OAUTH_RSA_KEY_PATH"] = str(tmp_path / "test_rsa_key.pem")
-        import switchboard.config.settings as _s
-        import switchboard.auth.oauth as _oauth
-        _s.OAUTH_BASE_URL = "https://switchboard.test"
+        import ouvrage.config.settings as _s
+        import ouvrage.auth.oauth as _oauth
+        _s.OAUTH_BASE_URL = "https://ouvrage.test"
         _s.OAUTH_RSA_KEY_PATH = os.environ["OAUTH_RSA_KEY_PATH"]
-        _oauth.OAUTH_BASE_URL = "https://switchboard.test"
+        _oauth.OAUTH_BASE_URL = "https://ouvrage.test"
         _oauth.OAUTH_RSA_KEY_PATH = os.environ["OAUTH_RSA_KEY_PATH"]
         _oauth._rsa_private_key = None
         _oauth._rsa_public_jwk = None
-        from switchboard.auth.oauth import init_oauth_keys, seed_default_client
+        from ouvrage.auth.oauth import init_oauth_keys, seed_default_client
         init_oauth_keys()
         yield
         os.environ.pop("OAUTH_BASE_URL", None)
         os.environ.pop("OAUTH_RSA_KEY_PATH", None)
 
     async def test_authorize_no_session_redirects_to_login(self, db):
-        from switchboard.auth.oauth import handle_authorize, seed_default_client
+        from ouvrage.auth.oauth import handle_authorize, seed_default_client
         await seed_default_client()
 
         query = "response_type=code&client_id=claude-mcp&redirect_uri=https://claude.ai/oauth/callback&scope=openid&state=abc"
@@ -533,7 +533,7 @@ class TestOAuthLoginRedirect:
 
     async def test_authorize_no_session_encodes_full_url(self, db):
         """The next= param should contain the full authorize URL with all params."""
-        from switchboard.auth.oauth import handle_authorize, seed_default_client
+        from ouvrage.auth.oauth import handle_authorize, seed_default_client
         from urllib.parse import urlparse, parse_qs, unquote
         await seed_default_client()
 
@@ -570,7 +570,7 @@ class TestOAuthLoginRedirect:
 
     async def test_authorize_with_valid_session_issues_code(self, db):
         """After login, session injected → authorize issues code."""
-        from switchboard.auth.oauth import handle_authorize, seed_default_client
+        from ouvrage.auth.oauth import handle_authorize, seed_default_client
         await seed_default_client()
 
         user = await db.create_user(email="oauth@test.com", name="OAuth User")

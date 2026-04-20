@@ -9,8 +9,8 @@ Covers all four reason types:
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dispatch.lifecycle import TaskLifecycle, _determine_queued_reason
+import ouvrage.db as db
+from ouvrage.dispatch.lifecycle import TaskLifecycle, _determine_queued_reason
 
 PROJECT_ID = "queued-reason-proj"
 _lifecycle = TaskLifecycle()

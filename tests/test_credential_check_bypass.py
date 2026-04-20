@@ -83,17 +83,17 @@ class TestDispatchSkipCredentialCheck:
 
     @pytest.fixture(autouse=True)
     def patch_context(self, owner_user):
-        with patch("switchboard.server.handlers.tasks.get_request_user_id", return_value=owner_user["id"]):
-            with patch("switchboard.server.handlers.tasks.get_request_is_token_auth", return_value=True):
-                with patch("switchboard.server.handlers.tasks.get_request_is_worker", return_value=False):
+        with patch("ouvrage.server.handlers.tasks.get_request_user_id", return_value=owner_user["id"]):
+            with patch("ouvrage.server.handlers.tasks.get_request_is_token_auth", return_value=True):
+                with patch("ouvrage.server.handlers.tasks.get_request_is_worker", return_value=False):
                     yield
 
     async def test_skip_true_allows_dispatch_without_key(self, db, sample_project, user_without_anthropic_key, mock_git):
         """SKIP_CREDENTIAL_CHECK=true → no error even without Anthropic key."""
-        from switchboard.server.handlers import tasks as tasks_module
+        from ouvrage.server.handlers import tasks as tasks_module
 
         with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", True):
-                from switchboard.server.handlers.tasks import _handle_dispatch_task
+                from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
                 result = await _handle_dispatch_task({
                     "project_id": "test-project",
@@ -108,10 +108,10 @@ class TestDispatchSkipCredentialCheck:
 
     async def test_skip_false_blocks_dispatch_without_key(self, db, sample_project, user_without_anthropic_key):
         """SKIP_CREDENTIAL_CHECK=false (default) → error when no Anthropic key."""
-        from switchboard.server.handlers import tasks as tasks_module
+        from ouvrage.server.handlers import tasks as tasks_module
 
         with patch.object(tasks_module, "SKIP_CREDENTIAL_CHECK", False):
-                from switchboard.server.handlers.tasks import _handle_dispatch_task
+                from ouvrage.server.handlers.tasks import _handle_dispatch_task
 
                 result = await _handle_dispatch_task({
                     "project_id": "test-project",
@@ -149,7 +149,7 @@ class TestCreateProjectPostValidation:
 
     async def test_no_credential_still_creates_project(self, db):
         """No credential configured → project created, credential_status stored as warning."""
-        from switchboard.server.handlers import projects as proj_module
+        from ouvrage.server.handlers import projects as proj_module
 
         async def mock_validation(project_id, project):
             # Simulate warning status from missing credential
@@ -161,8 +161,8 @@ class TestCreateProjectPostValidation:
             )
             return updated
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("ouvrage.server.handlers.projects._run_project_validation",
                    side_effect=mock_validation):
             result = await proj_module._handle_create_project(_BASE_PROJECT_ARGS)
 
@@ -173,7 +173,7 @@ class TestCreateProjectPostValidation:
 
     async def test_validation_error_does_not_block_creation(self, db):
         """Validation failure → project still created, status stored."""
-        from switchboard.server.handlers import projects as proj_module
+        from ouvrage.server.handlers import projects as proj_module
 
         async def mock_validation(project_id, project):
             # Simulate error status
@@ -185,8 +185,8 @@ class TestCreateProjectPostValidation:
             )
             return updated
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("ouvrage.server.handlers.projects._run_project_validation",
                    side_effect=mock_validation):
             result = await proj_module._handle_create_project({**_BASE_PROJECT_ARGS, "id": "err-project"})
 
@@ -197,7 +197,7 @@ class TestCreateProjectPostValidation:
 
     async def test_valid_credential_stores_validated_status(self, db):
         """Valid credential → project created with validated status."""
-        from switchboard.server.handlers import projects as proj_module
+        from ouvrage.server.handlers import projects as proj_module
 
         async def mock_validation(project_id, project):
             updated = await db.update_project(
@@ -208,8 +208,8 @@ class TestCreateProjectPostValidation:
             )
             return updated
 
-        with patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("ouvrage.server.handlers.projects._run_project_validation",
                    side_effect=mock_validation):
             result = await proj_module._handle_create_project({**_BASE_PROJECT_ARGS, "id": "valid-project"})
 
@@ -227,10 +227,10 @@ class TestSettingsApiBypassFlag:
 
     async def test_bypass_true_flag_returned(self, db, owner_user):
         """When bypass is active, anthropic.skip_credential_check=true in response."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
-                from switchboard.dashboard.api import handle_request
+                from ouvrage.dashboard.api import handle_request
 
                 scope = _make_scope(
                     method="GET",
@@ -247,10 +247,10 @@ class TestSettingsApiBypassFlag:
 
     async def test_bypass_false_flag_returned(self, db, owner_user):
         """When bypass is inactive, anthropic.skip_credential_check=false in response."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", False):
-                from switchboard.dashboard.api import handle_request
+                from ouvrage.dashboard.api import handle_request
 
                 scope = _make_scope(
                     method="GET",
@@ -275,14 +275,14 @@ class TestClearAnthropicKeyWithBypass:
 
     async def test_clear_key_with_bypass_set(self, db, owner_user, user_with_anthropic_key):
         """Empty anthropic_api_key in PATCH request removes a previously stored key."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         # Verify key is configured before the test
         creds = await db.get_user_credentials(owner_user["id"])
         assert creds and creds.get("anthropic_api_key"), "Pre-condition: key must be configured"
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
-            from switchboard.dashboard.api import handle_request
+            from ouvrage.dashboard.api import handle_request
 
             scope = _make_scope(
                 method="PATCH",
@@ -301,10 +301,10 @@ class TestClearAnthropicKeyWithBypass:
 
     async def test_clear_key_reflected_in_settings_response(self, db, owner_user, user_with_anthropic_key):
         """After clearing, GET settings/user shows configured=False."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
-            from switchboard.dashboard.api import handle_request
+            from ouvrage.dashboard.api import handle_request
 
             # Clear the key
             patch_scope = _make_scope(
@@ -330,10 +330,10 @@ class TestClearAnthropicKeyWithBypass:
 
     async def test_set_key_with_bypass_set(self, db, owner_user, user_without_anthropic_key):
         """Setting a new key still works when SKIP_CREDENTIAL_CHECK is active."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", True):
-            from switchboard.dashboard.api import handle_request
+            from ouvrage.dashboard.api import handle_request
 
             scope = _make_scope(
                 method="PATCH",
@@ -351,10 +351,10 @@ class TestClearAnthropicKeyWithBypass:
 
     async def test_clear_key_without_bypass(self, db, owner_user, user_with_anthropic_key):
         """Empty anthropic_api_key also clears the key when SKIP_CREDENTIAL_CHECK is False."""
-        from switchboard.dashboard import api as api_module
+        from ouvrage.dashboard import api as api_module
 
         with patch.object(api_module._settings, "SKIP_CREDENTIAL_CHECK", False):
-            from switchboard.dashboard.api import handle_request
+            from ouvrage.dashboard.api import handle_request
 
             scope = _make_scope(
                 method="PATCH",

@@ -1,4 +1,4 @@
-// LoginView — Switchboard login form
+// LoginView — Ouvrage login form
 // Dark-theme Preact/htm component. Reads ?next= param, redirects after login.
 
 import { h } from 'https://esm.sh/preact@10.25.4';

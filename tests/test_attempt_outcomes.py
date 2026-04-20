@@ -4,7 +4,7 @@ Covers: heuristic logic, OUTCOME_DEFINITIONS completeness, _finalize_attempt
 context key, transition side effects, and in-progress shortcut.
 """
 import pytest
-from switchboard.db._helpers import _determine_attempt_outcome
+from ouvrage.db._helpers import _determine_attempt_outcome
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ class TestOutcomeDefinitions:
     """Verify OUTCOME_DEFINITIONS has all required keys with correct labels/colors."""
 
     def test_required_keys_present(self):
-        from switchboard.dispatch.lifecycle import OUTCOME_DEFINITIONS
+        from ouvrage.dispatch.lifecycle import OUTCOME_DEFINITIONS
         required = [
             "gate_passed", "gate_skipped", "completed", "success",
             "test-failure", "review-rejection", "error", "failed",
@@ -123,13 +123,13 @@ class TestOutcomeDefinitions:
             assert key in OUTCOME_DEFINITIONS, f"Missing OUTCOME_DEFINITIONS key: {key}"
 
     def test_all_labels_lowercase(self):
-        from switchboard.dispatch.lifecycle import OUTCOME_DEFINITIONS
+        from ouvrage.dispatch.lifecycle import OUTCOME_DEFINITIONS
         for key, defn in OUTCOME_DEFINITIONS.items():
             label = defn["label"]
             assert label == label.lower(), f"Label for '{key}' is not lowercase: '{label}'"
 
     def test_success_colors_standardized(self):
-        from switchboard.dispatch.lifecycle import OUTCOME_DEFINITIONS
+        from ouvrage.dispatch.lifecycle import OUTCOME_DEFINITIONS
         success_keys = ["gate_passed", "gate_skipped", "completed", "success"]
         for key in success_keys:
             assert OUTCOME_DEFINITIONS[key]["color"] == "#22c55e", \
@@ -146,7 +146,7 @@ class TestFinalizeAttemptOutcomeKey:
 
     async def test_outcome_from_context(self, db, sample_project):
         """GAP-10: outcome passed via context should take priority."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
+        from ouvrage.dispatch.lifecycle import _finalize_attempt
 
         task = await db.create_task(id="test-project/finalize-1", project_id="test-project", goal="Test finalize")
         await db.update_task(task["id"], status="working", current_attempt=1)
@@ -160,7 +160,7 @@ class TestFinalizeAttemptOutcomeKey:
 
     async def test_outcome_falls_back_to_reason(self, db, sample_project):
         """Without context outcome, should use task reason."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
+        from ouvrage.dispatch.lifecycle import _finalize_attempt
 
         task = await db.create_task(id="test-project/finalize-2", project_id="test-project", goal="Test finalize fallback")
         await db.update_task(task["id"], status="stopped", reason="paused_by_user", current_attempt=1)
@@ -174,7 +174,7 @@ class TestFinalizeAttemptOutcomeKey:
 
     async def test_outcome_falls_back_to_previous_status(self, db, sample_project):
         """Without context outcome or reason, should use _previous_status."""
-        from switchboard.dispatch.lifecycle import _finalize_attempt
+        from ouvrage.dispatch.lifecycle import _finalize_attempt
 
         task = await db.create_task(id="test-project/finalize-3", project_id="test-project", goal="Test finalize fallback 2")
         await db.update_task(task["id"], status="stopped", current_attempt=1)
@@ -236,23 +236,23 @@ class TestTransitionSideEffects:
     """Verify transitions include _finalize_attempt where required."""
 
     def test_stopped_skip_gate_has_finalize(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
+        from ouvrage.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
         t = TRANSITIONS[("stopped", "skip_gate")]
         assert _finalize_attempt in t.side_effects
 
     def test_stopped_close_has_finalize(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
+        from ouvrage.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
         t = TRANSITIONS[("stopped", "close")]
         assert _finalize_attempt in t.side_effects
 
     def test_stopped_cancel_has_finalize_and_reason(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
+        from ouvrage.dispatch.lifecycle import TRANSITIONS, _finalize_attempt
         t = TRANSITIONS[("stopped", "cancel")]
         assert _finalize_attempt in t.side_effects
         assert t.reason == "cancelled"
 
     def test_validating_retry_has_finalize_before_launch(self):
-        from switchboard.dispatch.lifecycle import TRANSITIONS, _finalize_attempt, _retry_launch_session
+        from ouvrage.dispatch.lifecycle import TRANSITIONS, _finalize_attempt, _retry_launch_session
         t = TRANSITIONS[("validating", "retry")]
         effects = t.side_effects
         assert _finalize_attempt in effects

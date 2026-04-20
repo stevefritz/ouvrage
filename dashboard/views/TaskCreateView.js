@@ -1,6 +1,6 @@
 // TaskCreateView — Create a new task (held by default)
 // Route: #/task/new[?project=:id]
-// Reads sessionStorage['foreman-punchlist-scaffold'] on mount for pre-fill.
+// Reads sessionStorage['ouvrage-punchlist-scaffold'] on mount for pre-fill.
 
 import { h } from 'https://esm.sh/preact@10.25.4';
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';

@@ -13,11 +13,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from switchboard.dispatch.engine import retry_task
+from ouvrage.dispatch.engine import retry_task
 
 
-_INTERNALS = "switchboard.dispatch.internals"
-_LIFECYCLE = "switchboard.dispatch.lifecycle"
+_INTERNALS = "ouvrage.dispatch.internals"
+_LIFECYCLE = "ouvrage.dispatch.lifecycle"
 
 
 class TestAttemptCRUD:
@@ -101,9 +101,9 @@ class TestRetryFork:
     @pytest.fixture(autouse=True)
     def _base_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
-            patch("switchboard.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()),
+            patch("ouvrage.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
             patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
         ]
         for p in patches:
@@ -237,8 +237,8 @@ class TestStartFork:
     def _base_patches(self):
         patches = [
             patch(f"{_INTERNALS}.collect_reopen_feedback", AsyncMock(return_value=None)),
-            patch("switchboard.git.operations._sync_branch_with_base", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.git.operations._sync_branch_with_base", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -264,7 +264,7 @@ class TestStartFork:
         await db.create_attempt(task["id"], 2)
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -292,7 +292,7 @@ class TestReopenPreservesSession:
                              session_id="sess-to-keep", gate_status="passed",
                              gate_passed_at="2026-01-01T00:00:00Z")
 
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
         await lifecycle.execute(task["id"], "reopen")
 
         stored = await db.get_task("test-project/reopen-preserve")
@@ -312,7 +312,7 @@ class TestReopenPreservesSession:
                              gate_status="passed",
                              gate_passed_at="2026-01-01T00:00:00Z")
 
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
         await lifecycle.execute(task["id"], "reopen")
 
         attempt = await db.get_attempt("test-project/reopen-attempt", 2)
@@ -326,7 +326,7 @@ class TestDispatchFresh:
     @pytest.fixture(autouse=True)
     def _base_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -343,7 +343,7 @@ class TestDispatchFresh:
         )
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.check_and_queue_if_full", AsyncMock(return_value=False)),
@@ -366,14 +366,14 @@ class TestDispatchFresh:
             goal="Test dispatch attempt record",
         )
 
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.check_and_queue_if_full", AsyncMock(return_value=False)),
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
             patch(f"{_INTERNALS}.build_dispatch_prompt", AsyncMock(return_value="prompt")),
             patch(f"{_INTERNALS}.launch_sdk_session", AsyncMock()),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ):
             await lifecycle.execute(task["id"], "dispatch")
 
@@ -388,7 +388,7 @@ class TestResume:
     @pytest.fixture(autouse=True)
     def _base_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -411,7 +411,7 @@ class TestResume:
         await db.update_attempt(task["id"], 1, session_id="sess-current")
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -443,7 +443,7 @@ class TestResume:
         await db.update_attempt(task["id"], 2, session_id="sess-from-attempt")
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -463,7 +463,7 @@ class TestLaunchSdkSessionFork:
 
     async def test_fork_param_passed_through(self):
         """fork_session_id is forwarded to _run_sdk_session."""
-        import switchboard.dispatch.engine as _engine
+        import ouvrage.dispatch.engine as _engine
 
         mock_run = AsyncMock()
         mock_setup_log = AsyncMock(return_value="/tmp/log")
@@ -475,7 +475,7 @@ class TestLaunchSdkSessionFork:
             patch.object(_engine, "_write_dispatch_log", mock_write_log),
             patch(f"{_INTERNALS}._copy_archived_session_log", AsyncMock()),
         ):
-            from switchboard.dispatch.internals import launch_sdk_session
+            from ouvrage.dispatch.internals import launch_sdk_session
             handle = await launch_sdk_session(
                 task_id="test/fork-passthrough",
                 prompt="test prompt",
@@ -505,9 +505,9 @@ class TestGateRetryFresh:
     @pytest.fixture(autouse=True)
     def _base_patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()),
-            patch("switchboard.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
-            patch("switchboard.dispatch.engine.notify", AsyncMock()),
+            patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()),
+            patch("ouvrage.dispatch.engine.db.revert_punchlist_items_for_task", AsyncMock(return_value=0)),
+            patch("ouvrage.dispatch.engine.notify", AsyncMock()),
             patch(f"{_INTERNALS}.collect_review_feedback", AsyncMock(return_value=None)),
         ]
         for p in patches:
@@ -535,7 +535,7 @@ class TestGateRetryFresh:
         task_id = await self._setup_retryable_task(db, "gate-fresh")
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -554,7 +554,7 @@ class TestGateRetryFresh:
         task_id = await self._setup_retryable_task(db, "review-fresh")
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -573,7 +573,7 @@ class TestGateRetryFresh:
         task_id = await self._setup_retryable_task(db, "user-forks")
 
         mock_launch = AsyncMock()
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -591,7 +591,7 @@ class TestGateRetryFresh:
         """Gate retry status message should say 'fresh session'."""
         task_id = await self._setup_retryable_task(db, "gate-msg-fresh")
 
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -614,7 +614,7 @@ class TestGateRetryFresh:
         """User retry status message should say 'forked from previous session'."""
         task_id = await self._setup_retryable_task(db, "user-msg-fork")
 
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         with (
             patch(f"{_INTERNALS}.setup_task_worktree", AsyncMock(return_value="/tmp/wt")),
@@ -633,7 +633,7 @@ class TestGateRetryFresh:
 
     async def test_dispatch_log_fork_metadata(self, tmp_path):
         """Dispatch log should record forked: true/false and fork_parent_session."""
-        from switchboard.dispatch.sdk_session import _write_dispatch_log
+        from ouvrage.dispatch.sdk_session import _write_dispatch_log
 
         # Test with fork
         log_dir = tmp_path / "forked"

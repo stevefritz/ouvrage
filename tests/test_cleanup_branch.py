@@ -30,7 +30,7 @@ class TestCleanupBranchOnWorktreeRelease:
 
     async def test_branch_deleted_for_completed_task(self):
         """Terminal (completed) task → branch is force-deleted with -D."""
-        from switchboard.git.worktree import cleanup_worktree
+        from ouvrage.git.worktree import cleanup_worktree
 
         task = self._task("completed", branch="feature/done")
 
@@ -54,7 +54,7 @@ class TestCleanupBranchOnWorktreeRelease:
 
     async def test_branch_deleted_for_cancelled_task(self):
         """Terminal (cancelled) task → branch is force-deleted with -D."""
-        from switchboard.git.worktree import cleanup_worktree
+        from ouvrage.git.worktree import cleanup_worktree
 
         task = self._task("cancelled", branch="feature/cancelled")
 
@@ -71,7 +71,7 @@ class TestCleanupBranchOnWorktreeRelease:
 
     async def test_branch_not_force_deleted_for_stopped_task(self):
         """Non-terminal (stopped) task → branch uses safe -d, NOT force -D."""
-        from switchboard.git.worktree import cleanup_worktree
+        from ouvrage.git.worktree import cleanup_worktree
 
         task = self._task("stopped", branch="feature/paused")
 
@@ -92,7 +92,7 @@ class TestCleanupBranchOnWorktreeRelease:
     async def test_graceful_on_missing_branch_for_terminal_task(self, caplog):
         """Terminal task with already-deleted branch → no exception, warning logged."""
         import logging
-        from switchboard.git.worktree import cleanup_worktree
+        from ouvrage.git.worktree import cleanup_worktree
 
         task = self._task("completed", branch="feature/already-gone")
 
@@ -103,7 +103,7 @@ class TestCleanupBranchOnWorktreeRelease:
         )
 
         with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
-            with caplog.at_level(logging.WARNING, logger="switchboard.git.worktree"):
+            with caplog.at_level(logging.WARNING, logger="ouvrage.git.worktree"):
                 # Must not raise
                 await cleanup_worktree(self.project, task)
 

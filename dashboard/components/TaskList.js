@@ -120,8 +120,8 @@ export function TaskList({ tasks, conversations, chainMap, statusFilter, onStatu
         <div style=${{ display: 'flex', flexDirection: 'column' }}>
             <style>${`
                 @media (max-width: 640px) {
-                    .foreman-task-row { flex-wrap: wrap; }
-                    .foreman-task-row-tags { width: 100%; flex-wrap: wrap; margin-top: 2px; }
+                    .ouvrage-task-row { flex-wrap: wrap; }
+                    .ouvrage-task-row-tags { width: 100%; flex-wrap: wrap; margin-top: 2px; }
                 }
             `}</style>
 

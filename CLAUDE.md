@@ -1,9 +1,9 @@
-# Switchboard — Developer Guide for CC Workers
+# Ouvrage — Developer Guide for CC Workers
 
 ## NON-NEGOTIABLE CONTRACTS
 
 **1. ALL status changes go through `lifecycle.execute()`. Never call `db.update_task(status=...)` directly.**
-The `TaskLifecycle` class in `switchboard/dispatch/lifecycle.py` is the single owner of all task state
+The `TaskLifecycle` class in `ouvrage/dispatch/lifecycle.py` is the single owner of all task state
 transitions. Every status change — dispatch, complete, gate_pass, gate_fail, cancel, resume — must go
 through `lifecycle.execute(task_id, action)`. The engine functions in `dispatch/engine.py` are thin
 wrappers that call `lifecycle.execute()` internally.
@@ -14,7 +14,7 @@ The dashboard displays it as "held" via `_effective_ready_reason()`, but the act
 To hold/unhold a task, use `lifecycle.execute(task_id, "hold")` / `lifecycle.execute(task_id, "approve")`.
 
 **3. All git operations go through the provider interface. Never call GitHub-specific functions directly.**
-The provider abstraction in `switchboard/git/providers/` supports GitHub, GitLab, and Bitbucket.
+The provider abstraction in `ouvrage/git/providers/` supports GitHub, GitLab, and Bitbucket.
 Use `resolve_credential()`, `provider.build_authenticated_url()`, `provider.create_pr()`,
 `provider.validate_access()`. Never import or call platform-specific functions directly.
 
@@ -61,7 +61,7 @@ completed + reopen  → stopped     (user reopens for revisions)
 any + cancel        → cancelled
 ```
 
-The full transition table is the `TRANSITIONS` dict in `switchboard/dispatch/lifecycle.py`.
+The full transition table is the `TRANSITIONS` dict in `ouvrage/dispatch/lifecycle.py`.
 Look up `TRANSITIONS[(effective_state, action)]` to find valid actions for any state.
 
 ### Display states vs actual states
@@ -78,7 +78,7 @@ Similarly, `validating` tasks show as "testing" or "reviewing" based on which ga
 ### Architecture
 
 ```
-switchboard/git/providers/
+ouvrage/git/providers/
   base.py       — GitProvider abstract base class
   __init__.py   — Provider registry, resolve_credential(), get_provider()
   github.py     — GitHub implementation
@@ -112,7 +112,7 @@ Three layers, running at different times:
    dispatching. If validation fails or warns, the task is held with reason "credential issue".
    This is the only hard gate — it prevents launching a CC session that can't push.
 
-`validate_project_access()` lives in `switchboard/git/validation.py`.
+`validate_project_access()` lives in `ouvrage/git/validation.py`.
 
 ## Gate pipeline
 
@@ -126,17 +126,17 @@ After a CC session completes (`working` → `validating`):
    If `auto_merge` is set, merges automatically on gate pass.
 4. **Chain progression** — Dependent tasks auto-dispatch after gates pass.
 
-Gate logic is in `switchboard/dispatch/gates.py`.
+Gate logic is in `ouvrage/dispatch/gates.py`.
 
 ## Dashboard
 
-The dashboard is Foreman. Entry point: `foreman.html` → `dashboard/foreman-app.js` → `dashboard/views/`.
+The dashboard is Ouvrage. Entry point: `index.html` → `dashboard/ouvrage-app.js` → `dashboard/views/`.
 There is NO separate dashboard app.
-NEVER create `dashboard/app.js` or `dashboard/index.html` — these are legacy files that were purged.
-Foreman views live in `dashboard/views/`. Shared components live in `dashboard/components/`.
-If a component in `dashboard/components/` is not imported by any view or `foreman-app.js`, it should not exist.
+NEVER create `dashboard/app.js` — these are legacy files that were purged — these are legacy files that were purged.
+Ouvrage dashboard views live in `dashboard/views/`. Shared components live in `dashboard/components/`.
+If a component in `dashboard/components/` is not imported by any view or `ouvrage-app.js`, it should not exist.
 
-Switchboard (branded "Foreman" in the dashboard) is an AI task orchestration platform.
+Ouvrage is an AI task orchestration platform.
 It's an MCP server that dispatches Claude Code sessions to work on git repos with isolated
 worktrees, test gates, review gates, dependency chains, and crash recovery.
 
@@ -185,8 +185,8 @@ shared bare repo. This has implications:
 - **Your remote is HTTPS** — not SSH. Don't change it.
 - **Your branch is yours** — commit freely, push when ready. The branch was created for this task.
 - **Don't touch other branches** — don't checkout main, don't merge main into your branch,
-  don't rebase. Switchboard handles merging after your task passes gates.
-- **Don't run `git worktree` commands** — the worktree lifecycle is managed by Switchboard.
+  don't rebase. Ouvrage handles merging after your task passes gates.
+- **Don't run `git worktree` commands** — the worktree lifecycle is managed by Ouvrage.
 
 If you need to see what's on main, use `git log origin/main` (read-only). Do not checkout or merge it.
 
@@ -241,7 +241,7 @@ All tests are async (`pytest-asyncio`, `asyncio_mode=auto`). Use `python3`, not 
 ## Architecture
 
 ```
-switchboard/
+ouvrage/
   server/
     app.py            — Raw ASGI app, route registration, create_app() factory
     tools.py          — MCP tool definitions (70+ tools, pure schema, no logic)
@@ -297,12 +297,12 @@ switchboard/
     slack.py          — Per-task Slack threads with rich blocks
     web_push.py       — VAPID-signed browser push notifications
   dashboard/
-    api.py            — REST API endpoints for the Foreman SPA
-dashboard/              — Foreman SPA (Preact/htm via CDN, no build step)
+    api.py            — REST API endpoints for the Ouvrage SPA
+dashboard/              — Ouvrage SPA (Preact/htm via CDN, no build step)
 tests/                  — Pytest suite (2700+ tests, async, unit + integration)
 ```
 
-All code lives in the `switchboard/` package. No root-level Python shims.
+All code lives in the `ouvrage/` package. No root-level Python shims.
 
 ## Key patterns
 
@@ -335,17 +335,17 @@ These must never block the request path.
 
 ## Adding a new MCP tool
 
-1. Define schema in `switchboard/server/tools.py`:
+1. Define schema in `ouvrage/server/tools.py`:
    ```python
    Tool(name="my_tool", description="...", inputSchema={...})
    ```
-2. Create handler in appropriate `switchboard/server/handlers/*.py`:
+2. Create handler in appropriate `ouvrage/server/handlers/*.py`:
    ```python
    async def _handle_my_tool(arguments: dict) -> dict:
        ...
        return result_dict
    ```
-3. Register in `switchboard/server/dispatch.py`:
+3. Register in `ouvrage/server/dispatch.py`:
    ```python
    TOOL_HANDLERS = { ..., "my_tool": _handle_my_tool }
    ```
@@ -358,7 +358,7 @@ bug fixes, refactors, or config changes that are already exercised by the existi
 Before writing a test, check what coverage already exists — duplicate tests waste CI time.
 
 ### Fixtures (defined in `conftest.py`)
-- `tmp_db` — Temporary SQLite DB with `SWITCHBOARD_DB` env var + Fernet encryption key
+- `tmp_db` — Temporary SQLite DB with `OUVRAGE_DB` env var + Fernet encryption key
 - `db` — Initialized DB module (calls `init_db()`), resets singleton on teardown
 - `sample_project` — Pre-registered project with env_overrides, model="opus"
 - `sample_task` — Task in "working" status with 4 checklist items
@@ -381,13 +381,13 @@ Before writing a test, check what coverage already exists — duplicate tests wa
 ### Critical: mock ALL git and network operations
 
 Every test that touches dispatch, lifecycle, gates, or SDK code MUST mock:
-- `switchboard.dispatch.engine._run_as_worker` — runs commands as worker user
-- `switchboard.dispatch.engine.setup_worktree` — creates real git worktrees
-- `switchboard.dispatch.internals.setup_hook_config` — writes .claude/settings.json
-- `switchboard.dispatch.engine.cleanup_worktree` — removes worktrees
-- `switchboard.git.operations._ensure_branch_pushed` — does real `git push`
-- `switchboard.git.validation.validate_project_access` — calls provider API
-- `switchboard.dispatch.sdk_session._run_sdk_session` — launches real CC process
+- `ouvrage.dispatch.engine._run_as_worker` — runs commands as worker user
+- `ouvrage.dispatch.engine.setup_worktree` — creates real git worktrees
+- `ouvrage.dispatch.internals.setup_hook_config` — writes .claude/settings.json
+- `ouvrage.dispatch.engine.cleanup_worktree` — removes worktrees
+- `ouvrage.git.operations._ensure_branch_pushed` — does real `git push`
+- `ouvrage.git.validation.validate_project_access` — calls provider API
+- `ouvrage.dispatch.sdk_session._run_sdk_session` — launches real CC process
 
 Use the `mock_git` fixture from conftest.py, or patch individual functions.
 
@@ -399,8 +399,8 @@ This is extremely hard to debug — the only symptom is "all tests pass but gate
 
 **Two-layer auth, both always active:**
 
-1. **Session auth** — Cookie-based (`switchboard_session`), 7-day TTL + 24h inactivity timeout.
-   Used by `/foreman/*` and `/dashboard/api/*`. Login rate-limited (5 fails → 15min lockout).
+1. **Session auth — Cookie-based (`ouvrage_session`), 7-day TTL + 24h inactivity timeout.
+   Used by `/dashboard/*` and `/dashboard/api/*`. Login rate-limited (5 fails → 15min lockout).
    Passwords hashed with Argon2id.
 
 2. **Bearer JWT auth** — RS256 JWTs issued by built-in OAuth 2.0 server (authlib).
@@ -411,11 +411,11 @@ This is extremely hard to debug — the only symptom is "all tests pass but gate
    This is how CC workers access `/mcp/worker`. Do not change this without understanding
    the full auth flow.
 
-**Unprotected paths:** `/health`, `/.well-known/*`, `/oauth/*`, `/auth/*`, `/foreman/login`
+**Unprotected paths:** `/health`, `/.well-known/*`, `/oauth/*`, `/auth/*`, `/foreman/login` (legacy, redirects to /dashboard/login)
 
 ## Database
 
-SQLite, single-file, async via aiosqlite. Schema in `switchboard/db/schema.py`.
+SQLite, single-file, async via aiosqlite. Schema in `ouvrage/db/schema.py`.
 
 **Key tables:** `users`, `user_credentials` (Fernet-encrypted), `sessions`, `oauth_*` (full OAuth server),
 `projects`, `tasks` (status, phase, gates, depends_on), `task_checklist`, `components`, `punchlist`,
@@ -423,22 +423,22 @@ SQLite, single-file, async via aiosqlite. Schema in `switchboard/db/schema.py`.
 
 **FK patterns:** `created_by`, `dispatched_by`, `user_id` → `users(id)`.
 `task_id` → `tasks(id)`, `project_id` → `projects(id)`, `component_id` → `components(id)`.
-Schema in `switchboard/db/schema.py`.
+Schema in `ouvrage/db/schema.py`.
 
 ## Environment variables
 
-All config from env vars. Key ones: `SWITCHBOARD_DB` (SQLite path), `SWITCHBOARD_MASTER_KEY` (Fernet key, required),
-`OAUTH_BASE_URL`, `OAUTH_RSA_KEY_PATH`, `WORKER_USER` (default: `switchboard`).
+All config from env vars. Key ones: `OUVRAGE_DB` (SQLite path), `OUVRAGE_MASTER_KEY` (Fernet key, required),
+`OAUTH_BASE_URL`, `OAUTH_RSA_KEY_PATH`, `WORKER_USER` (default: `ouvrage`).
 Optional integrations: `SLACK_BOT_TOKEN`/`SLACK_CHANNEL_ID`, `VAPID_*` keys, `OPENAI_API_KEY` (embeddings).
-Full list in `switchboard/config/settings.py`.
+Full list in `ouvrage/config/settings.py`.
 
 ## Dashboard
 
-The Foreman SPA lives in `dashboard/`. Tech stack:
+The Ouvrage SPA lives in `dashboard/`. Tech stack:
 - **Preact 10.x + htm** loaded via CDN (esm.sh) — no build step, no node_modules
 - **Hash-based routing** (`#/board`, `#/task/...`, `#/conversations`)
 - **Components** are vanilla JS modules in `dashboard/components/` and `dashboard/views/`
-- **REST API** at `/dashboard/api/*` served by `switchboard/dashboard/api.py`
+- **REST API** at `/dashboard/api/*` served by `ouvrage/dashboard/api.py`
 - **Service worker** for web push notifications
 
 Do NOT add a build step, bundler, or node_modules. Keep it CDN-loaded ES modules.
@@ -475,8 +475,8 @@ Config: `scripts/visual-config.json`.
 The `.claude/settings.json` in this repo contains a PreToolUse hook that blocks
 `kill`/`pkill`/`killall` in CC workers. For the hook to apply to ALL CC workers
 (not just those working on this repo), copy it to `~/.claude/settings.json` for
-the worker user (`switchboard`) on the VPS:
+the worker user (`ouvrage`) on the VPS:
 
 ```bash
-cp .claude/settings.json /home/switchboard/.claude/settings.json
+cp .claude/settings.json /home/ouvrage/.claude/settings.json
 ```

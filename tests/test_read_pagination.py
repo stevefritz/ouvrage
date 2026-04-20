@@ -16,7 +16,7 @@ class TestReadMessageById:
     """read() with message_id returns a single message."""
 
     async def test_message_id_returns_single_message(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
         # Get messages to find an ID
         result = await db.read_messages("widget-redesign", last_n=10)
         msg = result["messages"][0]
@@ -30,7 +30,7 @@ class TestReadMessageById:
         assert "content" in resp["message"]
 
     async def test_message_id_wrong_conversation_returns_error(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
         # Create a second conversation
         await db.create_conversation(id="other-convo", project="test-project", goal="Other")
         await db.post_message(conversation_id="other-convo", author="test", content="hello")
@@ -46,7 +46,7 @@ class TestReadMessageById:
         assert "does not belong" in resp["error"]
 
     async def test_message_id_not_found(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
             "message_id": 99999,
@@ -70,7 +70,7 @@ class TestReadPagination:
 
     async def test_offset_limit_returns_page(self, db, sample_project):
         await self._populate(db)
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "paginated",
@@ -83,7 +83,7 @@ class TestReadPagination:
 
     async def test_total_and_has_more(self, db, sample_project):
         await self._populate(db)
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "paginated",
@@ -103,7 +103,7 @@ class TestReadPagination:
 
     async def test_default_limit_caps_at_50(self, db, sample_project):
         await self._populate(db)
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         # Default limit should be 50, but we only have 10 messages
         resp = await _handle_read({"conversation_id": "paginated"})
@@ -113,7 +113,7 @@ class TestReadPagination:
 
     async def test_limit_capped_at_50(self, db, sample_project):
         await self._populate(db)
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "paginated",
@@ -127,7 +127,7 @@ class TestReadSummary:
     """read() with summary=true returns lightweight objects."""
 
     async def test_summary_mode_returns_preview_and_char_count(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
@@ -142,7 +142,7 @@ class TestReadSummary:
             assert "created_at" in msg
 
     async def test_summary_preview_truncates_at_150(self, db, sample_project):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="long-convo", project="test-project", goal="Long")
         long_content = "x" * 300
@@ -158,7 +158,7 @@ class TestReadSummary:
         assert msg["preview"].endswith("...")
 
     async def test_summary_short_content_no_ellipsis(self, db, sample_project):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         await db.create_conversation(id="short-convo", project="test-project", goal="Short")
         await db.post_message(conversation_id="short-convo", author="test", content="Brief")
@@ -176,7 +176,7 @@ class TestReadPinnedOnly:
     """read() with pinned_only=true returns only pinned messages."""
 
     async def test_pinned_only_filters(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
@@ -186,7 +186,7 @@ class TestReadPinnedOnly:
         assert resp["messages"][0]["pinned"]
 
     async def test_pinned_only_with_summary(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
@@ -202,7 +202,7 @@ class TestReadBackwardCompat:
     """read() with last_n still works as before — pinned at top."""
 
     async def test_last_n_returns_pinned_plus_recent(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
@@ -215,7 +215,7 @@ class TestReadBackwardCompat:
         assert "cursor" in resp
 
     async def test_last_n_ignores_offset_limit(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({
             "conversation_id": "widget-redesign",
@@ -233,14 +233,14 @@ class TestReadEmbeddingStripped:
     """Embedding field is stripped from all response modes."""
 
     async def test_paginated_strips_embedding(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
 
         resp = await _handle_read({"conversation_id": "widget-redesign"})
         for msg in resp["messages"]:
             assert "embedding" not in msg
 
     async def test_message_id_strips_embedding(self, db, sample_conversation):
-        from switchboard.server.handlers.conversations import _handle_read
+        from ouvrage.server.handlers.conversations import _handle_read
         result = await db.read_messages("widget-redesign", last_n=1)
         msg_id = result["messages"][-1]["id"]
 
@@ -259,7 +259,7 @@ class TestReadTaskMessageById:
     """read_task_messages() with message_id."""
 
     async def test_message_id_returns_single(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         task_id = sample_task["id"]
         await db.post_task_message(task_id=task_id, author="cc-worker", content="Progress update")
@@ -275,7 +275,7 @@ class TestReadTaskMessageById:
         assert resp["message"]["id"] == msg_id
 
     async def test_message_id_wrong_task_returns_error(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         # Create another task
         task2 = await db.create_task(
@@ -300,7 +300,7 @@ class TestReadTaskMessagesPagination:
     """read_task_messages() with offset/limit."""
 
     async def test_pagination(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         task_id = sample_task["id"]
         for i in range(8):
@@ -320,7 +320,7 @@ class TestReadTaskMessagesSummary:
     """read_task_messages() with summary=true."""
 
     async def test_summary(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         task_id = sample_task["id"]
         await db.post_task_message(task_id=task_id, author="cc-worker", content="A" * 200)
@@ -340,8 +340,8 @@ class TestReadTaskMessagesAttemptFilter:
 
     async def _insert_with_attempt(self, db, task_id, content, attempt_number):
         """Insert a message with a specific attempt_number directly."""
-        from switchboard.db.connection import get_db
-        from switchboard.db._helpers import now_iso
+        from ouvrage.db.connection import get_db
+        from ouvrage.db._helpers import now_iso
         async with get_db() as conn:
             ts = now_iso()
             await conn.execute(
@@ -352,7 +352,7 @@ class TestReadTaskMessagesAttemptFilter:
             await conn.commit()
 
     async def test_attempt_filter(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         task_id = sample_task["id"]
         await self._insert_with_attempt(db, task_id, "Attempt 1 msg", 1)
@@ -369,7 +369,7 @@ class TestReadTaskMessagesAttemptFilter:
             assert "Attempt 2" in msg["content"]
 
     async def test_attempt_filter_with_summary(self, db, sample_task):
-        from switchboard.server.handlers.tasks import _handle_read_task_messages
+        from ouvrage.server.handlers.tasks import _handle_read_task_messages
 
         task_id = sample_task["id"]
         await self._insert_with_attempt(db, task_id, "Attempt 1", 1)

@@ -1,5 +1,5 @@
 {
-  "profile": {"name": "Stephen Fritz", "email": "stephen@stephenfritz.dev", "timezone": "America/Toronto", "role": "owner"},
+  "profile": {"name": "Example User", "email": "owner@example.com", "timezone": "America/Toronto", "role": "owner"},
   "anthropic": {"configured": true, "key_last4": "xK3m"},
   "git_credential": {"configured": true},
   "notifications": {"task_failed": true, "needs_review": true, "question": true, "task_completed": false}

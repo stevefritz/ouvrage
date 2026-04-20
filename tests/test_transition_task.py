@@ -45,7 +45,7 @@ class TestTransitionTaskHandler:
 
     async def test_valid_action_stop(self, db, mock_git, mock_sdk):
         """stop on a working task transitions to stopped."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
         task_id = f"{PROJECT_ID}/t-stop"
         await _seed(db, task_id, status="working")
 
@@ -56,7 +56,7 @@ class TestTransitionTaskHandler:
 
     async def test_valid_action_cancel(self, db, mock_git, mock_sdk):
         """cancel on a ready task transitions to cancelled."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
         task_id = f"{PROJECT_ID}/t-cancel"
         await _seed(db, task_id, status="ready")
 
@@ -67,7 +67,7 @@ class TestTransitionTaskHandler:
 
     async def test_invalid_action_wrong_state(self, db, mock_git, mock_sdk):
         """resume on a ready task (no session) returns error dict, not exception."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
         task_id = f"{PROJECT_ID}/t-bad-state"
         await _seed(db, task_id, status="ready")
 
@@ -79,7 +79,7 @@ class TestTransitionTaskHandler:
 
     async def test_unknown_task_returns_error(self, db, mock_git, mock_sdk):
         """Calling with a non-existent task_id returns an error dict."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
 
         result = await _handle_transition_task(
             {"task_id": "does-not/exist", "action": "stop"}
@@ -89,7 +89,7 @@ class TestTransitionTaskHandler:
 
     async def test_close_via_transition(self, db, mock_git, mock_sdk):
         """Close on a stopped task transitions to completed via transition_task."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
 
         task_id = f"{PROJECT_ID}/t-close"
         await _seed(db, task_id, status="stopped")
@@ -104,7 +104,7 @@ class TestTransitionTaskHandler:
 
     async def test_unknown_action_returns_error(self, db, mock_git, mock_sdk):
         """A completely bogus action name returns an error dict, not an exception."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
         task_id = f"{PROJECT_ID}/t-unknown-action"
         await _seed(db, task_id, status="working")
 
@@ -116,7 +116,7 @@ class TestTransitionTaskHandler:
 
     async def test_options_default_empty(self, db, mock_git, mock_sdk):
         """Omitting options is equivalent to passing an empty dict."""
-        from switchboard.server.handlers.tasks import _handle_transition_task
+        from ouvrage.server.handlers.tasks import _handle_transition_task
         task_id = f"{PROJECT_ID}/t-no-opts"
         await _seed(db, task_id, status="working")
 
@@ -134,7 +134,7 @@ class TestGetTaskStatusAvailableActions:
 
     async def test_slim_response_includes_available_actions(self, db):
         """Slim (default) response includes available_actions list."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         task_id = f"{PROJECT_ID}/ts-slim"
         await _seed(db, task_id, status="working")
 
@@ -148,7 +148,7 @@ class TestGetTaskStatusAvailableActions:
 
     async def test_detail_response_includes_available_actions(self, db):
         """Detail response also includes available_actions list."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         task_id = f"{PROJECT_ID}/ts-detail"
         await _seed(db, task_id, status="stopped", reason="paused_by_user", session_id="ses-123")
 
@@ -164,7 +164,7 @@ class TestGetTaskStatusAvailableActions:
 
     async def test_available_actions_empty_for_cancelled(self, db):
         """Cancelled tasks have no available user actions (or only retry/resume)."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         task_id = f"{PROJECT_ID}/ts-cancelled"
         await _seed(db, task_id, status="cancelled")
 

@@ -121,14 +121,14 @@ class TestStructuredTestOutput:
     @pytest.fixture(autouse=True)
     def _patches(self):
         patches = [
-            patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
-            patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()),
-            patch("switchboard.notifications.slack", AsyncMock()),
-            patch("switchboard.dispatch.engine._ensure_branch_pushed", AsyncMock()),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
-            patch("switchboard.dispatch.engine.retry_task", AsyncMock()),
+            patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-worktree")),
+            patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()),
+            patch("ouvrage.notifications.slack", AsyncMock()),
+            patch("ouvrage.dispatch.engine._ensure_branch_pushed", AsyncMock()),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.notifications.slack.task_needs_review", AsyncMock()),
+            patch("ouvrage.dispatch.engine.retry_task", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -138,7 +138,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_stored_on_pass(self, db, sample_project):
         """On test pass, last_test_output is stored as structured JSON."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-pass",
@@ -148,7 +148,7 @@ class TestStructuredTestOutput:
         )
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="validating")
 
-        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("All tests passed\nOK", 0))):
+        with patch("ouvrage.dispatch.gates._run_test_streaming", AsyncMock(return_value=("All tests passed\nOK", 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
@@ -163,7 +163,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_stored_on_fail(self, db, sample_project):
         """On test fail, last_test_output stores exit_code=1 with stdout_tail."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-fail",
@@ -174,7 +174,7 @@ class TestStructuredTestOutput:
         await db.update_task(task["id"], worktree_path="/tmp/fake-worktree", status="completed",
                              max_gate_retries=0)
 
-        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=("FAILED: 3 errors", 1))):
+        with patch("ouvrage.dispatch.gates._run_test_streaming", AsyncMock(return_value=("FAILED: 3 errors", 1))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
@@ -188,7 +188,7 @@ class TestStructuredTestOutput:
 
     async def test_test_output_capped_at_100_lines(self, db, sample_project):
         """stdout_tail is capped at the last 100 lines."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         task = await db.create_task(
             id="test-project/test-output-lines",
@@ -201,7 +201,7 @@ class TestStructuredTestOutput:
         # Generate 200 lines of output
         big_output = "\n".join(f"line {i}" for i in range(200))
 
-        with patch("switchboard.dispatch.gates._run_test_streaming", AsyncMock(return_value=(big_output, 0))):
+        with patch("ouvrage.dispatch.gates._run_test_streaming", AsyncMock(return_value=(big_output, 0))):
             project = await db.get_project("test-project")
             task_fresh = await db.get_task(task["id"])
             await _run_test_gate(task["id"], project, task_fresh)
@@ -262,7 +262,7 @@ class TestAttemptTracking:
 
     async def test_retry_increments_attempt(self, db, sample_project):
         """retry_task increments current_attempt on the task."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/attempt-retry",
@@ -271,8 +271,8 @@ class TestAttemptTracking:
         )
         await db.update_task(task["id"], status="completed")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()):
                 await retry_task(task["id"])
 
         updated = await db.get_task(task["id"])
@@ -280,7 +280,7 @@ class TestAttemptTracking:
 
     async def test_retry_increments_again(self, db, sample_project):
         """Multiple retries keep incrementing current_attempt."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/attempt-multi-retry",
@@ -289,8 +289,8 @@ class TestAttemptTracking:
         )
         await db.update_task(task["id"], status="completed")
 
-        with patch("switchboard.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
-            with patch("switchboard.dispatch.engine._invalidate_chain", AsyncMock()):
+        with patch("ouvrage.dispatch.engine.dispatch_task", AsyncMock(return_value={"status": "working"})):
+            with patch("ouvrage.dispatch.engine._invalidate_chain", AsyncMock()):
                 await retry_task(task["id"])
                 await db.update_task(task["id"], status="completed")
                 await retry_task(task["id"])
@@ -318,7 +318,7 @@ class TestAttemptTracking:
 
     async def test_resume_does_not_increment_attempt(self, db, sample_project, mock_git, mock_sdk):
         """resume_task does NOT increment current_attempt (same attempt)."""
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         task = await db.create_task(
             id="test-project/attempt-resume",
@@ -459,7 +459,7 @@ class TestDashboardApiAttempts:
 
     async def test_attempts_endpoint(self, db, sample_project):
         """Dashboard API returns attempts for a task (from disk archives)."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-attempts",
@@ -490,7 +490,7 @@ class TestDashboardApiAttempts:
 
     async def test_task_detail_includes_review_subtask_field(self, db, sample_project):
         """GET /api/tasks/{id} includes review_subtask in response."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-review-sub",
@@ -517,7 +517,7 @@ class TestDashboardApiAttempts:
 
     async def test_task_detail_includes_last_test_output(self, db, sample_project):
         """GET /api/tasks/{id} includes last_test_output parsed as dict."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         task = await db.create_task(
             id="test-project/api-test-output",

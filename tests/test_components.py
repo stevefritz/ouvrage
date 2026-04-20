@@ -402,15 +402,15 @@ class TestProjectConfigFields:
 
         # Use dispatch_task with concurrency full so it creates-but-queues the task.
         # This exercises the config resolution path before create_task.
-        import switchboard.db as _db
+        import ouvrage.db as _db
         for i in range(_db.DEFAULT_MAX_CONCURRENT):
             t = await db.create_task(
                 id=f"autopr-proj/filler-{i}", project_id="autopr-proj", goal=f"Filler {i}",
             )
             await db.update_task(t["id"], status="working")
 
-        from switchboard.dispatch.engine import dispatch_task
-        with patch("switchboard.dispatch.engine.notify", AsyncMock()):
+        from ouvrage.dispatch.engine import dispatch_task
+        with patch("ouvrage.dispatch.engine.notify", AsyncMock()):
             result = await dispatch_task(
                 project_id="autopr-proj",
                 task_id="autopr-proj/task1",
@@ -522,9 +522,9 @@ class TestGateRetryFields:
 class TestAutoReleaseWorktreeResolution:
     @pytest.fixture(autouse=True)
     def mock_git(self):
-        with patch("switchboard.dispatch.engine._run_as_worker") as mock_worker, \
-             patch("switchboard.dispatch.engine.setup_worktree") as mock_setup, \
-             patch("switchboard.dispatch.engine.cleanup_worktree") as mock_cleanup:
+        with patch("ouvrage.dispatch.engine._run_as_worker") as mock_worker, \
+             patch("ouvrage.dispatch.engine.setup_worktree") as mock_setup, \
+             patch("ouvrage.dispatch.engine.cleanup_worktree") as mock_cleanup:
             mock_setup.return_value = "/tmp/fake-worktree"
             mock_worker.return_value = None
             mock_cleanup.return_value = None
@@ -532,7 +532,7 @@ class TestAutoReleaseWorktreeResolution:
 
     async def test_auto_release_worktree_defaults_true_via_resolution(self, db, sample_project):
         """When auto_release_worktree not passed, resolves to system default True."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
         await dispatch_task(
             project_id="test-project", task_id="test-project/arw-default",
             goal="Test", held=True,
@@ -542,7 +542,7 @@ class TestAutoReleaseWorktreeResolution:
 
     async def test_auto_release_worktree_explicit_false(self, db, sample_project):
         """Explicit False is respected and not overridden."""
-        from switchboard.dispatch.engine import dispatch_task
+        from ouvrage.dispatch.engine import dispatch_task
         await dispatch_task(
             project_id="test-project", task_id="test-project/arw-false",
             goal="Test", held=True, auto_release_worktree=False,

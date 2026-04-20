@@ -2,7 +2,7 @@
 
 import pytest
 
-from switchboard.db.tasks import list_tasks
+from ouvrage.db.tasks import list_tasks
 
 
 # ---------------------------------------------------------------------------
@@ -11,7 +11,7 @@ from switchboard.db.tasks import list_tasks
 
 async def _make_task(db, project_id, task_id, goal, created_at=None, status="ready"):
     """Insert a task and optionally back-date its created_at/updated_at."""
-    from switchboard.db.connection import get_db
+    from ouvrage.db.connection import get_db
     task = await db.create_task(id=task_id, project_id=project_id, goal=goal)
     if created_at:
         async with get_db() as conn:
@@ -149,7 +149,7 @@ class TestDateRangeParams:
 class TestQueryParam:
     async def test_query_returns_matching_tasks(self, db, sample_project):
         """query param returns tasks whose goal matches."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/auth", "Implement OAuth authentication flow")
         await _make_task(db, "test-project", "test-project/bug", "Fix pagination bug in dashboard")
 
@@ -166,7 +166,7 @@ class TestQueryParam:
 
     async def test_query_excludes_non_matching_tasks(self, db, sample_project):
         """query param excludes tasks that don't match."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/match", "Deploy kubernetes cluster")
         await _make_task(db, "test-project", "test-project/nomatch", "Write unit tests")
 
@@ -193,7 +193,7 @@ class TestQueryParam:
 
     async def test_special_chars_query_no_crash(self, db, sample_project):
         """query with special chars like C++ doesn't crash."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/cpp", "Write C++ wrapper library")
 
         async with get_db() as conn:
@@ -205,7 +205,7 @@ class TestQueryParam:
 
     async def test_fts_operators_in_query_no_crash(self, db, sample_project):
         """FTS operators AND OR NOT in query don't crash."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/op", "AND OR NOT task")
 
         async with get_db() as conn:
@@ -229,7 +229,7 @@ class TestFtsSanitizationApplied:
 
     async def test_fts_operators_sanitized_no_crash(self, db, sample_project):
         """FTS operators in query are sanitized and don't cause OperationalError."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/san2", "Deploy AND test feature")
 
         async with get_db() as conn:
@@ -248,7 +248,7 @@ class TestFtsSanitizationApplied:
 class TestSortParam:
     async def test_sort_date_default(self, db, sample_project):
         """Default sort=date orders by updated_at descending."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/s1", "Sort task 1",
                          created_at="2020-01-01T00:00:00Z")
         await _make_task(db, "test-project", "test-project/s2", "Sort task 2",
@@ -288,7 +288,7 @@ class TestSortParam:
 
     async def test_sort_cost(self, db, sample_project):
         """sort=cost orders by total_cost_usd descending."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/cheap", "Cheap task")
         await _make_task(db, "test-project", "test-project/expensive", "Expensive task")
         async with get_db() as conn:
@@ -305,7 +305,7 @@ class TestSortParam:
 
     async def test_sort_relevance_with_query(self, db, sample_project):
         """sort=relevance with query param orders by BM25 score."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/exact", "Implement feature search feature feature")
         await _make_task(db, "test-project", "test-project/partial", "Minor feature update")
 
@@ -322,7 +322,7 @@ class TestSortParam:
 
     async def test_query_auto_selects_relevance_sort(self, db, sample_project):
         """When query is set and sort='date', relevance is used automatically."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         await _make_task(db, "test-project", "test-project/fts-a", "Authenticate with OAuth")
         await _make_task(db, "test-project", "test-project/fts-b", "Fix bug in login")
 
@@ -349,7 +349,7 @@ class TestSortParam:
 class TestCombinedParams:
     async def test_query_and_project_id(self, db, sample_project):
         """query + project_id filters to project and FTS."""
-        from switchboard.db.connection import get_db
+        from ouvrage.db.connection import get_db
         # Create second project
         await db.create_project(
             id="other-proj",

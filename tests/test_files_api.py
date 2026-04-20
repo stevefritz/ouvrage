@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dashboard.api import handle_request
+import ouvrage.db as db
+from ouvrage.dashboard.api import handle_request
 
 
 # ── ASGI helpers ──────────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ def tmp_uploads(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     uploads.mkdir()
 
-    monkeypatch.setattr("switchboard.config.settings.UPLOADS_DIR", str(uploads))
+    monkeypatch.setattr("ouvrage.config.settings.UPLOADS_DIR", str(uploads))
     yield uploads
     # Cleanup is automatic via tmp_path
 
@@ -604,12 +604,12 @@ class TestDownloadFile:
 class TestListFilesTool:
 
     async def test_list_files_empty(self, db):
-        from switchboard.server.handlers.files_handler import _handle_list_files
+        from ouvrage.server.handlers.files_handler import _handle_list_files
         result = await _handle_list_files({})
         assert result == {"files": []}
 
     async def test_list_files_returns_records(self, db):
-        from switchboard.server.handlers.files_handler import _handle_list_files
+        from ouvrage.server.handlers.files_handler import _handle_list_files
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid,
@@ -625,7 +625,7 @@ class TestListFilesTool:
         assert result["files"][0]["filename"] == "ref.pdf"
 
     async def test_list_files_filter_by_task_id(self, db, sample_task):
-        from switchboard.server.handlers.files_handler import _handle_list_files
+        from ouvrage.server.handlers.files_handler import _handle_list_files
         task_id = sample_task["id"]
         fid1 = str(uuid.uuid4())
         fid2 = str(uuid.uuid4())
@@ -642,7 +642,7 @@ class TestListFilesTool:
         assert result["files"][0]["id"] == fid1
 
     async def test_list_files_no_filter_returns_all(self, db, sample_task):
-        from switchboard.server.handlers.files_handler import _handle_list_files
+        from ouvrage.server.handlers.files_handler import _handle_list_files
         fid1 = str(uuid.uuid4())
         fid2 = str(uuid.uuid4())
         await db.create_file(
@@ -806,7 +806,7 @@ class TestTaskFilesEndpoint:
 class TestPromptInjection:
 
     async def test_prompt_includes_reference_files(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         task_id = sample_task["id"]
         fid = str(uuid.uuid4())
         await db.create_file(
@@ -821,12 +821,12 @@ class TestPromptInjection:
         assert "Read these files when relevant" in prompt
 
     async def test_prompt_no_reference_files_section_when_none(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
         assert "## Reference Files" not in prompt
 
     async def test_prompt_excludes_global_files(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid, filename="global.txt", stored_path="/data/uploads/xyz/global.txt",
@@ -837,7 +837,7 @@ class TestPromptInjection:
         assert "## Reference Files" not in prompt
 
     async def test_prompt_multiple_files(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         task_id = sample_task["id"]
         for i, name in enumerate(["a.txt", "b.pdf"]):
             fid = str(uuid.uuid4())
@@ -850,7 +850,7 @@ class TestPromptInjection:
         assert "b.pdf" in prompt
 
     async def test_prompt_includes_producing_files_section(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
         prompt = await _build_task_prompt(sample_project, sample_task, "Do the thing")
         assert "## Producing Files" in prompt
         assert "add_task_file" in prompt
@@ -869,7 +869,7 @@ class TestReactiveInjection:
         scope = _upload_scope("ref.txt", body, boundary)
 
         mock_post = AsyncMock(return_value={"id": 999})
-        with patch("switchboard.db.post_task_message", mock_post):
+        with patch("ouvrage.db.post_task_message", mock_post):
             resp = _Capture()
             await handle_request(scope, _make_receive(body), resp)
             # Give the background task a chance to run
@@ -879,7 +879,7 @@ class TestReactiveInjection:
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args.kwargs
         assert call_kwargs["task_id"] == task_id
-        assert call_kwargs["author"] == "switchboard"
+        assert call_kwargs["author"] == "ouvrage"
         assert call_kwargs["type"] == "note"
         assert "📎" in call_kwargs["content"]
         assert "ref.txt" in call_kwargs["content"]
@@ -900,7 +900,7 @@ class TestReactiveInjection:
         assert resp.status == 201
         # Check the message appears in the task thread
         thread = await db.read_task_messages(task_id)
-        notes = [m for m in thread.get("messages", []) if m.get("type") == "note" and m.get("author") == "switchboard"]
+        notes = [m for m in thread.get("messages", []) if m.get("type") == "note" and m.get("author") == "ouvrage"]
         assert len(notes) == 1
         assert "📎" in notes[0]["content"]
         assert "doc.txt" in notes[0]["content"]
@@ -919,7 +919,7 @@ class TestReactiveInjection:
         scope = _upload_scope("x.txt", body, boundary)
 
         mock_post = AsyncMock(return_value={"id": 1})
-        with patch("switchboard.db.post_task_message", mock_post):
+        with patch("ouvrage.db.post_task_message", mock_post):
             resp = _Capture()
             await handle_request(scope, _make_receive(body), resp)
 
@@ -933,7 +933,7 @@ class TestReactiveInjection:
         scope = _upload_scope("y.txt", body, boundary)
 
         mock_post = AsyncMock(return_value={"id": 1})
-        with patch("switchboard.db.post_task_message", mock_post):
+        with patch("ouvrage.db.post_task_message", mock_post):
             resp = _Capture()
             await handle_request(scope, _make_receive(body), resp)
 
@@ -953,7 +953,7 @@ class TestAddTaskFile:
         uploads = tmp_path / "uploads"
         uploads.mkdir(exist_ok=True)
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler._uploads_dir",
+            "ouvrage.server.handlers.files_handler._uploads_dir",
             lambda: uploads,
         )
         self._uploads = uploads
@@ -962,7 +962,7 @@ class TestAddTaskFile:
     def patch_worker_context(self, monkeypatch):
         """Default: pretend we are on the worker endpoint."""
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            "ouvrage.server.handlers.files_handler.get_request_is_worker",
             lambda: True,
         )
 
@@ -973,7 +973,7 @@ class TestAddTaskFile:
 
     async def test_successful_copy(self, db, sample_task, tmp_path):
         """File is copied to uploads dir and DB record is created."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         src = wt / "report.txt"
@@ -999,7 +999,7 @@ class TestAddTaskFile:
 
     async def test_custom_filename(self, db, sample_task, tmp_path):
         """Custom filename parameter is used as display name."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         src = wt / "output.json"
@@ -1017,7 +1017,7 @@ class TestAddTaskFile:
 
     async def test_path_traversal_rejected(self, db, sample_task, tmp_path):
         """Source path outside worktree is rejected."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         await db.update_task(sample_task["id"], worktree_path=str(wt))
@@ -1033,7 +1033,7 @@ class TestAddTaskFile:
 
     async def test_bad_extension_rejected(self, db, sample_task, tmp_path):
         """Files with disallowed extensions are rejected."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         await db.update_task(sample_task["id"], worktree_path=str(wt))
@@ -1049,7 +1049,7 @@ class TestAddTaskFile:
 
     async def test_size_limit_rejected(self, db, sample_task, tmp_path):
         """Files exceeding 10MB are rejected."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         await db.update_task(sample_task["id"], worktree_path=str(wt))
@@ -1065,7 +1065,7 @@ class TestAddTaskFile:
 
     async def test_file_not_found(self, db, sample_task, tmp_path):
         """Non-existent source path raises an error."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         await db.update_task(sample_task["id"], worktree_path=str(wt))
@@ -1078,10 +1078,10 @@ class TestAddTaskFile:
 
     async def test_worker_only_enforced(self, db, sample_task, tmp_path, monkeypatch):
         """Tool raises ValueError when called from a non-worker context."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            "ouvrage.server.handlers.files_handler.get_request_is_worker",
             lambda: False,
         )
 
@@ -1098,7 +1098,7 @@ class TestAddTaskFile:
 
     async def test_uploaded_by_is_null(self, db, sample_task, tmp_path):
         """Files added via add_task_file have uploaded_by=None."""
-        from switchboard.server.handlers.files_handler import _handle_add_task_file
+        from ouvrage.server.handlers.files_handler import _handle_add_task_file
 
         wt = await self._make_worktree(tmp_path)
         src = wt / "output.md"
@@ -1121,7 +1121,7 @@ class TestSchemaProjectId:
     """Verify the project_id column is added to the files table via migration."""
 
     async def test_project_id_column_exists(self, db):
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
         async with _conn.get_db() as conn:
             cols = await conn.execute_fetchall("PRAGMA table_info(files)")
         col_names = [c["name"] for c in cols]
@@ -1212,7 +1212,7 @@ class TestListFilesProjectId:
 
     async def test_mcp_list_files_filter_by_project_id(self, db, sample_project):
         """MCP list_files handler filters by project_id when provided."""
-        from switchboard.server.handlers.files_handler import _handle_list_files
+        from ouvrage.server.handlers.files_handler import _handle_list_files
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid, filename="ref.md", stored_path="/tmp/ref.md",
@@ -1345,7 +1345,7 @@ class TestGetFileEndpoint:
 class TestGetFileTool:
 
     async def test_get_readable_file_returns_content(self, db, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "data.txt"
         dest.write_bytes(b"hello world")
@@ -1360,7 +1360,7 @@ class TestGetFileTool:
         assert result["truncated"] is False
 
     async def test_get_binary_file_returns_metadata_only(self, db, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "photo.png"
         dest.write_bytes(b"\x89PNG" + b"\x00" * 50)
@@ -1374,12 +1374,12 @@ class TestGetFileTool:
         assert "content" not in result
 
     async def test_get_file_not_found_raises(self, db):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         with pytest.raises(ValueError, match="not found"):
             await _handle_get_file({"id": "nonexistent-uuid"})
 
     async def test_get_file_truncates_large_content(self, db, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "big.txt"
         dest.write_bytes(b"x" * 2000)
@@ -1392,7 +1392,7 @@ class TestGetFileTool:
         assert len(result["content"]) == 100
 
     async def test_get_file_returns_project_id(self, db, sample_project, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "ref.txt"
         dest.write_bytes(b"reference content")
@@ -1406,13 +1406,13 @@ class TestGetFileTool:
         assert result["task_id"] is None
 
     async def test_get_file_missing_id_raises(self, db):
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         with pytest.raises(ValueError, match="file_id is required"):
             await _handle_get_file({})
 
     async def test_get_file_accepts_file_id_param(self, db, tmp_path):
         """get_file accepts 'file_id' param (for get_attached_file alias compat)."""
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "compat.txt"
         dest.write_bytes(b"compat content")
@@ -1426,7 +1426,7 @@ class TestGetFileTool:
 
     async def test_get_file_same_result_as_get_attached_file(self, db, tmp_path):
         """get_file and get_attached_file (deprecated alias) return equivalent content."""
-        from switchboard.server.handlers.files_handler import _handle_get_file
+        from ouvrage.server.handlers.files_handler import _handle_get_file
         fid = str(uuid.uuid4())
         dest = tmp_path / "shared.txt"
         dest.write_bytes(b"shared file content")
@@ -1453,7 +1453,7 @@ class TestAddProjectFile:
         uploads = tmp_path / "uploads"
         uploads.mkdir(exist_ok=True)
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler._uploads_dir",
+            "ouvrage.server.handlers.files_handler._uploads_dir",
             lambda: uploads,
         )
         self._uploads = uploads
@@ -1461,7 +1461,7 @@ class TestAddProjectFile:
     @pytest.fixture(autouse=True)
     def patch_worker_context(self, monkeypatch):
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            "ouvrage.server.handlers.files_handler.get_request_is_worker",
             lambda: True,
         )
 
@@ -1477,7 +1477,7 @@ class TestAddProjectFile:
         return task
 
     async def test_successful_add_project_file(self, db, sample_project, worker_task, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "readme.md"
         src.write_bytes(b"# Project README")
 
@@ -1498,7 +1498,7 @@ class TestAddProjectFile:
         assert record["uploaded_by"] is None
 
     async def test_custom_filename(self, db, sample_project, worker_task, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "output.json"
         src.write_bytes(b"{}")
 
@@ -1513,7 +1513,7 @@ class TestAddProjectFile:
         assert Path(result["stored_path"]).name == "project-data.json"
 
     async def test_project_not_found_raises(self, db, sample_project, worker_task, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "test.txt"
         src.write_bytes(b"data")
 
@@ -1525,7 +1525,7 @@ class TestAddProjectFile:
             })
 
     async def test_bad_extension_rejected(self, db, sample_project, worker_task, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "script.sh"
         src.write_bytes(b"#!/bin/bash")
 
@@ -1537,9 +1537,9 @@ class TestAddProjectFile:
             })
 
     async def test_worker_only_enforced(self, db, sample_project, tmp_path, monkeypatch):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler.get_request_is_worker",
+            "ouvrage.server.handlers.files_handler.get_request_is_worker",
             lambda: False,
         )
         src = tmp_path / "doc.txt"
@@ -1553,7 +1553,7 @@ class TestAddProjectFile:
             })
 
     async def test_missing_project_id_raises(self, db, tmp_path):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
         src = tmp_path / "x.txt"
         src.write_bytes(b"x")
 
@@ -1561,7 +1561,7 @@ class TestAddProjectFile:
             await _handle_add_project_file({"source_path": str(src)})
 
     async def test_missing_source_path_raises(self, db, sample_project):
-        from switchboard.server.handlers.files_handler import _handle_add_project_file
+        from ouvrage.server.handlers.files_handler import _handle_add_project_file
 
         with pytest.raises(ValueError, match="source_path is required"):
             await _handle_add_project_file({"project_id": sample_project["id"]})
@@ -1578,7 +1578,7 @@ class TestPromoteTaskFile:
         uploads = tmp_path / "uploads"
         uploads.mkdir(exist_ok=True)
         monkeypatch.setattr(
-            "switchboard.server.handlers.files_handler._uploads_dir",
+            "ouvrage.server.handlers.files_handler._uploads_dir",
             lambda: uploads,
         )
 
@@ -1616,7 +1616,7 @@ class TestPromoteTaskFile:
 
     async def test_mcp_promote_task_file(self, db, sample_project, sample_task):
         """MCP promote_task_file handler promotes a file successfully."""
-        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        from ouvrage.server.handlers.files_handler import _handle_promote_task_file
         fid = await self._insert_task_file(db, sample_task)
 
         result = await _handle_promote_task_file({
@@ -1629,7 +1629,7 @@ class TestPromoteTaskFile:
 
     async def test_mcp_promote_invalid_project(self, db, sample_task):
         """MCP promote_task_file raises if project does not exist."""
-        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        from ouvrage.server.handlers.files_handler import _handle_promote_task_file
         fid = await self._insert_task_file(db, sample_task)
 
         with pytest.raises(ValueError, match="not found"):
@@ -1640,7 +1640,7 @@ class TestPromoteTaskFile:
 
     async def test_mcp_promote_non_task_file_raises(self, db, sample_project):
         """MCP promote_task_file raises if file has no task_id."""
-        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        from ouvrage.server.handlers.files_handler import _handle_promote_task_file
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid, filename="global.txt", stored_path="/tmp/global.txt",
@@ -1655,7 +1655,7 @@ class TestPromoteTaskFile:
 
     async def test_mcp_promote_missing_args(self, db, sample_project, sample_task):
         """Missing required args raise ValueError."""
-        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        from ouvrage.server.handlers.files_handler import _handle_promote_task_file
         fid = await self._insert_task_file(db, sample_task)
 
         with pytest.raises(ValueError, match="file_id is required"):
@@ -1735,7 +1735,7 @@ class TestPromoteTaskFile:
 
     async def test_promote_task_file_works_from_user_endpoint(self, db, sample_project, sample_task):
         """promote_task_file handler works without worker context (user endpoint)."""
-        from switchboard.server.handlers.files_handler import _handle_promote_task_file
+        from ouvrage.server.handlers.files_handler import _handle_promote_task_file
         fid = await self._insert_task_file(db, sample_task)
         # No is_worker check in promote_task_file — must work from user endpoint
         result = await _handle_promote_task_file({
@@ -1748,7 +1748,7 @@ class TestPromoteTaskFile:
 
     async def test_promote_task_file_in_user_tools_list(self):
         """promote_task_file is registered in TOOLS (user-facing endpoint)."""
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.tools import TOOLS
         names = {t.name for t in TOOLS}
         assert "promote_task_file" in names
 
@@ -1761,7 +1761,7 @@ class TestGetTaskStatusFilesArray:
 
     async def test_slim_response_includes_files(self, db, sample_task):
         """Slim (default) response includes files array."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid,
@@ -1784,7 +1784,7 @@ class TestGetTaskStatusFilesArray:
 
     async def test_detail_response_includes_files(self, db, sample_task):
         """Detail response (include_detail=True) also includes files array."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         fid = str(uuid.uuid4())
         await db.create_file(
             id=fid,
@@ -1807,7 +1807,7 @@ class TestGetTaskStatusFilesArray:
 
     async def test_empty_files_array_when_no_files(self, db, sample_task):
         """Files array is empty (not missing) when task has no files."""
-        from switchboard.server.handlers.tasks import _handle_get_task_status
+        from ouvrage.server.handlers.tasks import _handle_get_task_status
         result = await _handle_get_task_status({"task_id": sample_task["id"]})
         assert "files" in result
         assert result["files"] == []

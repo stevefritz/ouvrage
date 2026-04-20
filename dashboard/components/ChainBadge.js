@@ -1,4 +1,4 @@
-// Foreman — ChainBadge component
+// Ouvrage — ChainBadge component
 // Purple accent badge showing chain position (e.g. "2/3"). Clickable.
 
 import { h } from 'https://esm.sh/preact@10.25.4';

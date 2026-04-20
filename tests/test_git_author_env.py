@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import switchboard.db as db
+import ouvrage.db as db
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ class TestResolveGitAuthor:
 
     async def test_uses_dispatched_by_name_and_email(self, db, sample_project):
         """When dispatched_by user has name and email, use them."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         user = await db.create_user(
             email="alice@example.com", name="Alice Smith",
@@ -43,7 +43,7 @@ class TestResolveGitAuthor:
 
     async def test_uses_created_by_when_no_dispatched_by(self, db, sample_project):
         """When dispatched_by is None, fall back to created_by user."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         user = await db.create_user(
             email="bob@example.com", name="Bob Jones",
@@ -65,7 +65,7 @@ class TestResolveGitAuthor:
 
     async def test_dispatched_by_takes_priority_over_created_by(self, db, sample_project):
         """dispatched_by has higher priority than created_by."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         creator = await db.create_user(email="creator@example.com", name="Creator User")
         dispatcher = await db.create_user(email="dispatcher@example.com", name="Dispatcher User")
@@ -84,7 +84,7 @@ class TestResolveGitAuthor:
 
     async def test_fallback_to_instance_owner_when_user_has_no_name(self, db, sample_project):
         """If task user has no name, fall back to instance owner."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         # Create user without a name (empty string)
         nameless = await db.create_user(email="nameless@example.com", name="")
@@ -107,7 +107,7 @@ class TestResolveGitAuthor:
 
     async def test_fallback_to_bot_when_no_user_and_no_instance_owner(self, db, sample_project):
         """If no user identity available anywhere, use Ouvrage Bot defaults."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         task = await db.create_task(
             id="test-project/author-bot-fallback",
@@ -129,7 +129,7 @@ class TestResolveGitAuthor:
 
     async def test_fallback_to_bot_when_task_not_found(self, db):
         """If the task doesn't exist, return bot defaults without crashing."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         # Clear instance owner so bot fallback is reached
         await db.update_instance(owner_user_id=None)
@@ -141,7 +141,7 @@ class TestResolveGitAuthor:
 
     async def test_all_four_env_vars_present(self, db, sample_project):
         """All four git env vars must always be returned."""
-        from switchboard.dispatch.sdk_session import _resolve_git_author
+        from ouvrage.dispatch.sdk_session import _resolve_git_author
 
         task = await db.create_task(
             id="test-project/author-all-vars",
@@ -205,18 +205,18 @@ class TestGitAuthorEnvInjectedIntoSdkSession:
             return mock_client
 
         patches = [
-            patch("switchboard.dispatch.sdk_session.ClaudeSDKClient",
+            patch("ouvrage.dispatch.sdk_session.ClaudeSDKClient",
                   side_effect=_capture_options),
-            patch("switchboard.git.operations._ensure_branch_pushed",
+            patch("ouvrage.git.operations._ensure_branch_pushed",
                   AsyncMock(return_value=False)),
-            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
-            patch("switchboard.dispatch.engine._update_usage", AsyncMock()),
-            patch("switchboard.dispatch.sdk_session.pwd.getpwnam", return_value=mock_pw),
-            patch("switchboard.notifications.slack.task_completed", AsyncMock()),
-            patch("switchboard.notifications.slack.task_needs_review", AsyncMock()),
-            patch("switchboard.dispatch.queue._drain_queue", AsyncMock()),
+            patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", AsyncMock()),
+            patch("ouvrage.dispatch.engine._update_usage", AsyncMock()),
+            patch("ouvrage.dispatch.sdk_session.pwd.getpwnam", return_value=mock_pw),
+            patch("ouvrage.notifications.slack.task_completed", AsyncMock()),
+            patch("ouvrage.notifications.slack.task_needs_review", AsyncMock()),
+            patch("ouvrage.dispatch.queue._drain_queue", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -227,7 +227,7 @@ class TestGitAuthorEnvInjectedIntoSdkSession:
 
     async def test_git_env_vars_set_from_dispatched_by(self, db, sample_project):
         """GIT_AUTHOR/COMMITTER env vars are injected with the dispatched_by user's info."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from ouvrage.dispatch.sdk_session import _run_sdk_session
 
         user = await db.create_user(email="carol@example.com", name="Carol Dev")
         task = await db.create_task(
@@ -260,7 +260,7 @@ class TestGitAuthorEnvInjectedIntoSdkSession:
 
     async def test_git_env_vars_fallback_to_bot(self, db, sample_project):
         """When no user identity, GIT_* env vars fall back to Ouvrage Bot."""
-        from switchboard.dispatch.sdk_session import _run_sdk_session
+        from ouvrage.dispatch.sdk_session import _run_sdk_session
 
         task = await db.create_task(
             id="test-project/env-bot-fallback",

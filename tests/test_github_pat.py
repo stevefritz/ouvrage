@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from switchboard.git.operations import (
+from ouvrage.git.operations import (
     parse_repo_url,
     _classify_push_error,
 )
@@ -86,9 +86,9 @@ class TestEnsureBranchPushedPat:
         self.mock_resolve_url = AsyncMock(return_value="https://oauth2:ghp_test@github.com/acme/widgets.git")
 
         patches = [
-            patch("switchboard.git.operations._run_as_worker", self.mock_run),
-            patch("switchboard.git.operations._resolve_push_url", self.mock_resolve_url),
-            patch("switchboard.git.operations.db.post_task_message", AsyncMock()),
+            patch("ouvrage.git.operations._run_as_worker", self.mock_run),
+            patch("ouvrage.git.operations._resolve_push_url", self.mock_resolve_url),
+            patch("ouvrage.git.operations.db.post_task_message", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -99,7 +99,7 @@ class TestEnsureBranchPushedPat:
     @pytest.mark.asyncio
     async def test_push_uses_https_url_not_origin(self):
         """Push command must use authenticated HTTPS URL, not 'origin'."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         import os
 
         with patch.object(os.path, "exists", return_value=True):
@@ -121,7 +121,7 @@ class TestEnsureBranchPushedPat:
     @pytest.mark.asyncio
     async def test_ls_remote_uses_https_url(self):
         """ls-remote should also use authenticated URL."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         import os
 
         with patch.object(os.path, "exists", return_value=True):
@@ -143,7 +143,7 @@ class TestEnsureBranchPushedPat:
     @pytest.mark.asyncio
     async def test_no_pat_posts_error_message(self):
         """If no PAT configured, post error and skip push."""
-        from switchboard.git.operations import _ensure_branch_pushed
+        from ouvrage.git.operations import _ensure_branch_pushed
         import os
 
         self.mock_resolve_url.side_effect = ValueError("No GitHub PAT configured")

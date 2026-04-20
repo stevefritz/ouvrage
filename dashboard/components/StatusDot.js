@@ -1,4 +1,4 @@
-// Foreman — StatusDot component
+// Ouvrage — StatusDot component
 // Colored circle indicating task status. Pulses when status is "working".
 
 import { h } from 'https://esm.sh/preact@10.25.4';
@@ -32,7 +32,7 @@ export function StatusDot({ status, size = 8, style: extraStyle, pulse }) {
 
     return html`
         <span
-            class=${isPulsing ? 'foreman-status-dot-pulse' : ''}
+            class=${isPulsing ? 'ouvrage-status-dot-pulse' : ''}
             style=${dotStyle}
             aria-label=${status || 'unknown'}
         />

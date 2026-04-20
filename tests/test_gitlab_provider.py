@@ -34,7 +34,7 @@ def _make_async_client(responses: list) -> MagicMock:
 
 class TestGitLabParseRepoUrl:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.gitlab import GitLabProvider
         self.provider = GitLabProvider()
 
     def test_https_simple(self):
@@ -111,7 +111,7 @@ class TestGitLabParseRepoUrl:
 
 class TestGitLabBuildAuthenticatedUrl:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.gitlab import GitLabProvider
         self.provider = GitLabProvider()
 
     def test_https_simple(self):
@@ -151,8 +151,8 @@ class TestGitLabBuildAuthenticatedUrl:
 
 class TestGitLabValidateAccess:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = GitLabProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="gitlab.com")
 
@@ -278,7 +278,7 @@ class TestGitLabValidateAccess:
 
     async def test_self_hosted_uses_correct_api_base(self):
         """Self-hosted instances get API calls to their hostname."""
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.base import RepoInfo
         self_hosted_repo = RepoInfo(
             owner="myorg", repo="myrepo", hostname="gl.sf.net"
         )
@@ -317,8 +317,8 @@ class TestGitLabValidateAccess:
 
 class TestGitLabCreatePr:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = GitLabProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="gitlab.com")
 
@@ -446,7 +446,7 @@ class TestGitLabCreatePr:
 
     async def test_create_pr_nested_groups(self):
         """Nested group paths are URL-encoded correctly in API calls."""
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.base import RepoInfo
         nested_repo = RepoInfo(
             owner="group/subgroup", repo="project", hostname="gitlab.com"
         )
@@ -483,8 +483,8 @@ class TestGitLabCreatePr:
 
 class TestGitLabGetPrStatus:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.base import RepoInfo
         self.provider = GitLabProvider()
         self.repo_info = RepoInfo(owner="acme", repo="widgets", hostname="gitlab.com")
 
@@ -544,7 +544,7 @@ class TestGitLabGetPrStatus:
                 await self.provider.get_pr_status("tok", self.repo_info, 99)
 
     async def test_self_hosted_uses_correct_hostname(self):
-        from switchboard.git.providers.base import RepoInfo
+        from ouvrage.git.providers.base import RepoInfo
         self_hosted = RepoInfo(owner="org", repo="repo", hostname="gl.sf.net")
         resp = _make_response(200, {"state": "opened"})
 
@@ -572,7 +572,7 @@ class TestGitLabGetPrStatus:
 
 class TestGitLabParsePrUrl:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.gitlab import GitLabProvider
         self.provider = GitLabProvider()
 
     def test_standard_url(self):
@@ -635,7 +635,7 @@ class TestGitLabParsePrUrl:
 
 class TestGitLabProviderProperties:
     def setup_method(self):
-        from switchboard.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers.gitlab import GitLabProvider
         self.provider = GitLabProvider()
 
     def test_name(self):
@@ -651,16 +651,16 @@ class TestGitLabProviderProperties:
 
 class TestGitLabRegistration:
     def test_get_provider_gitlab(self):
-        from switchboard.git.providers import get_provider
+        from ouvrage.git.providers import get_provider
         p = get_provider("gitlab")
         assert p.name == "gitlab"
 
     def test_gitlab_in_providers_dict(self):
-        from switchboard.git.providers import _PROVIDERS
+        from ouvrage.git.providers import _PROVIDERS
         assert "gitlab" in _PROVIDERS
 
     def test_gitlab_provider_is_gitlab_instance(self):
-        from switchboard.git.providers import get_provider
-        from switchboard.git.providers.gitlab import GitLabProvider
+        from ouvrage.git.providers import get_provider
+        from ouvrage.git.providers.gitlab import GitLabProvider
         p = get_provider("gitlab")
         assert isinstance(p, GitLabProvider)

@@ -1,4 +1,4 @@
-"""Shared fixtures for switchboard tests."""
+"""Shared fixtures for ouvrage tests."""
 
 import os
 import sys
@@ -18,17 +18,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 def tmp_db(tmp_path):
     """Point database.py at a temporary SQLite file and reset the singleton."""
     db_path = str(tmp_path / "test.db")
-    os.environ["SWITCHBOARD_DB"] = db_path
+    os.environ["OUVRAGE_DB"] = db_path
 
-    # Ensure SWITCHBOARD_MASTER_KEY is set for tests so encryption works.
+    # Ensure OUVRAGE_MASTER_KEY is set for tests so encryption works.
     # Generate a fresh random key if none is configured in the environment.
-    if not os.environ.get("SWITCHBOARD_MASTER_KEY"):
+    if not os.environ.get("OUVRAGE_MASTER_KEY"):
         from cryptography.fernet import Fernet
-        os.environ["SWITCHBOARD_MASTER_KEY"] = Fernet.generate_key().decode()
+        os.environ["OUVRAGE_MASTER_KEY"] = Fernet.generate_key().decode()
 
-    # Reset the real connection singleton and DB path (now in switchboard.db.connection)
-    import switchboard.config.settings as _settings
-    import switchboard.db.connection as _conn
+    # Reset the real connection singleton and DB path (now in ouvrage.db.connection)
+    import ouvrage.config.settings as _settings
+    import ouvrage.db.connection as _conn
     _settings.DB_PATH = db_path
     _conn.DB_PATH = db_path  # override the module-level binding in connection.py
     _conn._connection = None
@@ -38,15 +38,15 @@ def tmp_db(tmp_path):
 @pytest.fixture
 async def db(tmp_db):
     """Initialized database ready for use. Yields the database module."""
-    import switchboard.db as _db
+    import ouvrage.db as _db
     await _db.init_db()
     # Update VEC_AVAILABLE flag so tests reflect actual vec0 table availability.
-    from switchboard.db.search import _check_vec_tables
+    from ouvrage.db.search import _check_vec_tables
     await _check_vec_tables()
     yield _db
     await _db.close_db()
     # Reset connection singleton for test isolation
-    import switchboard.db.connection as _conn
+    import ouvrage.db.connection as _conn
     _conn._connection = None
 
 
@@ -181,21 +181,21 @@ def _mock_credential_validation():
     Tests that need the real functions should patch them back with the
     `_real_*` references captured at module level.
     """
-    from switchboard.git.providers import GitHubProvider
+    from ouvrage.git.providers import GitHubProvider
     fake_provider_credential = (GitHubProvider(), "ghp_test_fake_credential")
 
-    with patch("switchboard.git.validation.validate_project_access", AsyncMock(return_value={
+    with patch("ouvrage.git.validation.validate_project_access", AsyncMock(return_value={
         "status": "validated",
         "message": "Credential validated",
         "checked_at": "2024-01-01T00:00:00Z",
         "detail": {"clone": True, "push": True, "pr": True},
-    })), patch("switchboard.git.providers.resolve_credential", AsyncMock(return_value=fake_provider_credential)):
+    })), patch("ouvrage.git.providers.resolve_credential", AsyncMock(return_value=fake_provider_credential)):
         yield
 
 
 # Capture the real functions at module level, before any autouse fixtures run.
-from switchboard.git.validation import validate_project_access as _real_validate_project_access
-from switchboard.git.providers import resolve_credential as _real_resolve_credential
+from ouvrage.git.validation import validate_project_access as _real_validate_project_access
+from ouvrage.git.providers import resolve_credential as _real_resolve_credential
 
 
 @pytest.fixture
@@ -207,7 +207,7 @@ def real_resolve_credential():
     actually exercise credential resolution should request this fixture to
     restore the real function.
     """
-    with patch("switchboard.git.providers.resolve_credential", _real_resolve_credential):
+    with patch("ouvrage.git.providers.resolve_credential", _real_resolve_credential):
         yield _real_resolve_credential
 
 
@@ -215,7 +215,9 @@ def real_resolve_credential():
 def mock_git():
     """Mock all git/subprocess operations in dispatch engine and lifecycle.
 
-    Patches: _run_as_worker, setup_worktree, cleanup_worktree, _ensure_branch_pushed.
+    Patches: _run_as_worker, setup_worktree, cleanup_worktree, _ensure_branch_pushed,
+    checkout_existing_worktree, and launch_sdk_session (prevents background asyncio
+    tasks that would outlive the test and cause teardown timeouts).
     Returns a dict of the mocks for assertion.
     """
     mocks = {
@@ -224,6 +226,8 @@ def mock_git():
         "cleanup_worktree": AsyncMock(),
         "ensure_branch_pushed": AsyncMock(return_value=True),
         "setup_hook_config": AsyncMock(),
+        "checkout_existing_worktree": AsyncMock(return_value="/tmp/fake-worktree"),
+        "launch_sdk_session": AsyncMock(),
         "validate_project_access": AsyncMock(return_value={
             "status": "validated",
             "message": "Credential validated",
@@ -233,12 +237,14 @@ def mock_git():
     }
 
     patches = [
-        patch("switchboard.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
-        patch("switchboard.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
-        patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
-        patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
-        patch("switchboard.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
-        patch("switchboard.git.validation.validate_project_access", mocks["validate_project_access"]),
+        patch("ouvrage.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
+        patch("ouvrage.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
+        patch("ouvrage.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
+        patch("ouvrage.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
+        patch("ouvrage.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
+        patch("ouvrage.dispatch.internals.checkout_existing_worktree", mocks["checkout_existing_worktree"]),
+        patch("ouvrage.dispatch.internals.launch_sdk_session", mocks["launch_sdk_session"]),
+        patch("ouvrage.git.validation.validate_project_access", mocks["validate_project_access"]),
     ]
     for p in patches:
         p.start()
@@ -279,9 +285,9 @@ def real_fs_worker():
 
     # Patch every module that imports _run_as_worker by name
     patches = [
-        patch("switchboard.git.worktree._run_as_worker", side_effect=_direct_exec),
-        patch("switchboard.dispatch.internals._run_as_worker", side_effect=_direct_exec, create=True),
-        patch("switchboard.dispatch.engine._run_as_worker", side_effect=_direct_exec),
+        patch("ouvrage.git.worktree._run_as_worker", side_effect=_direct_exec),
+        patch("ouvrage.dispatch.internals._run_as_worker", side_effect=_direct_exec, create=True),
+        patch("ouvrage.dispatch.engine._run_as_worker", side_effect=_direct_exec),
     ]
     started = []
     for p in patches:

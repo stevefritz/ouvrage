@@ -1,5 +1,5 @@
-// Foreman Hash Router
-// Handles Foreman-specific routes: #/ #/project/:id #/task/:id #/conversation/:id
+// Ouvrage Hash Router
+// Handles Ouvrage-specific routes: #/ #/project/:id #/task/:id #/conversation/:id
 // Separate from utils.js getRoute() which handles the existing dashboard routes.
 //
 // Usage:
@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
 
 /**
- * Parse a Foreman-style hash route.
+ * Parse an Ouvrage hash route.
  * Returns { view, params } where params is an object of named captures.
  *
  * Routes:
@@ -91,12 +91,12 @@ export function parseRoute() {
 }
 
 /**
- * Navigate to a Foreman route.
+ * Navigate to an Ouvrage route.
  * Examples:
  *   navigate('/')
- *   navigate('/project/mcp-switchboard')
- *   navigate('/task/mcp-switchboard/foreman-design-system')
- *   navigate('/conversation/foreman-design')
+ *   navigate('/project/mcp-ouvrage')
+ *   navigate('/task/mcp-ouvrage/ouvrage-design-system')
+ *   navigate('/conversation/ouvrage-design')
  */
 export function navigate(path) {
     location.hash = path.startsWith('/') ? path : '/' + path;
@@ -104,10 +104,10 @@ export function navigate(path) {
 
 /**
  * Preact hook: returns { view, params } and re-renders on hash change.
- * Use this in your Foreman app root component.
+ * Use this in your Ouvrage app root component.
  *
  * Example:
- *   function ForemanApp() {
+ *   function OuvrageApp() {
  *     const { view, params } = useRouter();
  *     if (view === 'landing')      return html`<${LandingView} />`;
  *     if (view === 'project')      return html`<${ProjectView} id=${params.id} />`;

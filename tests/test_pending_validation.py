@@ -13,7 +13,7 @@ Covers:
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-import switchboard.db as db
+import ouvrage.db as db
 
 
 # ---------------------------------------------------------------------------
@@ -21,17 +21,17 @@ import switchboard.db as db
 # ---------------------------------------------------------------------------
 
 def _set_worker_context():
-    from switchboard.server.context import set_request_context
+    from ouvrage.server.context import set_request_context
     set_request_context(user_id=None, is_token_auth=False, is_worker=True)
 
 
 def _set_user_context(user_id=1):
-    from switchboard.server.context import set_request_context
+    from ouvrage.server.context import set_request_context
     set_request_context(user_id=user_id, is_token_auth=True, is_worker=False)
 
 
 def _clear_context():
-    from switchboard.server.context import set_request_context
+    from ouvrage.server.context import set_request_context
     set_request_context(user_id=None, is_token_auth=False, is_worker=False)
 
 
@@ -45,7 +45,7 @@ class TestSdkSessionSetsPendingValidation:
     def test_completion_uses_lifecycle_execute(self):
         """Source code must use lifecycle.execute('complete') on CC finish."""
         import inspect
-        import switchboard.dispatch.sdk_session as mod
+        import ouvrage.dispatch.sdk_session as mod
         source = inspect.getsource(mod)
         # The normal completion path must use lifecycle.execute("complete")
         assert 'lifecycle.execute' in source
@@ -62,22 +62,22 @@ class TestGatePassCompletesTask:
     @pytest.fixture(autouse=True)
     def _patches(self, sample_project):
         self.drain_mock = patch(
-            "switchboard.dispatch.engine._drain_queue",
+            "ouvrage.dispatch.engine._drain_queue",
             new_callable=AsyncMock,
         )
         self.release_mock = patch(
-            "switchboard.dispatch.engine._auto_release_worktree",
+            "ouvrage.dispatch.engine._auto_release_worktree",
             new_callable=AsyncMock,
         )
         self.pr_mock = patch(
-            "switchboard.dispatch.engine._maybe_create_pr",
+            "ouvrage.dispatch.engine._maybe_create_pr",
             new_callable=AsyncMock,
         )
         with self.drain_mock, self.release_mock, self.pr_mock:
             yield
 
     async def test_validating_becomes_completed_via_gate_pass(self, db, sample_project):
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/pv-task",
@@ -95,7 +95,7 @@ class TestGatePassCompletesTask:
 
     async def test_pending_validation_becomes_completed_via_gate_pass(self, db, sample_project):
         """Legacy pending-validation status is mapped to validating by lifecycle."""
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/te-task",
@@ -114,7 +114,7 @@ class TestGatePassCompletesTask:
 
     async def test_completed_status_unchanged(self, db, sample_project):
         """Already-completed tasks should not be re-touched."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/already-done",
@@ -133,7 +133,7 @@ class TestGatePassCompletesTask:
 
     async def test_no_gate_passed_at_returns_early(self, db, sample_project):
         """Without gate_passed_at the function should no-op."""
-        from switchboard.dispatch.engine import _check_and_dispatch_dependents
+        from ouvrage.dispatch.engine import _check_and_dispatch_dependents
 
         task = await db.create_task(
             id="test-project/no-gate",
@@ -159,7 +159,7 @@ class TestResumeTaskPendingValidation:
     @pytest.fixture(autouse=True)
     def _patches(self, sample_project):
         self.dispatch_mock = patch(
-            "switchboard.dispatch.engine.dispatch_task",
+            "ouvrage.dispatch.engine.dispatch_task",
             new_callable=AsyncMock,
             return_value={"status": "working"},
         )
@@ -167,7 +167,7 @@ class TestResumeTaskPendingValidation:
             yield
 
     async def test_resume_accepts_pending_validation(self, db, sample_project):
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         task = await db.create_task(
             id="test-project/pv-resume",
@@ -183,10 +183,10 @@ class TestResumeTaskPendingValidation:
 
     async def test_resume_pending_validation_with_gate_passed_triggers_chain(self, db, sample_project):
         """If gate already passed for a pending-validation task, re-trigger chain, not CC session."""
-        from switchboard.dispatch.engine import resume_task
+        from ouvrage.dispatch.engine import resume_task
 
         with patch(
-            "switchboard.dispatch.engine._check_and_dispatch_dependents",
+            "ouvrage.dispatch.engine._check_and_dispatch_dependents",
             new_callable=AsyncMock,
         ) as mock_chain:
             task = await db.create_task(
@@ -213,7 +213,7 @@ class TestRetryTaskPendingValidation:
     @pytest.fixture(autouse=True)
     def _patches(self, sample_project):
         self.gate_mock = patch(
-            "switchboard.dispatch.gates._run_test_gate",
+            "ouvrage.dispatch.gates._run_test_gate",
             new_callable=AsyncMock,
         )
         with self.gate_mock as m:
@@ -227,7 +227,7 @@ class TestRetryTaskPendingValidation:
         (process died mid-flight). retry_task must NOT re-enter the gate pipeline —
         it must dispatch a fresh CC session so the worker can fix the code.
         """
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/pv-stall",
@@ -241,14 +241,14 @@ class TestRetryTaskPendingValidation:
 
         mock_run_sdk = AsyncMock()
         mock_resume = AsyncMock()
-        with patch("switchboard.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
-             patch("switchboard.dispatch.internals.setup_hook_config", AsyncMock()), \
-             patch("switchboard.dispatch.engine.run_setup_command", AsyncMock()), \
-             patch("switchboard.dispatch.engine.archive_task_logs", AsyncMock()), \
-             patch("switchboard.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.switchboard")), \
-             patch("switchboard.dispatch.engine._write_dispatch_log"), \
-             patch("switchboard.dispatch.engine._run_sdk_session", mock_run_sdk), \
-             patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
+        with patch("ouvrage.dispatch.engine.setup_worktree", AsyncMock(return_value="/tmp/fake-wt")), \
+             patch("ouvrage.dispatch.internals.setup_hook_config", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.run_setup_command", AsyncMock()), \
+             patch("ouvrage.dispatch.engine.archive_task_logs", AsyncMock()), \
+             patch("ouvrage.dispatch.engine._setup_log_dir", AsyncMock(return_value="/tmp/fake-wt/.ouvrage")), \
+             patch("ouvrage.dispatch.engine._write_dispatch_log"), \
+             patch("ouvrage.dispatch.engine._run_sdk_session", mock_run_sdk), \
+             patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume):
             await retry_task("test-project/pv-stall")
 
         mock_run_sdk.assert_called_once()
@@ -267,10 +267,10 @@ class TestEscalateTool:
 
     async def test_escalate_stops_task_with_reason_escalated(self, db, sample_task):
         """Escalate transitions task to stopped with reason=escalated (not needs-review)."""
-        from switchboard.server.handlers.tasks import _handle_escalate
+        from ouvrage.server.handlers.tasks import _handle_escalate
 
         _set_worker_context()
-        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+        with patch("ouvrage.notifications.slack.task_needs_review", new_callable=AsyncMock):
             result = await _handle_escalate({
                 "task_id": sample_task["id"],
                 "reason": "Spec is ambiguous — cannot proceed without clarification.",
@@ -286,8 +286,8 @@ class TestEscalateTool:
     async def test_escalate_kills_running_session(self, db, sample_task):
         """Escalate cancels the asyncio task in _running_tasks."""
         import asyncio
-        from switchboard.server.handlers.tasks import _handle_escalate
-        from switchboard.dispatch._state import _running_tasks
+        from ouvrage.server.handlers.tasks import _handle_escalate
+        from ouvrage.dispatch._state import _running_tasks
 
         # Seed a fake asyncio task that tracks whether it was cancelled
         mock_task = MagicMock(spec=asyncio.Task)
@@ -298,7 +298,7 @@ class TestEscalateTool:
 
         try:
             _set_worker_context()
-            with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+            with patch("ouvrage.notifications.slack.task_needs_review", new_callable=AsyncMock):
                 await _handle_escalate({
                     "task_id": sample_task["id"],
                     "reason": "Need human input.",
@@ -309,11 +309,11 @@ class TestEscalateTool:
 
     async def test_escalate_posts_escalation_message(self, db, sample_task):
         """Escalate posts escalation message with correct author, type, and content."""
-        from switchboard.server.handlers.tasks import _handle_escalate
+        from ouvrage.server.handlers.tasks import _handle_escalate
 
         _set_worker_context()
         reason = "Blocked: missing external API credentials."
-        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+        with patch("ouvrage.notifications.slack.task_needs_review", new_callable=AsyncMock):
             result = await _handle_escalate({
                 "task_id": sample_task["id"],
                 "reason": reason,
@@ -334,7 +334,7 @@ class TestEscalateTool:
 
     async def test_escalate_returns_error_for_missing_task(self, db):
         """Escalate returns error dict for unknown task_id."""
-        from switchboard.server.handlers.tasks import _handle_escalate
+        from ouvrage.server.handlers.tasks import _handle_escalate
 
         result = await _handle_escalate({
             "task_id": "nonexistent/task",
@@ -344,14 +344,14 @@ class TestEscalateTool:
 
     async def test_resume_available_after_escalate(self, db, sample_task):
         """After escalation, resume/retry/cancel are available actions (not blocked by awaiting_feedback)."""
-        from switchboard.server.handlers.tasks import _handle_escalate
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.server.handlers.tasks import _handle_escalate
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         # Give the task a session_id so _require_session_or_gate_resumable passes
         await db.update_task(sample_task["id"], session_id="sess-escalated")
 
         _set_worker_context()
-        with patch("switchboard.notifications.slack.task_needs_review", new_callable=AsyncMock):
+        with patch("ouvrage.notifications.slack.task_needs_review", new_callable=AsyncMock):
             await _handle_escalate({
                 "task_id": sample_task["id"],
                 "reason": "Need guidance.",
@@ -376,8 +376,8 @@ class TestWorkerToolAllowlist:
         _clear_context()
 
     async def test_worker_list_tools_only_shows_allowlist(self):
-        from switchboard.server.app import list_tools
-        from switchboard.server.tools import WORKER_TOOL_ALLOWLIST
+        from ouvrage.server.app import list_tools
+        from ouvrage.server.tools import WORKER_TOOL_ALLOWLIST
 
         _set_worker_context()
         tools = await list_tools()
@@ -388,7 +388,7 @@ class TestWorkerToolAllowlist:
             assert name in WORKER_TOOL_ALLOWLIST, f"Tool '{name}' not in WORKER_TOOL_ALLOWLIST"
 
     async def test_worker_list_tools_includes_escalate(self):
-        from switchboard.server.app import list_tools
+        from ouvrage.server.app import list_tools
 
         _set_worker_context()
         tools = await list_tools()
@@ -397,7 +397,7 @@ class TestWorkerToolAllowlist:
         assert "escalate" in names
 
     async def test_worker_list_tools_excludes_dispatch_task(self):
-        from switchboard.server.app import list_tools
+        from ouvrage.server.app import list_tools
 
         _set_worker_context()
         tools = await list_tools()
@@ -406,7 +406,7 @@ class TestWorkerToolAllowlist:
         assert "dispatch_task" not in names
 
     async def test_worker_list_tools_excludes_cancel_task(self):
-        from switchboard.server.app import list_tools
+        from ouvrage.server.app import list_tools
 
         _set_worker_context()
         tools = await list_tools()
@@ -415,8 +415,8 @@ class TestWorkerToolAllowlist:
         assert "cancel_task" not in names
 
     async def test_user_list_tools_shows_all(self):
-        from switchboard.server.app import list_tools
-        from switchboard.server.tools import TOOLS
+        from ouvrage.server.app import list_tools
+        from ouvrage.server.tools import TOOLS
 
         _set_user_context()
         tools = await list_tools()
@@ -425,7 +425,7 @@ class TestWorkerToolAllowlist:
         assert len(tools) == len(TOOLS)
 
     async def test_worker_call_tool_rejects_non_allowlist(self):
-        from switchboard.server.app import call_tool
+        from ouvrage.server.app import call_tool
 
         _set_worker_context()
         result = await call_tool("dispatch_task", {"project_id": "x", "task_id": "y", "goal": "z"})
@@ -434,7 +434,7 @@ class TestWorkerToolAllowlist:
         assert "not available on the worker endpoint" in result[0].text
 
     async def test_worker_call_tool_rejects_get_context(self):
-        from switchboard.server.app import call_tool
+        from ouvrage.server.app import call_tool
 
         _set_worker_context()
         result = await call_tool("get_context", {})
@@ -443,7 +443,7 @@ class TestWorkerToolAllowlist:
         assert "not available on the worker endpoint" in result[0].text
 
     async def test_worker_call_tool_allows_post_task_message(self, db, sample_task):
-        from switchboard.server.app import call_tool
+        from ouvrage.server.app import call_tool
         import json
 
         _set_worker_context()
@@ -460,7 +460,7 @@ class TestWorkerToolAllowlist:
         assert "error" not in str(data).lower() or "Error" not in result[0].text[:10]
 
     async def test_worker_call_tool_allows_escalate(self, db, sample_task):
-        from switchboard.server.app import call_tool
+        from ouvrage.server.app import call_tool
         import json
 
         _set_worker_context()
@@ -485,18 +485,18 @@ class TestRecoveryPendingValidation:
     @pytest.fixture(autouse=True)
     def _patches(self):
         self.resume_mock = patch(
-            "switchboard.dispatch.engine.resume_task",
+            "ouvrage.dispatch.engine.resume_task",
             new_callable=AsyncMock,
         )
         self.retry_mock = patch(
-            "switchboard.dispatch.engine.retry_task",
+            "ouvrage.dispatch.engine.retry_task",
             new_callable=AsyncMock,
         )
         with self.resume_mock, self.retry_mock:
             yield
 
     async def test_pending_validation_no_gate_runs_test_gate(self, db, sample_project):
-        from switchboard.dispatch.recovery import recover_orphaned_tasks
+        from ouvrage.dispatch.recovery import recover_orphaned_tasks
         import os as _os
 
         # Update project to have a test_command
@@ -521,16 +521,16 @@ class TestRecoveryPendingValidation:
             return _real_exists(p)
 
         with patch(
-            "switchboard.dispatch.gates._run_test_gate",
+            "ouvrage.dispatch.gates._run_test_gate",
             new_callable=AsyncMock,
         ) as mock_test_gate, patch(
-            "switchboard.dispatch.gates._dispatch_review",
+            "ouvrage.dispatch.gates._dispatch_review",
             new_callable=AsyncMock,
         ) as mock_review, patch(
-            "switchboard.dispatch.gates.os.path.exists",
+            "ouvrage.dispatch.gates.os.path.exists",
             side_effect=_fake_exists,
         ), patch(
-            "switchboard.git.operations._ensure_branch_pushed",
+            "ouvrage.git.operations._ensure_branch_pushed",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -541,7 +541,7 @@ class TestRecoveryPendingValidation:
 
     async def test_pending_validation_push_failed_skipped(self, db, sample_project):
         """push-failed tasks should not be auto-recovered."""
-        from switchboard.dispatch.recovery import recover_orphaned_tasks
+        from ouvrage.dispatch.recovery import recover_orphaned_tasks
 
         task = await db.create_task(
             id="test-project/pv-push-failed",
@@ -553,10 +553,10 @@ class TestRecoveryPendingValidation:
                              gate_status="push-failed")
 
         with patch(
-            "switchboard.dispatch.gates._run_test_gate",
+            "ouvrage.dispatch.gates._run_test_gate",
             new_callable=AsyncMock,
         ) as mock_test_gate, patch(
-            "switchboard.dispatch.gates._dispatch_review",
+            "ouvrage.dispatch.gates._dispatch_review",
             new_callable=AsyncMock,
         ) as mock_review:
             await recover_orphaned_tasks()
@@ -571,7 +571,7 @@ class TestRecoveryPendingValidation:
         For review-failed, _resume_gate_pipeline dispatches a fresh CC session (correct behavior:
         reviewer found code issues, code needs fixing before reviewing again).
         """
-        from switchboard.dispatch.recovery import recover_orphaned_tasks
+        from ouvrage.dispatch.recovery import recover_orphaned_tasks
 
         task = await db.create_task(
             id="test-project/pv-review-failed",
@@ -584,7 +584,7 @@ class TestRecoveryPendingValidation:
                              gate_status="review-failed")
 
         mock_resume = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume):
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume):
             await recover_orphaned_tasks()
 
         mock_resume.assert_called_with(
@@ -593,7 +593,7 @@ class TestRecoveryPendingValidation:
 
     async def test_pending_validation_gate_passed_dispatches_chain(self, db, sample_project):
         """pending-validation with gate_status=passed should dispatch chain."""
-        from switchboard.dispatch.recovery import recover_orphaned_tasks
+        from ouvrage.dispatch.recovery import recover_orphaned_tasks
 
         task = await db.create_task(
             id="test-project/pv-chain-dispatch",
@@ -606,13 +606,13 @@ class TestRecoveryPendingValidation:
                              gate_passed_at=db.now_iso())
 
         with patch(
-            "switchboard.dispatch.engine._check_and_dispatch_dependents",
+            "ouvrage.dispatch.engine._check_and_dispatch_dependents",
             new_callable=AsyncMock,
         ) as mock_chain, patch(
-            "switchboard.dispatch.gates._run_test_gate",
+            "ouvrage.dispatch.gates._run_test_gate",
             new_callable=AsyncMock,
         ), patch(
-            "switchboard.dispatch.gates._dispatch_review",
+            "ouvrage.dispatch.gates._dispatch_review",
             new_callable=AsyncMock,
         ):
             await recover_orphaned_tasks()
@@ -628,7 +628,7 @@ class TestPromptIncludesEscalate:
     """_build_task_prompt includes instructions about the escalate tool."""
 
     async def test_prompt_mentions_escalate(self, db, sample_task, sample_project):
-        from switchboard.dispatch.sdk_session import _build_task_prompt
+        from ouvrage.dispatch.sdk_session import _build_task_prompt
 
         task = await db.get_task(sample_task["id"])
         project = await db.get_project(sample_project["id"])

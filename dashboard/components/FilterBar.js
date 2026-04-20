@@ -109,16 +109,16 @@ export function FilterBar({ statusFilter, onStatusFilter, searchQuery, onSearch 
         <div style=${{ marginBottom: '12px' }}>
             <style>${`
                 @media (max-width: 640px) {
-                    .foreman-filterbar { flex-direction: column; align-items: stretch !important; }
-                    .foreman-filterbar-search { max-width: none !important; width: 100% !important; }
-                    .foreman-filterbar-search input { width: 100% !important; box-sizing: border-box; }
-                    .foreman-filterbar-dropdowns { flex-wrap: wrap; }
+                    .ouvrage-filterbar { flex-direction: column; align-items: stretch !important; }
+                    .ouvrage-filterbar-search { max-width: none !important; width: 100% !important; }
+                    .ouvrage-filterbar-search input { width: 100% !important; box-sizing: border-box; }
+                    .ouvrage-filterbar-dropdowns { flex-wrap: wrap; }
                 }
-                .foreman-filterbar-search input:focus { border-color: ${colors.accent}; }
+                .ouvrage-filterbar-search input:focus { border-color: ${colors.accent}; }
             `}</style>
-            <div class="foreman-filterbar" style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div class="ouvrage-filterbar" style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <!-- Search input -->
-                <div class="foreman-filterbar-search" style=${searchWrapStyle}>
+                <div class="ouvrage-filterbar-search" style=${searchWrapStyle}>
                     <span style=${searchIconStyle}>⌕</span>
                     <input
                         type="text"
@@ -131,7 +131,7 @@ export function FilterBar({ statusFilter, onStatusFilter, searchQuery, onSearch 
                 </div>
 
                 <!-- Dropdowns -->
-                <div class="foreman-filterbar-dropdowns" style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div class="ouvrage-filterbar-dropdowns" style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style=${wrapStyle}>
                         <select
                             style=${selectStyle}

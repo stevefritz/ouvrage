@@ -80,12 +80,12 @@ class TestCreateProjectNonBlocking:
 
     async def test_create_project_no_credential_succeeds(self, db):
         """POST /dashboard/api/projects succeeds even with no PAT or credential configured."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_create_payload()), resp)
 
         # Should succeed — no longer blocked by PAT check
@@ -99,14 +99,14 @@ class TestCreateProjectWithProvider:
 
     async def test_create_project_stores_provider(self, db):
         """provider field is stored in the database."""
-        from switchboard.dashboard.api import handle_request
-        import switchboard.db as sw_db
+        from ouvrage.dashboard.api import handle_request
+        import ouvrage.db as sw_db
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
         payload = _valid_create_payload(provider="gitlab")
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -115,9 +115,9 @@ class TestCreateProjectWithProvider:
 
     async def test_create_project_stores_credential_override_encrypted(self, db):
         """credential_override is encrypted before storage."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
@@ -127,7 +127,7 @@ class TestCreateProjectWithProvider:
             credential_override="glpat-plaintexttoken",
         )
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -141,14 +141,14 @@ class TestCreateProjectWithProvider:
 
     async def test_create_project_no_credential_stores_null(self, db):
         """No credential_override → NULL stored in DB."""
-        import switchboard.db.connection as _conn
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
         payload = _valid_create_payload(id="nocred-proj", provider="github")
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -161,13 +161,13 @@ class TestCreateProjectWithProvider:
 
     async def test_create_project_no_provider_stores_null(self, db):
         """No provider field → NULL stored."""
-        import switchboard.db.connection as _conn
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_create_payload()), resp)
 
         assert resp.status == 201
@@ -184,8 +184,8 @@ class TestUpdateProjectWithProvider:
 
     async def test_patch_project_sets_provider(self, db):
         """PATCH with provider sets it in the DB."""
-        import switchboard.db.connection as _conn
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_project(id="patch-prov-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
 
@@ -203,9 +203,9 @@ class TestUpdateProjectWithProvider:
 
     async def test_patch_project_sets_credential_override_encrypted(self, db):
         """PATCH with credential_override encrypts and stores it."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_project(id="patch-cred-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
 
@@ -223,9 +223,9 @@ class TestUpdateProjectWithProvider:
 
     async def test_patch_project_clears_credential_override(self, db):
         """PATCH with empty string clears credential_override (sets to NULL)."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
 
         encrypted = encrypt_value("glpat-existingtoken")
         await db.create_project(

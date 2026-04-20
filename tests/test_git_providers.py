@@ -147,33 +147,33 @@ class TestDetectProvider:
     """Test provider detection from URLs."""
 
     async def test_github_https(self, db):
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         result = await detect_provider("https://github.com/acme/repo.git")
         assert result == "github"
 
     async def test_github_ssh(self, db):
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         result = await detect_provider("git@github.com:acme/repo.git")
         assert result == "github"
 
     async def test_gitlab_https(self, db):
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         result = await detect_provider("https://gitlab.com/acme/repo.git")
         assert result == "gitlab"
 
     async def test_bitbucket_https(self, db):
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         result = await detect_provider("https://bitbucket.org/acme/repo.git")
         assert result == "bitbucket"
 
     async def test_unknown_host_returns_none(self, db):
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         result = await detect_provider("https://unknown.example.com/acme/repo.git")
         assert result is None
 
     async def test_custom_hostname_from_credentials(self, db):
         """Custom hostnames registered in git_credentials are detected."""
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         await db.create_credential(
             provider="gitlab", credential="tok", hostname="gl.sf.net",
         )
@@ -182,7 +182,7 @@ class TestDetectProvider:
 
     async def test_credential_hostname_takes_priority(self, db):
         """DB hostname check runs before hardcoded defaults."""
-        from switchboard.git.providers import detect_provider
+        from ouvrage.git.providers import detect_provider
         # Register github.com as a different provider (contrived but tests priority)
         await db.create_credential(
             provider="gitlab", credential="tok", hostname="github.com",
@@ -197,23 +197,23 @@ class TestDetectProvider:
 
 class TestParseHostname:
     def test_https_url(self):
-        from switchboard.git.providers import _parse_hostname
+        from ouvrage.git.providers import _parse_hostname
         assert _parse_hostname("https://github.com/owner/repo.git") == "github.com"
 
     def test_ssh_url(self):
-        from switchboard.git.providers import _parse_hostname
+        from ouvrage.git.providers import _parse_hostname
         assert _parse_hostname("git@github.com:owner/repo.git") == "github.com"
 
     def test_custom_hostname(self):
-        from switchboard.git.providers import _parse_hostname
+        from ouvrage.git.providers import _parse_hostname
         assert _parse_hostname("https://gl.sf.net/group/project.git") == "gl.sf.net"
 
     def test_ssh_custom_hostname(self):
-        from switchboard.git.providers import _parse_hostname
+        from ouvrage.git.providers import _parse_hostname
         assert _parse_hostname("git@gl.sf.net:group/project.git") == "gl.sf.net"
 
     def test_invalid_url_returns_none(self):
-        from switchboard.git.providers import _parse_hostname
+        from ouvrage.git.providers import _parse_hostname
         assert _parse_hostname("not-a-url") is None
 
 
@@ -232,8 +232,8 @@ class TestResolveCredential:
 
     async def test_project_credential_override(self, db):
         """Project-level credential_override is used first."""
-        from switchboard.git.providers import resolve_credential
-        from switchboard.crypto import encrypt_value
+        from ouvrage.git.providers import resolve_credential
+        from ouvrage.crypto import encrypt_value
 
         encrypted = encrypt_value("my-secret-pat")
         project = await db.create_project(
@@ -247,8 +247,8 @@ class TestResolveCredential:
 
     async def test_project_github_pat_override_alias(self, db):
         """Legacy github_pat_override field is used as fallback."""
-        from switchboard.git.providers import resolve_credential
-        from switchboard.crypto import encrypt_value
+        from ouvrage.git.providers import resolve_credential
+        from ouvrage.crypto import encrypt_value
 
         encrypted = encrypt_value("legacy-pat")
         project = await db.create_project(
@@ -261,8 +261,8 @@ class TestResolveCredential:
 
     async def test_instance_credential_from_git_credentials(self, db):
         """Instance-level credential from git_credentials table."""
-        from switchboard.git.providers import resolve_credential
-        from switchboard.crypto import encrypt_value
+        from ouvrage.git.providers import resolve_credential
+        from ouvrage.crypto import encrypt_value
 
         encrypted = encrypt_value("instance-token")
         await db.create_credential(
@@ -277,7 +277,7 @@ class TestResolveCredential:
 
     async def test_legacy_instance_github_pat(self, db):
         """Falls back to instance.github_pat_encrypted for github provider."""
-        from switchboard.git.providers import resolve_credential
+        from ouvrage.git.providers import resolve_credential
 
         await db.set_instance_github_pat("legacy-instance-pat")
         project = await db.create_project(
@@ -289,7 +289,7 @@ class TestResolveCredential:
 
     async def test_no_credential_raises_error(self, db):
         """ValueError raised when no credential is available."""
-        from switchboard.git.providers import resolve_credential
+        from ouvrage.git.providers import resolve_credential
 
         project = await db.create_project(
             id="test-proj", repo="https://github.com/acme/test.git",
@@ -300,7 +300,7 @@ class TestResolveCredential:
 
     async def test_defaults_to_github_provider(self, db):
         """Provider defaults to github when project.provider is None."""
-        from switchboard.git.providers import resolve_credential
+        from ouvrage.git.providers import resolve_credential
 
         await db.set_instance_github_pat("some-pat")
         project = await db.create_project(
@@ -317,7 +317,7 @@ class TestResolveCredential:
 
 class TestGitHubProvider:
     def setup_method(self):
-        from switchboard.git.providers.github import GitHubProvider
+        from ouvrage.git.providers.github import GitHubProvider
         self.provider = GitHubProvider()
 
     def test_name(self):
@@ -365,12 +365,12 @@ class TestGitHubProvider:
 
 class TestGetProvider:
     def test_get_github(self):
-        from switchboard.git.providers import get_provider
+        from ouvrage.git.providers import get_provider
         p = get_provider("github")
         assert p.name == "github"
 
     def test_unknown_provider_raises(self):
-        from switchboard.git.providers import get_provider
+        from ouvrage.git.providers import get_provider
         with pytest.raises(ValueError, match="Unknown git provider"):
             get_provider("svn")
 
@@ -384,7 +384,7 @@ class TestSchemaAutoMigration:
 
     async def test_instance_pat_migrated_to_git_credentials(self, db):
         """After init_db, instance.github_pat_encrypted should create a git_credentials row."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
 
         # Set an instance PAT
         encrypted = encrypt_value("test-pat-123")
@@ -401,7 +401,7 @@ class TestSchemaAutoMigration:
 
     async def test_migration_does_not_duplicate(self, db):
         """Running init_db twice doesn't create duplicate credentials."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
 
         encrypted = encrypt_value("test-pat-123")
         await db.update_instance(github_pat_encrypted=encrypted)
@@ -438,11 +438,11 @@ class TestDispatchCredentialValidation:
             "setup_hook_config": AsyncMock(),
         }
         patches = [
-            patch("switchboard.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
-            patch("switchboard.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
-            patch("switchboard.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
-            patch("switchboard.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
-            patch("switchboard.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
+            patch("ouvrage.dispatch.engine._run_as_worker", mocks["run_as_worker"]),
+            patch("ouvrage.dispatch.engine.setup_worktree", mocks["setup_worktree"]),
+            patch("ouvrage.dispatch.engine.cleanup_worktree", mocks["cleanup_worktree"]),
+            patch("ouvrage.git.operations._ensure_branch_pushed", mocks["ensure_branch_pushed"]),
+            patch("ouvrage.dispatch.internals.setup_hook_config", mocks["setup_hook_config"]),
         ]
         for p in patches:
             p.start()
@@ -452,8 +452,8 @@ class TestDispatchCredentialValidation:
 
     async def test_dispatch_blocks_without_credential(self, db):
         """Dispatch raises ValueError when no credential is available."""
-        from switchboard.dispatch.engine import dispatch_task
-        import switchboard.config.settings as _settings
+        from ouvrage.dispatch.engine import dispatch_task
+        import ouvrage.config.settings as _settings
 
         await db.create_project(
             id="no-cred-proj", repo="https://github.com/acme/test.git",
@@ -474,7 +474,7 @@ class TestDispatchCredentialValidation:
 
     async def test_dispatch_succeeds_with_credential(self, db):
         """Dispatch proceeds past credential check when credential is available."""
-        from switchboard.git.providers import resolve_credential
+        from ouvrage.git.providers import resolve_credential
 
         await db.set_instance_github_pat("valid-pat")
         project = await db.create_project(

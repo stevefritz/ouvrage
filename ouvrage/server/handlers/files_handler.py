@@ -1,0 +1,322 @@
+"""MCP tool handlers for files."""
+import shutil
+import uuid
+from pathlib import Path
+
+import ouvrage.db as db
+from ouvrage.server.context import get_request_is_worker
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+ALLOWED_EXTENSIONS = {
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',   # images
+    'txt', 'md', 'json', 'csv', 'yaml', 'yml', 'toml', 'xml',  # text
+    'pdf',  # documents
+}
+
+READABLE_EXTENSIONS = {
+    'txt', 'md', 'json', 'csv', 'yaml', 'yml', 'toml', 'xml',
+}
+
+MIME_TYPES = {
+    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'gif': 'image/gif', 'webp': 'image/webp', 'svg': 'image/svg+xml',
+    'txt': 'text/plain', 'md': 'text/markdown', 'json': 'application/json',
+    'csv': 'text/csv', 'yaml': 'application/yaml', 'yml': 'application/yaml',
+    'toml': 'application/toml', 'xml': 'application/xml',
+    'pdf': 'application/pdf',
+}
+
+
+def _is_readable(filename: str) -> bool:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in READABLE_EXTENSIONS
+
+
+def _uploads_dir() -> Path:
+    from ouvrage.config.settings import UPLOADS_DIR
+    return Path(UPLOADS_DIR)
+
+
+async def _handle_list_files(arguments: dict) -> dict:
+    task_id = arguments.get("task_id") or None
+    project_id = arguments.get("project_id") or None
+    files = await db.list_files(task_id=task_id, project_id=project_id)
+    for f in files:
+        f["readable"] = _is_readable(f.get("filename", ""))
+    return {"files": files}
+
+
+async def _handle_get_attached_file(arguments: dict) -> dict:
+    """Read the content of a text-based attached file."""
+    file_id = arguments.get("file_id")
+    if not file_id:
+        raise ValueError("file_id is required")
+
+    record = await db.get_file(file_id)
+    if not record:
+        raise ValueError(f"File '{file_id}' not found")
+
+    filename = record.get("filename", "")
+    if not _is_readable(filename):
+        return {
+            "error": "File is not a readable text format",
+            "filename": filename,
+            "mime_type": record.get("mime_type"),
+            "readable": False,
+        }
+
+    stored_path = Path(record["stored_path"])
+    if not stored_path.exists():
+        raise ValueError(f"File not found on disk: {filename}")
+
+    max_bytes = arguments.get("max_bytes", 1048576)
+    content = stored_path.read_bytes()
+    size = len(content)
+    truncated = size > max_bytes
+
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "content": content[:max_bytes].decode("utf-8", errors="replace"),
+        "size": size,
+        "truncated": truncated,
+        "mime_type": record.get("mime_type"),
+        "task_id": record.get("task_id"),
+    }
+
+
+async def _handle_add_task_file(arguments: dict) -> dict:
+    if not get_request_is_worker():
+        raise ValueError("add_task_file is only available on the worker endpoint")
+
+    task_id = arguments.get("task_id")
+    source_path = arguments.get("source_path")
+    filename = arguments.get("filename")
+
+    if not task_id:
+        raise ValueError("task_id is required")
+    if not source_path:
+        raise ValueError("source_path is required")
+
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+
+    worktree_path = task.get("worktree_path")
+    if not worktree_path:
+        raise ValueError("Task has no worktree_path — cannot validate source path")
+
+    src = Path(source_path)
+    if not src.exists():
+        raise ValueError(f"File not found: {source_path}")
+    if not src.is_file():
+        raise ValueError(f"Source path is not a file: {source_path}")
+
+    # Resolve real paths — prevent directory traversal
+    real_src = src.resolve()
+    real_worktree = Path(worktree_path).resolve()
+    try:
+        real_src.relative_to(real_worktree)
+    except ValueError:
+        raise ValueError("Source path must be within the worktree")
+
+    # Default filename from source basename, strip any path components
+    if not filename:
+        filename = real_src.name
+    filename = Path(filename).name
+    if not filename:
+        raise ValueError("Invalid filename")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"File type .{ext} not allowed")
+
+    size_bytes = real_src.stat().st_size
+    if size_bytes > MAX_FILE_SIZE:
+        raise ValueError("File exceeds 10MB limit")
+
+    file_id = str(uuid.uuid4())
+    dest_dir = _uploads_dir() / file_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename
+    shutil.copy2(str(real_src), str(dest))
+
+    mime_type = MIME_TYPES.get(ext)
+    record = await db.create_file(
+        id=file_id,
+        filename=filename,
+        stored_path=str(dest),
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        uploaded_by=None,
+        task_id=task_id,
+    )
+
+    return {
+        "id": record["id"],
+        "filename": record["filename"],
+        "stored_path": record["stored_path"],
+        "size_bytes": record["size_bytes"],
+    }
+
+
+async def _handle_add_project_file(arguments: dict) -> dict:
+    # Worker calls must supply task_id so we can validate the source path is
+    # within the task's worktree. This prevents a worker from uploading
+    # arbitrary system files (e.g. /etc/passwd) by exploiting project scope.
+    # Future hardening: non-worker callers (dashboard) should validate against
+    # a user-owned upload directory instead.
+    if not get_request_is_worker():
+        raise ValueError("add_project_file is only available on the worker endpoint")
+
+    project_id = arguments.get("project_id")
+    source_path = arguments.get("source_path")
+    filename = arguments.get("filename")
+    task_id = arguments.get("task_id")
+
+    if not project_id:
+        raise ValueError("project_id is required")
+    if not source_path:
+        raise ValueError("source_path is required")
+    if not task_id:
+        raise ValueError("task_id is required for worker calls")
+
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found")
+
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError(f"Task '{task_id}' not found")
+
+    worktree_path = task.get("worktree_path")
+    if not worktree_path:
+        raise ValueError("Task has no worktree_path — cannot validate source path")
+
+    src = Path(source_path)
+    if not src.exists():
+        raise ValueError(f"File not found: {source_path}")
+    if not src.is_file():
+        raise ValueError(f"Source path is not a file: {source_path}")
+
+    # Resolve real paths — prevent directory traversal outside the worktree
+    real_src = src.resolve()
+    real_worktree = Path(worktree_path).resolve()
+    try:
+        real_src.relative_to(real_worktree)
+    except ValueError:
+        raise ValueError("Source path must be within the worktree")
+
+    # Default filename from source basename
+    if not filename:
+        filename = real_src.name
+    filename = Path(filename).name
+    if not filename:
+        raise ValueError("Invalid filename")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"File type .{ext} not allowed")
+
+    size_bytes = real_src.stat().st_size
+    if size_bytes > MAX_FILE_SIZE:
+        raise ValueError("File exceeds 10MB limit")
+
+    file_id = str(uuid.uuid4())
+    dest_dir = _uploads_dir() / file_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename
+    shutil.copy2(str(real_src), str(dest))
+
+    mime_type = MIME_TYPES.get(ext)
+    record = await db.create_file(
+        id=file_id,
+        filename=filename,
+        stored_path=str(dest),
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        uploaded_by=None,
+        project_id=project_id,
+    )
+
+    return {
+        "id": record["id"],
+        "filename": record["filename"],
+        "stored_path": record["stored_path"],
+        "size_bytes": record["size_bytes"],
+        "project_id": record["project_id"],
+    }
+
+
+async def _handle_get_file(arguments: dict) -> dict:
+    # Accept both "id" (get_file) and "file_id" (deprecated get_attached_file alias)
+    file_id = arguments.get("id") or arguments.get("file_id")
+    if not file_id:
+        raise ValueError("file_id is required")
+
+    record = await db.get_file(file_id)
+    if not record:
+        raise ValueError(f"File '{file_id}' not found")
+
+    filename = record.get("filename", "")
+    readable = _is_readable(filename)
+
+    if not readable:
+        return {
+            "id": file_id,
+            "filename": filename,
+            "mime_type": record.get("mime_type"),
+            "size_bytes": record.get("size_bytes"),
+            "task_id": record.get("task_id"),
+            "project_id": record.get("project_id"),
+            "created_at": record.get("created_at"),
+            "readable": False,
+        }
+
+    stored_path = Path(record["stored_path"])
+    if not stored_path.exists():
+        raise ValueError(f"File not found on disk: {filename}")
+
+    max_bytes = arguments.get("max_bytes", 1048576)
+    content = stored_path.read_bytes()
+    size = len(content)
+    truncated = size > max_bytes
+
+    return {
+        "id": file_id,
+        "filename": filename,
+        "content": content[:max_bytes].decode("utf-8", errors="replace"),
+        "size_bytes": size,
+        "truncated": truncated,
+        "mime_type": record.get("mime_type"),
+        "task_id": record.get("task_id"),
+        "project_id": record.get("project_id"),
+        "created_at": record.get("created_at"),
+        "readable": True,
+    }
+
+
+async def _handle_promote_task_file(arguments: dict) -> dict:
+    file_id = arguments.get("file_id")
+    project_id = arguments.get("project_id")
+
+    if not file_id:
+        raise ValueError("file_id is required")
+    if not project_id:
+        raise ValueError("project_id is required")
+
+    project = await db.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project '{project_id}' not found")
+
+    record = await db.promote_task_file(file_id, project_id)
+    if not record:
+        raise ValueError(f"File '{file_id}' not found or has no task_id — only task files can be promoted")
+
+    return {
+        "id": record["id"],
+        "filename": record["filename"],
+        "task_id": record["task_id"],
+        "project_id": record["project_id"],
+    }

@@ -1,16 +1,16 @@
-# Foreman — example single-tenant deployment
+# Ouvrage — example single-tenant deployment
 #
 # Usage:
 #   docker compose -f docker-compose.example.yml up -d
 #
-# This runs Foreman with AUTH_MODE=local (built-in login page).
+# This runs Ouvrage with AUTH_MODE=local (built-in login page).
 # For SaaS mode, uncomment the control plane env vars below.
 
 services:
-  foreman:
-    image: foreman:latest
+  ouvrage:
+    image: ouvrage:latest
     build: .
-    container_name: foreman
+    container_name: ouvrage
     restart: unless-stopped
     ports:
       - "8100:8100"
@@ -24,8 +24,8 @@ services:
       - KILL
 
     volumes:
-      - foreman-data:/data    # SQLite DB, OAuth RSA key, state
-      - foreman-work:/work    # Git bare repos and worktrees
+      - ouvrage-data:/data    # SQLite DB, OAuth RSA key, state
+      - ouvrage-work:/work    # Git bare repos and worktrees
 
     # --- Docker secrets (recommended for production) ---
     # The master encryption key protects stored credentials (GitHub PATs, API keys).
@@ -36,7 +36,7 @@ services:
     environment:
       # --- Core ---
       PORT: "8100"
-      SWITCHBOARD_DB: /data/switchboard.db
+      OUVRAGE_DB: /data/ouvrage.db
       OAUTH_RSA_KEY_PATH: /data/oauth_rsa_key.pem
       WORKER_USER: switchboard
 
@@ -48,21 +48,21 @@ services:
       # --- Local auth: owner bootstrap (first boot only) ---
       # Uncomment to auto-create the owner user on first start.
       # After first boot these can be removed.
-      # SWITCHBOARD_OWNER_EMAIL: admin@example.com
-      # SWITCHBOARD_OWNER_NAME: Admin
-      # SWITCHBOARD_OWNER_PASSWORD_HASH: "$argon2id$..."
+      # OUVRAGE_OWNER_EMAIL: admin@example.com
+      # OUVRAGE_OWNER_NAME: Admin
+      # OUVRAGE_OWNER_PASSWORD_HASH: "$argon2id$..."
 
       # --- SaaS mode (uncomment when connecting to control plane) ---
-      # CONTROL_PLANE_URL: https://foreman.dev
-      # CONTROL_PLANE_JWKS: https://foreman.dev/api/auth/.well-known/jwks.json
+      # CONTROL_PLANE_URL: https://ouvrage.build
+      # CONTROL_PLANE_JWKS: https://ouvrage.build/api/auth/.well-known/jwks.json
       # INSTANCE_SLUG: acme
       # INTERNAL_API_TOKEN: <shared-secret-from-control-plane>
       # MAX_PROJECTS: 0
 
       # --- OAuth (for MCP client connections like Claude.ai) ---
-      # AUTH_ISSUER_URL: https://acme.foreman.dev
-      # OAUTH_BASE_URL: https://acme.foreman.dev
-      # RESOURCE_URL: https://acme.foreman.dev/mcp
+      # AUTH_ISSUER_URL: https://acme.ouvrage.build
+      # OAUTH_BASE_URL: https://acme.ouvrage.build
+      # RESOURCE_URL: https://acme.ouvrage.build/mcp
 
       # --- Customer credentials (pushed via POST /internal/config in SaaS) ---
       # ANTHROPIC_API_KEY: <customer-provides>
@@ -77,7 +77,7 @@ services:
     # Add both containers to a shared Docker network:
     #
     # networks:
-    #   - foreman-internal
+    #   - ouvrage-internal
     #
     # The control plane calls POST /internal/config and POST /internal/bootstrap-user
     # over this network. Caddy on the host should NOT proxy /internal/* to the public.
@@ -89,10 +89,10 @@ secrets:
     file: ./secrets/master_key
 
 volumes:
-  foreman-data:
-  foreman-work:
+  ouvrage-data:
+  ouvrage-work:
 
 # Uncomment for SaaS control plane connectivity:
 # networks:
-#   foreman-internal:
+#   ouvrage-internal:
 #     external: true

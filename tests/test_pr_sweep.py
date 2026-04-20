@@ -3,13 +3,13 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from switchboard.dispatch.pr_sweep import (
+from ouvrage.dispatch.pr_sweep import (
     _parse_pr_url,
     _check_pr_status,
     _handle_pr_merged,
     _pr_status_sweep,
 )
-from switchboard.git.providers.base import RepoInfo
+from ouvrage.git.providers.base import RepoInfo
 
 
 # ---------------------------------------------------------------------------
@@ -71,9 +71,9 @@ def _patch_resolve_credential(status_dict: dict, project_dict: dict | None = Non
     """Patch resolve_credential and db.get_project for pr_sweep tests."""
     mock_provider, credential = _make_mock_provider(status_dict)
     project = project_dict or {"id": "test-proj", "repo": "https://github.com/acme/widgets.git"}
-    ctx = patch("switchboard.dispatch.pr_sweep.resolve_credential",
+    ctx = patch("ouvrage.dispatch.pr_sweep.resolve_credential",
                 AsyncMock(return_value=(mock_provider, credential)))
-    db_ctx = patch("switchboard.dispatch.pr_sweep.db.get_project",
+    db_ctx = patch("ouvrage.dispatch.pr_sweep.db.get_project",
                    AsyncMock(return_value=project))
     return ctx, db_ctx, mock_provider
 
@@ -108,9 +108,9 @@ class TestCheckPrStatus:
         )
         mock_provider.get_pr_status = AsyncMock(side_effect=Exception("404 Not Found"))
         project = {"id": "test-proj", "repo": "https://github.com/acme/widgets.git"}
-        with patch("switchboard.dispatch.pr_sweep.resolve_credential",
+        with patch("ouvrage.dispatch.pr_sweep.resolve_credential",
                    AsyncMock(return_value=(mock_provider, "ghp_test"))):
-            with patch("switchboard.dispatch.pr_sweep.db.get_project",
+            with patch("ouvrage.dispatch.pr_sweep.db.get_project",
                        AsyncMock(return_value=project)):
                 with pytest.raises(Exception, match="404"):
                     await _check_pr_status("https://github.com/acme/widgets/pull/99", "test-proj")
@@ -226,10 +226,10 @@ class TestPrStatusSweep:
         tasks_list[0]["pr_status"] = None
 
         # sleep side_effect: first call passes (None), second raises to stop loop
-        with patch("switchboard.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
-            with patch("switchboard.dispatch.pr_sweep._check_pr_status", AsyncMock(return_value="merged")):
-                with patch("switchboard.dispatch.pr_sweep.db.update_task", AsyncMock()) as mock_update:
-                    with patch("switchboard.dispatch.pr_sweep._handle_pr_merged", AsyncMock()) as mock_handle:
+        with patch("ouvrage.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
+            with patch("ouvrage.dispatch.pr_sweep._check_pr_status", AsyncMock(return_value="merged")):
+                with patch("ouvrage.dispatch.pr_sweep.db.update_task", AsyncMock()) as mock_update:
+                    with patch("ouvrage.dispatch.pr_sweep._handle_pr_merged", AsyncMock()) as mock_handle:
                         with patch("asyncio.sleep", AsyncMock(side_effect=[None, StopAsyncIteration])):
                             try:
                                 await _pr_status_sweep()
@@ -247,9 +247,9 @@ class TestPrStatusSweep:
         tasks_list[0]["pr_url"] = pr_url
         tasks_list[0]["pr_status"] = "open"
 
-        with patch("switchboard.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
-            with patch("switchboard.dispatch.pr_sweep._check_pr_status", AsyncMock(return_value="open")):
-                with patch("switchboard.dispatch.pr_sweep.db.update_task", AsyncMock()) as mock_update:
+        with patch("ouvrage.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
+            with patch("ouvrage.dispatch.pr_sweep._check_pr_status", AsyncMock(return_value="open")):
+                with patch("ouvrage.dispatch.pr_sweep.db.update_task", AsyncMock()) as mock_update:
                     with patch("asyncio.sleep", AsyncMock(side_effect=[None, StopAsyncIteration])):
                         try:
                             await _pr_status_sweep()
@@ -277,9 +277,9 @@ class TestPrStatusSweep:
                 raise Exception("API error")
             return "open"
 
-        with patch("switchboard.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
-            with patch("switchboard.dispatch.pr_sweep._check_pr_status", side_effect=_flaky_check):
-                with patch("switchboard.dispatch.pr_sweep.db.update_task", AsyncMock()):
+        with patch("ouvrage.dispatch.pr_sweep.db.get_tasks_with_open_prs", AsyncMock(return_value=tasks_list)):
+            with patch("ouvrage.dispatch.pr_sweep._check_pr_status", side_effect=_flaky_check):
+                with patch("ouvrage.dispatch.pr_sweep.db.update_task", AsyncMock()):
                     with patch("asyncio.sleep", AsyncMock(side_effect=[None, StopAsyncIteration])):
                         try:
                             await _pr_status_sweep()
@@ -343,7 +343,7 @@ class TestGetTasksWithOpenPrs:
 class TestGhCliGuard:
     @pytest.mark.asyncio
     async def test_allows_non_bash(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultAllow
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -353,7 +353,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_blocks_gh_pr_create(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultDeny
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -364,7 +364,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_blocks_gh_in_middle_of_command(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultDeny
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -374,7 +374,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_allows_regular_bash(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultAllow
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -384,7 +384,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_allows_bash_without_gh(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultAllow
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -394,7 +394,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_blocks_piped_gh(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultDeny
         from claude_agent_sdk.types import ToolPermissionContext
 
@@ -404,7 +404,7 @@ class TestGhCliGuard:
 
     @pytest.mark.asyncio
     async def test_rejection_message_mentions_gate_pipeline(self):
-        from switchboard.dispatch.sdk_session import _gh_cli_guard
+        from ouvrage.dispatch.sdk_session import _gh_cli_guard
         from claude_agent_sdk import PermissionResultDeny
         from claude_agent_sdk.types import ToolPermissionContext
 

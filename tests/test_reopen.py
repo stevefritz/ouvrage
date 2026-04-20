@@ -19,7 +19,7 @@ class TestReopenTask:
     """reopen_task transitions completed → reopened."""
 
     async def test_reopen_succeeds_on_completed_task(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-ok",
@@ -33,8 +33,8 @@ class TestReopenTask:
         assert result["reason"] == "awaiting_feedback"
 
     async def test_reopen_fails_on_non_completed_task(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
-        from switchboard.dispatch.lifecycle import IllegalTransition
+        from ouvrage.dispatch.engine import reopen_task
+        from ouvrage.dispatch.lifecycle import IllegalTransition
 
         task = await db.create_task(
             id="test-project/reopen-fail-working",
@@ -47,8 +47,8 @@ class TestReopenTask:
             await reopen_task(task["id"])
 
     async def test_reopen_fails_on_failed_task(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
-        from switchboard.dispatch.lifecycle import IllegalTransition
+        from ouvrage.dispatch.engine import reopen_task
+        from ouvrage.dispatch.lifecycle import IllegalTransition
 
         task = await db.create_task(
             id="test-project/reopen-fail-failed",
@@ -61,13 +61,13 @@ class TestReopenTask:
             await reopen_task(task["id"])
 
     async def test_reopen_fails_on_missing_task(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         with pytest.raises(ValueError, match="not found"):
             await reopen_task("test-project/does-not-exist")
 
     async def test_reopen_increments_current_attempt(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-attempt",
@@ -83,7 +83,7 @@ class TestReopenTask:
 
     async def test_reopen_increments_from_higher_attempt(self, db, sample_project):
         """Works correctly when current_attempt > 1."""
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-attempt-3",
@@ -98,7 +98,7 @@ class TestReopenTask:
         assert updated["current_attempt"] == 4
 
     async def test_reopen_sets_status_to_stopped_awaiting_feedback(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-status",
@@ -114,7 +114,7 @@ class TestReopenTask:
         assert updated["reason"] == "awaiting_feedback"
 
     async def test_reopen_clears_session_id(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-clear-session",
@@ -130,7 +130,7 @@ class TestReopenTask:
         assert updated["session_id"] == "ses_abc123"
 
     async def test_reopen_clears_gate_status(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-clear-gate",
@@ -151,7 +151,7 @@ class TestReopenTask:
         assert updated["gate_passed_at"] is None
 
     async def test_reopen_posts_status_message_stamped_to_new_attempt(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-msg",
@@ -170,7 +170,7 @@ class TestReopenTask:
         assert reopen_msgs[0]["attempt_number"] == 2
 
     async def test_reopen_posts_awaiting_feedback_message(self, db, sample_project):
-        from switchboard.dispatch.engine import reopen_task
+        from ouvrage.dispatch.engine import reopen_task
 
         task = await db.create_task(
             id="test-project/reopen-msg-content",
@@ -183,7 +183,7 @@ class TestReopenTask:
 
         thread = await db.read_task_messages(task["id"])
         msgs = thread["messages"]
-        reopen_msgs = [m for m in msgs if m.get("author") == "switchboard"]
+        reopen_msgs = [m for m in msgs if m.get("author") == "ouvrage"]
         assert len(reopen_msgs) == 1
         assert "awaiting feedback" in reopen_msgs[0]["title"].lower()
         assert reopen_msgs[0]["type"] == "status"
@@ -197,7 +197,7 @@ class TestStartReopenedTask:
     """start_reopened_task transitions stopped(awaiting_feedback) → working via lifecycle."""
 
     async def test_start_fails_on_non_reopened_task(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import start_reopened_task
+        from ouvrage.dispatch.engine import start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-fail-completed",
@@ -206,19 +206,19 @@ class TestStartReopenedTask:
         )
         await db.update_task(task["id"], status="completed")
 
-        from switchboard.dispatch.lifecycle import IllegalTransition
+        from ouvrage.dispatch.lifecycle import IllegalTransition
         with pytest.raises(IllegalTransition):
             await start_reopened_task(task["id"])
 
     async def test_start_fails_on_missing_task(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import start_reopened_task
+        from ouvrage.dispatch.engine import start_reopened_task
 
         with pytest.raises(ValueError, match="not found"):
             await start_reopened_task("test-project/no-such-task")
 
     async def test_start_calls_dispatch_with_phase_revisions(self, db, sample_project, mock_git, mock_sdk):
         """start_reopened_task transitions to working status."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-phase",
@@ -235,8 +235,8 @@ class TestStartReopenedTask:
 
     async def test_start_collects_user_feedback_messages(self, db, sample_project, mock_git, mock_sdk):
         """Only user-authored messages after the reopen message are passed as feedback."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
-        from switchboard.dispatch.internals import collect_reopen_feedback
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.internals import collect_reopen_feedback
 
         task = await db.create_task(
             id="test-project/start-feedback",
@@ -271,9 +271,9 @@ class TestStartReopenedTask:
         assert authors == {"stephen"}
 
     async def test_start_excludes_system_authors_from_feedback(self, db, sample_project, mock_git, mock_sdk):
-        """switchboard, dispatcher, cc-worker messages are not included in feedback."""
-        from switchboard.dispatch.engine import reopen_task
-        from switchboard.dispatch.internals import collect_reopen_feedback
+        """ouvrage/switchboard, dispatcher, cc-worker messages are not included in feedback."""
+        from ouvrage.dispatch.engine import reopen_task
+        from ouvrage.dispatch.internals import collect_reopen_feedback
 
         task = await db.create_task(
             id="test-project/start-filter",
@@ -296,7 +296,7 @@ class TestStartReopenedTask:
         assert feedback is None
 
     async def test_start_passes_correct_task_id_and_goal(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-args",
@@ -314,7 +314,7 @@ class TestStartReopenedTask:
 
     async def test_start_posts_attempt_starting_message(self, db, sample_project, mock_git, mock_sdk):
         """start_reopened_task posts 'Attempt N starting' before dispatching."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-msg",
@@ -333,7 +333,7 @@ class TestStartReopenedTask:
         assert starting_msgs[0]["attempt_number"] == 2
 
     async def test_start_invalidates_chain_when_dependents_exist(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         parent = await db.create_task(
             id="test-project/start-parent",
@@ -350,13 +350,13 @@ class TestStartReopenedTask:
         await reopen_task(parent["id"])
 
         mock_invalidate = AsyncMock()
-        with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
+        with patch("ouvrage.dispatch.engine._invalidate_chain", mock_invalidate):
             await start_reopened_task(parent["id"])
 
         mock_invalidate.assert_awaited_once_with("test-project/start-parent")
 
     async def test_start_does_not_invalidate_when_no_dependents(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-no-deps",
@@ -367,7 +367,7 @@ class TestStartReopenedTask:
         await reopen_task(task["id"])
 
         mock_invalidate = AsyncMock()
-        with patch("switchboard.dispatch.engine._invalidate_chain", mock_invalidate):
+        with patch("ouvrage.dispatch.engine._invalidate_chain", mock_invalidate):
             await start_reopened_task(task["id"])
 
         mock_invalidate.assert_not_awaited()
@@ -381,7 +381,7 @@ class TestRetryTaskStartingMessage:
     """Regression: retry_task posts 'Attempt N starting' message before dispatch."""
 
     async def test_retry_posts_starting_message(self, db, sample_project, mock_git, mock_sdk):
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-starting-msg",
@@ -397,11 +397,11 @@ class TestRetryTaskStartingMessage:
         starting_msgs = [m for m in msgs if "starting" in (m.get("title") or "").lower()]
         assert len(starting_msgs) == 1
         assert starting_msgs[0]["attempt_number"] == 2
-        assert starting_msgs[0]["author"] == "switchboard"
+        assert starting_msgs[0]["author"] == "ouvrage"
 
     async def test_retry_starting_message_posted_before_dispatch(self, db, sample_project, mock_git, mock_sdk):
         """The 'Attempt N starting' message is posted as part of the retry side effect."""
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
 
         task = await db.create_task(
             id="test-project/retry-order",
@@ -428,7 +428,7 @@ class TestCancelReopen:
     """cancel_reopen() reverses a reopen — back to completed."""
 
     async def test_cancel_reopen_succeeds_on_reopened_task(self, db, sample_project):
-        from switchboard.dispatch.engine import cancel_reopen, reopen_task
+        from ouvrage.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-ok",
@@ -442,8 +442,8 @@ class TestCancelReopen:
         assert result["status"] == "completed"
 
     async def test_cancel_reopen_fails_on_non_reopened_task(self, db, sample_project):
-        from switchboard.dispatch.engine import cancel_reopen
-        from switchboard.dispatch.lifecycle import IllegalTransition
+        from ouvrage.dispatch.engine import cancel_reopen
+        from ouvrage.dispatch.lifecycle import IllegalTransition
 
         task = await db.create_task(
             id="test-project/cancel-reopen-fail",
@@ -456,13 +456,13 @@ class TestCancelReopen:
             await cancel_reopen(task["id"])
 
     async def test_cancel_reopen_fails_on_missing_task(self, db, sample_project):
-        from switchboard.dispatch.engine import cancel_reopen
+        from ouvrage.dispatch.engine import cancel_reopen
 
         with pytest.raises(ValueError, match="not found"):
             await cancel_reopen("test-project/no-such-task")
 
     async def test_cancel_reopen_decrements_attempt(self, db, sample_project):
-        from switchboard.dispatch.engine import cancel_reopen, reopen_task
+        from ouvrage.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-attempt",
@@ -483,7 +483,7 @@ class TestCancelReopen:
 
     async def test_cancel_reopen_deletes_reopened_messages(self, db, sample_project):
         """Messages stamped to the reopened attempt should be deleted."""
-        from switchboard.dispatch.engine import cancel_reopen, reopen_task
+        from ouvrage.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-msgs",
@@ -512,7 +512,7 @@ class TestCancelReopen:
 
     async def test_cancel_reopen_preserves_earlier_attempt_messages(self, db, sample_project):
         """Messages from attempt 1 should NOT be deleted."""
-        from switchboard.dispatch.engine import cancel_reopen, reopen_task
+        from ouvrage.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-preserve",
@@ -536,7 +536,7 @@ class TestCancelReopen:
 
     async def test_cancel_reopen_restores_gate_status(self, db, sample_project):
         """cancel_reopen restores the gate_status and gate_passed_at that were saved at reopen."""
-        from switchboard.dispatch.engine import cancel_reopen, reopen_task
+        from ouvrage.dispatch.engine import cancel_reopen, reopen_task
 
         task = await db.create_task(
             id="test-project/cancel-reopen-gate",
@@ -580,7 +580,7 @@ class TestSyncBranchWithBase:
     """_sync_branch_with_base() — rebase helper for start_reopened_task."""
 
     async def test_returns_true_when_no_worktree(self, db, sample_project):
-        from switchboard.git.operations import _sync_branch_with_base
+        from ouvrage.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-no-worktree",
@@ -592,7 +592,7 @@ class TestSyncBranchWithBase:
         assert result is True
 
     async def test_returns_true_when_worktree_missing_from_disk(self, db, sample_project):
-        from switchboard.git.operations import _sync_branch_with_base
+        from ouvrage.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-missing-dir",
@@ -608,7 +608,7 @@ class TestSyncBranchWithBase:
     async def test_rebase_conflict_sets_gate_status_needs_review(self, db, sample_project):
         """When rebase fails, gate_status is set to needs-review."""
         import os
-        from switchboard.git.operations import _sync_branch_with_base
+        from ouvrage.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-conflict",
@@ -628,8 +628,8 @@ class TestSyncBranchWithBase:
                     return b"", b"CONFLICT", 1
                 return b"", b"", 0
 
-            with patch("switchboard.git.operations._run_as_worker", mock_run):
-                with patch("switchboard.git.operations.resolve_branch_target", return_value="main"):
+            with patch("ouvrage.git.operations._run_as_worker", mock_run):
+                with patch("ouvrage.git.operations.resolve_branch_target", return_value="main"):
                     result = await _sync_branch_with_base(task)
 
         assert result is False
@@ -641,7 +641,7 @@ class TestSyncBranchWithBase:
         import tempfile
         from unittest.mock import patch
 
-        from switchboard.git.operations import _sync_branch_with_base
+        from ouvrage.git.operations import _sync_branch_with_base
 
         task = await db.create_task(
             id="test-project/sync-conflict-msg",
@@ -657,8 +657,8 @@ class TestSyncBranchWithBase:
                     return b"", b"CONFLICT", 1
                 return b"", b"", 0
 
-            with patch("switchboard.git.operations._run_as_worker", mock_run):
-                with patch("switchboard.git.operations.resolve_branch_target", return_value="main"):
+            with patch("ouvrage.git.operations._run_as_worker", mock_run):
+                with patch("ouvrage.git.operations.resolve_branch_target", return_value="main"):
                     await _sync_branch_with_base(task)
 
         thread = await db.read_task_messages(task["id"])
@@ -676,7 +676,7 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_passes_auto_test_override(self, db, sample_project, mock_git, mock_sdk):
         """auto_test=False override is applied to the task in the DB before dispatch."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-override-test",
@@ -694,7 +694,7 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_without_overrides_omits_auto_test_key(self, db, sample_project, mock_git, mock_sdk):
         """start_reopened_task without overrides leaves task auto_test unchanged."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-no-override",
@@ -714,8 +714,8 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_with_auto_test_false_skips_test_gate(self, db, sample_project, mock_git, mock_sdk):
         """start(auto_test=False) causes test gate to be skipped on completion."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/start-skip-test-gate",
@@ -738,10 +738,10 @@ class TestStartReopenedTaskOverrides:
         mock_dispatch_dependents = AsyncMock()
         mock_drain_queue = AsyncMock()
         with (
-            patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", mock_review_gate),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
-            patch("switchboard.dispatch.queue._drain_queue", mock_drain_queue),
+            patch("ouvrage.dispatch.gates._run_test_gate", mock_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", mock_review_gate),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
+            patch("ouvrage.dispatch.queue._drain_queue", mock_drain_queue),
         ):
             await lifecycle.execute(task["id"], "complete", triggered_by="sdk")
 
@@ -750,8 +750,8 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_with_auto_review_false_skips_review_gate(self, db, sample_project, mock_git, mock_sdk):
         """start(auto_review=False) causes review gate to be skipped on completion."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
-        from switchboard.dispatch.lifecycle import lifecycle
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.lifecycle import lifecycle
 
         task = await db.create_task(
             id="test-project/start-skip-review-gate",
@@ -774,10 +774,10 @@ class TestStartReopenedTaskOverrides:
         mock_dispatch_dependents = AsyncMock()
         mock_drain_queue = AsyncMock()
         with (
-            patch("switchboard.dispatch.gates._run_test_gate", mock_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", mock_review_gate),
-            patch("switchboard.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
-            patch("switchboard.dispatch.queue._drain_queue", mock_drain_queue),
+            patch("ouvrage.dispatch.gates._run_test_gate", mock_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", mock_review_gate),
+            patch("ouvrage.dispatch.engine._check_and_dispatch_dependents", mock_dispatch_dependents),
+            patch("ouvrage.dispatch.queue._drain_queue", mock_drain_queue),
         ):
             await lifecycle.execute(task["id"], "complete", triggered_by="sdk")
 
@@ -786,7 +786,7 @@ class TestStartReopenedTaskOverrides:
 
     async def test_start_fires_notification_with_correct_args(self, db, sample_project, mock_git, mock_sdk):
         """start_reopened_task fires task_attempt_starting with correct task_id, attempt, and goal."""
-        from switchboard.dispatch.engine import reopen_task, start_reopened_task
+        from ouvrage.dispatch.engine import reopen_task, start_reopened_task
 
         task = await db.create_task(
             id="test-project/start-notify-args",
@@ -797,7 +797,7 @@ class TestStartReopenedTaskOverrides:
         await reopen_task(task["id"])
 
         mock_notify = AsyncMock()
-        with patch("switchboard.notifications.slack.task_attempt_starting", mock_notify):
+        with patch("ouvrage.notifications.slack.task_attempt_starting", mock_notify):
             await start_reopened_task(task["id"])
 
         mock_notify.assert_awaited_once_with(task["id"], 2, "Notification args test goal")

@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import switchboard.db as db
-from switchboard.dispatch._state import _running_gates
+import ouvrage.db as db
+from ouvrage.dispatch._state import _running_gates
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ class TestTestToReviewTransition:
         This is the exact bug scenario: _run_test_gate adds to _running_gates,
         then _run_test_gate_inner calls _dispatch_review. The review must run.
         """
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         # Simulate: task is in _running_gates (held by _run_test_gate)
         _running_gates.add("test-project/audit-task-1")
@@ -99,7 +99,7 @@ class TestTestToReviewTransition:
         async def _fake_inner(tid, proj, task):
             inner_called.append(tid)
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/audit-task-1", sample_project, {})
 
         # The review inner function MUST be called (was skipped before the fix)
@@ -107,7 +107,7 @@ class TestTestToReviewTransition:
 
     async def test_dispatch_review_adds_to_running_gates_for_liveness(self, db, sample_project):
         """_dispatch_review still adds to _running_gates for background monitor liveness."""
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         # Create task NOT in reviewing state
         await _make_task(db, gate_status="test-passed")
@@ -117,14 +117,14 @@ class TestTestToReviewTransition:
         async def _fake_inner(tid, proj, task):
             captured_in_gates.append(tid in _running_gates)
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/audit-task-1", sample_project, {})
 
         assert captured_in_gates == [True]
 
     async def test_dispatch_review_blocks_duplicate_via_gate_status(self, db, sample_project):
         """If gate_status is already 'reviewing', _dispatch_review skips (new duplicate guard)."""
-        from switchboard.dispatch.gates import _dispatch_review
+        from ouvrage.dispatch.gates import _dispatch_review
 
         # Create task already in reviewing state
         await _make_task(db, gate_status="reviewing")
@@ -134,7 +134,7 @@ class TestTestToReviewTransition:
         async def _fake_inner(tid, proj, task):
             inner_called.append(tid)
 
-        with patch("switchboard.dispatch.gates._dispatch_review_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._dispatch_review_inner", _fake_inner):
             await _dispatch_review("test-project/audit-task-1", sample_project, {})
 
         assert inner_called == []  # Duplicate blocked
@@ -162,10 +162,10 @@ class TestInterruptedGateRecovery:
         self.mock_dispatch_review = AsyncMock()
 
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", self.mock_run_test_gate),
-            patch("switchboard.dispatch.gates._dispatch_review", self.mock_dispatch_review),
-            patch("switchboard.dispatch.gates.notify", AsyncMock()),
-            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+            patch("ouvrage.dispatch.gates._run_test_gate", self.mock_run_test_gate),
+            patch("ouvrage.dispatch.gates._dispatch_review", self.mock_dispatch_review),
+            patch("ouvrage.dispatch.gates.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()
@@ -176,7 +176,7 @@ class TestInterruptedGateRecovery:
 
     async def test_testing_interrupted_reruns_test_gate(self, db, sample_project):
         """Scenario 4: gate_status=testing after restart → re-run test gate."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="testing")
 
@@ -192,7 +192,7 @@ class TestInterruptedGateRecovery:
 
     async def test_testing_interrupted_preserves_gate_retries(self, db, sample_project):
         """Recovery does not reset gate_retries for interrupted test gates."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="testing", gate_retries=2)
 
@@ -205,7 +205,7 @@ class TestInterruptedGateRecovery:
 
     async def test_reviewing_interrupted_dispatches_fresh_review(self, db, sample_project):
         """Scenario 5: gate_status=reviewing after restart → fresh review dispatch."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="reviewing")
 
@@ -219,7 +219,7 @@ class TestInterruptedGateRecovery:
     async def test_reviewing_recovery_resets_gate_status_before_dispatch(self, db, sample_project):
         """Scenario 5 detail: recovery resets gate_status to test-passed so
         _dispatch_review's duplicate guard (gate_status==reviewing) doesn't block it."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="reviewing")
 
@@ -236,7 +236,7 @@ class TestInterruptedGateRecovery:
 
     async def test_test_passed_dispatches_review(self, db, sample_project):
         """Scenario 6: gate_status=test-passed after restart → dispatch review."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="test-passed", auto_review=True)
 
@@ -265,8 +265,8 @@ class TestRejectionStatesNotReenteredByRetry:
         await _make_task(db, status="completed", gate_status="review-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
         # review-failed is NOT an interrupted state — CC gets a fresh session, not gate re-entry
@@ -279,8 +279,8 @@ class TestRejectionStatesNotReenteredByRetry:
         await _make_task(db, status="completed", gate_status="test-failed", gate_retries=1)
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
         mock_resume_pipeline.assert_not_called()
@@ -292,8 +292,8 @@ class TestRejectionStatesNotReenteredByRetry:
         await _make_task(db, status="completed", gate_status="needs-review", gate_retries=2)
 
         mock_resume_pipeline = AsyncMock()
-        with patch("switchboard.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
-            from switchboard.dispatch.engine import retry_task
+        with patch("ouvrage.dispatch.gates._resume_gate_pipeline", mock_resume_pipeline):
+            from ouvrage.dispatch.engine import retry_task
             await retry_task("test-project/audit-task-1")
 
         mock_resume_pipeline.assert_not_called()
@@ -304,7 +304,7 @@ class TestRejectionStatesNotReenteredByRetry:
         """retry_task resets gate_status and gate_retries for fresh CC run."""
         await _make_task(db, status="completed", gate_status="review-failed", gate_retries=2)
 
-        from switchboard.dispatch.engine import retry_task
+        from ouvrage.dispatch.engine import retry_task
         await retry_task("test-project/audit-task-1")
 
         # After retry_task, gate state is cleared before dispatch_task is called
@@ -324,9 +324,9 @@ class TestMissingWorktreeGuard:
     def _setup(self):
         _running_gates.clear()
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.dispatch.gates.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.dispatch.gates.notify", AsyncMock()),
         ]
         for p in patches:
             p.start()
@@ -337,7 +337,7 @@ class TestMissingWorktreeGuard:
 
     async def test_missing_worktree_sets_needs_review(self, db, sample_project):
         """Scenario 9: worktree released → recovery sets gate_status=needs-review."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         # worktree_path is None (released)
         await _make_task(db, gate_status="testing", worktree_path=None)
@@ -350,7 +350,7 @@ class TestMissingWorktreeGuard:
 
     async def test_nonexistent_worktree_sets_needs_review(self, db, sample_project):
         """Worktree path set but directory doesn't exist → needs-review."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="testing",
                          worktree_path="/tmp/nonexistent-worktree-xyz-999")
@@ -363,7 +363,7 @@ class TestMissingWorktreeGuard:
 
     async def test_worktree_guard_posts_message(self, db, sample_project):
         """Missing worktree posts a status message explaining the situation."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="reviewing", worktree_path=None)
 
@@ -395,10 +395,10 @@ class TestConcurrentRacePrevention:
             return _real_exists(p)
 
         patches = [
-            patch("switchboard.dispatch.gates._run_test_gate", AsyncMock()),
-            patch("switchboard.dispatch.gates._dispatch_review", AsyncMock()),
-            patch("switchboard.dispatch.gates.notify", AsyncMock()),
-            patch("switchboard.dispatch.gates.os.path.exists", side_effect=_fake_exists),
+            patch("ouvrage.dispatch.gates._run_test_gate", AsyncMock()),
+            patch("ouvrage.dispatch.gates._dispatch_review", AsyncMock()),
+            patch("ouvrage.dispatch.gates.notify", AsyncMock()),
+            patch("ouvrage.dispatch.gates.os.path.exists", side_effect=_fake_exists),
         ]
         for p in patches:
             p.start()
@@ -410,7 +410,7 @@ class TestConcurrentRacePrevention:
     async def test_resume_skips_when_gate_already_running(self, db, sample_project):
         """If task_id is in _running_gates (normal completion in progress),
         _resume_gate_pipeline skips to prevent double execution."""
-        from switchboard.dispatch.gates import _resume_gate_pipeline
+        from ouvrage.dispatch.gates import _resume_gate_pipeline
 
         await _make_task(db, gate_status="testing")
         _running_gates.add("test-project/audit-task-1")
@@ -423,7 +423,7 @@ class TestConcurrentRacePrevention:
 
     async def test_run_test_gate_duplicate_guard(self, db, sample_project):
         """_run_test_gate skips if task_id already in _running_gates."""
-        from switchboard.dispatch.gates import _run_test_gate
+        from ouvrage.dispatch.gates import _run_test_gate
 
         _running_gates.add("test-project/audit-task-1")
         inner_called = []
@@ -431,7 +431,7 @@ class TestConcurrentRacePrevention:
         async def _fake_inner(*args):
             inner_called.append(True)
 
-        with patch("switchboard.dispatch.gates._run_test_gate_inner", _fake_inner):
+        with patch("ouvrage.dispatch.gates._run_test_gate_inner", _fake_inner):
             await _run_test_gate("test-project/audit-task-1", {}, {})
 
         assert inner_called == []  # Skipped — gate already running

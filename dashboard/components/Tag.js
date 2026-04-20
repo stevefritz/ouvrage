@@ -1,4 +1,4 @@
-// Foreman — Tag component
+// Ouvrage — Tag component
 // Small pill with monospace text. Used for IDs, branch names, labels.
 
 import { h } from 'https://esm.sh/preact@10.25.4';
@@ -44,7 +44,7 @@ export function Tag({ children, color, bg, onClick, title }) {
                 style=${style}
                 onClick=${onClick}
                 title=${title}
-                class="foreman-tag-btn"
+                class="ouvrage-tag-btn"
             >${children}</button>
         `;
     }

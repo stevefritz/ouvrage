@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from switchboard.config.nudges import (
+from ouvrage.config.nudges import (
     NUDGE_CATEGORIES,
     TOOL_CATEGORY_MAP,
     inject_nudge,
@@ -109,7 +109,7 @@ class TestSelectNudge:
 
     def test_nudge_selected_deterministically_with_fixed_random(self):
         """With a fixed random seed, select_nudge returns a consistent result."""
-        with patch("switchboard.config.nudges.random") as mock_random:
+        with patch("ouvrage.config.nudges.random") as mock_random:
             mock_random.random.return_value = 0.0
             nudge1 = select_nudge("search")
             nudge2 = select_nudge("search")

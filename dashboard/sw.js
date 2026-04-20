@@ -1,4 +1,4 @@
-// Switchboard Service Worker — handles Web Push notifications
+// Ouvrage Service Worker — handles Web Push notifications
 
 self.addEventListener('push', (event) => {
     if (!event.data) return;

@@ -87,7 +87,7 @@ class TestCreateProjectWithPat:
 
     async def test_create_project_stores_pat(self, db):
         """create_project accepts github_pat_override and stores it."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_testtoken")
 
         proj = await db.create_project(
@@ -109,7 +109,7 @@ class TestCreateProjectWithPat:
 
     async def test_get_project_returns_pat(self, db):
         """get_project returns the stored github_pat_override."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_readback")
 
         await db.create_project(
@@ -130,7 +130,7 @@ class TestUpdateProjectPat:
 
     async def test_update_project_sets_pat(self, db):
         """update_project can set github_pat_override."""
-        from switchboard.crypto import encrypt_value, is_fernet_token
+        from ouvrage.crypto import encrypt_value, is_fernet_token
         await db.create_project(id="upd-pat", repo="https://github.com/org/r.git", working_dir="/work/r")
         encrypted = encrypt_value("ghp_newtoken")
         updated = await db.update_project("upd-pat", github_pat_override=encrypted)
@@ -138,7 +138,7 @@ class TestUpdateProjectPat:
 
     async def test_update_project_clears_pat_with_empty_string(self, db):
         """update_project with empty string clears github_pat_override to NULL."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_clearme")
         await db.create_project(
             id="clr-pat",
@@ -151,7 +151,7 @@ class TestUpdateProjectPat:
 
     async def test_update_project_clears_pat_with_none(self, db):
         """update_project with None clears github_pat_override."""
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_clearme2")
         await db.create_project(
             id="clrn-pat",
@@ -173,7 +173,7 @@ class TestGetGithubPatResolution:
         """get_github_pat returns decrypted project PAT when set."""
         await db.create_project(id="ppat-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
         # Set PAT via encrypt_value → stored encrypted
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_projecttoken")
         await db.update_project("ppat-proj", github_pat_override=encrypted)
 
@@ -199,7 +199,7 @@ class TestGetGithubPatResolution:
     async def test_get_github_pat_project_overrides_instance(self, db):
         """Project PAT takes priority over instance PAT."""
         await db.set_instance_github_pat("ghp_instancetoken")
-        from switchboard.crypto import encrypt_value
+        from ouvrage.crypto import encrypt_value
         encrypted = encrypt_value("ghp_projectwins")
         await db.create_project(
             id="prio-proj",
@@ -219,8 +219,8 @@ class TestGetGithubPatResolution:
 
     async def test_pat_override_encrypted_in_db(self, db):
         """github_pat_override is Fernet-encrypted in the raw DB row."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value, is_fernet_token
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import encrypt_value, is_fernet_token
 
         encrypted = encrypt_value("ghp_rawcheck")
         await db.create_project(
@@ -248,13 +248,13 @@ class TestMcpCreateProjectPat:
 
     async def test_create_project_mcp_encrypts_pat(self, db):
         """_handle_create_project encrypts github_pat_override before storing."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.server.handlers.projects import _handle_create_project
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.server.handlers.projects import _handle_create_project
 
-        with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
-             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
+        with patch("ouvrage.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
+             patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("ouvrage.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await _handle_create_project({
                 "id": "mcp-enc-proj",
                 "repo": "https://github.com/org/repo.git",
@@ -278,12 +278,12 @@ class TestMcpCreateProjectPat:
 
     async def test_create_project_mcp_no_pat_stores_null(self, db):
         """_handle_create_project with no PAT stores NULL."""
-        import switchboard.db.connection as _conn
-        from switchboard.server.handlers.projects import _handle_create_project
+        import ouvrage.db.connection as _conn
+        from ouvrage.server.handlers.projects import _handle_create_project
 
-        with patch("switchboard.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
-             patch("switchboard.server.handlers.projects.WORKTREE_BASE", "/work"), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
+        with patch("ouvrage.server.handlers.projects.db.get_max_projects", AsyncMock(return_value=0)), \
+             patch("ouvrage.server.handlers.projects.WORKTREE_BASE", "/work"), \
+             patch("ouvrage.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await _handle_create_project({
                 "id": "mcp-nopat-proj",
                 "repo": "https://github.com/org/repo.git",
@@ -312,9 +312,9 @@ class TestMcpUpdateProjectPat:
 
     async def test_update_project_mcp_encrypts_pat(self, db):
         """_handle_update_project encrypts a new PAT before storing."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.server.handlers.projects import _handle_update_project
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.server.handlers.projects import _handle_update_project
 
         await db.create_project(id="mcp-upd-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
 
@@ -331,9 +331,9 @@ class TestMcpUpdateProjectPat:
 
     async def test_update_project_mcp_clears_pat(self, db):
         """_handle_update_project with empty string clears PAT to NULL."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value
-        from switchboard.server.handlers.projects import _handle_update_project
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import encrypt_value
+        from ouvrage.server.handlers.projects import _handle_update_project
 
         encrypted = encrypt_value("ghp_clearme")
         await db.create_project(
@@ -360,17 +360,17 @@ class TestDashboardCreateProjectPat:
 
     async def test_dashboard_create_project_encrypts_pat(self, db):
         """POST /dashboard/api/projects encrypts github_pat_override before storing."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
         payload = _valid_create_payload(github_pat_override="ghp_dashboardpat")
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
-             patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"), \
+             patch("ouvrage.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
+             patch("ouvrage.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -383,16 +383,16 @@ class TestDashboardCreateProjectPat:
 
     async def test_dashboard_create_project_no_pat_stores_null(self, db):
         """POST /dashboard/api/projects without PAT stores NULL."""
-        import switchboard.db.connection as _conn
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
         payload = _valid_create_payload(id="nopat-dash-proj")
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"), \
-             patch("switchboard.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
-             patch("switchboard.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"), \
+             patch("ouvrage.dashboard.api.db.get_instance_github_pat", AsyncMock(return_value="ghp_instance")), \
+             patch("ouvrage.server.handlers.projects._run_project_validation", AsyncMock(side_effect=lambda pid, proj: proj)):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -412,9 +412,9 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_sets_pat(self, db):
         """PATCH /dashboard/api/projects/{id} encrypts and stores PAT."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import is_fernet_token
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import is_fernet_token
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_project(id="patch-proj", repo="https://github.com/org/r.git", working_dir="/work/r")
 
@@ -432,9 +432,9 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_clears_pat(self, db):
         """PATCH /dashboard/api/projects/{id} with empty string clears PAT."""
-        import switchboard.db.connection as _conn
-        from switchboard.crypto import encrypt_value
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db.connection as _conn
+        from ouvrage.crypto import encrypt_value
+        from ouvrage.dashboard.api import handle_request
 
         encrypted = encrypt_value("ghp_clearpatch")
         await db.create_project(
@@ -458,8 +458,8 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_decrypts_and_reencrypts_pat(self, db):
         """PATCH with a new PAT replaces the old encrypted value."""
-        from switchboard.crypto import encrypt_value, is_fernet_token, decrypt_value
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.crypto import encrypt_value, is_fernet_token, decrypt_value
+        from ouvrage.dashboard.api import handle_request
 
         encrypted_old = encrypt_value("ghp_oldtoken")
         await db.create_project(
@@ -482,7 +482,7 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_not_found(self, db):
         """PATCH returns 404 for nonexistent project."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects/nonexistent", method="PATCH")
         resp = _Capture()
@@ -492,7 +492,7 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_empty_body(self, db):
         """PATCH with no updatable fields returns unchanged project (no-op)."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_project(id="empty-patch", repo="https://github.com/org/r.git", working_dir="/work/r")
 
@@ -505,7 +505,7 @@ class TestDashboardUpdateProjectPat:
 
     async def test_patch_project_updates_non_pat_fields(self, db):
         """PATCH can update other project fields like test_command."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         await db.create_project(id="nonpat-patch", repo="https://github.com/org/r.git", working_dir="/work/r")
 

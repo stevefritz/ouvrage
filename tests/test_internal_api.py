@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from switchboard.internal.api import handle_request
+from ouvrage.internal.api import handle_request
 
 
 # ── ASGI call helper ─────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ class TestLocalMode:
 
     @pytest.fixture(autouse=True)
     def local_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "local"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "local"):
             yield
 
     async def test_config_returns_404_in_local_mode(self, db):
@@ -105,8 +105,8 @@ class TestAuth:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
-             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "saas"), \
+             patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "secret-token"):
             yield
 
     async def test_valid_token_accepted(self, db):
@@ -125,7 +125,7 @@ class TestAuth:
 
     async def test_empty_internal_api_token_rejects_all(self, db):
         """If INTERNAL_API_TOKEN is not configured, all requests fail."""
-        with patch("switchboard.internal.api.INTERNAL_API_TOKEN", None):
+        with patch("ouvrage.internal.api.INTERNAL_API_TOKEN", None):
             status, _ = await _call("GET", "/internal/usage", token="anything")
             assert status == 401
 
@@ -136,8 +136,8 @@ class TestConfig:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
-             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "saas"), \
+             patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "secret-token"):
             yield
 
     async def test_sets_concurrency_limit(self, db):
@@ -212,8 +212,8 @@ class TestBootstrapUser:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
-             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "saas"), \
+             patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "secret-token"):
             yield
 
     async def test_creates_new_user(self, db):
@@ -274,8 +274,8 @@ class TestUsage:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
-             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "saas"), \
+             patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "secret-token"):
             yield
 
     async def test_usage_empty_db(self, db):
@@ -347,7 +347,7 @@ class TestInstanceConfig:
         assert cfg["max_projects"] is None
 
     async def test_get_concurrency_limit_falls_back_to_default(self, db):
-        from switchboard.config.constants import DEFAULT_MAX_CONCURRENT
+        from ouvrage.config.constants import DEFAULT_MAX_CONCURRENT
         limit = await db.get_concurrency_limit()
         assert limit == DEFAULT_MAX_CONCURRENT
 
@@ -391,8 +391,8 @@ class TestConfigTrialEndsAt:
 
     @pytest.fixture(autouse=True)
     def saas_mode(self):
-        with patch("switchboard.internal.api.AUTH_MODE", "saas"), \
-             patch("switchboard.internal.api.INTERNAL_API_TOKEN", "secret-token"):
+        with patch("ouvrage.internal.api.AUTH_MODE", "saas"), \
+             patch("ouvrage.internal.api.INTERNAL_API_TOKEN", "secret-token"):
             yield
 
     async def test_accepts_trial_ends_at(self, db):

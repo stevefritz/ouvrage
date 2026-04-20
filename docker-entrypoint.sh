@@ -50,12 +50,12 @@ if [ -f "$SECRET_FILE" ]; then
     # migrate-auth runs as root (before gosu) so it can still read the file
     # After this block, entrypoint chowns to service user so worker can't read it
     echo "[entrypoint] Master key found at Docker secret"
-elif [ -z "${SWITCHBOARD_MASTER_KEY:-}" ]; then
-    export SWITCHBOARD_MASTER_KEY
-    SWITCHBOARD_MASTER_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-    echo "[entrypoint] WARNING: No /run/secrets/master_key or SWITCHBOARD_MASTER_KEY env var found"
+elif [ -z "${OUVRAGE_MASTER_KEY:-}" ]; then
+    export OUVRAGE_MASTER_KEY
+    OUVRAGE_MASTER_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    echo "[entrypoint] WARNING: No /run/secrets/master_key or OUVRAGE_MASTER_KEY env var found"
     echo "[entrypoint] Generated ephemeral key — credentials will be unrecoverable if container restarts"
-    echo "[entrypoint] Set SWITCHBOARD_MASTER_KEY or use Docker secrets for production"
+    echo "[entrypoint] Set OUVRAGE_MASTER_KEY or use Docker secrets for production"
 fi
 
 # --- OAuth RSA key ---
@@ -78,14 +78,14 @@ fi
 # migrate-auth is idempotent — safe to run every boot.
 # Only runs if owner credentials are provided (SaaS mode: control plane calls
 # POST /internal/bootstrap-user instead, so these vars won't be set).
-if [ -n "${SWITCHBOARD_OWNER_EMAIL:-}" ] && [ -n "${SWITCHBOARD_OWNER_PASSWORD_HASH:-}" ]; then
+if [ -n "${OUVRAGE_OWNER_EMAIL:-}" ] && [ -n "${OUVRAGE_OWNER_PASSWORD_HASH:-}" ]; then
     echo "[entrypoint] Running migrate-auth..."
-    python3 -m switchboard migrate-auth \
-        --email "${SWITCHBOARD_OWNER_EMAIL}" \
-        --name "${SWITCHBOARD_OWNER_NAME:-Owner}" \
-        --password-hash "${SWITCHBOARD_OWNER_PASSWORD_HASH}" \
-        --slug "${SWITCHBOARD_INSTANCE_SLUG:-default}" \
-        --instance-name "${SWITCHBOARD_INSTANCE_NAME:-Foreman}" \
+    python3 -m ouvrage migrate-auth \
+        --email "${OUVRAGE_OWNER_EMAIL}" \
+        --name "${OUVRAGE_OWNER_NAME:-Owner}" \
+        --password-hash "${OUVRAGE_OWNER_PASSWORD_HASH}" \
+        --slug "${OUVRAGE_INSTANCE_SLUG:-default}" \
+        --instance-name "${OUVRAGE_INSTANCE_NAME:-Ouvrage}" \
     || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
 fi
 

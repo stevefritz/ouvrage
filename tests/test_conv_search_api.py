@@ -138,7 +138,7 @@ class TestConversationSearchEndpoint:
     """Tests for GET /dashboard/api/conversations/{id}/search."""
 
     async def test_missing_q_returns_400(self, db, sample_conversation):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/conversations/widget-redesign/search", query={})
         resp = _Capture()
@@ -148,7 +148,7 @@ class TestConversationSearchEndpoint:
         assert "q" in resp.json()["error"].lower()
 
     async def test_empty_q_returns_400(self, db, sample_conversation):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/conversations/widget-redesign/search", query={"q": ""})
         resp = _Capture()
@@ -157,7 +157,7 @@ class TestConversationSearchEndpoint:
         assert resp.status == 400
 
     async def test_returns_matching_messages(self, db, sample_conversation):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/conversations/widget-redesign/search", query={"q": "redesign"})
         resp = _Capture()
@@ -171,7 +171,7 @@ class TestConversationSearchEndpoint:
         assert len(data["results"]) == data["total"]
 
     async def test_result_contains_message_fields(self, db, sample_conversation):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/conversations/widget-redesign/search", query={"q": "widget"})
         resp = _Capture()
@@ -190,7 +190,7 @@ class TestConversationSearchEndpoint:
         assert "task_id" not in r or r.get("task_id") is None  # no task grouping
 
     async def test_no_match_returns_empty_results(self, db, sample_conversation):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope(
             "/dashboard/api/conversations/widget-redesign/search",
@@ -205,7 +205,7 @@ class TestConversationSearchEndpoint:
         assert data["results"] == []
 
     async def test_scoped_to_conversation(self, db, sample_project):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         # Create two conversations with distinct content
         await db.create_conversation(id="scope-conv-a", project="test-project", goal="A")

@@ -1,6 +1,6 @@
 # Ouvrage Worker Runtimes
 
-Reference for what's available inside `foreman:full` / `foreman:eyes` (images built from `Dockerfile.runtimes`). CC workers run as the `switchboard` user inside `/work/<project>/<worktree>`.
+Reference for what's available inside `ouvrage:full` / `ouvrage:eyes` (images built from `Dockerfile.runtimes`). CC workers run as the `switchboard` OS user inside `/work/<project>/<worktree>`.
 
 ## Quick reference
 
@@ -78,5 +78,5 @@ Edit `Dockerfile.runtimes`, rebuild, retag. Keep the layer ordering (system libs
 
 ```bash
 cd /root/mcp-switchboard
-docker build -f Dockerfile.runtimes --build-arg WITH_PLAYWRIGHT=true -t foreman:full .
+docker build -f Dockerfile.runtimes --build-arg WITH_PLAYWRIGHT=true -t ouvrage:full .
 ```

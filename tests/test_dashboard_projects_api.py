@@ -73,18 +73,18 @@ class TestPostProjects:
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
         """Bypass credential validation — these tests focus on project creation logic, not credentials."""
-        with patch("switchboard.db.get_instance_github_pat", return_value="ghp_test"):
-            with patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.db.get_instance_github_pat", return_value="ghp_test"):
+            with patch("ouvrage.server.handlers.projects._run_project_validation",
                        new=AsyncMock(side_effect=lambda pid, proj: proj)):
                 yield
 
     async def test_create_project_success(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_payload()), resp)
 
         assert resp.status == 201
@@ -97,13 +97,13 @@ class TestPostProjects:
         assert data["max_wall_clock"] == 60
 
     async def test_create_project_persisted_in_db(self, db):
-        from switchboard.dashboard.api import handle_request
-        import switchboard.db as sw_db
+        from ouvrage.dashboard.api import handle_request
+        import ouvrage.db as sw_db
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_payload()), resp)
 
         assert resp.status == 201
@@ -112,41 +112,41 @@ class TestPostProjects:
         assert project["id"] == "test-proj"
 
     async def test_create_project_missing_id(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         payload = _valid_payload()
         del payload["id"]
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 400
         assert "id is required" in resp.json()["error"]
 
     async def test_create_project_missing_repo(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         payload = _valid_payload()
         del payload["repo"]
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 400
         assert "repo is required" in resp.json()["error"]
 
     async def test_create_project_invalid_id_format(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         payload = _valid_payload(id="My Project!")
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 400
@@ -154,21 +154,21 @@ class TestPostProjects:
         assert "id must start with" in data["error"]
 
     async def test_create_project_missing_required_config(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         payload = _valid_payload()
         del payload["model"]
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 400
         assert "model" in resp.json()["error"]
 
     async def test_create_project_with_optional_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         payload = _valid_payload(
             id="opt-proj",
@@ -181,7 +181,7 @@ class TestPostProjects:
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload), resp)
 
         assert resp.status == 201
@@ -193,31 +193,31 @@ class TestPostProjects:
         assert data["env_overrides"] == {"KEY": "value"}
 
     async def test_create_project_invalid_json(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(b"not json"), resp)
 
         assert resp.status == 400
         assert "Invalid JSON" in resp.json()["error"]
 
     async def test_create_project_working_dir_collision(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp1 = _Capture()
 
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_payload()), resp1)
         assert resp1.status == 201
 
         # Same repo → same working_dir → collision
         resp2 = _Capture()
         payload2 = _valid_payload(id="other-proj")  # different id, same repo
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(payload2), resp2)
 
         assert resp2.status == 400
@@ -231,24 +231,24 @@ class TestPatchProject:
     @pytest.fixture(autouse=True)
     def mock_pat_validation(self):
         """Bypass credential validation — these tests focus on project patch logic, not credentials."""
-        with patch("switchboard.db.get_instance_github_pat", return_value="ghp_test"):
-            with patch("switchboard.server.handlers.projects._run_project_validation",
+        with patch("ouvrage.db.get_instance_github_pat", return_value="ghp_test"):
+            with patch("ouvrage.server.handlers.projects._run_project_validation",
                        new=AsyncMock(side_effect=lambda pid, proj: proj)):
                 yield
 
     async def _create_project(self, db):
         """Helper: create a test project and return its id."""
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects", method="POST")
         resp = _Capture()
-        with patch("switchboard.dashboard.api._WORKTREE_BASE", "/work"):
+        with patch("ouvrage.dashboard.api._WORKTREE_BASE", "/work"):
             await handle_request(scope, _make_receive(_valid_payload()), resp)
         assert resp.status == 201
         return resp.json()["id"]
 
     async def test_patch_project_updates_field(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -260,7 +260,7 @@ class TestPatchProject:
         assert data["default_branch"] == "develop"
 
     async def test_patch_project_updates_multiple_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -278,7 +278,7 @@ class TestPatchProject:
         assert data["auto_pr"] in (True, 1)
 
     async def test_patch_project_not_found(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         scope = _make_scope("/dashboard/api/projects/nonexistent", method="PATCH")
         resp = _Capture()
@@ -288,7 +288,7 @@ class TestPatchProject:
         assert "nonexistent" in resp.json()["error"]
 
     async def test_patch_project_ignores_unknown_fields(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -299,7 +299,7 @@ class TestPatchProject:
         assert resp.status == 200
 
     async def test_patch_project_env_overrides(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -310,7 +310,7 @@ class TestPatchProject:
         assert resp.json()["env_overrides"] == {"KEY": "val"}
 
     async def test_patch_project_review_ignore_patterns(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -321,7 +321,7 @@ class TestPatchProject:
         assert resp.json()["review_ignore_patterns"] == ["*.lock", "dist/"]
 
     async def test_patch_project_empty_body_returns_unchanged(self, db):
-        from switchboard.dashboard.api import handle_request
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -333,8 +333,8 @@ class TestPatchProject:
 
     async def test_patch_project_sets_github_pat_override(self, db):
         """PATCH with a PAT value encrypts and stores it; DB has a non-null value."""
-        import switchboard.db as sw_db
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db as sw_db
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")
@@ -349,8 +349,8 @@ class TestPatchProject:
 
     async def test_patch_project_clears_github_pat_override(self, db):
         """PATCH with empty string clears the stored PAT (sets to null in DB)."""
-        import switchboard.db as sw_db
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db as sw_db
+        from ouvrage.dashboard.api import handle_request
 
         # First, set a PAT
         proj_id = await self._create_project(db)
@@ -369,8 +369,8 @@ class TestPatchProject:
 
     async def test_patch_project_display_name(self, db):
         """PATCH with display_name stores the human-readable name."""
-        import switchboard.db as sw_db
-        from switchboard.dashboard.api import handle_request
+        import ouvrage.db as sw_db
+        from ouvrage.dashboard.api import handle_request
 
         proj_id = await self._create_project(db)
         scope = _make_scope(f"/dashboard/api/projects/{proj_id}", method="PATCH")

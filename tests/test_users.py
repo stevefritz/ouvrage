@@ -1,8 +1,8 @@
-"""Tests for switchboard/db/users.py — user, instance, credentials, and API token CRUD."""
+"""Tests for ouvrage/db/users.py — user, instance, credentials, and API token CRUD."""
 
 import pytest
 
-from switchboard.crypto import is_fernet_token
+from ouvrage.crypto import is_fernet_token
 
 
 # ===========================================================================
@@ -126,8 +126,8 @@ class TestInstance:
         assert inst["slug"] == "default"
 
     async def test_update_instance_name(self, db):
-        updated = await db.update_instance(name="My Switchboard")
-        assert updated["name"] == "My Switchboard"
+        updated = await db.update_instance(name="My Ouvrage")
+        assert updated["name"] == "My Ouvrage"
 
     async def test_update_instance_plan_tier(self, db):
         updated = await db.update_instance(plan_tier="starter")
@@ -203,7 +203,7 @@ class TestApiTokens:
         user = await db.create_user(email="exp@example.com", name="Exp User")
         result = await db.create_api_token(user["id"])
         # Manually set expires_at to the past
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
         async with _conn.get_db() as db_conn:
             await db_conn.execute(
                 "UPDATE api_tokens SET expires_at = '2000-01-01T00:00:00' WHERE id = ?",
@@ -282,7 +282,7 @@ class TestEncryption:
 
     async def test_anthropic_key_stored_encrypted(self, db):
         """Value written to DB is Fernet-encrypted, not plaintext."""
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
         user = await db.create_user(email="enc@example.com", name="Enc User")
         await db.update_user_credentials(user["id"], anthropic_api_key="sk-plaintext")
         # Check the raw DB value is a Fernet token
@@ -303,7 +303,7 @@ class TestEncryption:
 
     async def test_slack_webhook_not_encrypted(self, db):
         """slack_webhook_url is stored as plaintext (not sensitive enough to encrypt)."""
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
         user = await db.create_user(email="slack@example.com", name="Slack User")
         url = "https://hooks.slack.com/services/T0/B0/xyz"
         await db.update_user_credentials(user["id"], slack_webhook_url=url)
@@ -340,14 +340,14 @@ class TestEncryption:
 
     async def test_set_and_get_instance_github_pat(self, db):
         """set_instance_github_pat stores encrypted, get_instance_github_pat decrypts."""
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
         await db.set_instance_github_pat("ghp_testpat")
         # Raw value in DB should be encrypted
         async with _conn.get_db() as conn:
             rows = await conn.execute_fetchall(
                 "SELECT github_pat_encrypted FROM instance WHERE id = 1"
             )
-        from switchboard.crypto import is_fernet_token
+        from ouvrage.crypto import is_fernet_token
         assert is_fernet_token(rows[0]["github_pat_encrypted"])
         # Reading back returns plaintext
         pat = await db.get_instance_github_pat()
@@ -360,7 +360,7 @@ class TestEncryption:
 
     async def test_encryption_migration_encrypts_plaintext_values(self, db):
         """init_db() re-run encrypts any pre-existing plaintext credential values."""
-        import switchboard.db.connection as _conn
+        import ouvrage.db.connection as _conn
 
         # Write a plaintext value directly to the DB (bypassing the ORM layer)
         inst = await db.get_instance()
