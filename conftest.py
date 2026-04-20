@@ -26,11 +26,20 @@ def tmp_db(tmp_path):
         from cryptography.fernet import Fernet
         os.environ["OUVRAGE_MASTER_KEY"] = Fernet.generate_key().decode()
 
-    # Reset the real connection singleton and DB path (now in ouvrage.db.connection)
+    # Redirect filesystem-backed defaults (UPLOADS_DIR, LOG_DIR) into tmp_path
+    # so tests don't require /work or /opt/ouvrage to exist on the host.
+    uploads_dir = str(tmp_path / "uploads")
+    log_dir = str(tmp_path / "logs")
+    os.environ["UPLOADS_DIR"] = uploads_dir
+    os.environ["LOG_DIR"] = log_dir
+
+    # Reset the real connection singleton and override module-level bindings.
     import ouvrage.config.settings as _settings
     import ouvrage.db.connection as _conn
     _settings.DB_PATH = db_path
-    _conn.DB_PATH = db_path  # override the module-level binding in connection.py
+    _settings.UPLOADS_DIR = uploads_dir
+    _settings.LOG_DIR = log_dir
+    _conn.DB_PATH = db_path
     _conn._connection = None
     return db_path
 
