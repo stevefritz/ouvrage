@@ -627,8 +627,11 @@ async def _run_sdk_session(
     stderr_path = log_dir / "cc-stderr.log"
     stderr_log = _open_shared(stderr_path)
 
-    # Build SDK options — run CC as restricted 'switchboard' user
-    worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+    # Build SDK options — run CC as restricted worker user when configured,
+    # else fall back to current user's home (dev / CI / OSS without setuid).
+    from ouvrage.git.worktree import _resolve_worker_identity
+    _identity = _resolve_worker_identity()
+    worker_home = _identity[2] if _identity else os.path.expanduser("~")
 
     # Merge user-level MCP servers from ~/.claude.json (e.g. shopify-ai)
     mcp_servers = {

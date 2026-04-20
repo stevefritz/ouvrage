@@ -14,32 +14,59 @@ from ouvrage.config.settings import WORKER_USER
 log = logging.getLogger(__name__)
 
 
+def _resolve_worker_identity() -> tuple[int, int, str] | None:
+    """Return (uid, gid, home) for the worker user, or None if not configured.
+
+    Production deployments run in a container with a dedicated WORKER_USER
+    for privilege separation. Tests, CI runners, and OSS self-hosters without
+    a dedicated user fall through to None and run subprocesses as the current
+    process user.
+    """
+    try:
+        pw = pwd.getpwnam(WORKER_USER)
+        return pw.pw_uid, pw.pw_gid, pw.pw_dir
+    except KeyError:
+        return None
+
+
 def _get_worker_ids() -> tuple[int, int]:
-    """Get uid/gid for the worker user."""
+    """Get uid/gid for the worker user. Raises KeyError if not configured."""
     pw = pwd.getpwnam(WORKER_USER)
     return pw.pw_uid, pw.pw_gid
 
 
 async def _run_as_worker(*cmd, **kwargs) -> tuple[bytes, bytes, int]:
-    """Run a command as the worker user via setuid (requires CAP_SETUID)."""
-    uid, gid = _get_worker_ids()
-    pw = pwd.getpwnam(WORKER_USER)
+    """Run a command as the worker user via setuid (requires CAP_SETUID).
 
-    def _demote():
-        os.setgid(gid)
-        os.setuid(uid)
-
-    # Ensure HOME is set to the worker user's home dir, not the service user's
+    Falls back to running as the current process user when WORKER_USER is
+    not configured on the host. Production must configure the worker user
+    to get privilege separation; dev/test/CI run without it.
+    """
+    identity = _resolve_worker_identity()
     env = kwargs.pop("env", None) or os.environ.copy()
-    env["HOME"] = pw.pw_dir
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        preexec_fn=_demote,
-        env=env,
-        **kwargs,
-    )
+    if identity is None:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env,
+            **kwargs,
+        )
+    else:
+        uid, gid, home = identity
+        env["HOME"] = home
+
+        def _demote():
+            os.setgid(gid)
+            os.setuid(uid)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            preexec_fn=_demote,
+            env=env,
+            **kwargs,
+        )
     stdout, stderr = await proc.communicate()
     return stdout, stderr, proc.returncode
 

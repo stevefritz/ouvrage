@@ -96,26 +96,35 @@ async def _run_test_streaming(worktree: str, test_command: str) -> tuple[str, in
     log_dir.mkdir(parents=True, exist_ok=True)
     output_path = log_dir / "test-output.log"
 
-    uid, gid = pwd.getpwnam(WORKER_USER).pw_uid, pwd.getpwnam(WORKER_USER).pw_gid
-    pw = pwd.getpwnam(WORKER_USER)
-
-    def _demote():
-        os.setgid(gid)
-        os.setuid(uid)
-
+    from ouvrage.git.worktree import _resolve_worker_identity
+    identity = _resolve_worker_identity()
     env = os.environ.copy()
-    env["HOME"] = pw.pw_dir
 
     # Note: preexec_fn is not safe with threads per Python docs, but asyncio's
     # subprocess implementation uses fork+exec on Linux where this runs in the
     # child process before exec. Safe for our single-threaded event loop use case.
-    proc = await asyncio.create_subprocess_exec(
-        "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,  # merge stderr into stdout
-        preexec_fn=_demote,
-        env=env,
-    )
+    if identity is None:
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+    else:
+        uid, gid, home = identity
+        env["HOME"] = home
+
+        def _demote():
+            os.setgid(gid)
+            os.setuid(uid)
+
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-c", f"cd {shlex.quote(worktree)} && {test_command}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            preexec_fn=_demote,
+            env=env,
+        )
 
     chunks = []
     try:
@@ -176,7 +185,9 @@ async def _run_subtask(
     )
 
     # Build SDK options — same as _run_sdk_session but simpler
-    worker_home = pwd.getpwnam(WORKER_USER).pw_dir
+    from ouvrage.git.worktree import _resolve_worker_identity
+    _identity = _resolve_worker_identity()
+    worker_home = _identity[2] if _identity else os.path.expanduser("~")
     mcp_servers = {
         "ouvrage": {"type": "http", "url": f"http://localhost:{os.environ.get('OUVRAGE_PORT', '8100')}/mcp"},
     }

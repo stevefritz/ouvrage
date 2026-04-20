@@ -1,0 +1,39 @@
+# Dev overlay — use with the base compose file to mount source live.
+#
+# Usage:
+#   make docker-dev
+# Or:
+#   docker compose -f docker-compose.example.yml -f docker-compose.dev.yml up
+#
+# Edit code on the host and restart the container to apply:
+#   docker compose restart ouvrage
+#
+# This overlay intentionally loosens the production image's privilege
+# separation and file lockdown so the bind-mounted source is readable.
+# Never use this for production.
+
+services:
+  ouvrage:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: ouvrage:dev
+    # Dev image doesn't create the worker user, so drop the caps the
+    # production image requires for setuid-based process isolation.
+    cap_add: []
+    # Base compose references a ./secrets/master_key file; dev generates an
+    # ephemeral key inside the container instead (see Dockerfile.dev CMD).
+    secrets: []
+    volumes:
+      - ./ouvrage:/app/ouvrage
+      - ./dashboard:/app/dashboard
+      - ./index.html:/app/index.html
+      - ouvrage-dev-data:/data
+      - ouvrage-dev-work:/work
+    environment:
+      # Master key: defer to host env or container-side ephemeral generation.
+      OUVRAGE_MASTER_KEY: "${OUVRAGE_MASTER_KEY:-}"
+
+volumes:
+  ouvrage-dev-data:
+  ouvrage-dev-work:
