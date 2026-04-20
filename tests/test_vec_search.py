@@ -94,7 +94,7 @@ class TestVec0Schema:
         blob = encode_vector([0.0] * 1536)
         async with get_db() as conn:
             rows = await conn.execute_fetchall(
-                "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? ORDER BY distance LIMIT 5",
+                "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? AND k = 5 ORDER BY distance",
                 (blob,),
             )
         assert rows == []  # empty table, no results — just confirming no error

@@ -202,6 +202,21 @@ export function LoginView() {
                         ${loading ? 'Signing in…' : 'Sign in'}
                     </button>
                 </form>
+
+                <!-- First-run hint: explains the owner-bootstrap env vars. -->
+                <div style=${{
+                    marginTop: '16px',
+                    padding: '0 4px',
+                    fontSize: typography.size.xs,
+                    color: colors.textTertiary,
+                    lineHeight: '1.5',
+                    textAlign: 'center',
+                }}>
+                    First run on a new instance? The owner account is seeded
+                    from <code style=${{ color: colors.textSecondary }}>OUVRAGE_OWNER_EMAIL</code>
+                    and <code style=${{ color: colors.textSecondary }}>OUVRAGE_OWNER_PASSWORD_HASH</code>.
+                    Generate the hash with <code style=${{ color: colors.textSecondary }}>python -m ouvrage hash-password</code>.
+                </div>
             </div>
         </div>
     `;

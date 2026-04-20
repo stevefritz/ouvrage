@@ -1,0 +1,45 @@
+# Ouvrage — dev image
+#
+# Builds a minimal image that expects the source tree to be bind-mounted at
+# runtime (see docker-compose.dev.yml). Skips the privilege separation and
+# file lockdown used in the production Dockerfile so edits on the host are
+# immediately visible inside the container — restart the container to pick
+# up code changes without rebuilding the image.
+#
+# NOT FOR PRODUCTION. Use Dockerfile for that.
+#
+# Build:  docker build -f Dockerfile.dev -t ouvrage:dev .
+# Run:    make docker-dev
+
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Placeholder git identity so integration tests that exec `git rebase`
+# (which requires user.email/name) don't error in this container.
+RUN git config --global user.email "dev@ouvrage.local" \
+    && git config --global user.name "Ouvrage Dev"
+
+WORKDIR /app
+
+# Install dependencies. Copying the source at build time seeds the editable
+# install; at runtime the bind mount from docker-compose.dev.yml overlays
+# /app/ouvrage and /app/dashboard with the host's working copy.
+COPY pyproject.toml ./
+COPY ouvrage/ ouvrage/
+COPY dashboard/ dashboard/
+COPY index.html ./
+RUN pip install --no-cache-dir -e '.[dev]'
+
+ENV OUVRAGE_DB=/data/ouvrage.db \
+    OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
+    PORT=8100
+
+EXPOSE 8100
+
+# Generate an ephemeral master key if none is provided — dev convenience only.
+CMD ["bash", "-c", "mkdir -p /data && : \"${OUVRAGE_MASTER_KEY:=$(python3 -m ouvrage generate-key)}\" && export OUVRAGE_MASTER_KEY && exec python3 -m ouvrage"]

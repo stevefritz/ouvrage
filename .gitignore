@@ -8,3 +8,5 @@ __pycache__/
 .switchboard/
 /etc/switchboard/env
 .git-credential-helper.sh
+.env
+secrets/

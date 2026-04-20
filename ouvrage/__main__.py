@@ -3,6 +3,7 @@
 Sub-commands:
     (default)       Start the ouvrage server
     generate-key    Print a new Fernet master key for OUVRAGE_MASTER_KEY
+    hash-password   Print an argon2id hash for OUVRAGE_OWNER_PASSWORD_HASH
     migrate-auth    Create owner user, seed OAuth client, backfill FK columns
 """
 
@@ -13,6 +14,29 @@ import sys
 def _generate_key():
     from cryptography.fernet import Fernet
     print(Fernet.generate_key().decode())
+
+
+def _hash_password(args):
+    import argparse
+    import getpass
+
+    parser = argparse.ArgumentParser(
+        prog="python -m ouvrage hash-password",
+        description="Print an argon2id password hash for OUVRAGE_OWNER_PASSWORD_HASH.",
+    )
+    parser.add_argument(
+        "password",
+        nargs="?",
+        help="Password to hash. If omitted, reads interactively without echoing.",
+    )
+    parsed = parser.parse_args(args)
+
+    pw = parsed.password or getpass.getpass("Password: ")
+    if not pw:
+        parser.error("password is required")
+
+    from argon2 import PasswordHasher
+    print(PasswordHasher().hash(pw))
 
 
 def _migrate_auth(args):
@@ -72,6 +96,8 @@ def _migrate_auth(args):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "generate-key":
         _generate_key()
+    elif len(sys.argv) > 1 and sys.argv[1] == "hash-password":
+        _hash_password(sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == "migrate-auth":
         _migrate_auth(sys.argv[2:])
     else:
