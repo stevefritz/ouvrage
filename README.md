@@ -12,34 +12,20 @@ Workers can have their own MCP servers (loaded from user config), so a task can 
 
 ## Deployment
 
-Ouvrage runs as a bare process (not Docker) because the task engine needs host-level access to the `claude` CLI, git, and the filesystem for worktrees.
+> **This section is being rewritten.** The installation guide below is out of date and will be replaced in a forthcoming documentation pass. Until then, use the following pointers:
+>
+> - **Production:** build and run the image in `Dockerfile` via `docker-compose.example.yml`. Worker isolation requires `CAP_SETUID`, `CAP_SETGID`, `CAP_KILL`.
+> - **Local development / contributing:** use `make docker-dev` (bind-mounted source, no image rebuild on edits) or `make install && make test` for a plain virtualenv workflow.
+> - **CI:** GitHub Actions runs `pytest` on Python 3.12 and 3.13 against every PR.
 
 ### Requirements
 
-- Linux VPS (tested on Ubuntu)
-- Python 3.10+
-- `claude` CLI installed and authenticated (Claude Max subscription)
-- `claude-agent-sdk` Python package
-- Git
+- Linux host (Ubuntu 24.04+ recommended for the dev workflow; older distros need a newer `libsqlite3`).
+- Python 3.12+ for direct (non-container) installs.
+- Docker 24+ and Docker Compose v2 for the container workflow.
+- `git`, `node` 22 and the `claude` CLI (`npm i -g @anthropic-ai/claude-code`) only if you plan to dispatch real tasks against the API.
 
-### Manual Install
-
-```bash
-# Install deps
-pip3 install .
-
-# Create directories
-sudo mkdir -p /opt/ouvrage/data /work
-sudo chown $USER:$USER /opt/ouvrage /work
-
-# Copy files
-cp server.py database.py tasks.py auth.py /opt/ouvrage/
-
-# Run
-OUVRAGE_DB=/opt/ouvrage/data/ouvrage.db python3 /opt/ouvrage/server.py
-```
-
-### Systemd Service
+### Systemd Service (bare-metal VPS deployments)
 
 ```bash
 sudo cp ouvrage.service /etc/systemd/system/
@@ -50,34 +36,11 @@ sudo systemctl enable --now ouvrage
 ```bash
 # Manage
 systemctl status ouvrage
-journalctl -u ouvrage -f     # live logs
+journalctl -u ouvrage -f         # live logs
 curl http://localhost:8100/health # health check
 ```
 
-### Directory Layout
-
-```
-/opt/ouvrage/           # Application code
-  ├── server.py             # MCP server, ASGI app, tool definitions
-  ├── tasks.py              # Task engine — Agent SDK, gate pipeline, subtasks
-  ├── database.py           # SQLite models and queries (aiosqlite)
-  ├── dashboard_api.py      # REST API for dashboard SPA
-  ├── notifications.py      # Slack notifications (outbound only)
-  ├── auth.py               # OAuth JWT middleware (Authelia)
-  ├── dashboard/            # Static SPA (HTML, JS, CSS)
-  └── data/
-      └── ouvrage.db    # SQLite database
-/work/                      # Task worktrees
-  └── {project-id}/
-      ├── .bare/            # Bare git clone
-      └── {task-id}/        # Worktree per task
-```
-
 Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint at `/mcp`.
-
-### Why Not Docker?
-
-The task engine dispatches Claude Code sessions via the Agent SDK, which spawns `claude` as a subprocess. That process needs the authenticated CLI, host filesystem access for worktrees, and the ability to manage its own subprocesses. Docker would require privileged mode and host mounts that defeat the purpose of containerization. Deployment is via bare metal with systemd.
 
 ## Client Configuration
 
