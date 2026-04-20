@@ -10,3 +10,5 @@ __pycache__/
 .git-credential-helper.sh
 .env
 secrets/
+testOutput.txt
+/tmp-*.log
