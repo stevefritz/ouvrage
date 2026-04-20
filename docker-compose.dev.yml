@@ -1,16 +1,16 @@
-# Dev overlay — use with the base compose file to mount source live.
+# Ouvrage — dev compose file (standalone, not an overlay).
 #
 # Usage:
 #   make docker-dev
 # Or:
-#   docker compose -f docker-compose.example.yml -f docker-compose.dev.yml up
+#   docker compose -f docker-compose.dev.yml up
 #
-# Edit code on the host and restart the container to apply:
-#   docker compose restart ouvrage
+# Bind-mounts the host source tree into the container so edits appear
+# immediately. Restart the container to pick up changes:
+#   docker compose -f docker-compose.dev.yml restart ouvrage
 #
-# This overlay intentionally loosens the production image's privilege
-# separation and file lockdown so the bind-mounted source is readable.
-# Never use this for production.
+# NOT FOR PRODUCTION. Skips the prod image's privilege separation and
+# file lockdown so the mounted source stays readable.
 
 services:
   ouvrage:
@@ -18,20 +18,30 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     image: ouvrage:dev
-    # Dev image doesn't create the worker user, so drop the caps the
-    # production image requires for setuid-based process isolation.
-    cap_add: []
-    # Base compose references a ./secrets/master_key file; dev generates an
-    # ephemeral key inside the container instead (see Dockerfile.dev CMD).
-    secrets: []
+    container_name: ouvrage-dev
+    restart: unless-stopped
+    ports:
+      - "8100:8100"
     volumes:
       - ./ouvrage:/app/ouvrage
       - ./dashboard:/app/dashboard
       - ./index.html:/app/index.html
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./fixtures:/app/fixtures
+      - ./hooks:/app/hooks
+      - ./.claude:/app/.claude
+      - ./CLAUDE.md:/app/CLAUDE.md
+      - ./conftest.py:/app/conftest.py
+      - ./pytest.ini:/app/pytest.ini
       - ouvrage-dev-data:/data
       - ouvrage-dev-work:/work
     environment:
-      # Master key: defer to host env or container-side ephemeral generation.
+      PORT: "8100"
+      OUVRAGE_DB: /data/ouvrage.db
+      OAUTH_RSA_KEY_PATH: /data/oauth_rsa_key.pem
+      AUTH_MODE: local
+      # Master key: host env if set, else Dockerfile.dev generates ephemeral.
       OUVRAGE_MASTER_KEY: "${OUVRAGE_MASTER_KEY:-}"
 
 volumes:

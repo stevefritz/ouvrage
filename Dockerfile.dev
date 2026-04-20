@@ -19,6 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Placeholder git identity so integration tests that exec `git rebase`
+# (which requires user.email/name) don't error in this container.
+RUN git config --global user.email "dev@ouvrage.local" \
+    && git config --global user.name "Ouvrage Dev"
+
 WORKDIR /app
 
 # Install dependencies. Copying the source at build time seeds the editable
