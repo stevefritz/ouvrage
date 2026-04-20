@@ -8,7 +8,20 @@ from typing import Optional
 
 
 class TaskStatus(str, Enum):
-    """All valid task status values."""
+    """All task status values, including display-layer states.
+
+    The lifecycle state machine in ``ouvrage/dispatch/lifecycle.py`` operates on
+    six core DB states: ``ready``, ``working``, ``validating``, ``stopped``,
+    ``completed``, ``cancelled``. The other values here (``BLOCKED``, ``TESTING``,
+    ``REVIEWING``, ``NEEDS_REVIEW``, ``TURNS_EXHAUSTED``, ``REOPENED``,
+    ``MERGED``, ``FAILED``) are display-layer states computed at read time by
+    ``_effective_state()`` / ``_effective_ready_reason()`` for the dashboard.
+
+    The authoritative mapping from DB state + task flags → display state lives
+    in ``ouvrage/config/constants.py::CORE_STATE_DEFINITIONS``. The transition
+    table is ``ouvrage/dispatch/lifecycle.py::TRANSITIONS``. Every status
+    change must go through ``TaskLifecycle.execute()``.
+    """
     READY = "ready"
     BLOCKED = "blocked"
     WORKING = "working"
