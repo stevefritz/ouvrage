@@ -9,6 +9,15 @@ import pytest
 # Ensure the project root is on sys.path for test discovery
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Provide a git identity for tests that invoke `git rebase`/`git commit`
+# (e.g. test_integration.TestRebaseGit). CI runners and minimal containers
+# have no system-wide git config, and those commands refuse to run without
+# author identity. Set via env vars so nothing is written to ~/.gitconfig.
+os.environ.setdefault("GIT_AUTHOR_NAME", "Ouvrage Tests")
+os.environ.setdefault("GIT_AUTHOR_EMAIL", "tests@ouvrage.local")
+os.environ.setdefault("GIT_COMMITTER_NAME", "Ouvrage Tests")
+os.environ.setdefault("GIT_COMMITTER_EMAIL", "tests@ouvrage.local")
+
 
 # ---------------------------------------------------------------------------
 # Core DB fixtures
