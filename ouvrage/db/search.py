@@ -60,7 +60,7 @@ async def search_messages_semantic(
         try:
             async with get_db() as db:
                 vec_rows = await db.execute_fetchall(
-                    "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    "SELECT rowid, distance FROM messages_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
                     (blob, oversample),
                 )
         except Exception as exc:
@@ -523,7 +523,7 @@ async def search_message_chunks(
         try:
             async with get_db() as db:
                 vec_rows = await db.execute_fetchall(
-                    "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
                     (blob, oversample),
                 )
         except Exception as exc:
@@ -731,7 +731,7 @@ async def search_tasks_semantic(
         try:
             async with get_db() as db:
                 vec_rows = await db.execute_fetchall(
-                    "SELECT rowid, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                    "SELECT rowid, distance FROM tasks_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
                     (blob, oversample),
                 )
         except Exception as exc:
