@@ -189,6 +189,7 @@ async def setup_task_worktree(project: dict, task: dict) -> str:
         project, short_name, effective_branch,
         depends_on=task.get("depends_on"),
         base_branch=task.get("base_branch"),
+        task_id=task_id,
     )
 
     # Write hook config to block direct git push/fetch

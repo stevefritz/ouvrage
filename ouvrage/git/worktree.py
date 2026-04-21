@@ -145,7 +145,8 @@ async def _seed_empty_repo(bare_path: str, project_id: str, default_branch: str,
 
 async def setup_worktree(project: dict, dir_name: str, branch: str,
                          depends_on: str | None = None,
-                         base_branch: str | None = None) -> str:
+                         base_branch: str | None = None,
+                         task_id: str | None = None) -> str:
     """Create git worktree for a task. Returns worktree path.
 
     Args:
@@ -254,6 +255,8 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
         if parent_task and parent_task.get("branch"):
             base_ref = f"origin/{parent_task['branch']}"
             log.debug(f"Branch chaining: branching from parent branch '{base_ref}' (depends_on={depends_on})")
+            if task_id:
+                await db.update_task(task_id, base_branch=parent_task["branch"])
     elif base_branch:
         base_ref = base_branch if base_branch.startswith("origin/") else f"origin/{base_branch}"
         log.debug(f"Explicit base_branch: branching from '{base_ref}'")

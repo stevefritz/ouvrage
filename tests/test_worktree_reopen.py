@@ -119,3 +119,56 @@ class TestSetupWorktreeReopenedTask:
         assert call[-1] == "origin/parent-branch", (
             f"Expected base_ref 'origin/parent-branch' (from depends_on) but got '{call[-1]}'"
         )
+
+    async def test_chained_task_persists_base_branch(self, db, sample_project, tmp_path):
+        """When task_id is provided and depends_on resolves a parent branch,
+        base_branch should be written to the task record."""
+        from ouvrage.git.worktree import setup_worktree
+
+        await db.create_task(
+            id="test-project/parent-task",
+            project_id="test-project",
+            goal="Parent",
+            branch="parent-branch",
+        )
+        await db.create_task(
+            id="test-project/child-task",
+            project_id="test-project",
+            goal="Child",
+            branch="child-branch",
+        )
+
+        project = self._project(tmp_path)
+        await setup_worktree(
+            project, "child-branch", "child-branch",
+            depends_on="test-project/parent-task",
+            task_id="test-project/child-task",
+        )
+
+        child = await db.get_task("test-project/child-task")
+        assert child["base_branch"] == "parent-branch", (
+            f"Expected base_branch='parent-branch' but got '{child['base_branch']}'"
+        )
+
+    async def test_standalone_task_base_branch_remains_none(self, db, sample_project, tmp_path):
+        """A task with no depends_on should NOT get base_branch set — it falls
+        back to project default_branch at review time."""
+        from ouvrage.git.worktree import setup_worktree
+
+        await db.create_task(
+            id="test-project/standalone-task",
+            project_id="test-project",
+            goal="Standalone",
+            branch="standalone-branch",
+        )
+
+        project = self._project(tmp_path)
+        await setup_worktree(
+            project, "standalone-branch", "standalone-branch",
+            task_id="test-project/standalone-task",
+        )
+
+        task = await db.get_task("test-project/standalone-task")
+        assert task["base_branch"] is None, (
+            f"Expected base_branch=None for standalone task but got '{task['base_branch']}'"
+        )
