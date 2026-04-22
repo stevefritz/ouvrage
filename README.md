@@ -1,53 +1,77 @@
 # Ouvrage
 
-An MCP server that turns Claude.ai into a dispatch center for autonomous Claude Code agents. Describe work in conversation, dispatch it as a task, and a CC instance on your VPS picks it up — working in its own git branch, reading code, making changes, committing, and reporting back through the same MCP protocol.
+An MCP server that turns Claude.ai (or any MCP client) into a dispatch center for autonomous Claude Code agents. Describe work in conversation, dispatch it as a task, and a CC instance picks it up — working in its own git branch, reading code, making changes, committing, and reporting back through the same MCP protocol.
 
 Three ways to interact with running work:
 
-- **Claude.ai** — dispatch tasks, check status, post course corrections, retry — all through natural conversation via MCP tools
-- **Dashboard** — web UI with live session logs (every tool call, file read, API response), message threads, checklist progress, and direct task actions
-- **Any MCP client** — Claude Code, Cursor, custom agents — anything that speaks MCP can connect and participate. CC workers talk back to Ouvrage through the same MCP endpoint that dispatches them
+- **Claude.ai** — dispatch tasks, check status, post course corrections, retry, all through natural conversation via MCP tools.
+- **Dashboard** — web UI with live session logs, message threads, checklist progress, and direct task actions.
+- **Any MCP client** — Claude Code, Cursor, custom agents. CC workers talk back to Ouvrage through the same MCP endpoint that dispatches them.
 
-Workers can have their own MCP servers (loaded from user config), so a task can use tools like Shopify AI or Jira alongside standard code tools. The conversation layer (project threads, task messages, pinned specs) means context from planning carries through to execution and back.
+Workers inherit the user's MCP config, so a task can use tools like `shopify-ai` or `jira` alongside standard code tools. The conversation layer (project threads, task messages, pinned specs) means context from planning carries through execution and back.
 
-## Deployment
+## Status
 
-> **This section is being rewritten.** The installation guide below is out of date and will be replaced in a forthcoming documentation pass. Until then, use the following pointers:
->
-> - **Production:** build and run the image in `Dockerfile` via `docker-compose.example.yml`. Worker isolation requires `CAP_SETUID`, `CAP_SETGID`, `CAP_KILL`.
-> - **Local development / contributing:** use `make docker-dev` (bind-mounted source, no image rebuild on edits) or `make install && make test` for a plain virtualenv workflow.
-> - **CI:** GitHub Actions runs `pytest` on Python 3.12 and 3.13 against every PR.
+Functional and in daily use. Public under MIT as of 2026-04. Still rough edges in the install surface and a handful of refactors outstanding — see [`docs/internal/pre-oss-architecture-review.md`](docs/internal/pre-oss-architecture-review.md) for an honest self-assessment of the debt.
 
-### Requirements
+## Quick start
 
-- Linux host (Ubuntu 24.04+ recommended for the dev workflow; older distros need a newer `libsqlite3`).
-- Python 3.12+ for direct (non-container) installs.
-- Docker 24+ and Docker Compose v2 for the container workflow.
-- `git`, `node` 22 and the `claude` CLI (`npm i -g @anthropic-ai/claude-code`) only if you plan to dispatch real tasks against the API.
-
-### Systemd Service (bare-metal VPS deployments)
+Requires Docker 24+ and Docker Compose v2.
 
 ```bash
-sudo cp ouvrage.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ouvrage
+git clone https://github.com/stevefritz/switchboard.git ouvrage
+cd ouvrage
+
+# 1. Generate a Fernet master key (used to encrypt stored credentials).
+mkdir -p secrets
+docker run --rm --entrypoint python3 python:3.13-slim -c \
+  "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
+  > secrets/master_key
+
+# 2. Build the image.
+docker compose -f docker-compose.example.yml build
+
+# 3. Start the stack with an owner bootstrapped on first boot.
+#    The OUVRAGE_OWNER_PASSWORD env var is hashed server-side at bootstrap.
+OUVRAGE_OWNER_EMAIL=you@example.com \
+OUVRAGE_OWNER_PASSWORD=change-me \
+docker compose -f docker-compose.example.yml up -d
+
+# 4. Log in.
+open http://localhost:8100/dashboard/login
 ```
+
+That's it. The container auto-generates the OAuth RSA key, initialises the DB, bootstraps your owner user, and starts serving on port 8100.
+
+For compose-file-checked-into-git flows where plaintext in env is a dealbreaker, pre-hash the password with `python3 -m ouvrage hash-password 'change-me'` and set `OUVRAGE_OWNER_PASSWORD_HASH` instead. The hash form takes precedence when both are set.
+
+## Local development
+
+For editing code with live reload (bind-mounted source, no image rebuild on change):
 
 ```bash
-# Manage
-systemctl status ouvrage
-journalctl -u ouvrage -f         # live logs
-curl http://localhost:8100/health # health check
+make docker-dev      # starts docker-compose.dev.yml
+# edit files on host
+docker compose -f docker-compose.dev.yml restart ouvrage  # pick up changes
 ```
 
-Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint at `/mcp`.
+For running the test suite without Docker:
 
-## Client Configuration
+```bash
+make install         # pip install -e '.[dev]' into the current environment
+make test            # pytest tests/ -q --tb=short
+make test-quick      # --last-failed only
+```
+
+CI runs pytest on Python 3.12 and 3.13 on every push and PR (see `.github/workflows/test.yml`).
+
+## Client configuration
 
 ### Claude Code (local)
 
+Add the Ouvrage MCP server to `~/.claude.json`:
+
 ```json
-// ~/.claude.json
 {
   "mcpServers": {
     "ouvrage": {
@@ -58,326 +82,204 @@ Server runs on `http://localhost:8100`. Health check at `/health`. MCP endpoint 
 }
 ```
 
-### Claude AI (via OAuth on VPS)
+### Claude AI (via OAuth)
 
-Configured through Anthropic's MCP connector with OAuth. See `auth.py` for the resource server middleware.
+The server publishes an OAuth 2.1 authorisation server at `/oauth/*` and issues self-signed RS256 JWTs. When you bootstrap an owner the entrypoint prints the `claude-mcp` OAuth client credentials — save them; you'll paste them into Claude.ai's MCP connector settings.
 
-## Conversation Tools
+To re-print the credentials later:
+
+```bash
+docker exec ouvrage python3 -c "\
+import asyncio, ouvrage.db as db; \
+from ouvrage.crypto import decrypt_value; \
+async def go(): \
+    await db.init_db(); \
+    async with db.get_db() as c: \
+        r = (await c.execute_fetchall('SELECT client_id, client_secret_encrypted FROM oauth_clients WHERE client_id=\'claude-mcp\''))[0]; \
+    print(r['client_id'], decrypt_value(r['client_secret_encrypted'])); \
+asyncio.run(go())"
+```
+
+### Any MCP client
+
+Any client that speaks the MCP HTTP transport can connect at `http://<host>:8100/mcp` with a Bearer token issued by `/oauth/token`. CC workers connect to `/mcp/worker` which bypasses auth for localhost traffic.
+
+## How it works
+
+Ouvrage dispatches autonomous Claude Code sessions in isolated git worktrees. Each task gets its own branch, its own working directory, and reports progress back through MCP:
+
+1. `dispatch_task` creates a task record and a worktree (bare clone + `git worktree add`).
+2. A CC session launches in the background via the Agent SDK — the MCP call returns immediately with the task ID.
+3. The worker reads code, edits files, runs tests, commits to its branch. It reports progress via Ouvrage tools (checklist updates, phase changes, messages).
+4. When the worker finishes, the branch is auto-pushed to origin.
+5. The gate pipeline runs: auto-test → auto-review → PR. Failures retry the session with feedback injected.
+6. If the task has dependents, they auto-dispatch from its branch. If `auto_merge` is set, the PR merges.
+
+### Task lifecycle
+
+The database tracks six core states:
+
+```
+ready  →  working  →  validating  →  completed
+                   ↘              ↙
+                     stopped  ←──  (user intervention)
+          any state  →  cancelled
+```
+
+- **ready** — waiting for dispatch or for a dependency to pass its gate.
+- **working** — CC session is active.
+- **validating** — gate pipeline running (test or review).
+- **stopped** — paused by user action, timeout, error, or gate failure.
+- **completed** — finished, gates passed or manually closed.
+- **cancelled** — discarded before completion.
+
+The dashboard surfaces richer display states (`testing`, `reviewing`, `needs-review`, `turns-exhausted`, etc.) computed from the DB state plus task flags. See `ouvrage/config/constants.py::CORE_STATE_DEFINITIONS` for the mapping.
+
+All state transitions route through `TaskLifecycle.execute()` in `ouvrage/dispatch/lifecycle.py` — single owner, no side-channel writes.
+
+### Gate pipeline
+
+Optional per-project / per-task, controlled by `auto_test` and `auto_review`:
+
+```
+CC completes → auto-push → [auto-test] → [auto-review] → gate passed
+                              ↓              ↓
+                         test failed    changes requested
+                              ↓              ↓
+                          auto-retry     auto-retry (limits configurable)
+```
+
+- **Auto-test**: runs the project's `test_command` in the worktree. Failure output feeds back into a retry dispatch.
+- **Auto-review**: a subtask CC session reviews the diff against the spec. `CHANGES REQUESTED` triggers a retry with the review feedback injected.
+- **Auto-PR**: on gate pass (or if no gate is configured), creates a PR on the project's platform (GitHub, GitLab, Bitbucket).
+- **Auto-merge**: on `auto_merge`, merges the PR after it lands.
+
+### Task chains
+
+Tasks can depend on each other. A dependent stays `ready` until its dependency's gate passes, then auto-dispatches from the dependency's branch:
+
+```python
+dispatch_task(id="add-models")
+dispatch_task(id="add-api",      depends_on="add-models")
+dispatch_task(id="add-frontend", depends_on="add-api")
+```
+
+Chain propagation: if an upstream task retries, downstream tasks are marked `stale`. When the upstream task's gate passes again, stale dependents auto-rebase onto the updated parent branch and re-dispatch with context about what changed.
+
+## MCP tools
+
+~70 tools grouped by domain. A partial reference:
+
+### Conversations
 
 | Tool | Purpose |
 |---|---|
-| `board` | Dashboard — show active conversations. Filter by `project`. |
-| `create_conversation` | Start a new conversation with slug ID, project, goal. Can include an initial message. |
-| `post` | Add a message. Requires `conversation_id`, `author`, `content`. |
-| `read` | Get messages. Supports cursor-based polling via `after` param. |
-| `get_pinned` | Get the pinned source-of-truth message for a conversation. |
-| `pin` | Pin a message by ID (auto-unpins previous). |
+| `create_conversation` | Start a project thread. |
+| `post` | Post a message (spec, question, answer, plan, note, status). |
+| `read` | Read messages with cursor-based pagination (`after=<cursor>` returns only new). |
+| `get_pinned` | Fetch the pinned source-of-truth message. |
+| `pin` | Pin a message (auto-unpins previous). |
 | `conversations` | List/search conversations. |
-| `archive` | Soft-archive a resolved conversation. |
+| `archive` | Archive a resolved conversation. |
 
-### Cursor-Based Polling
-
-Avoid flooding context with repeated messages:
-
-```
-# First read — get everything
-read(conversation_id="my-convo")
-→ { messages: [...], cursor: 7 }
-
-# Later — only new messages
-read(conversation_id="my-convo", after=7)
-→ { messages: [...], cursor: 12 }
-```
-
-## Project Management
-
-Before dispatching tasks, register a project. Projects define the repo, environment, and default resource limits.
-
-### Tools
+### Projects
 
 | Tool | Purpose |
 |---|---|
 | `create_project` | Register a project for task dispatch. |
-| `get_project` | Get a project's configuration. |
-| `update_project` | Update project settings. |
-| `list_projects` | List all registered projects. |
+| `get_project` / `update_project` / `list_projects` | CRUD. |
 
-### `create_project` Fields
+`create_project` requires `id`, `repo`, `working_dir`. Optional: `default_branch`, `setup_command`, `teardown_command`, `test_command`, `env_overrides`, `max_turns`, `max_wall_clock`, `claude_md_path`, `auto_test`, `auto_review`, `auto_pr`, `auto_merge`, `review_model`.
 
-| Field | Required | Description |
-|---|---|---|
-| `id` | Yes | Project slug, e.g. `ym-discount-engine` |
-| `repo` | Yes | Git repo URL, e.g. `git@github.com:org/repo.git` |
-| `working_dir` | Yes | Base path for worktrees, e.g. `/work/ym-discount-engine` |
-| `default_branch` | No | Main branch name (default: `main`) |
-| `setup_command` | No | Run after worktree creation, e.g. `composer install` |
-| `teardown_command` | No | Run on task cleanup |
-| `test_command` | No | Command for auto-test gate, e.g. `php artisan test` |
-| `env_overrides` | No | Key-value env vars written to `.env.testing` |
-| `max_turns` | No | Default max turns per dispatch |
-| `max_wall_clock` | No | Default max wall clock minutes per dispatch |
-| `claude_md_path` | No | Path to CLAUDE.md relative to repo root |
-| `auto_test` | No | Enable automatic test gate after CC completes (default: false) |
-| `auto_review` | No | Enable automatic self-review gate (default: false) |
-| `auto_pr` | No | Auto-create PR when gate passes (default: false) |
-| `review_model` | No | Model for review subtask (default: `opus`) |
-
-## Task Execution System
-
-The task system dispatches autonomous Claude Code sessions that work in isolated git worktrees. Each task gets its own branch, its own working directory, and reports progress back to the Ouvrage server.
-
-### How It Works
-
-1. `dispatch_task` creates a task record, sets up a git worktree (bare clone + `git worktree add`), and runs any project setup commands.
-2. A Claude Code session is launched via the Agent SDK in the background — the call returns immediately with the task ID.
-3. CC works autonomously: reading code, editing files, running tests, committing to its branch.
-4. CC reports progress via Ouvrage MCP tools (checklist updates, phase changes, messages).
-5. When CC finishes, the branch is auto-pushed to origin.
-6. The gate pipeline runs (test → review → pass), then dependents are dispatched or a PR is created.
-
-### Task Lifecycle
-
-```
-ready → working → completed → [gate: testing → reviewing → passed] → dependents dispatched / PR created
-                → failed
-                → needs-review → working (resume) → completed
-                → cancelled
-```
-
-- **ready** — Task created, waiting for dependencies or dispatch.
-- **working** — CC session is active.
-- **completed** — CC finished. Gate pipeline runs next.
-- **needs-review** — CC hit a timeout, ran out of turns, or posted a question.
-- **failed** — CC session errored out.
-- **cancelled** — Manually killed via `cancel_task`.
-
-### Gate Pipeline
-
-After CC completes and its branch is pushed, a configurable gate pipeline runs before downstream tasks dispatch or a PR is created:
-
-```
-CC completes → auto-push → [auto-test] → [auto-review] → gate passed → dispatch dependents / auto-PR
-                                ↓               ↓
-                           test failed     changes requested
-                                ↓               ↓
-                           auto-retry      auto-retry (up to 2x)
-```
-
-**Auto-test**: Runs the project's `test_command` in the task's worktree. If tests fail, CC is re-dispatched with the failure output to fix the issues. Configurable retry limit (`gate_max_retries`, default 2).
-
-**Auto-review**: A subtask runs in the parent's worktree — a fresh CC session that reviews the diff against the original spec. Posts an APPROVED or CHANGES REQUESTED verdict. On rejection, the main task re-dispatches with the review feedback.
-
-**Auto-PR**: When the gate passes (or if no gate is configured), automatically creates a GitHub PR from the task branch.
-
-Gate status values: `testing`, `reviewing`, `passed`, `stale` (chain propagation).
-
-### Task Dependencies & Chains
-
-Tasks can declare dependencies on other tasks. A dependent task stays in `ready` status until its dependency's gate passes, then auto-dispatches — branching from the dependency's branch.
-
-```
-dispatch_task(id="add-models", ...)
-dispatch_task(id="add-api", depends_on="add-models", ...)
-dispatch_task(id="add-frontend", depends_on="add-api", ...)
-```
-
-This creates a chain: `add-models → add-api → add-frontend`. Each task branches from its parent's branch, so code flows forward through the chain.
-
-**Chain propagation**: If a task in the chain is retried (e.g., `add-models` needs a fix), all downstream tasks are automatically marked `stale`. When the retried task passes its gate, stale dependents auto-rebase onto the updated parent branch and re-dispatch with context about what changed.
-
-### Subtasks
-
-Subtasks are lightweight CC executions that run inside a parent task's worktree. They don't get their own worktree, don't appear as top-level tasks, and don't trigger the gate pipeline. Currently used for:
-
-- **Review** — a fresh CC session reviews the parent's diff and posts a verdict
-
-Subtasks show in the parent task's detail view via the API (`task.subtasks` array). They track their own token usage and cost, which rolls up to the parent task.
-
-### Push Enforcement
-
-After CC completes, Ouvrage automatically pushes the task branch to origin (with `--force-with-lease`) before the gate pipeline runs. This ensures work is never stranded in an unpushed worktree. The CC prompt also instructs the agent to push, as belt-and-suspenders.
-
-### Dispatch & Lifecycle Tools
+### Tasks
 
 | Tool | Purpose |
 |---|---|
-| `dispatch_task` | Create task + worktree + launch CC. Non-blocking. |
-| `resume_task` | Resume a `needs-review` task. Reuses the same session for context preservation. |
-| `retry_task` | Start a fresh CC session for a task. Optionally clean worktree (`git checkout .`). |
-| `cancel_task` | SIGTERM the CC process, mark as cancelled. Worktree preserved. |
-| `close_task` | Mark completed, optionally remove worktree + delete branch. |
-| `get_task_status` | Checklist progress, liveness, recent messages, artifacts, token usage. |
-| `list_tasks` | List tasks, filter by project and/or status. |
+| `dispatch_task` | Create task + worktree + launch CC session. Non-blocking. |
+| `resume_task` | Resume a stopped task; reuses the same SDK session for full history. |
+| `retry_task` | Fresh session for a task; optionally clean the worktree first. |
+| `cancel_task` | SIGTERM the CC process, mark cancelled, keep the worktree. |
+| `close_task` | Mark completed, optionally remove the worktree and delete the branch. |
+| `get_task_status` | Checklist, liveness, recent messages, artifacts, token usage. |
+| `list_tasks` | Filter by project/status. |
 
-### `dispatch_task` Fields
-
-| Field | Required | Description |
-|---|---|---|
-| `project_id` | Yes | Which registered project |
-| `id` | Yes | Task slug — becomes the branch name |
-| `goal` | Yes | One-liner purpose |
-| `spec` | No | Full markdown spec (becomes the pinned message) |
-| `checklist` | No | Array of checklist item strings |
-| `phase` | No | Starting phase: `analysis` or `implementing` (default: `analysis`) |
-| `depends_on` | No | Task ID this depends on (chains tasks) |
-| `tags` | No | Array of string tags for filtering |
-| `max_turns` | No | Turn limit for this dispatch |
-| `max_wall_clock` | No | Wall clock timeout in minutes |
-| `model` | No | Model override (`opus`, `sonnet`) |
-| `auto_test` | No | Override project's auto-test setting |
-| `auto_review` | No | Override project's auto-review setting |
-| `auto_pr` | No | Override project's auto-PR setting |
-| `escalation_criteria` | No | Tells CC when to escalate to human |
-
-### CC-Side Tools
-
-These tools are available to the CC worker session via the Ouvrage MCP connection:
+### Worker-side (available to the CC session)
 
 | Tool | Purpose |
 |---|---|
-| `update_task_checklist` | Mark a checklist item as done/not done by `item_id`. |
-| `update_task_phase` | Update the task's phase label and optional detail text. |
-| `post_task_message` | Post progress updates, questions, or results to the task thread. |
-| `read_task_messages` | Read messages from the task thread (cursor-based polling). |
-| `get_task_status` | Read own task status (checklist, artifacts, etc.). |
+| `update_task_checklist` | Check off an item by `item_id`. |
+| `update_task_phase` | Update phase (`analysis`, `implementing`, `reviewing`, ...) with detail text. |
+| `post_task_message` | Progress updates, questions, results. |
+| `read_task_messages` | Cursor-based polling for mid-task injections. |
+| `git_push` / `git_fetch` | Authenticated git ops via the platform — workers can't push directly. |
 
-### Session Persistence
-
-When a task is resumed, the dispatcher reuses the same `session_id`. The Agent SDK picks up the full conversation history, so CC retains context from its previous run. No re-explanation needed — just "check Ouvrage for answers and keep going."
-
-### Resource Limits
-
-Limits resolve in order: task override > project default > global default.
-
-| Limit | Global Default | Description |
-|---|---|---|
-| `max_turns` | 200 | Maximum Agent SDK turns per dispatch |
-| `max_wall_clock` | 60 minutes | Wall clock timeout — task moves to `needs-review` on expiry |
-| `max_concurrent` | 3 | Maximum simultaneously running tasks |
-
-### Logging
-
-Each task's worktree contains a `.ouvrage/` directory with:
-
-- `session.jsonl` — Structured session log. Every tool call, result, and message as JSONL entries.
-- `dispatch.log` — Dispatch metadata, session IDs, limits, timestamps, result summaries.
-- `cc-stderr.log` — Raw stderr from the CC process. Use `get_task_status(include_log_tail=true)` to read the last 30 lines without leaving the board.
-
-### Token & Cost Tracking
-
-Each task tracks cumulative `total_input_tokens`, `total_output_tokens`, and `total_cost_usd` across all dispatches (including resumes and subtasks). Visible in `get_task_status` output.
-
-## Example Workflow
-
-### Simple Task
-
-```
-# 1. Register a project
-create_project(
-  id="ym-discount-engine",
-  repo="git@github.com:org/ym-discount-engine.git",
-  working_dir="/work/ym-discount-engine",
-  setup_command="composer install",
-  test_command="php artisan test",
-  auto_test=true,
-  auto_review=true
-)
-
-# 2. Dispatch a task
-dispatch_task(
-  project_id="ym-discount-engine",
-  id="add-bogo-strategy",
-  goal="Implement Buy One Get One discount strategy",
-  spec="## Requirements\n\n- Create BuyXGetYStrategy class...",
-  checklist=["Create strategy class", "Write unit tests", "Add to strategy registry"]
-)
-→ { task_id: "add-bogo-strategy", status: "working" }
-
-# 3. CC works → completes → branch pushed → tests pass → review approves → gate passed
-
-# 4. Check status
-get_task_status(task_id="add-bogo-strategy")
-→ { status: "completed", gate_status: "passed", ... }
-
-# 5. Close and clean up
-close_task(task_id="add-bogo-strategy", cleanup=true)
-```
-
-### Chained Tasks
-
-```
-# Task A — add models
-dispatch_task(project_id="myapp", id="add-models", goal="Add User and Team models")
-
-# Task B — depends on A, branches from A's branch
-dispatch_task(project_id="myapp", id="add-api", goal="Add REST API endpoints", depends_on="add-models")
-
-# Task C — depends on B
-dispatch_task(project_id="myapp", id="add-frontend", goal="Add React components", depends_on="add-api")
-
-# A completes + gate passes → B auto-dispatches
-# B completes + gate passes → C auto-dispatches
-# If A is retried → B and C marked stale → auto-rebase and re-dispatch when A passes again
-```
-
-## Mid-Task Message Injection
-
-Post messages to a running task (via `post_task_message` or the dashboard) and they get injected into the active CC session as user messages. The CC worker sees them as course corrections and adjusts its work.
-
-Uses `ClaudeSDKClient` — a persistent bidirectional session — rather than the one-shot `query()` function. A background poller checks the DB every 5 seconds for new messages and calls `client.query()` to inject them at safe conversation boundaries.
+Mid-task message injection: posting to a running task's thread injects the message into the active CC session as a user message at the next safe boundary. Course corrections without stopping the session.
 
 ## Dashboard
 
-SPA at `/dashboard` (basic auth via Caddy, bypasses OAuth).
+Served at `http://localhost:8100/dashboard/`. Preact + htm via CDN, no build step.
 
-- **Task board**: status, phase, cost, checklist progress, gate status, chain visualization
-- **Task detail**: message thread, expandable session log, dispatch log, subtasks
-- **Session log**: click any entry to expand full tool inputs/outputs/results
-- **Live updates**: 5-second polling with scroll pinning
-- **Actions**: cancel, retry, resume, close, advance/cancel chain from the UI
+- Task board with status, phase, cost, checklist progress, gate state, chain visualisation.
+- Task detail view with message thread, expandable session log, dispatch log, subtasks.
+- Click any log entry to expand the full tool inputs/outputs/results.
+- Live updates on a 5-second poll.
+- Actions: cancel, retry, resume, close, advance or cancel a chain.
 
-### User MCP Servers
+Auth is session cookies (`ouvrage_session`) for browser access, Bearer JWT for the MCP endpoint. Localhost `/mcp/worker` traffic is unauthenticated so in-container CC workers can reach back without credentials.
 
-CC worker sessions automatically load MCP servers from the worker user's `~/.claude.json`. This means global MCPs (e.g. `shopify-ai`, `shopify-dev-mcp`) are available to tasks without per-project configuration.
+## Environment variables
 
-## Author Convention
-
-| Author | Who |
-|---|---|
-| `claude-code` | Claude Code (CLI) |
-| `claude-ai` | Claude AI (web/desktop) |
-| `cc-worker` | Autonomous CC task worker |
-| `dispatcher` | Ouvrage task engine |
-| `dashboard` | Dashboard web UI |
-| `human` / name | Human operator (freeform) |
-
-## Message Types
-
-Optional, for filtering: `spec`, `plan`, `question`, `answer`, `note`, `review`, `status`, `progress`, `result`, `test-result`
-
-## Environment Variables
+Full reference: [`.env.example`](.env.example). The ones that matter:
 
 | Variable | Required | Description |
 |---|---|---|
-| `OUVRAGE_DB` | Yes | Path to SQLite database |
-| `OUVRAGE_PORT` | No | Server port (default: 8100) |
-| `AUTH_ISSUER_URL` | No | Authelia/OIDC issuer URL (omit to disable OAuth) |
-| `RESOURCE_URL` | No | OAuth resource indicator |
-| `PUBLIC_HOST` | No | Public hostname for DNS rebinding protection |
-| `SLACK_BOT_TOKEN` | No | Slack bot token for outbound notifications |
-| `SLACK_CHANNEL_ID` | No | Slack channel for outbound notifications |
-| `JIRA_BASE_URL` | No | Base Jira URL for ticket links |
+| `OUVRAGE_MASTER_KEY` | Yes | Fernet key encrypting stored credentials. Lose this, lose encrypted data. |
+| `OUVRAGE_OWNER_EMAIL` | First boot only | Email for the owner user seeded on startup. |
+| `OUVRAGE_OWNER_PASSWORD` | First boot only | Plaintext password, hashed server-side. Or set `_PASSWORD_HASH` with a pre-hashed value. |
+| `OUVRAGE_DB` | No | SQLite path (default `/data/ouvrage.db`). |
+| `OAUTH_RSA_KEY_PATH` | No | OAuth RSA key path (auto-generated on first boot). |
+| `PORT` | No | HTTP port (default `8100`). |
+| `WORKER_USER` | No | OS user for worker subprocess isolation (prod only, falls back to current user). |
+| `AUTH_MODE` | No | `local` (default) or `saas` (SSO via control plane). |
+| `OPENAI_API_KEY` | No | Enables semantic search over conversations. |
+| `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | No | Per-task Slack notifications. |
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | No | Browser web-push notifications. |
 
 ## Architecture
 
-- **Server**: Python + [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), raw ASGI with Streamable HTTP transport
-- **Database**: aiosqlite (async SQLite with WAL mode)
-- **Task Engine**: `ClaudeSDKClient` from the Agent SDK — persistent bidirectional sessions with mid-task message injection
-- **Gate Pipeline**: Auto-test → auto-review (subtask) → auto-PR, with configurable retry
-- **Subtasks**: Lightweight CC executions in parent worktree (no separate task/worktree)
-- **Chain Propagation**: Automatic invalidation, rebase, and re-dispatch when upstream tasks retry
-- **Worktrees**: Bare git clone + `git worktree add` per task for full isolation
-- **Dashboard**: Vanilla JS SPA with REST API, real-time polling
-- **Auth**: Optional OAuth 2.1 middleware (enabled via `AUTH_ISSUER_URL` env var)
-- **Notifications**: Slack outbound only (task dispatched/completed/failed/heartbeat)
-- **Deployment**: Bare metal with systemd
+```
+ouvrage/
+├── server/           # Raw ASGI app, 70+ MCP tool definitions, per-domain handlers
+├── dispatch/         # Task lifecycle state machine, gate pipeline, SDK session mgmt
+├── db/               # aiosqlite + WAL, schema migrations, FTS5 + sqlite-vec search
+├── auth/             # Session cookies + Bearer JWT, built-in OAuth 2.1 server
+├── git/              # Worktree mgmt + GitHub/GitLab/Bitbucket provider abstraction
+├── embeddings/       # OpenAI text-embedding-3-small for semantic search
+├── notifications/    # Slack threads, web-push
+├── config/           # Env-driven settings, task-state constants
+└── dashboard/        # REST API for the SPA
+
+dashboard/            # Preact SPA, CDN-loaded ES modules, no build step
+tests/                # 2,700+ pytest tests, async, unit + integration
+```
+
+- **Raw ASGI**, not FastAPI — one-endpoint MCP surface doesn't need routing sugar.
+- **Python 3.12+**, runs on `python:3.13-slim` in production. SQLite via stdlib, `sqlite-vec` for semantic queries.
+- **Async throughout** — single-process cooperative, workers are separate OS processes.
+- **State machine** — every status change goes through `TaskLifecycle.execute()`; there's no other way.
+- **Multi-platform git** — providers for GitHub, GitLab, Bitbucket behind a small ABC.
+- **Worker isolation** — production runs worker processes as a dedicated OS user via `setuid` (requires `CAP_SETUID`, `CAP_SETGID`, `CAP_KILL`). Falls back to current-user execution when no worker user is configured.
+
+## Contributing
+
+Issues and PRs welcome. Run `make test` before opening a PR; CI will run it too. Larger changes should come with a short design note — open an issue first to align.
+
+The `CLAUDE.md` at the repo root documents internal conventions (the state-machine contract, the provider interface, test-fixture patterns). Read it before editing `ouvrage/dispatch/` or `ouvrage/git/`.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
+
+---
+
+Built by Stephen Fritz.
