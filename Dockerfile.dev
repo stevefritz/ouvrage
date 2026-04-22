@@ -39,7 +39,11 @@ ENV OUVRAGE_DB=/data/ouvrage.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
     PORT=8100
 
+# Dev entrypoint — master key resolution with persistence.
+# See dev-start.sh for the full resolution order and rationale.
+COPY dev-start.sh /usr/local/bin/dev-start.sh
+RUN chmod +x /usr/local/bin/dev-start.sh
+
 EXPOSE 8100
 
-# Generate an ephemeral master key if none is provided — dev convenience only.
-CMD ["bash", "-c", "mkdir -p /data && : \"${OUVRAGE_MASTER_KEY:=$(python3 -m ouvrage generate-key)}\" && export OUVRAGE_MASTER_KEY && exec python3 -m ouvrage"]
+CMD ["/usr/local/bin/dev-start.sh"]

@@ -14,6 +14,7 @@ docs/
 *.service
 *.sh
 !docker-entrypoint.sh
+!dev-start.sh
 conftest.py
 pytest.ini
 *.png
