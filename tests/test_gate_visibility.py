@@ -22,14 +22,15 @@ class TestRunTestStreaming:
         worktree = str(tmp_path)
         (tmp_path / ".ouvrage").mkdir()
 
-        with patch("ouvrage.dispatch.gates.pwd") as mock_pwd, \
-             patch("ouvrage.dispatch.gates.WORKER_USER", "nobody"):
-            pw = MagicMock()
-            pw.pw_uid = os.getuid()
-            pw.pw_gid = os.getgid()
-            pw.pw_dir = str(tmp_path)
-            mock_pwd.getpwnam.return_value = pw
-
+        # Force the fallback (current-user) path: _run_test_streaming now
+        # routes through ouvrage.git.worktree._resolve_worker_identity(),
+        # which returns None when WORKER_USER isn't on the host. Inside a
+        # container that has the real worker user, we need to short-circuit
+        # to avoid setuid'ing away from the test's tmp_path owner.
+        with patch(
+            "ouvrage.git.worktree._resolve_worker_identity",
+            return_value=None,
+        ):
             from ouvrage.dispatch.gates import _run_test_streaming
             output, rc = await _run_test_streaming(worktree, "echo hello && echo world")
 
@@ -49,14 +50,10 @@ class TestRunTestStreaming:
         worktree = str(tmp_path)
         (tmp_path / ".ouvrage").mkdir()
 
-        with patch("ouvrage.dispatch.gates.pwd") as mock_pwd, \
-             patch("ouvrage.dispatch.gates.WORKER_USER", "nobody"):
-            pw = MagicMock()
-            pw.pw_uid = os.getuid()
-            pw.pw_gid = os.getgid()
-            pw.pw_dir = str(tmp_path)
-            mock_pwd.getpwnam.return_value = pw
-
+        with patch(
+            "ouvrage.git.worktree._resolve_worker_identity",
+            return_value=None,
+        ):
             from ouvrage.dispatch.gates import _run_test_streaming
             output, rc = await _run_test_streaming(worktree, "echo failing && exit 1")
 
