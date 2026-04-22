@@ -437,14 +437,21 @@ async def main():
 
     await db.init_db()
 
-    # Auto-migration: if owner env vars are set and no real owner exists, seed one.
+    # Auto-migration: seed the owner user from env vars if one isn't set up yet.
+    # Accept either OUVRAGE_OWNER_PASSWORD (plaintext, hashed here) or
+    # OUVRAGE_OWNER_PASSWORD_HASH (pre-hashed). The hash variant wins when both
+    # are set — deliberate, so ops flows that already hash can keep doing so.
     import os as _os
     _owner_email = _os.environ.get("OUVRAGE_OWNER_EMAIL")
     _owner_hash = _os.environ.get("OUVRAGE_OWNER_PASSWORD_HASH")
-    if _owner_email and _owner_hash:
+    _owner_pw = _os.environ.get("OUVRAGE_OWNER_PASSWORD")
+    if _owner_email and (_owner_hash or _owner_pw):
         from ouvrage.db.users import get_user_by_email as _get_user_by_email
         _existing = await _get_user_by_email(_owner_email)
         if not _existing:
+            if not _owner_hash:
+                from argon2 import PasswordHasher
+                _owner_hash = PasswordHasher().hash(_owner_pw)
             from ouvrage.migrate import run_migrate_auth as _run_migrate_auth
             log.info("Auto-migrating owner user from env vars: %s", _owner_email)
             await _run_migrate_auth(

@@ -78,15 +78,23 @@ fi
 # migrate-auth is idempotent — safe to run every boot.
 # Only runs if owner credentials are provided (SaaS mode: control plane calls
 # POST /internal/bootstrap-user instead, so these vars won't be set).
-if [ -n "${OUVRAGE_OWNER_EMAIL:-}" ] && [ -n "${OUVRAGE_OWNER_PASSWORD_HASH:-}" ]; then
+# Accept either OUVRAGE_OWNER_PASSWORD (plaintext, hashed inside migrate-auth)
+# or OUVRAGE_OWNER_PASSWORD_HASH (pre-hashed). The CLI handles either.
+if [ -n "${OUVRAGE_OWNER_EMAIL:-}" ] && { [ -n "${OUVRAGE_OWNER_PASSWORD_HASH:-}" ] || [ -n "${OUVRAGE_OWNER_PASSWORD:-}" ]; }; then
     echo "[entrypoint] Running migrate-auth..."
-    python3 -m ouvrage migrate-auth \
-        --email "${OUVRAGE_OWNER_EMAIL}" \
-        --name "${OUVRAGE_OWNER_NAME:-Owner}" \
-        --password-hash "${OUVRAGE_OWNER_PASSWORD_HASH}" \
-        --slug "${OUVRAGE_INSTANCE_SLUG:-default}" \
-        --instance-name "${OUVRAGE_INSTANCE_NAME:-Ouvrage}" \
-    || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
+    MIGRATE_ARGS=(
+        --email "${OUVRAGE_OWNER_EMAIL}"
+        --name "${OUVRAGE_OWNER_NAME:-Owner}"
+        --slug "${OUVRAGE_INSTANCE_SLUG:-default}"
+        --instance-name "${OUVRAGE_INSTANCE_NAME:-Ouvrage}"
+    )
+    if [ -n "${OUVRAGE_OWNER_PASSWORD_HASH:-}" ]; then
+        MIGRATE_ARGS+=( --password-hash "${OUVRAGE_OWNER_PASSWORD_HASH}" )
+    else
+        MIGRATE_ARGS+=( --password "${OUVRAGE_OWNER_PASSWORD}" )
+    fi
+    python3 -m ouvrage migrate-auth "${MIGRATE_ARGS[@]}" \
+        || echo "[entrypoint] migrate-auth failed (non-fatal, may already exist)"
 fi
 
 # --- Lock down secrets — copy to service-user-only location ---
