@@ -45,14 +45,26 @@ def _migrate_auth(args):
 
     parser = argparse.ArgumentParser(
         prog="python -m ouvrage migrate-auth",
-        description="Create owner user from Authelia credentials and seed OAuth client.",
+        description=(
+            "Create the owner user and seed the OAuth client. "
+            "Password can be supplied plaintext (--password / OUVRAGE_OWNER_PASSWORD) "
+            "and will be hashed on the fly, or pre-hashed "
+            "(--password-hash / OUVRAGE_OWNER_PASSWORD_HASH)."
+        ),
     )
     parser.add_argument("--email", default=os.environ.get("OUVRAGE_OWNER_EMAIL"))
     parser.add_argument("--name", default=os.environ.get("OUVRAGE_OWNER_NAME", "Owner"))
     parser.add_argument(
+        "--password",
+        dest="password",
+        default=os.environ.get("OUVRAGE_OWNER_PASSWORD"),
+        help="Plaintext password; hashed on the fly with argon2id.",
+    )
+    parser.add_argument(
         "--password-hash",
         dest="password_hash",
         default=os.environ.get("OUVRAGE_OWNER_PASSWORD_HASH"),
+        help="Pre-computed argon2id hash. Takes precedence over --password.",
     )
     parser.add_argument("--slug", default=os.environ.get("OUVRAGE_INSTANCE_SLUG", "default"))
     parser.add_argument(
@@ -65,8 +77,16 @@ def _migrate_auth(args):
 
     if not parsed.email:
         parser.error("--email is required (or set OUVRAGE_OWNER_EMAIL)")
+    if not parsed.password_hash and not parsed.password:
+        parser.error(
+            "Provide either --password / OUVRAGE_OWNER_PASSWORD (plaintext, hashed on the fly) "
+            "or --password-hash / OUVRAGE_OWNER_PASSWORD_HASH (pre-hashed)."
+        )
+
+    # If both are provided, --password-hash wins — that's the explicit contract.
     if not parsed.password_hash:
-        parser.error("--password-hash is required (or set OUVRAGE_OWNER_PASSWORD_HASH)")
+        from argon2 import PasswordHasher
+        parsed.password_hash = PasswordHasher().hash(parsed.password)
 
     from ouvrage.migrate import run_migrate_auth
 
