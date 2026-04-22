@@ -10,7 +10,6 @@ fixtures/
 scripts/
 docs/
 *.md
-!foreman.html
 *.service
 *.sh
 !docker-entrypoint.sh
@@ -19,3 +18,9 @@ conftest.py
 pytest.ini
 *.png
 .env*
+# Defensive excludes — local state that must never end up in the image context.
+/switchboard/
+secrets/
+*.db
+*.pem
+*.log

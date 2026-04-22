@@ -26,8 +26,8 @@ import time
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import switchboard.db as db
-import switchboard.embeddings.service as emb
+import ouvrage.db as db
+import ouvrage.embeddings.service as emb
 
 
 async def run(batch_size: int, dry_run: bool) -> None:

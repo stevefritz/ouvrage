@@ -58,7 +58,7 @@ def _migrate_auth(args):
     parser.add_argument(
         "--instance-name",
         dest="instance_name",
-        default=os.environ.get("OUVRAGE_INSTANCE_NAME", "Switchboard"),
+        default=os.environ.get("OUVRAGE_INSTANCE_NAME", "Ouvrage"),
     )
 
     parsed = parser.parse_args(args)

@@ -155,9 +155,9 @@ RUN ln -sf /home/switchboard/.local/bin/claude /usr/local/bin/claude
 WORKDIR /app
 
 COPY pyproject.toml ./
-COPY switchboard/ switchboard/
+COPY ouvrage/ ouvrage/
 COPY dashboard/ dashboard/
-COPY foreman.html ./
+COPY index.html ./
 
 RUN apt-get update && apt-get install -y --no-install-recommends tmpreaper \
     && rm -rf /var/lib/apt/lists/* \
@@ -187,7 +187,7 @@ RUN mkdir -p /data /work \
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENV SWITCHBOARD_DB=/data/switchboard.db \
+ENV OUVRAGE_DB=/data/ouvrage.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
     WORKER_USER=switchboard \
     AUTH_MODE=local \
@@ -197,4 +197,4 @@ ENV SWITCHBOARD_DB=/data/switchboard.db \
 EXPOSE 8100
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python3", "-m", "switchboard"]
+CMD ["python3", "-m", "ouvrage"]

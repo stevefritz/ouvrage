@@ -17,7 +17,7 @@ async def run_migrate_auth(
     name: str,
     password_hash: str,
     slug: str,
-    instance_name: str = "Switchboard",
+    instance_name: str = "Ouvrage",
 ) -> dict:
     """Create owner user and seed OAuth client. Idempotent.
 
