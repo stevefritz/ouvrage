@@ -1,9 +1,4 @@
 {
-  "includeCoAuthoredBy": false,
-  "attribution": {
-    "commit": "",
-    "pr": ""
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -11,17 +6,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r .tool_input.command // empty); if echo \"$cmd\" | grep -qE \"\\bpkill\\b|\\bkillall\\b|\\bkill\\s|\\bkill\\s+-\"; then echo \"BLOCKED: Do not use pkill/killall/kill — you will terminate yourself. Use task timeouts instead.\" >&2; exit 2; fi'"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "if": "Bash(git *)",
-        "hooks": [
+            "command": "/opt/switchboard/hooks/block-git-push.sh"
+          },
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-dangerous-git.sh"
+            "command": "/opt/switchboard/hooks/block-git-fetch.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'cmd=$(echo \"$CLAUDE_TOOL_INPUT\" | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get(\\\"command\\\",\\\"\\\"))\" 2>/dev/null || true); if echo \"$cmd\" | grep -qE \"\\b(kill|pkill|killall)\\b\"; then echo \"BLOCKED: kill/pkill/killall are not allowed in worker sessions\" >&2; exit 1; fi'"
           }
         ]
       }
