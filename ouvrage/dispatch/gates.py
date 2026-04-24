@@ -188,8 +188,11 @@ async def _run_subtask(
     from ouvrage.git.worktree import _resolve_worker_identity
     _identity = _resolve_worker_identity()
     worker_home = _identity[2] if _identity else os.path.expanduser("~")
+    # Point reviewer at /mcp/worker (trust-based, localhost-bypass) so tool
+    # calls like post_task_message don't need OAuth. Matches the worker's
+    # MCP endpoint in sdk_session.py.
     mcp_servers = {
-        "ouvrage": {"type": "http", "url": f"http://localhost:{os.environ.get('OUVRAGE_PORT', '8100')}/mcp"},
+        "ouvrage": {"type": "http", "url": f"http://localhost:{os.environ.get('OUVRAGE_PORT', '8100')}/mcp/worker"},
     }
     try:
         with open(os.path.join(worker_home, ".claude.json")) as f:
