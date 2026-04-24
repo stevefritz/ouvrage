@@ -123,34 +123,34 @@ RUN git clone --depth 1 https://github.com/rbenv/rbenv.git "$RBENV_ROOT" \
 # UID/GID 1001 — avoids conflict with systemd-journal (999) on Ubuntu 24.04.
 # The entrypoint chowns /data and /work on every boot, so existing volumes
 # with different ownership are fixed automatically.
-RUN groupadd -g 1001 switchboard \
-    && useradd -u 1001 -g switchboard -m -s /bin/bash switchboard \
+RUN groupadd -g 1001 ouvrage \
+    && useradd -u 1001 -g ouvrage -m -s /bin/bash ouvrage \
     && groupadd -r svc-only \
-    && useradd -r -g switchboard -G svc-only -s /usr/sbin/nologin switchboard-svc
+    && useradd -r -g ouvrage -G svc-only -s /usr/sbin/nologin ouvrage-svc
 
-# ── Layer 8: Rust (as switchboard user — rustup is user-scoped) ──────────────
-USER switchboard
+# ── Layer 8: Rust (as ouvrage user — rustup is user-scoped) ──────────────────
+USER ouvrage
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-ENV PATH="/home/switchboard/.cargo/bin:$PATH"
+ENV PATH="/home/ouvrage/.cargo/bin:$PATH"
 USER root
 # Make cargo/rustc available system-wide
-RUN ln -sf /home/switchboard/.cargo/bin/cargo /usr/local/bin/cargo \
-    && ln -sf /home/switchboard/.cargo/bin/rustc /usr/local/bin/rustc \
-    && ln -sf /home/switchboard/.cargo/bin/rustup /usr/local/bin/rustup
+RUN ln -sf /home/ouvrage/.cargo/bin/cargo /usr/local/bin/cargo \
+    && ln -sf /home/ouvrage/.cargo/bin/rustc /usr/local/bin/rustc \
+    && ln -sf /home/ouvrage/.cargo/bin/rustup /usr/local/bin/rustup
 
 # ── Layer 9: Claude Code ────────────────────────────────────────────────────
 # The installer writes to ~/.local/bin/claude (NOT ~/.claude/local/bin — that
 # was the old path). Symlink target must match the new location, otherwise
 # /usr/local/bin/claude points at nothing.
 #
-# IMPORTANT: do not install the binary inside /home/switchboard/.claude/ —
+# IMPORTANT: do not install the binary inside /home/ouvrage/.claude/ —
 # that directory is bind-mounted in production (./claude-auth volume) for
 # auth state persistence, and the mount would shadow the binary on first run.
 # Installing to ~/.local/bin/ keeps it outside the bind mount.
-USER switchboard
+USER ouvrage
 RUN curl -fsSL https://claude.ai/install.sh | bash
 USER root
-RUN ln -sf /home/switchboard/.local/bin/claude /usr/local/bin/claude
+RUN ln -sf /home/ouvrage/.local/bin/claude /usr/local/bin/claude
 
 # ── Layer 10: App code (busts cache on every deploy) ─────────────────────────
 WORKDIR /app
@@ -163,10 +163,10 @@ COPY index.html ./
 RUN apt-get update && apt-get install -y --no-install-recommends tmpreaper \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed hatchling \
-    && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed ".[dev]" sqlite-vec
+    && python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed -e ".[dev]" sqlite-vec
 
-# Lock down /app — only root and svc-only group (switchboard-svc) can read.
-# Worker user (switchboard) cannot access the codebase or DB schema.
+# Lock down /app — only root and svc-only group (ouvrage-svc) can read.
+# Worker user (ouvrage) cannot access the codebase or DB schema.
 RUN chown -R root:svc-only /app/ \
     && find /app -type d -exec chmod 750 {} + \
     && find /app -type f -exec chmod 640 {} +
@@ -181,8 +181,8 @@ RUN if [ "$WITH_PLAYWRIGHT" = "true" ]; then \
 # ── Volumes ──────────────────────────────────────────────────────────────────
 VOLUME ["/data", "/work"]
 RUN mkdir -p /data /work \
-    && chown switchboard-svc:switchboard /data \
-    && chown switchboard:switchboard /work
+    && chown ouvrage-svc:ouvrage /data \
+    && chown ouvrage:ouvrage /work
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 COPY docker-entrypoint.sh /usr/local/bin/
@@ -190,7 +190,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV OUVRAGE_DB=/data/ouvrage.db \
     OAUTH_RSA_KEY_PATH=/data/oauth_rsa_key.pem \
-    WORKER_USER=switchboard \
+    WORKER_USER=ouvrage \
     AUTH_MODE=local \
     TMPDIR=/work/.tmp \
     PORT=8100

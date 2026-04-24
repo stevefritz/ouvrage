@@ -35,7 +35,7 @@ RECOVERY_ENABLED = os.environ.get("RECOVERY_ENABLED", "true").lower() in ("true"
 # Worker
 # ---------------------------------------------------------------------------
 
-WORKER_USER = os.environ.get("WORKER_USER", "switchboard")
+WORKER_USER = os.environ.get("WORKER_USER", "ouvrage")
 
 # ---------------------------------------------------------------------------
 # Slack

@@ -426,7 +426,7 @@ async def _setup_log_dir(worktree_path: str, clean: bool = True) -> Path:
 
 
 def _open_shared(path, mode="a"):
-    """Open a file with group-writable umask (for switchboard-svc + switchboard user)."""
+    """Open a file with group-writable umask (for ouvrage-svc + ouvrage user)."""
     old = os.umask(0o002)
     try:
         return open(path, mode)

@@ -41,7 +41,30 @@ After first boot the container initialises the database, creates the owner accou
 
 ## Usage
 
-Connect an MCP-enabled client to `http://localhost:8100/mcp`. Claude.ai connects via OAuth (credentials printed on first boot); Claude Code and other local clients connect without auth from localhost.
+Connect an MCP-enabled client to `http://localhost:8100/mcp`. Claude.ai connects via OAuth; Claude Code and other local clients connect without auth from localhost. OAuth client credentials are available on the dashboard **Settings** page.
+
+### Claude Code
+
+From any project directory, register Ouvrage as an MCP server:
+
+```bash
+claude mcp add --transport http ouvrage http://localhost:8100/mcp
+```
+
+That's it for local use — the localhost bypass means no OAuth credentials are needed. To connect to a remote Ouvrage instance, add `--client-id` and `--client-secret` flags (you'll be prompted for the secret):
+
+```bash
+claude mcp add --transport http ouvrage https://your-host/mcp \
+  --client-id <client-id> --client-secret
+```
+
+Inside Claude Code, run `/mcp`, select the `ouvrage` server, and choose **Authenticate** to complete the OAuth handshake. After that, Ouvrage tools are available to the session.
+
+### Claude.ai
+
+In Claude.ai go to **Settings → Connectors → Add Custom Connector**. Give it any name (e.g. `Ouvrage`), set the remote URL to your Ouvrage `/mcp` endpoint, and under **Advanced settings** paste the OAuth client credentials from the dashboard Settings page. Save, then click **Connect** on the connector to authenticate against the dashboard.
+
+Claude.ai requires a publicly reachable URL — the local default `http://localhost:8100/mcp` won't work. For local machines, expose Ouvrage through a tunnel (e.g. [ngrok](https://ngrok.com/)) and use the external URL when adding the connector.
 
 Register a project and dispatch work:
 

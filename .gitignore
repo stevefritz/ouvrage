@@ -1,15 +1,20 @@
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/*.pem
+# Local state directories created by setup.sh
+data/*
+!data/.gitignore
+work/*
+!work/.gitignore
+claude-auth/*
+!claude-auth/.gitignore
+secrets/*
+!secrets/.gitignore
+gitconfig
+.env
+
 __pycache__/
 *.pyc
 .venv/
 .switchboard/
 /etc/switchboard/env
 .git-credential-helper.sh
-.env
-secrets/*
-!secrets/.gitignore
 testOutput.txt
 /tmp-*.log

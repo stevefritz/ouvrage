@@ -311,7 +311,7 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
 
     log.info(f"Created worktree: {worktree_path} on branch {branch}")
 
-    # Make worktree group-writable so the service user (switchboard-svc) can
+    # Make worktree group-writable so the service user (ouvrage-svc) can
     # write files into worker-owned directories.
     await _run_as_worker("chmod", "g+w", worktree_path)
 

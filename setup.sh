@@ -38,7 +38,8 @@ prompt_owner_creds() {
 
 prompt_openai_key() {
   echo "  OpenAI API key (optional — enables vector search; leave blank to skip)..."
-  read -r -p "  OpenAI API key: " openai_key
+  read -r -s -p "  OpenAI API key: " openai_key
+  echo
 
   if [[ -n "$openai_key" ]]; then
     if ! printf '%s\n' "$openai_key" > ./secrets/openai_key; then
@@ -62,8 +63,18 @@ if [[ "${1:-}" == "--reset" ]]; then
     echo "Aborted. Nothing was changed."
     exit 0
   fi
+  echo "→ Stopping container..."
+  docker compose down 2>&1 | grep -vE "^$" || true
   echo "→ Wiping installation..."
-  rm -rf data/ work/ claude-auth/ secrets/ .env gitconfig
+  # State dirs contain files owned by container uids (ouvrage-svc=996,
+  # ouvrage=1001) that the host user can't delete directly. Spin up a
+  # throwaway Alpine container with bind mounts and let its root nuke them.
+  if [[ -d data || -d work || -d claude-auth || -d gitconfig ]]; then
+    docker run --rm \
+      -v "$PWD:/host" \
+      alpine:latest sh -c 'rm -rf /host/data /host/work /host/claude-auth /host/gitconfig' 2>/dev/null || true
+  fi
+  rm -rf secrets .env
   echo "✓ Wiped. Running fresh setup..."
   echo ""
 fi
@@ -90,11 +101,34 @@ echo "✓ Docker is ready"
 # ── State directories ─────────────────────────────────────────────────────────
 
 mkdir -p data work claude-auth secrets
+for d in data work claude-auth secrets; do
+  if [[ ! -f "$d/.gitignore" ]]; then
+    printf '*\n!.gitignore\n' > "$d/.gitignore"
+  fi
+done
 echo "✓ Directories ready"
 
 # ── Git config ────────────────────────────────────────────────────────────────
 
 echo "→ Checking git config for workers..."
+write_placeholder_gitconfig() {
+  cat > ./gitconfig <<'GITEOF'
+[user]
+	name = Your Name
+	email = you@example.com
+GITEOF
+}
+
+# Repair: Docker auto-creates a directory at the bind-mount target when the
+# host file doesn't exist. If that happened on a previous run, the dir is
+# root-owned and the host user can't delete it — nuke it via a throwaway
+# container that has root inside.
+if [[ -d ./gitconfig ]]; then
+  echo "  Repairing ./gitconfig (Docker auto-created it as a directory)..."
+  docker compose down >/dev/null 2>&1 || true
+  docker run --rm -v "$PWD:/host" alpine:latest sh -c 'rm -rf /host/gitconfig' >/dev/null 2>&1 || true
+fi
+
 if [[ -f ./gitconfig ]]; then
   echo "✓ ./gitconfig already exists — skipping"
 elif [[ -f "$HOME/.gitconfig" ]]; then
@@ -103,18 +137,20 @@ elif [[ -f "$HOME/.gitconfig" ]]; then
     cp "$HOME/.gitconfig" ./gitconfig
     echo "✓ Copied ~/.gitconfig"
   else
-    echo "  Skipped. Workers will use a placeholder identity."
+    write_placeholder_gitconfig
+    echo "  Wrote placeholder ./gitconfig — edit it before dispatching tasks."
   fi
 else
-  cat > ./gitconfig <<'GITEOF'
-[user]
-	name = Your Name
-	email = you@example.com
-GITEOF
+  write_placeholder_gitconfig
   echo "  Created ./gitconfig with placeholder values — edit it before dispatching tasks."
 fi
 
 # ── Build image ───────────────────────────────────────────────────────────────
+
+# Compose requires .env to exist (it's listed in env_file). Real contents are
+# written later in prompt_owner_creds; an empty file is enough to unblock build.
+touch .env
+chmod 600 .env
 
 echo "→ Building the Ouvrage image (this takes a few minutes the first time)..."
 if ! docker compose build; then
@@ -128,7 +164,7 @@ echo "✓ Image built"
 echo "→ Checking master encryption key..."
 if [[ ! -s ./secrets/master_key ]]; then
   echo "  Generating master key..."
-  if ! docker compose run --rm ouvrage python3 -m ouvrage generate-key > ./secrets/master_key; then
+  if ! docker compose run --rm --entrypoint "" ouvrage python3 -m ouvrage generate-key > ./secrets/master_key; then
     echo "✗ Key generation failed."
     echo "  Run manually: docker compose run --rm ouvrage python3 -m ouvrage generate-key > secrets/master_key"
     exit 1
