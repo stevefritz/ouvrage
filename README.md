@@ -69,11 +69,11 @@ dispatch_task(
 
 The context layer is built on SQLite with FTS5 for full-text search and sqlite-vec for vector embeddings. The orchestration layer runs Claude Code workers in isolated git worktrees, managed through a six-state lifecycle machine (`ready → working → validating → completed`, with `stopped` and `cancelled`). Both layers share the same database and MCP surface.
 
-- [`docs/architecture/overview.md`](docs/architecture/overview.md) — System overview and component relationships
-- [`docs/architecture/context-engineering.md`](docs/architecture/context-engineering.md) — How the context layer stores, pins, and retrieves
-- [`docs/architecture/task-lifecycle.md`](docs/architecture/task-lifecycle.md) — Task state machine and gate pipeline
-- [`docs/architecture/prompt-engineering.md`](docs/architecture/prompt-engineering.md) — How worker prompts are constructed
-- [`docs/architecture/security-and-isolation.md`](docs/architecture/security-and-isolation.md) — Worker isolation, auth model, credential encryption
+- [`docs/overview.md`](docs/overview.md) — System overview and component relationships
+- [`docs/context-engineering.md`](docs/context-engineering.md) — How the context layer stores, pins, and retrieves
+- [`docs/task-lifecycle.md`](docs/task-lifecycle.md) — Task state machine and gate pipeline
+- [`docs/prompt-engineering.md`](docs/prompt-engineering.md) — How worker prompts are constructed
+- [`docs/security-and-isolation.md`](docs/security-and-isolation.md) — Worker isolation, auth model, credential encryption
 
 ## Development
 
