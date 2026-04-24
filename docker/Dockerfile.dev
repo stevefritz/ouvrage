@@ -8,7 +8,7 @@
 #
 # NOT FOR PRODUCTION. Use Dockerfile for that.
 #
-# Build:  docker build -f Dockerfile.dev -t ouvrage:dev .
+# Build:  docker build -f docker/Dockerfile.dev -t ouvrage:dev .
 # Run:    make docker-dev
 
 FROM python:3.13-slim

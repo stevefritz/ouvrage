@@ -16,7 +16,7 @@ services:
   ouvrage:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: docker/Dockerfile.dev
     image: ouvrage:dev
     container_name: ouvrage-dev
     restart: unless-stopped

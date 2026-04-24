@@ -10,39 +10,20 @@ Working at AI-driven speed creates its own coordination problem: long conversati
 
 ## Quickstart
 
-Requires Docker 24+ and Docker Compose v2.
-
 ```bash
 git clone https://github.com/stevefritz/switchboard.git ouvrage
 cd ouvrage
+./setup.sh
+docker compose up -d
 ```
 
-Generate a Fernet master key to encrypt stored credentials:
+Then open http://localhost:8100.
 
-```bash
-mkdir -p secrets
-docker run --rm --entrypoint python3 python:3.13-slim -c \
-  "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
-  > secrets/master_key
-```
-
-Start the stack with your owner credentials:
-
-```bash
-OUVRAGE_OWNER_EMAIL=you@example.com \
-OUVRAGE_OWNER_PASSWORD=change-me \
-docker compose -f docker-compose.example.yml up -d --build
-```
-
-```bash
-open http://localhost:8100/dashboard/login
-```
-
-On first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The bootstrap env vars can be removed after first start.
+The setup script will prompt for the few things it needs (owner email, owner password, optional OpenAI key). Everything else is handled for you.
 
 ## Configuration
 
-See [`.env.example`](.env.example) for the full variable reference. The required vars are `OUVRAGE_MASTER_KEY` (the Fernet key generated above), `ANTHROPIC_API_KEY` (used by dispatched Claude Code workers), `OUVRAGE_OWNER_EMAIL`, and `OUVRAGE_OWNER_PASSWORD`. `OPENAI_API_KEY` is optional — without it, conversation search falls back to full-text search only; vector search is disabled.
+After first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The `OUVRAGE_OWNER_EMAIL` and `OUVRAGE_OWNER_PASSWORD` vars (written to `.env` by `setup.sh`) are only needed on first start. `OPENAI_API_KEY` is optional — without it, conversation search falls back to full-text search only; vector search is disabled.
 
 ## Usage
 

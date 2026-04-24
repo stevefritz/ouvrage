@@ -9,6 +9,7 @@ __pycache__/
 /etc/switchboard/env
 .git-credential-helper.sh
 .env
-secrets/
+secrets/*
+!secrets/.gitignore
 testOutput.txt
 /tmp-*.log

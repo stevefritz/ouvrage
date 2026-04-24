@@ -1,4 +1,4 @@
-.PHONY: help install test test-quick run docker docker-dev docker-build clean
+.PHONY: help install test test-quick run setup docker docker-dev docker-build clean
 
 help:
 	@echo "Ouvrage — common tasks"
@@ -7,6 +7,7 @@ help:
 	@echo "  make test         Run the full test suite"
 	@echo "  make test-quick   Run only tests that failed on the last run (pytest --last-failed)"
 	@echo "  make run          Start the server locally (python3 -m ouvrage)"
+	@echo "  make setup        First-time setup (interactive)"
 	@echo "  make docker       Start the production container (docker compose up -d)"
 	@echo "  make docker-dev   Start the dev container with code mounted live"
 	@echo "  make docker-build Rebuild the production image"
@@ -24,14 +25,17 @@ test-quick:
 run:
 	python3 -m ouvrage
 
+setup:
+	./setup.sh
+
 docker:
-	docker compose -f docker-compose.example.yml up -d
+	docker compose up -d
 
 docker-dev:
 	docker compose -f docker-compose.dev.yml up
 
 docker-build:
-	docker compose -f docker-compose.example.yml build
+	docker compose build
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

@@ -1,6 +1,6 @@
 # Ouvrage Worker Runtimes
 
-Reference for what's available inside `ouvrage:full` / `ouvrage:eyes` (images built from `Dockerfile.runtimes`). CC workers run as the `switchboard` OS user inside `/work/<project>/<worktree>`.
+Reference for what's available inside the production image (built from `Dockerfile`). CC workers run as the `switchboard` OS user inside `/work/<project>/<worktree>`.
 
 ## Quick reference
 
@@ -74,9 +74,10 @@ Grouped by purpose — enough for most native-extension builds without extra `ap
 
 ## Adding a new runtime version
 
-Edit `Dockerfile.runtimes`, rebuild, retag. Keep the layer ordering (system libs → runtimes → app code) so day-to-day app deploys only rebuild from the `COPY` layer onward.
+Edit `Dockerfile`, rebuild. Keep the layer ordering (system libs → runtimes → app code) so day-to-day app deploys only rebuild from the `COPY` layer onward.
 
 ```bash
-cd /root/mcp-switchboard
-docker build -f Dockerfile.runtimes --build-arg WITH_PLAYWRIGHT=true -t ouvrage:full .
+docker compose build
+# With Playwright:
+docker build --build-arg WITH_PLAYWRIGHT=true -t ouvrage:latest .
 ```
