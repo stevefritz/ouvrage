@@ -21,6 +21,20 @@ Then open http://localhost:8100.
 
 The setup script will prompt for the few things it needs (owner email, owner password, optional OpenAI key). Everything else is handled for you.
 
+## Resetting
+
+Re-running `./setup.sh` is safe — it skips anything already done. If the database exists, it won't re-prompt for owner credentials (the bootstrap values are only meaningful on first boot; changing them after the database is created has no effect).
+
+To change your owner password after first boot, log in and use the dashboard.
+
+To wipe everything and start over:
+
+```bash
+./setup.sh --reset
+```
+
+This deletes `data/`, `work/`, `claude-auth/`, `secrets/`, `.env`, and `gitconfig`, then runs fresh setup. You will be prompted to confirm before anything is deleted.
+
 ## Configuration
 
 After first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The `OUVRAGE_OWNER_EMAIL` and `OUVRAGE_OWNER_PASSWORD` vars (written to `.env` by `setup.sh`) are only needed on first start. `OPENAI_API_KEY` is optional — without it, conversation search falls back to full-text search only; vector search is disabled.
