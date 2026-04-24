@@ -1,285 +1,101 @@
 # Ouvrage
 
-An MCP server that turns Claude.ai (or any MCP client) into a dispatch center for autonomous Claude Code agents. Describe work in conversation, dispatch it as a task, and a CC instance picks it up — working in its own git branch, reading code, making changes, committing, and reporting back through the same MCP protocol.
+Ouvrage is a context engineering and orchestration system for agentic coding. The context layer stores conversations, decisions, and specs with hybrid keyword and vector search, so an LLM can help you plan and then retrieve that planning later at whatever grain you need. The orchestration layer dispatches Claude Code workers to your repos, chains them through dependencies, runs test and review gates, and opens PRs. Both are exposed through an MCP server for use from any MCP-enabled client, and through a web dashboard for direct access when needed.
 
-Three ways to interact with running work:
+The context layer is indexed by project and scoped by conversation or task. Pins mark canonical content; the rest of the history stays searchable. Retrieval is available to both humans (through the dashboard or an MCP client) and workers (through the same MCP tools).
 
-- **Claude.ai** — dispatch tasks, check status, post course corrections, retry, all through natural conversation via MCP tools.
-- **Dashboard** — web UI with live session logs, message threads, checklist progress, and direct task actions.
-- **Any MCP client** — Claude Code, Cursor, custom agents. CC workers talk back to Ouvrage through the same MCP endpoint that dispatches them.
+Orchestration is primarily driven by the LLM through MCP — dispatching tasks, responding to status, handling retries. The dashboard exposes the same operations for human-in-the-loop work: approving held tasks, reviewing gate output, pinning messages, reading task threads.
 
-Workers inherit the user's MCP config, so a task can use tools like `shopify-ai` or `jira` alongside standard code tools. The conversation layer (project threads, task messages, pinned specs) means context from planning carries through execution and back.
+Working at AI-driven speed creates its own coordination problem: long conversations, cross-cutting concerns, and multiple parallel work streams that become difficult to manage inside a single conversation. Ouvrage is an attempt to address that. Separate conversations converge into a single knowledge base, and that knowledge can be retrieved in a fresh context without losing the nuance of the original reasoning. The result is that both the human and the LLM have a durable reference for what was decided and why — which makes specifications sharper, planning more coherent, and the work itself closer to the original vision.
 
-## Status
-
-Functional and in daily use. Public under MIT as of 2026-04. Still rough edges in the install surface and a handful of refactors outstanding — see [`docs/internal/pre-oss-architecture-review.md`](docs/internal/pre-oss-architecture-review.md) for an honest self-assessment of the debt.
-
-## Quick start
+## Quickstart
 
 Requires Docker 24+ and Docker Compose v2.
 
 ```bash
 git clone https://github.com/stevefritz/switchboard.git ouvrage
 cd ouvrage
+```
 
-# 1. Generate a Fernet master key (used to encrypt stored credentials).
+Generate a Fernet master key to encrypt stored credentials:
+
+```bash
 mkdir -p secrets
 docker run --rm --entrypoint python3 python:3.13-slim -c \
   "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
   > secrets/master_key
+```
 
-# 2. Build the image.
-docker compose -f docker-compose.example.yml build
+If you're just trying it out, skip the key step — the container will generate an ephemeral key automatically on startup, with a warning that encrypted data won't survive a restart.
 
-# 3. Start the stack with an owner bootstrapped on first boot.
-#    The OUVRAGE_OWNER_PASSWORD env var is hashed server-side at bootstrap.
+Start the stack with your owner credentials:
+
+```bash
 OUVRAGE_OWNER_EMAIL=you@example.com \
 OUVRAGE_OWNER_PASSWORD=change-me \
-docker compose -f docker-compose.example.yml up -d
+docker compose -f docker-compose.example.yml up -d --build
+```
 
-# 4. Log in.
+```bash
 open http://localhost:8100/dashboard/login
 ```
 
-That's it. The container auto-generates the OAuth RSA key, initialises the DB, bootstraps your owner user, and starts serving on port 8100.
+On first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The bootstrap env vars can be removed after first start.
 
-For compose-file-checked-into-git flows where plaintext in env is a dealbreaker, pre-hash the password with `python3 -m ouvrage hash-password 'change-me'` and set `OUVRAGE_OWNER_PASSWORD_HASH` instead. The hash form takes precedence when both are set.
+## Configuration
 
-## Local development
+See [`.env.example`](.env.example) for the full variable reference. The required vars are `OUVRAGE_MASTER_KEY` (the Fernet key generated above), `ANTHROPIC_API_KEY` (used by dispatched Claude Code workers), `OUVRAGE_OWNER_EMAIL`, and `OUVRAGE_OWNER_PASSWORD`. `OPENAI_API_KEY` is optional — without it, conversation search falls back to full-text search only; vector search is disabled.
 
-For editing code with live reload (bind-mounted source, no image rebuild on change):
+## Usage
 
-```bash
-make docker-dev      # starts docker-compose.dev.yml
-# edit files on host
-docker compose -f docker-compose.dev.yml restart ouvrage  # pick up changes
-```
+Connect an MCP-enabled client to `http://localhost:8100/mcp`. Claude.ai connects via OAuth (credentials printed on first boot); Claude Code and other local clients connect without auth from localhost.
 
-For running the test suite without Docker:
-
-```bash
-make install         # pip install -e '.[dev]' into the current environment
-make test            # pytest tests/ -q --tb=short
-make test-quick      # --last-failed only
-```
-
-CI runs pytest on Python 3.12 and 3.13 on every push and PR (see `.github/workflows/test.yml`).
-
-## Client configuration
-
-### Claude Code (local)
-
-Add the Ouvrage MCP server to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "ouvrage": {
-      "type": "http",
-      "url": "http://localhost:8100/mcp"
-    }
-  }
-}
-```
-
-### Claude AI (via OAuth)
-
-The server publishes an OAuth 2.1 authorisation server at `/oauth/*` and issues self-signed RS256 JWTs. When you bootstrap an owner the entrypoint prints the `claude-mcp` OAuth client credentials — save them; you'll paste them into Claude.ai's MCP connector settings.
-
-To re-print the credentials later:
-
-```bash
-docker exec ouvrage python3 -c "\
-import asyncio, ouvrage.db as db; \
-from ouvrage.crypto import decrypt_value; \
-async def go(): \
-    await db.init_db(); \
-    async with db.get_db() as c: \
-        r = (await c.execute_fetchall('SELECT client_id, client_secret_encrypted FROM oauth_clients WHERE client_id=\'claude-mcp\''))[0]; \
-    print(r['client_id'], decrypt_value(r['client_secret_encrypted'])); \
-asyncio.run(go())"
-```
-
-### Any MCP client
-
-Any client that speaks the MCP HTTP transport can connect at `http://<host>:8100/mcp` with a Bearer token issued by `/oauth/token`. CC workers connect to `/mcp/worker` which bypasses auth for localhost traffic.
-
-## How it works
-
-Ouvrage dispatches autonomous Claude Code sessions in isolated git worktrees. Each task gets its own branch, its own working directory, and reports progress back through MCP:
-
-1. `dispatch_task` creates a task record and a worktree (bare clone + `git worktree add`).
-2. A CC session launches in the background via the Agent SDK — the MCP call returns immediately with the task ID.
-3. The worker reads code, edits files, runs tests, commits to its branch. It reports progress via Ouvrage tools (checklist updates, phase changes, messages).
-4. When the worker finishes, the branch is auto-pushed to origin.
-5. The gate pipeline runs: auto-test → auto-review → PR. Failures retry the session with feedback injected.
-6. If the task has dependents, they auto-dispatch from its branch. If `auto_merge` is set, the PR merges.
-
-### Task lifecycle
-
-The database tracks six core states:
+Register a project and dispatch work:
 
 ```
-ready  →  working  →  validating  →  completed
-                   ↘              ↙
-                     stopped  ←──  (user intervention)
-          any state  →  cancelled
+create_project(id="my-repo", repo="https://github.com/you/my-repo.git", working_dir="/work/my-repo")
+
+dispatch_task(
+  project_id="my-repo",
+  goal="Add pagination to the users API endpoint",
+  auto_test=true,
+  auto_review=true
+)
 ```
 
-- **ready** — waiting for dispatch or for a dependency to pass its gate.
-- **working** — CC session is active.
-- **validating** — gate pipeline running (test or review).
-- **stopped** — paused by user action, timeout, error, or gate failure.
-- **completed** — finished, gates passed or manually closed.
-- **cancelled** — discarded before completion.
-
-The dashboard surfaces richer display states (`testing`, `reviewing`, `needs-review`, `turns-exhausted`, etc.) computed from the DB state plus task flags. See `ouvrage/config/constants.py::CORE_STATE_DEFINITIONS` for the mapping.
-
-All state transitions route through `TaskLifecycle.execute()` in `ouvrage/dispatch/lifecycle.py` — single owner, no side-channel writes.
-
-### Gate pipeline
-
-Optional per-project / per-task, controlled by `auto_test` and `auto_review`:
-
-```
-CC completes → auto-push → [auto-test] → [auto-review] → gate passed
-                              ↓              ↓
-                         test failed    changes requested
-                              ↓              ↓
-                          auto-retry     auto-retry (limits configurable)
-```
-
-- **Auto-test**: runs the project's `test_command` in the worktree. Failure output feeds back into a retry dispatch.
-- **Auto-review**: a subtask CC session reviews the diff against the spec. `CHANGES REQUESTED` triggers a retry with the review feedback injected.
-- **Auto-PR**: on gate pass (or if no gate is configured), creates a PR on the project's platform (GitHub, GitLab, Bitbucket).
-- **Auto-merge**: on `auto_merge`, merges the PR after it lands.
-
-### Task chains
-
-Tasks can depend on each other. A dependent stays `ready` until its dependency's gate passes, then auto-dispatches from the dependency's branch:
-
-```python
-dispatch_task(id="add-models")
-dispatch_task(id="add-api",      depends_on="add-models")
-dispatch_task(id="add-frontend", depends_on="add-api")
-```
-
-Chain propagation: if an upstream task retries, downstream tasks are marked `stale`. When the upstream task's gate passes again, stale dependents auto-rebase onto the updated parent branch and re-dispatch with context about what changed.
-
-## MCP tools
-
-~70 tools grouped by domain. A partial reference:
-
-### Conversations
-
-| Tool | Purpose |
-|---|---|
-| `create_conversation` | Start a project thread. |
-| `post` | Post a message (spec, question, answer, plan, note, status). |
-| `read` | Read messages with cursor-based pagination (`after=<cursor>` returns only new). |
-| `get_pinned` | Fetch the pinned source-of-truth message. |
-| `pin` | Pin a message (auto-unpins previous). |
-| `conversations` | List/search conversations. |
-| `archive` | Archive a resolved conversation. |
-
-### Projects
-
-| Tool | Purpose |
-|---|---|
-| `create_project` | Register a project for task dispatch. |
-| `get_project` / `update_project` / `list_projects` | CRUD. |
-
-`create_project` requires `id`, `repo`, `working_dir`. Optional: `default_branch`, `setup_command`, `teardown_command`, `test_command`, `env_overrides`, `max_turns`, `max_wall_clock`, `claude_md_path`, `auto_test`, `auto_review`, `auto_pr`, `auto_merge`, `review_model`.
-
-### Tasks
-
-| Tool | Purpose |
-|---|---|
-| `dispatch_task` | Create task + worktree + launch CC session. Non-blocking. |
-| `resume_task` | Resume a stopped task; reuses the same SDK session for full history. |
-| `retry_task` | Fresh session for a task; optionally clean the worktree first. |
-| `cancel_task` | SIGTERM the CC process, mark cancelled, keep the worktree. |
-| `close_task` | Mark completed, optionally remove the worktree and delete the branch. |
-| `get_task_status` | Checklist, liveness, recent messages, artifacts, token usage. |
-| `list_tasks` | Filter by project/status. |
-
-### Worker-side (available to the CC session)
-
-| Tool | Purpose |
-|---|---|
-| `update_task_checklist` | Check off an item by `item_id`. |
-| `update_task_phase` | Update phase (`analysis`, `implementing`, `reviewing`, ...) with detail text. |
-| `post_task_message` | Progress updates, questions, results. |
-| `read_task_messages` | Cursor-based polling for mid-task injections. |
-| `git_push` / `git_fetch` | Authenticated git ops via the platform — workers can't push directly. |
-
-Mid-task message injection: posting to a running task's thread injects the message into the active CC session as a user message at the next safe boundary. Course corrections without stopping the session.
-
-## Dashboard
-
-Served at `http://localhost:8100/dashboard/`. Preact + htm via CDN, no build step.
-
-- Task board with status, phase, cost, checklist progress, gate state, chain visualisation.
-- Task detail view with message thread, expandable session log, dispatch log, subtasks.
-- Click any log entry to expand the full tool inputs/outputs/results.
-- Live updates on a 5-second poll.
-- Actions: cancel, retry, resume, close, advance or cancel a chain.
-
-Auth is session cookies (`ouvrage_session`) for browser access, Bearer JWT for the MCP endpoint. Localhost `/mcp/worker` traffic is unauthenticated so in-container CC workers can reach back without credentials.
-
-## Environment variables
-
-Full reference: [`.env.example`](.env.example). The ones that matter:
-
-| Variable | Required | Description |
-|---|---|---|
-| `OUVRAGE_MASTER_KEY` | Yes | Fernet key encrypting stored credentials. Lose this, lose encrypted data. |
-| `OUVRAGE_OWNER_EMAIL` | First boot only | Email for the owner user seeded on startup. |
-| `OUVRAGE_OWNER_PASSWORD` | First boot only | Plaintext password, hashed server-side. Or set `_PASSWORD_HASH` with a pre-hashed value. |
-| `OUVRAGE_DB` | No | SQLite path (default `/data/ouvrage.db`). |
-| `OAUTH_RSA_KEY_PATH` | No | OAuth RSA key path (auto-generated on first boot). |
-| `PORT` | No | HTTP port (default `8100`). |
-| `WORKER_USER` | No | OS user for worker subprocess isolation (prod only, falls back to current user). |
-| `AUTH_MODE` | No | `local` (default) or `saas` (SSO via control plane). |
-| `OPENAI_API_KEY` | No | Enables semantic search over conversations. |
-| `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | No | Per-task Slack notifications. |
-| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | No | Browser web-push notifications. |
+`dispatch_task` returns immediately with a task ID. A Claude Code worker picks it up, runs in an isolated git worktree, commits to a branch, and reports progress back through MCP. Task status, message thread, and session log are visible at `http://localhost:8100/dashboard/`.
 
 ## Architecture
 
+The context layer is built on SQLite with FTS5 for full-text search and sqlite-vec for vector embeddings. The orchestration layer runs Claude Code workers in isolated git worktrees, managed through a six-state lifecycle machine (`ready → working → validating → completed`, with `stopped` and `cancelled`). Both layers share the same database and MCP surface.
+
+- [`docs/architecture/overview.md`](docs/architecture/overview.md) — System overview and component relationships
+- [`docs/architecture/context-engineering.md`](docs/architecture/context-engineering.md) — How the context layer stores, pins, and retrieves
+- [`docs/architecture/task-lifecycle.md`](docs/architecture/task-lifecycle.md) — Task state machine and gate pipeline
+- [`docs/architecture/prompt-engineering.md`](docs/architecture/prompt-engineering.md) — How worker prompts are constructed
+- [`docs/architecture/security-and-isolation.md`](docs/architecture/security-and-isolation.md) — Worker isolation, auth model, credential encryption
+
+## Development
+
+```bash
+make docker-dev   # bind-mounted source, live reload
+make test         # pytest tests/ -q --tb=short
 ```
-ouvrage/
-├── server/           # Raw ASGI app, 70+ MCP tool definitions, per-domain handlers
-├── dispatch/         # Task lifecycle state machine, gate pipeline, SDK session mgmt
-├── db/               # aiosqlite + WAL, schema migrations, FTS5 + sqlite-vec search
-├── auth/             # Session cookies + Bearer JWT, built-in OAuth 2.1 server
-├── git/              # Worktree mgmt + GitHub/GitLab/Bitbucket provider abstraction
-├── embeddings/       # OpenAI text-embedding-3-small for semantic search
-├── notifications/    # Slack threads, web-push
-├── config/           # Env-driven settings, task-state constants
-└── dashboard/        # REST API for the SPA
 
-dashboard/            # Preact SPA, CDN-loaded ES modules, no build step
-tests/                # 2,700+ pytest tests, async, unit + integration
-```
+Tests are in `tests/`. CI runs on Python 3.12 and 3.13. [`CLAUDE.md`](CLAUDE.md) documents internal conventions — the state-machine contract, provider interface, and test-fixture patterns — and is the right starting point for contributors.
 
-- **Raw ASGI**, not FastAPI — one-endpoint MCP surface doesn't need routing sugar.
-- **Python 3.12+**, runs on `python:3.13-slim` in production. SQLite via stdlib, `sqlite-vec` for semantic queries.
-- **Async throughout** — single-process cooperative, workers are separate OS processes.
-- **State machine** — every status change goes through `TaskLifecycle.execute()`; there's no other way.
-- **Multi-platform git** — providers for GitHub, GitLab, Bitbucket behind a small ABC.
-- **Worker isolation** — production runs worker processes as a dedicated OS user via `setuid` (requires `CAP_SETUID`, `CAP_SETGID`, `CAP_KILL`). Falls back to current-user execution when no worker user is configured.
-
-## Contributing
-
-Issues and PRs welcome. Run `make test` before opening a PR; CI will run it too. Larger changes should come with a short design note — open an issue first to align.
-
-The `CLAUDE.md` at the repo root documents internal conventions (the state-machine contract, the provider interface, test-fixture patterns). Read it before editing `ouvrage/dispatch/` or `ouvrage/git/`.
+[`docs/internal/pre-oss-architecture-review.md`](docs/internal/pre-oss-architecture-review.md) covers the pre-cleanup state of the repo for anyone wanting historical context.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
----
+## A note on how this was built
 
-Built by Stephen Fritz.
+Ouvrage started as a small MCP server — a BBS where my Claudes could post in threads and read each other's messages. Claude.ai drafted specs, Claude Code read them. Around 350 lines. That was the whole thing, and it was the first time I externalized context discipline into infrastructure instead of tab-switching.
+
+It grew from there. Once I could dispatch work from inside the system, translating ideas into implementations got noticeably easier, and the system started building itself.
+
+The codebase is almost entirely AI-generated. Planning is collaborative — human and LLM working through design across many hours of conversation, with human judgment on what to build. Implementation is dispatched to Claude Code workers through Ouvrage. Every change goes through review (gate-enforced reviewer sessions plus human review on specs that matter), and the system has been used continuously throughout its development.
+
+The shape of the work shifts when automation handles implementation. Time that would have gone to writing code goes instead to planning and specification — working an idea until the plan is genuinely clear, because once it is, turning it into working code is quick. Building the system tested the system.
