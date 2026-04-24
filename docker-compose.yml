@@ -1,0 +1,51 @@
+# Ouvrage — production compose file
+#
+# Usage:
+#   ./setup.sh        # first-time setup (interactive)
+#   docker compose up -d
+
+services:
+  ouvrage:
+    build: .
+    container_name: ouvrage
+    restart: unless-stopped
+    ports:
+      - "8100:8100"
+
+    # --- Linux capabilities ---
+    # Required: the app spawns CC worker processes as a separate OS user
+    # (switchboard) via os.setuid(). Without these, task dispatch fails.
+    cap_add:
+      - SETUID
+      - SETGID
+      - KILL
+
+    volumes:
+      - ./data:/data                                         # SQLite DB, OAuth RSA key, state
+      - ./work:/work                                         # Git bare repos and worktrees
+      - ./claude-auth:/home/switchboard/.claude              # Claude Code auth persistence
+      - ./gitconfig:/home/switchboard/.gitconfig:ro          # Worker git identity
+
+    secrets:
+      - master_key
+      - openai_key
+
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      PORT: "8100"
+      OUVRAGE_DB: /data/ouvrage.db
+      OAUTH_RSA_KEY_PATH: /data/oauth_rsa_key.pem
+      WORKER_USER: switchboard
+      AUTH_MODE: local
+      OAUTH_BASE_URL: http://localhost:8100
+      AUTH_ISSUER_URL: http://localhost:8100
+      RESOURCE_URL: http://localhost:8100/mcp
+
+secrets:
+  master_key:
+    file: ./secrets/master_key
+  openai_key:
+    file: ./secrets/openai_key
