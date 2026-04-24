@@ -1,6 +1,6 @@
 # Ouvrage
 
-Ouvrage is a context engineering and orchestration system for agentic coding. The context layer stores conversations, decisions, and specs with hybrid keyword and vector search, so an LLM can help you plan and then retrieve that planning later at whatever grain you need. The orchestration layer dispatches Claude Code workers to your repos, chains them through dependencies, runs test and review gates, and opens PRs. Both are exposed through an MCP server for use from any MCP-enabled client, and through a web dashboard for direct access when needed.
+Ouvrage is a context engineering and orchestration system for agentic coding. The context layer stores conversations, decisions, and specs with hybrid keyword and vector search, so an LLM can help you plan and then retrieve that planning later at whatever grain you need. The orchestration layer dispatches Claude Code workers against your codebase, chains them through dependencies, runs test and review gates, and opens PRs. Both are exposed through an MCP server for use from any MCP-enabled client, and through a web dashboard for direct access when needed.
 
 The context layer is indexed by project and scoped by conversation or task. Pins mark canonical content; the rest of the history stays searchable. Retrieval is available to both humans (through the dashboard or an MCP client) and workers (through the same MCP tools).
 
