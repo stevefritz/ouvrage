@@ -26,8 +26,6 @@ docker run --rm --entrypoint python3 python:3.13-slim -c \
   > secrets/master_key
 ```
 
-If you're just trying it out, skip the key step — the container will generate an ephemeral key automatically on startup, with a warning that encrypted data won't survive a restart.
-
 Start the stack with your owner credentials:
 
 ```bash
