@@ -68,6 +68,11 @@ async def _error(send, message, status=400):
     await _json_response(send, {"error": message}, status)
 
 
+async def _no_content_response(send):
+    await send({"type": "http.response.start", "status": 204, "headers": []})
+    await send({"type": "http.response.body", "body": b""})
+
+
 def _parse_qs(scope) -> dict:
     qs = scope.get("query_string", b"").decode()
     parsed = parse_qs(qs, keep_blank_values=False)
@@ -325,6 +330,14 @@ async def handle_request(scope, receive, send):
         # ── Search endpoint ────────────────────────────────────────────────
         if path == "/dashboard/api/search" and method == "GET":
             return await _handle_search_api(scope, send)
+
+        # ── Search weight endpoints ────────────────────────────────────────
+        if path == "/dashboard/api/search/weight" and method == "POST":
+            return await _handle_set_search_weight(scope, receive, send)
+        if path == "/dashboard/api/search/weight" and method == "DELETE":
+            return await _handle_delete_search_weight(scope, receive, send)
+        if path == "/dashboard/api/search/weights" and method == "GET":
+            return await _handle_list_search_weights(scope, send)
 
         # ── Files endpoints ────────────────────────────────────────────────
         if path == "/dashboard/api/files" and method == "GET":
@@ -2404,3 +2417,81 @@ async def _handle_search_api(scope, send):
         return await _error(send, result["error"], 503)
 
     await _json_response(send, result)
+
+
+# ── Search weight handlers ─────────────────────────────────────────────────
+
+async def _handle_set_search_weight(scope, receive, send):
+    """POST /dashboard/api/search/weight — upsert a search weight override."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    try:
+        data = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        return await _error(send, "Invalid JSON body", 400)
+
+    entity_type = data.get("entity_type")
+    entity_id = data.get("entity_id")
+    weight = data.get("weight")
+
+    if entity_type is None:
+        return await _error(send, "Missing required field: entity_type", 400)
+    if entity_id is None:
+        return await _error(send, "Missing required field: entity_id", 400)
+    if weight is None:
+        return await _error(send, "Missing required field: weight", 400)
+    if not isinstance(weight, (int, float)):
+        return await _error(send, "weight must be a number", 400)
+
+    try:
+        row = await db.set_weight(
+            entity_type=entity_type,
+            entity_id=str(entity_id),
+            weight=float(weight),
+            reason=data.get("reason"),
+            user_id=user.get("id"),
+        )
+    except ValueError as e:
+        return await _error(send, str(e), 400)
+
+    await _json_response(send, row)
+
+
+async def _handle_delete_search_weight(scope, receive, send):
+    """DELETE /dashboard/api/search/weight — remove a search weight override."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    body = await _read_body(receive)
+    try:
+        data = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        return await _error(send, "Invalid JSON body", 400)
+
+    entity_type = data.get("entity_type")
+    entity_id = data.get("entity_id")
+
+    if entity_type is None:
+        return await _error(send, "Missing required field: entity_type", 400)
+    if entity_id is None:
+        return await _error(send, "Missing required field: entity_id", 400)
+
+    await db.remove_weight(entity_type=entity_type, entity_id=str(entity_id))
+    await _no_content_response(send)
+
+
+async def _handle_list_search_weights(scope, send):
+    """GET /dashboard/api/search/weights — list all search weight overrides."""
+    user = scope.get("session_user") or {}
+    if not user.get("id"):
+        return await _error(send, "Not authenticated", 401)
+
+    params = _parse_qs(scope)
+    entity_type = params.get("entity_type") or None
+
+    rows = await db.list_weights(entity_type=entity_type)
+    await _json_response(send, rows)
