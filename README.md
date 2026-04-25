@@ -49,17 +49,11 @@ After first boot the container initialises the database, creates the owner accou
 
 ## Usage
 
-Connect an MCP-enabled client to `http://localhost:8100/mcp`. Claude.ai connects via OAuth; Claude Code and other local clients connect without auth from localhost. OAuth client credentials are available on the dashboard **Settings** page.
+Connect an MCP-enabled client to `http://localhost:8100/mcp`. OAuth client credentials are available on the dashboard **Settings** page.
 
 ### Claude Code
 
 From any project directory, register Ouvrage as an MCP server:
-
-```bash
-claude mcp add --transport http ouvrage http://localhost:8100/mcp
-```
-
-That's it for local use — the localhost bypass means no OAuth credentials are needed. To connect to a remote Ouvrage instance, add `--client-id` and `--client-secret` flags (you'll be prompted for the secret):
 
 ```bash
 claude mcp add --transport http ouvrage https://your-host/mcp \
