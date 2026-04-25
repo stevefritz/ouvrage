@@ -1,12 +1,20 @@
 # Ouvrage
 
-Ouvrage is a context engineering and orchestration system for agentic coding. The context layer stores conversations, decisions, and specs with hybrid keyword and vector search, so an LLM can help you plan and then retrieve that planning later at whatever grain you need. The orchestration layer dispatches Claude Code workers against your codebase, chains them through dependencies, runs test and review gates, and opens PRs. Both are exposed through an MCP server for use from any MCP-enabled client, and through a web dashboard for direct access when needed.
+Working at AI-driven speed creates its own coordination problem. Long conversations, cross-cutting concerns, and multiple parallel work streams quickly become difficult to manage inside a single chat session.
 
-The context layer is indexed by project and scoped by conversation or task. Pins mark canonical content; the rest of the history stays searchable. Retrieval is available to both humans (through the dashboard or an MCP client) and workers (through the same MCP tools).
+Ouvrage is an attempt to address that. It is a planning and orchestration system that brings order to the chaos, and it produces documentation as exhaust.
 
-Orchestration is primarily driven by the LLM through MCP — dispatching tasks, responding to status, handling retries. The dashboard exposes the same operations for human-in-the-loop work: approving held tasks, reviewing gate output, pinning messages, reading task threads.
+You work through ideas in conversation with an MCP-enabled chat client, recording decisions, raw notes, and designs as you go. Ouvrage decomposes that work into bounded tasks with concrete specifications. Separate conversations converge into a single, durable knowledge base. Because this entire corpus is vectorized, context can be retrieved via semantic search for a fresh session without losing the nuance of the original reasoning.
 
-Working at AI-driven speed creates its own coordination problem: long conversations, cross-cutting concerns, and multiple parallel work streams that become difficult to manage inside a single conversation. Ouvrage is an attempt to address that. Separate conversations converge into a single knowledge base, and that knowledge can be retrieved in a fresh context without losing the nuance of the original reasoning. The result is that both the human and the LLM have a durable reference for what was decided and why — which makes specifications sharper, planning more coherent, and the work itself closer to the original vision. Documentation becomes an organic byproduct of the work. Planning and decisions are captured as they happen, task specifications curate that thinking into fine-grained distillations, and the accumulated material is the source an agent uses to produce consolidated documentation.
+How it works:
+
+The flywheel. The accumulated material powers the specifications going into new tasks. An agent can produce on-the-fly documentation from this vector store, or you can interrogate the system conversationally to learn its architecture and why past decisions were made.
+
+Context and state. The context layer is indexed by project and scoped by task. Pins mark canonical content, while the underlying vector database ensures the full historical record remains semantically searchable.
+
+Orchestration via MCP. The LLM drives orchestration: dispatching tasks, responding to status, and handling retries. A human-in-the-loop dashboard exposes the same operations, allowing you to approve held tasks, review gate output, and curate the corpus.
+
+The result is that both the human and the LLM have a shared, durable reference for what was decided and why. This makes specifications sharper, planning more coherent, and the work itself closer to the original vision.
 
 ## Quickstart
 
