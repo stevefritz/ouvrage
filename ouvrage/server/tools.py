@@ -738,6 +738,40 @@ SEARCH_TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="set_weight",
+        description=(
+            "Adjust the search ranking weight for a specific result. "
+            "Weight 1.0 is no-op (default), 0.0 fully suppresses, 2.0+ promotes. "
+            "Use the entity_type and entity_id directly from search results. "
+            "Reason is optional but useful for self-documenting adjustments."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["task", "message", "chunk"],
+                    "description": "Type of the entity to weight",
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "ID of the entity to weight (from search results)",
+                },
+                "weight": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 3.0,
+                    "description": "Ranking weight. 1.0 = no-op, 0.0 = suppress, 2.0+ = promote.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional note explaining why the weight was set",
+                },
+            },
+            "required": ["entity_type", "entity_id", "weight"],
+        },
+    ),
 ]
 
 

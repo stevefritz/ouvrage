@@ -276,6 +276,17 @@ async def init_db():
                 credential_last4 TEXT,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
+
+            CREATE TABLE IF NOT EXISTS search_weights (
+                entity_type TEXT NOT NULL,
+                entity_id   TEXT NOT NULL,
+                weight      REAL NOT NULL DEFAULT 1.0,
+                reason      TEXT,
+                created_by  INTEGER REFERENCES users(id),
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL,
+                PRIMARY KEY (entity_type, entity_id)
+            );
         """)
 
         # Migrate messages table: add task_id column if missing

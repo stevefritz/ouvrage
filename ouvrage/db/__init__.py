@@ -193,6 +193,14 @@ from ouvrage.db.audit import (
     get_audit_log,
 )
 
+# Search weights
+from ouvrage.db.search_weights import (
+    set_weight,
+    remove_weight,
+    get_weight,
+    list_weights,
+)
+
 # Search
 from ouvrage.db.search import (
     search_messages_semantic,
@@ -265,6 +273,8 @@ __all__ = [
     "get_instance_config", "set_instance_config", "get_concurrency_limit", "get_max_projects",
     # audit
     "write_audit_log", "get_audit_log",
+    # search weights
+    "set_weight", "remove_weight", "get_weight", "list_weights",
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",

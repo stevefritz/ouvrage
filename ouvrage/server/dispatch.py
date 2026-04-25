@@ -42,7 +42,7 @@ from ouvrage.server.handlers.tasks import (
     _handle_escalate,
     _handle_search_task_messages,
 )
-from ouvrage.server.handlers.search import _handle_search
+from ouvrage.server.handlers.search import _handle_search, _handle_set_weight
 from ouvrage.server.handlers.ops import (
     _handle_get_context,
     _handle_get_guide,
@@ -115,6 +115,7 @@ TOOL_HANDLERS = {
     "get_guide": _handle_get_guide,
     # Search
     "search": _handle_search,
+    "set_weight": _handle_set_weight,
     # Token management
     "create_api_token": _handle_create_api_token,
     "list_api_tokens": _handle_list_api_tokens,
