@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import ouvrage.db as db
 import ouvrage.db.search as _search_db
+import ouvrage.db.search_weights as _sw_db
 from ouvrage.embeddings import service as emb
 
 # Type boosts for message relevance scoring
@@ -289,3 +290,27 @@ async def _handle_search(arguments: dict) -> dict:
     results = candidates[:limit]
 
     return {"results": results, "total_candidates": len(candidates)}
+
+
+async def _handle_set_weight(arguments: dict) -> dict:
+    """Set a search ranking weight for a specific entity.
+
+    Upserts (entity_type, entity_id) → weight. Returns the resulting row.
+    Raises ValueError on invalid entity_type or out-of-range weight.
+    """
+    entity_type = arguments["entity_type"]
+    entity_id = str(arguments["entity_id"])
+    weight = float(arguments["weight"])
+    reason = arguments.get("reason")
+
+    try:
+        row = await _sw_db.set_weight(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            weight=weight,
+            reason=reason,
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return row

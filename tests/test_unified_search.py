@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from ouvrage.server.handlers.search import _handle_search
+from ouvrage.server.handlers.search import _handle_search, _handle_set_weight
 
 
 def _encode_vector(v: list[float]) -> bytes:
@@ -454,3 +454,68 @@ class TestSearchRanking:
             assert isinstance(result["total_candidates"], int)
         finally:
             set_embedding_service(None)
+
+
+# ---------------------------------------------------------------------------
+# set_weight MCP tool
+# ---------------------------------------------------------------------------
+
+class TestSetWeight:
+    async def test_tool_registered_in_dispatch(self):
+        from ouvrage.server.dispatch import TOOL_HANDLERS
+        assert "set_weight" in TOOL_HANDLERS
+
+    async def test_tool_schema_in_search_tools(self):
+        from ouvrage.server.tools import SEARCH_TOOLS
+        names = [t.name for t in SEARCH_TOOLS]
+        assert "set_weight" in names
+
+    async def test_set_weight_returns_row(self, db):
+        row = await _handle_set_weight({
+            "entity_type": "task",
+            "entity_id": "my-task-1",
+            "weight": 2.0,
+        })
+        assert row["entity_type"] == "task"
+        assert row["entity_id"] == "my-task-1"
+        assert row["weight"] == 2.0
+        assert row["reason"] is None
+
+    async def test_set_weight_with_reason(self, db):
+        row = await _handle_set_weight({
+            "entity_type": "message",
+            "entity_id": "42",
+            "weight": 0.5,
+            "reason": "noisy result",
+        })
+        assert row["weight"] == 0.5
+        assert row["reason"] == "noisy result"
+
+    async def test_set_weight_upserts(self, db):
+        await _handle_set_weight({"entity_type": "task", "entity_id": "t-1", "weight": 1.0})
+        row = await _handle_set_weight({"entity_type": "task", "entity_id": "t-1", "weight": 2.5})
+        assert row["weight"] == 2.5
+
+    async def test_invalid_entity_type_raises(self, db):
+        with pytest.raises(ValueError, match="Invalid entity_type"):
+            await _handle_set_weight({
+                "entity_type": "project",
+                "entity_id": "p-1",
+                "weight": 1.0,
+            })
+
+    async def test_weight_below_range_raises(self, db):
+        with pytest.raises(ValueError, match="out of range"):
+            await _handle_set_weight({
+                "entity_type": "task",
+                "entity_id": "t-1",
+                "weight": -0.1,
+            })
+
+    async def test_weight_above_range_raises(self, db):
+        with pytest.raises(ValueError, match="out of range"):
+            await _handle_set_weight({
+                "entity_type": "chunk",
+                "entity_id": "c-1",
+                "weight": 3.1,
+            })
