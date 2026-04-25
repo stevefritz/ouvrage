@@ -519,3 +519,135 @@ class TestSetWeight:
                 "entity_id": "c-1",
                 "weight": 3.1,
             })
+
+
+# ---------------------------------------------------------------------------
+# Manual weight integration — weights applied in scoring loop
+# ---------------------------------------------------------------------------
+
+class TestSearchManualWeights:
+    async def test_high_weight_boosts_result_above_unweighted(self, db, sample_project):
+        """A low-similarity task with a high manual weight ranks above a high-similarity unweighted task."""
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        import ouvrage.db.search_weights as sw_db
+
+        query_vec = _unit_vec(4, 0)
+        other_vec = _unit_vec(4, 1)  # orthogonal → similarity 0
+
+        class MockService(EmbeddingService):
+            async def embed(self, text):
+                return query_vec
+
+        task_high_sim = await db.create_task(
+            id="test-project/weight-high-sim",
+            project_id="test-project",
+            goal="High similarity task",
+        )
+        task_low_sim = await db.create_task(
+            id="test-project/weight-low-sim",
+            project_id="test-project",
+            goal="Low similarity task",
+        )
+        await db.set_task_embedding(task_high_sim["id"], encode_vector(query_vec))
+        await db.set_task_embedding(task_low_sim["id"], encode_vector(other_vec))
+
+        # Give the low-similarity task a 3x weight boost
+        await sw_db.set_weight("task", task_low_sim["id"], 3.0)
+
+        set_embedding_service(MockService())
+        try:
+            result = await _handle_search({"query": "task", "limit": 10})
+            entity_ids = [r["entity_id"] for r in result["results"]]
+            assert task_low_sim["id"] in entity_ids
+            assert task_high_sim["id"] in entity_ids
+            assert entity_ids.index(task_low_sim["id"]) < entity_ids.index(task_high_sim["id"])
+        finally:
+            set_embedding_service(None)
+            await sw_db.remove_weight("task", task_low_sim["id"])
+
+    async def test_zero_weight_sinks_result(self, db, sample_project):
+        """A task with weight 0.0 scores 0 and ranks last."""
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        import ouvrage.db.search_weights as sw_db
+
+        query_vec = _unit_vec(4, 0)
+
+        class MockService(EmbeddingService):
+            async def embed(self, text):
+                return query_vec
+
+        # High-similarity task with weight 0.0
+        task_zeroed = await db.create_task(
+            id="test-project/weight-zero",
+            project_id="test-project",
+            goal="Zeroed out task",
+        )
+        # Normal task with default weight (1.0)
+        task_normal = await db.create_task(
+            id="test-project/weight-normal",
+            project_id="test-project",
+            goal="Normal weight task",
+        )
+        await db.set_task_embedding(task_zeroed["id"], encode_vector(query_vec))
+        await db.set_task_embedding(task_normal["id"], encode_vector(query_vec))
+
+        await sw_db.set_weight("task", task_zeroed["id"], 0.0)
+
+        set_embedding_service(MockService())
+        try:
+            result = await _handle_search({"query": "task", "limit": 10})
+            zeroed_cards = [r for r in result["results"] if r["entity_id"] == task_zeroed["id"]]
+            normal_cards = [r for r in result["results"] if r["entity_id"] == task_normal["id"]]
+            assert len(zeroed_cards) == 1
+            assert len(normal_cards) == 1
+            # Zero-weighted task must have score 0
+            assert zeroed_cards[0]["relevance_score"] == 0.0
+            # And rank below the normal task
+            entity_ids = [r["entity_id"] for r in result["results"]]
+            assert entity_ids.index(task_normal["id"]) < entity_ids.index(task_zeroed["id"])
+        finally:
+            set_embedding_service(None)
+            await sw_db.remove_weight("task", task_zeroed["id"])
+
+    async def test_anchor_not_affected_by_weights(self, db, sample_project):
+        """Anchor is the newest created_at regardless of weights; a weighted old task can outscore a new one."""
+        from ouvrage.embeddings.service import set_embedding_service, EmbeddingService, encode_vector
+        import ouvrage.db.search_weights as sw_db
+
+        query_vec = _unit_vec(4, 0)
+
+        class MockService(EmbeddingService):
+            async def embed(self, text):
+                return query_vec
+
+        # Both tasks have the same similarity; one is older and gets a high weight
+        task_new = await db.create_task(
+            id="test-project/anchor-new",
+            project_id="test-project",
+            goal="Newly created task",
+        )
+        task_old = await db.create_task(
+            id="test-project/anchor-old",
+            project_id="test-project",
+            goal="Older task with boost",
+        )
+        await db.set_task_embedding(task_new["id"], encode_vector(query_vec))
+        await db.set_task_embedding(task_old["id"], encode_vector(query_vec))
+
+        # Give the old task a weight boost — it should be able to rank above the new task
+        await sw_db.set_weight("task", task_old["id"], 3.0)
+
+        set_embedding_service(MockService())
+        try:
+            result = await _handle_search({"query": "task", "limit": 10})
+            new_cards = [r for r in result["results"] if r["entity_id"] == task_new["id"]]
+            old_cards = [r for r in result["results"] if r["entity_id"] == task_old["id"]]
+            assert len(new_cards) == 1
+            assert len(old_cards) == 1
+            # New task (anchor) gets recency_mult=1.0 — verify it has a positive score
+            assert new_cards[0]["relevance_score"] > 0.0
+            # Old task with 3x weight should outscore the new unweighted task
+            assert old_cards[0]["relevance_score"] > new_cards[0]["relevance_score"]
+        finally:
+            set_embedding_service(None)
+            await sw_db.remove_weight("task", task_old["id"])

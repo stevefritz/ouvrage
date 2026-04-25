@@ -209,6 +209,12 @@ async def _handle_search(arguments: dict) -> dict:
             "created_at": r.get("created_at"),
         }
 
+    # --- Load manual weights once (O(1) lookup per result) ---
+    _weight_rows = await _sw_db.list_weights()
+    weights_map: dict[tuple[str, str], float] = {
+        (r["entity_type"], r["entity_id"]): r["weight"] for r in _weight_rows
+    }
+
     # --- Build task candidates with hybrid scores ---
     task_ids = set(fts_task_norm) | set(vec_task_norm)
     task_candidates = []
@@ -220,8 +226,10 @@ async def _handle_search(arguments: dict) -> dict:
         meta = task_meta.get(task_id, {})
         dual_mult = _DUAL_MATCH_BOOST if (task_id in fts_task_norm and task_id in vec_task_norm) else 1.0
         rec_mult = _recency_mult_relative(meta.get("created_at"), anchor_dt, decay_span_days)
+        manual_weight = weights_map.get(("task", task_id), 1.0)
 
-        final_score = base * dual_mult * rec_mult
+        # final_score = base_relevance * dual_match_mult * recency_mult * manual_weight
+        final_score = base * dual_mult * rec_mult * manual_weight
 
         goal = meta.get("goal") or ""
         task_candidates.append({
@@ -257,8 +265,10 @@ async def _handle_search(arguments: dict) -> dict:
         pinned_mult = _PINNED_BOOST if meta.get("pinned") else 1.0
         dual_mult = _DUAL_MATCH_BOOST if (msg_id in fts_msg_norm and msg_id in vec_msg_norm) else 1.0
         rec_mult = _recency_mult_relative(meta.get("created_at"), anchor_dt, decay_span_days)
+        manual_weight = weights_map.get(("message", str(msg_id)), 1.0)
 
-        final_score = base * type_mult * pinned_mult * dual_mult * rec_mult
+        # final_score = base_relevance * type_mult * pinned_mult * dual_match_mult * recency_mult * manual_weight
+        final_score = base * type_mult * pinned_mult * dual_mult * rec_mult * manual_weight
 
         # Prefer rich content snippet; fall back to FTS snippet
         content = meta.get("content")
@@ -287,8 +297,10 @@ async def _handle_search(arguments: dict) -> dict:
         pinned_mult = _PINNED_BOOST if hit.get("pinned") else 1.0
         rec_mult = _recency_mult_relative(hit.get("created_at"), anchor_dt, decay_span_days)
         # No dual-match boost for chunks (no FTS chunk search exists)
+        manual_weight = weights_map.get(("chunk", str(hit["message_id"])), 1.0)
 
-        final_score = base * type_mult * pinned_mult * rec_mult
+        # final_score = base_relevance * type_mult * pinned_mult * recency_mult * manual_weight
+        final_score = base * type_mult * pinned_mult * rec_mult * manual_weight
 
         result_type = "task_message" if hit.get("task_id") else "conversation_message"
         title = hit.get("title") or hit.get("chunk_heading")
