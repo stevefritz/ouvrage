@@ -6,13 +6,11 @@ Ouvrage is an attempt to address that. It is a planning and orchestration system
 
 You work through ideas in conversation with an MCP-enabled chat client, recording decisions, raw notes, and designs as you go. Ouvrage decomposes that work into bounded tasks with concrete specifications. Separate conversations converge into a single, durable knowledge base. Because this entire corpus is vectorized, context can be retrieved via semantic search for a fresh session without losing the nuance of the original reasoning.
 
-How it works:
+## How it works
 
-The flywheel. The accumulated material powers the specifications going into new tasks. An agent can produce on-the-fly documentation from this vector store, or you can interrogate the system conversationally to learn its architecture and why past decisions were made.
-
-Context and state. The context layer is indexed by project and scoped by task. Pins mark canonical content, while the underlying vector database ensures the full historical record remains semantically searchable.
-
-Orchestration via MCP. The LLM drives orchestration: dispatching tasks, responding to status, and handling retries. A human-in-the-loop dashboard exposes the same operations, allowing you to approve held tasks, review gate output, and curate the corpus.
+- **The flywheel.** The accumulated material powers the specifications going into new tasks. An agent can produce on-the-fly documentation from this vector store, or you can interrogate the system conversationally to learn its architecture and why past decisions were made.
+- **Context and state.** The context layer is indexed by project and scoped by task. Pins mark canonical content, while the underlying vector database ensures the full historical record remains semantically searchable.
+- **Orchestration via MCP.** The LLM drives orchestration: dispatching tasks, responding to status, and handling retries. A human-in-the-loop dashboard exposes the same operations, allowing you to approve held tasks, review gate output, and curate the corpus.
 
 The result is that both the human and the LLM have a shared, durable reference for what was decided and why. This makes specifications sharper, planning more coherent, and the work itself closer to the original vision.
 
