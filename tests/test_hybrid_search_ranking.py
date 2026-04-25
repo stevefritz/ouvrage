@@ -21,7 +21,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ouvrage.server.handlers.search import _handle_search, _recency_mult, _TYPE_BOOST
+from ouvrage.server.handlers.search import (
+    _handle_search,
+    _recency_mult_relative,
+    _TYPE_BOOST,
+    RECENCY_FLOOR,
+    MIN_DECAY_SPAN_DAYS,
+    DEFAULT_DECAY_SPAN_DAYS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -39,39 +46,53 @@ def _unit_vec(dim: int, index: int) -> list[float]:
 
 
 # ---------------------------------------------------------------------------
-# _recency_mult unit tests
+# _recency_mult_relative unit tests
 # ---------------------------------------------------------------------------
 
 class TestRecencyMult:
-    def test_today_is_1(self):
-        now = datetime.now(timezone.utc)
-        assert _recency_mult(now.isoformat(), now) == 1.0
+    def test_at_anchor_is_1(self):
+        """Result at 0 days from anchor → 1.0."""
+        anchor = datetime.now(timezone.utc)
+        assert _recency_mult_relative(anchor.isoformat(), anchor, DEFAULT_DECAY_SPAN_DAYS) == 1.0
 
-    def test_90_days_is_0_3(self):
-        now = datetime.now(timezone.utc)
-        old = now - timedelta(days=90)
-        mult = _recency_mult(old.isoformat(), now)
-        assert abs(mult - 0.3) < 0.001
+    def test_at_half_life_is_half(self):
+        """Result at half_life days from anchor → ~0.5. half_life = span/3 = 30d."""
+        anchor = datetime.now(timezone.utc)
+        half_life = DEFAULT_DECAY_SPAN_DAYS / 3.0  # 30 days
+        at_half_life = anchor - timedelta(days=half_life)
+        mult = _recency_mult_relative(at_half_life.isoformat(), anchor, DEFAULT_DECAY_SPAN_DAYS)
+        assert abs(mult - 0.5) < 0.001
 
-    def test_beyond_90_days_capped_at_0_3(self):
-        now = datetime.now(timezone.utc)
-        very_old = now - timedelta(days=365)
-        mult = _recency_mult(very_old.isoformat(), now)
-        assert abs(mult - 0.3) < 0.001
+    def test_at_full_span_hits_floor(self):
+        """Result at full span (90d) → floor 0.3 (raw 2^(-3) = 0.125, floored)."""
+        anchor = datetime.now(timezone.utc)
+        at_span = anchor - timedelta(days=DEFAULT_DECAY_SPAN_DAYS)
+        mult = _recency_mult_relative(at_span.isoformat(), anchor, DEFAULT_DECAY_SPAN_DAYS)
+        assert abs(mult - RECENCY_FLOOR) < 0.001
 
-    def test_45_days_is_midpoint(self):
-        now = datetime.now(timezone.utc)
-        mid = now - timedelta(days=45)
-        mult = _recency_mult(mid.isoformat(), now)
-        assert abs(mult - 0.65) < 0.001
+    def test_beyond_full_span_capped_at_floor(self):
+        """Result older than full span → floor 0.3."""
+        anchor = datetime.now(timezone.utc)
+        very_old = anchor - timedelta(days=365)
+        mult = _recency_mult_relative(very_old.isoformat(), anchor, DEFAULT_DECAY_SPAN_DAYS)
+        assert abs(mult - RECENCY_FLOOR) < 0.001
 
     def test_none_returns_1(self):
-        now = datetime.now(timezone.utc)
-        assert _recency_mult(None, now) == 1.0
+        anchor = datetime.now(timezone.utc)
+        assert _recency_mult_relative(None, anchor, DEFAULT_DECAY_SPAN_DAYS) == 1.0
 
     def test_invalid_string_returns_1(self):
-        now = datetime.now(timezone.utc)
-        assert _recency_mult("not-a-date", now) == 1.0
+        anchor = datetime.now(timezone.utc)
+        assert _recency_mult_relative("not-a-date", anchor, DEFAULT_DECAY_SPAN_DAYS) == 1.0
+
+    def test_min_decay_span_applied_for_tight_cluster(self):
+        """With span < MIN_DECAY_SPAN_DAYS, half_life = MIN_DECAY_SPAN_DAYS/3 = 10d."""
+        anchor = datetime.now(timezone.utc)
+        # Use MIN_DECAY_SPAN_DAYS as the decay span (enforced minimum)
+        half_life = MIN_DECAY_SPAN_DAYS / 3.0  # 10 days
+        at_half_life = anchor - timedelta(days=half_life)
+        mult = _recency_mult_relative(at_half_life.isoformat(), anchor, MIN_DECAY_SPAN_DAYS)
+        assert abs(mult - 0.5) < 0.001
 
 
 # ---------------------------------------------------------------------------

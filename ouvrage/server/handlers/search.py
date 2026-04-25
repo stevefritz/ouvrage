@@ -30,9 +30,10 @@ _MSG_VEC_WEIGHT = 0.6
 _TASK_FTS_WEIGHT = 0.6  # tasks: keyword precision matters more
 _TASK_VEC_WEIGHT = 0.4
 
-# Recency decay: 1.0 today → 0.3 at 3 months
-_RECENCY_MAX_DAYS = 90
-_RECENCY_DECAY = 0.7  # total decay over _RECENCY_MAX_DAYS
+# Recency decay: result-set-relative, exponential with floor
+RECENCY_FLOOR = 0.3
+MIN_DECAY_SPAN_DAYS = 30
+DEFAULT_DECAY_SPAN_DAYS = 90
 
 
 def _strip_markdown(text: str) -> str:
@@ -63,19 +64,33 @@ def _make_search_snippet(content: str, max_len: int = 200) -> str:
     return stripped
 
 
-def _recency_mult(created_at_iso: str | None, now: datetime) -> float:
-    """Recency multiplier: 1.0 today, 0.3 at 3 months, linear between."""
+def _parse_dt(created_at_iso: str | None) -> datetime | None:
+    """Parse ISO datetime string to timezone-aware datetime, or None on failure."""
     if not created_at_iso:
-        return 1.0
+        return None
     try:
         ts = created_at_iso.replace("Z", "+00:00")
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        days_old = max(0, (now - dt).days)
-        return 1.0 - (min(days_old, _RECENCY_MAX_DAYS) / _RECENCY_MAX_DAYS * _RECENCY_DECAY)
+        return dt
     except Exception:
+        return None
+
+
+def _recency_mult_relative(created_at_iso: str | None, anchor_dt: datetime, decay_span_days: float) -> float:
+    """Recency multiplier: anchor date → 1.0, exponential decay with floor 0.3.
+
+    anchor_dt is the newest created_at in the result set. decay_span_days is
+    max(actual span of result set, MIN_DECAY_SPAN_DAYS).
+    """
+    dt = _parse_dt(created_at_iso)
+    if dt is None:
         return 1.0
+    days_from_anchor = max(0, (anchor_dt - dt).days)
+    half_life = decay_span_days / 3.0
+    raw = 2.0 ** (-days_from_anchor / half_life)
+    return max(raw, RECENCY_FLOOR)
 
 
 async def _handle_search(arguments: dict) -> dict:
@@ -92,7 +107,6 @@ async def _handle_search(arguments: dict) -> dict:
     query = arguments["query"]
     project_id = arguments.get("project_id")
     limit = min(int(arguments.get("limit", 10)), 30)
-    now = datetime.now(timezone.utc)
 
     # Try to embed the query — falls back to FTS-only if embedding unavailable or vec tables missing
     service = emb.get_embedding_service()
@@ -123,6 +137,20 @@ async def _handle_search(arguments: dict) -> dict:
         vec_msg_hits = []
         vec_task_hits = []
         chunk_hits = []
+
+    # --- Compute anchor and decay span from all raw hits ---
+    _all_dts = [
+        _parse_dt(r.get("created_at"))
+        for r in (fts_msg_hits + vec_msg_hits + fts_task_hits + vec_task_hits + chunk_hits)
+    ]
+    _all_dts = [d for d in _all_dts if d is not None]
+    if _all_dts:
+        anchor_dt = max(_all_dts)
+        actual_span = (anchor_dt - min(_all_dts)).days
+        decay_span_days = float(max(actual_span, MIN_DECAY_SPAN_DAYS))
+    else:
+        anchor_dt = datetime.now(timezone.utc)
+        decay_span_days = float(DEFAULT_DECAY_SPAN_DAYS)
 
     # --- Normalize FTS BM25 scores to 0-1 ---
     raw_fts_msg = {r["message_id"]: r["bm25_score"] for r in fts_msg_hits}
@@ -191,7 +219,7 @@ async def _handle_search(arguments: dict) -> dict:
 
         meta = task_meta.get(task_id, {})
         dual_mult = _DUAL_MATCH_BOOST if (task_id in fts_task_norm and task_id in vec_task_norm) else 1.0
-        rec_mult = _recency_mult(meta.get("created_at"), now)
+        rec_mult = _recency_mult_relative(meta.get("created_at"), anchor_dt, decay_span_days)
 
         final_score = base * dual_mult * rec_mult
 
@@ -228,7 +256,7 @@ async def _handle_search(arguments: dict) -> dict:
         type_mult = _TYPE_BOOST.get(msg_type or "", 1.0)
         pinned_mult = _PINNED_BOOST if meta.get("pinned") else 1.0
         dual_mult = _DUAL_MATCH_BOOST if (msg_id in fts_msg_norm and msg_id in vec_msg_norm) else 1.0
-        rec_mult = _recency_mult(meta.get("created_at"), now)
+        rec_mult = _recency_mult_relative(meta.get("created_at"), anchor_dt, decay_span_days)
 
         final_score = base * type_mult * pinned_mult * dual_mult * rec_mult
 
@@ -257,7 +285,7 @@ async def _handle_search(arguments: dict) -> dict:
         msg_type = hit.get("type")
         type_mult = _TYPE_BOOST.get(msg_type or "", 1.0)
         pinned_mult = _PINNED_BOOST if hit.get("pinned") else 1.0
-        rec_mult = _recency_mult(hit.get("created_at"), now)
+        rec_mult = _recency_mult_relative(hit.get("created_at"), anchor_dt, decay_span_days)
         # No dual-match boost for chunks (no FTS chunk search exists)
 
         final_score = base * type_mult * pinned_mult * rec_mult
