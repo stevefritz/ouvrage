@@ -98,9 +98,7 @@ make docker-dev   # bind-mounted source, live reload
 make test         # pytest tests/ -q --tb=short
 ```
 
-Tests are in `tests/`. CI runs on Python 3.12 and 3.13. [`CLAUDE.md`](CLAUDE.md) documents internal conventions — the state-machine contract, provider interface, and test-fixture patterns — and is the right starting point for contributors.
-
-[`docs/internal/pre-oss-architecture-review.md`](docs/internal/pre-oss-architecture-review.md) covers the pre-cleanup state of the repo for anyone wanting historical context.
+Tests are in `tests/`. CI runs on Python 3.12 and 3.13.
 
 ## License
 
