@@ -1,6 +1,6 @@
 [project]
 name = "ouvrage"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI task orchestration platform — dispatches autonomous Claude Code workers to git repos with test/review gates"
 license = "MIT"
 license-files = ["LICENSE"]
