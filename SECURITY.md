@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you've found a security issue in Ouvrage, please email **stephen@badger.blue** rather than opening a public GitHub issue. Include enough detail to reproduce. I'll respond within a few days and coordinate a fix and (if relevant) disclosure timeline before anything goes public.
+If you've found a security issue in Ouvrage, please email **steve.fritz@gmail.com** rather than opening a public GitHub issue. Include enough detail to reproduce. I'll respond within a few days and coordinate a fix and (if relevant) disclosure timeline before anything goes public.
 
 ## Known historical exposures
 
