@@ -7,6 +7,10 @@
 #
 # Format: Canonical Name <canonical@email>  <commit-as-recorded@email>
 
+# Normalize the canonical email's display name (handles GitHub web-edit
+# commits which record the recorded name as the GH login, e.g. "stevefritz")
+Stephen Fritz <steve.fritz@gmail.com>
+
 # All Stephen variants → canonical identity
 Stephen Fritz <steve.fritz@gmail.com>  <stephen@badger.blue>
 Stephen Fritz <steve.fritz@gmail.com>  <stephen@stephenfritz.dev>
