@@ -1,10 +1,12 @@
  ## Ouvrage
 
-Ouvrage is a self-hosted development knowledge and orchestration platform for AI-assisted engineering.
+Ouvrage is a self-hosted knowledge and orchestration platform for AI-assisted development.
 
-You connect it to your repositories and plan work through any MCP-enabled chat client. Conversations, specs, and architectural decisions accumulate in a vectorized knowledge base that both you and the LLM can search. When you're ready to build, you use your chat client to write up the task specification and dispatch the work. Ouvrage then handles branch management, Claude Code agent execution, automated quality gates with retries, and the PR.
 
-Agentic workflows generate enormous volumes of information and work product, most of which is ephemeral by default — scattered across chat sessions, lost between contexts, gone when the window closes. Ouvrage is an attempt to make that substrate durable. Beyond providing an orchestration pipeline and a knowledge base, the goal is that any user can connect through an MCP client and conversationally introspect the system — understanding a codebase's architecture, the reasoning behind past decisions, and the current state of work through organic conversation rather than documentation they have to go find and read.
+Agentic workflows generate enormous volumes of information and work product, most of which is ephemeral by default — scattered across chat sessions, lost between contexts, gone when the window closes. Ouvrage makes that substrate durable. Conversations, specs, architectural decisions, and task outputs accumulate in a vectorized knowledge base that both you and the LLM can search.
+
+
+You connect it to your repositories and plan work through any MCP-enabled chat client. When you're ready to build, you dispatch a task specification and Ouvrage handles branch management, Claude agent execution, automated quality gates  and eventually the PR. Agents draw on the accumulated context, and everything they produce feeds back into it.
 
 ### How it works
 
