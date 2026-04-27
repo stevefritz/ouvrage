@@ -14,7 +14,7 @@ import os
 import secrets
 import time
 import uuid
-from urllib.parse import urlencode, parse_qs, urlparse
+from urllib.parse import urlencode, parse_qs
 
 from authlib.jose import jwt as authlib_jwt
 from cryptography.hazmat.primitives import serialization

@@ -2362,7 +2362,7 @@ async def _handle_get_file(send, file_id: str, scope):
     if not record:
         return await _error(send, f"File '{file_id}' not found", 404)
 
-    from ouvrage.server.handlers.files_handler import _is_readable, READABLE_EXTENSIONS
+    from ouvrage.server.handlers.files_handler import _is_readable
     filename = record.get("filename", "")
     readable = _is_readable(filename)
     record["readable"] = readable
