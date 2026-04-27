@@ -1,6 +1,5 @@
 """Shared utilities used across multiple handler modules."""
 
-import asyncio
 import logging
 import re
 

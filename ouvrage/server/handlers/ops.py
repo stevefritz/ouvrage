@@ -400,10 +400,10 @@ async def _handle_get_context(arguments):
     pinned_convs = [c for c in convs if c.get("has_pinned")]
 
     parts = [
-        f"# Ouvrage Context",
-        f"",
+        "# Ouvrage Context",
+        "",
         f"**Projects:** {len(projects)} | **Active tasks:** {active_count}",
-        f"",
+        "",
     ]
 
     if project_lines:

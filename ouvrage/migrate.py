@@ -7,7 +7,6 @@ Auto-migration on startup: set OUVRAGE_OWNER_EMAIL + OUVRAGE_OWNER_PASSWORD_HASH
 """
 
 import logging
-import os
 
 log = logging.getLogger("ouvrage.migrate")
 
@@ -28,8 +27,6 @@ async def run_migrate_auth(
         get_user_by_email,
         update_user,
         update_instance,
-        get_instance,
-        create_user,
     )
     from ouvrage.db.connection import get_db
     from ouvrage.db._helpers import now_iso

@@ -2,7 +2,6 @@
 import json
 
 from ouvrage.config.constants import (
-    COMPONENT_CONFIG_FIELDS,
     COMPONENT_MUTABLE_FIELDS,
     SYSTEM_DEFAULTS,
 )

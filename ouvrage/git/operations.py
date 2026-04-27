@@ -1,6 +1,5 @@
 """Git branch operations — rebase, merge, push, PR creation, diff extraction."""
 
-import asyncio
 import logging
 import os
 import re
