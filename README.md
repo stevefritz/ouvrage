@@ -1,18 +1,20 @@
-# Ouvrage
+## Ouvrage
 
-Working at AI-driven speed creates its own coordination problem. Long conversations, cross-cutting concerns, and multiple parallel work streams quickly become difficult to manage inside a single chat session.
+Ouvrage is a self-hosted development knowledge and orchestration platform for AI-assisted engineering.
 
-Ouvrage is an attempt to address that. It is a planning and orchestration system that brings order to the chaos, and it produces documentation as exhaust.
+You connect it to your repositories and plan work through any MCP-enabled chat client. Conversations, specs, and architectural decisions accumulate in a vectorized knowledge base that both you and the LLM can search. When you're ready to build, you use your chat client to write up the task specification and dispatch the work. Ouvrage then handles branch management, Claude Code agent execution, automated quality gates with retries, and the PR.
 
-You work through ideas in conversation with an MCP-enabled chat client, recording decisions, raw notes, and designs as you go. Ouvrage decomposes that work into bounded tasks with concrete specifications. Separate conversations converge into a single, durable knowledge base. Because this entire corpus is vectorized, context can be retrieved via semantic search for a fresh session without losing the nuance of the original reasoning.
+Agentic workflows generate enormous volumes of information and work product, most of which is ephemeral by default — scattered across chat sessions, lost between contexts, gone when the window closes. Ouvrage is an attempt to make that substrate durable. Beyond providing an orchestration pipeline and a knowledge base, the goal is that any user can connect through an MCP client and conversationally introspect the system — understanding a codebase's architecture, the reasoning behind past decisions, and the current state of work through organic conversation rather than documentation they have to go find and read.
 
-## How it works
+### How it works
 
-- **The flywheel.** The accumulated material powers the specifications going into new tasks. An agent can produce on-the-fly documentation from this vector store, or you can interrogate the system conversationally to learn its architecture and why past decisions were made.
-- **Context and state.** The context layer is indexed by project and scoped by task. Pins mark canonical content, while the underlying vector database ensures the full historical record remains semantically searchable.
-- **Orchestration via MCP.** The LLM drives orchestration: dispatching tasks, responding to status, and handling retries. A human-in-the-loop dashboard exposes the same operations, allowing you to approve held tasks, review gate output, and curate the corpus.
+**The flywheel.** The accumulated knowledge powers the specifications going into new tasks. An agent can produce on-the-fly documentation from the vector store, or you can interrogate the system conversationally to learn its architecture and why past decisions were made.
 
-The result is that both the human and the LLM have a shared, durable reference for what was decided and why. This makes specifications sharper, planning more coherent, and the work itself closer to the original vision.
+**Context and state.** The knowledge layer is indexed by project and scoped by task. Pins mark canonical content, while the underlying vector database ensures the full historical record remains semantically searchable.
+
+**Orchestration via MCP.** The LLM drives orchestration: dispatching tasks, responding to status, and handling retries. A human-in-the-loop dashboard exposes the same operations — approving held tasks, reviewing gate output, and curating the knowledge base.
+
+The result is that both you and the LLM share a durable reference for what was decided and why. Specifications get sharper over time, planning stays coherent, and the work stays closer to the original vision.
 
 ## Quickstart
 
