@@ -15,7 +15,6 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from ouvrage.db.connection import get_db
-from ouvrage.db._helpers import now_iso
 from ouvrage.db.users import get_user_by_email_with_auth, update_user
 
 logger = logging.getLogger("ouvrage.auth.sessions")

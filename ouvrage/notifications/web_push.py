@@ -28,7 +28,7 @@ def is_enabled() -> bool:
 def _send_one(subscription: dict, payload_str: str) -> bool:
     """Send one push notification (sync, runs in thread pool)."""
     try:
-        from pywebpush import webpush, WebPushException
+        from pywebpush import webpush
         webpush(
             subscription_info={
                 "endpoint": subscription["endpoint"],

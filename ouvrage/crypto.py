@@ -8,7 +8,7 @@ Or via CLI:
 """
 import os
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 
 
 def get_master_key() -> bytes:
