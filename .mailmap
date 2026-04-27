@@ -1,0 +1,24 @@
+# .mailmap — display identity normalization for git history.
+#
+# This file does NOT change commit data. It only provides display aliases
+# for tools that respect mailmap: `git log`, `git blame`, `git shortlog`,
+# and the GitHub Contributors graph. Individual commit pages on GitHub
+# still show whatever the original git author email maps to.
+#
+# Format: Canonical Name <canonical@email>  <commit-as-recorded@email>
+
+# All Stephen variants → canonical identity
+Stephen Fritz <steve.fritz@gmail.com>  <stephen@badger.blue>
+Stephen Fritz <steve.fritz@gmail.com>  <stephen@stephenfritz.dev>
+Stephen Fritz <steve.fritz@gmail.com>  <switchboard@stephenfritz.dev>
+Stephen Fritz <steve.fritz@gmail.com>  <root@vps-526635cb.vps.ovh.ca>
+
+# All CC worker variants → recognizable bot identity.
+# These commits were made by Claude Code worker sessions before commit
+# 41e72c3 wired up GIT_AUTHOR/COMMITTER injection per task. They were
+# attributed to the SDK's default identity at the time. Mapping them to
+# a stable Ouvrage Worker identity makes the contributor graph honest.
+Ouvrage Worker <cc-worker@ouvrage.local>  <claude-code@anthropic.com>
+Ouvrage Worker <cc-worker@ouvrage.local>  <foreman-worker@stephenfritz.dev>
+Ouvrage Worker <cc-worker@ouvrage.local>  <worker@switchboard.local>
+Ouvrage Worker <cc-worker@ouvrage.local>  <cc-worker@switchboard.local>
