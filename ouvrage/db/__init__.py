@@ -181,6 +181,21 @@ from ouvrage.db.files import (
     promote_task_file,
 )
 
+# Reference docs (living-docs)
+from ouvrage.db.reference_docs import (
+    upsert_config,
+    get_config,
+    get_config_by_id,
+    list_configs,
+    delete_config_row,
+    update_config_meta,
+    insert_run,
+    list_runs,
+    get_runs_by_task,
+    get_latest_regen_at,
+    has_inflight_tagged_task,
+)
+
 # Instance config (control-plane overrides)
 from ouvrage.db.instance_config import (
     get_instance_config,
@@ -277,6 +292,11 @@ __all__ = [
     "write_audit_log", "get_audit_log",
     # search weights
     "set_weight", "remove_weight", "get_weight", "list_weights",
+    # reference docs (living-docs)
+    "upsert_config", "get_config", "get_config_by_id", "list_configs",
+    "delete_config_row", "update_config_meta",
+    "insert_run", "list_runs", "get_runs_by_task",
+    "get_latest_regen_at", "has_inflight_tagged_task",
     # search
     "search_messages_semantic", "get_messages_needing_embedding",
     "count_messages_needing_embedding", "get_activity", "get_component_activity",

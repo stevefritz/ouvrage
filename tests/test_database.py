@@ -643,3 +643,293 @@ class TestLivingDocsSchema:
         assert files_rows == [], "files row must be gone"
         assert emb_rows == [], "files_embeddings must cascade-delete"
         assert chunk_rows == [], "file_chunks must cascade-delete"
+
+
+# ===========================================================================
+# Reference doc helpers
+# ===========================================================================
+
+class TestReferenceDocHelpers:
+    """Tests for ouvrage/db/reference_docs.py helpers."""
+
+    # shared project/task IDs — each test method creates its own to avoid collisions
+    async def _setup_project(self, db, proj_id="rd-proj"):
+        await db.create_project(id=proj_id, repo="git@x.git", working_dir="/w")
+        return proj_id
+
+    async def _setup_task(self, db, proj_id="rd-proj", task_id=None):
+        tid = task_id or f"{proj_id}/t1"
+        await db.create_task(id=tid, project_id=proj_id, goal="Regen docs")
+        return tid
+
+    # --- upsert_config happy path ---
+
+    async def test_upsert_config_creates_row(self, db):
+        await self._setup_project(db, "uc-proj")
+        row = await db.upsert_config(
+            project_id="uc-proj", slug="api-ref", title="API Reference", brief="All endpoints"
+        )
+        assert row["project_id"] == "uc-proj"
+        assert row["slug"] == "api-ref"
+        assert row["title"] == "API Reference"
+        assert row["brief"] == "All endpoints"
+        assert row["id"] is not None
+
+    async def test_upsert_config_idempotent(self, db):
+        await self._setup_project(db, "ui-proj")
+        row1 = await db.upsert_config(
+            project_id="ui-proj", slug="overview", title="Overview v1", brief="Brief v1"
+        )
+        row2 = await db.upsert_config(
+            project_id="ui-proj", slug="overview", title="Overview v2", brief="Brief v2"
+        )
+        # Same row (same id), updated title/brief
+        assert row1["id"] == row2["id"]
+        assert row2["title"] == "Overview v2"
+        assert row2["brief"] == "Brief v2"
+
+    async def test_upsert_config_source_hints(self, db):
+        await self._setup_project(db, "sh-proj")
+        row = await db.upsert_config(
+            project_id="sh-proj", slug="hints-doc", title="T", brief="B",
+            source_hints="src/*.py"
+        )
+        assert row["source_hints"] == "src/*.py"
+
+    # --- get_config ---
+
+    async def test_get_config_returns_row(self, db):
+        await self._setup_project(db, "gc-proj")
+        await db.upsert_config(project_id="gc-proj", slug="ref", title="T", brief="B")
+        row = await db.get_config("gc-proj", "ref")
+        assert row is not None
+        assert row["slug"] == "ref"
+
+    async def test_get_config_returns_none_for_missing(self, db):
+        await self._setup_project(db, "gcm-proj")
+        row = await db.get_config("gcm-proj", "nonexistent")
+        assert row is None
+
+    # --- get_config_by_id ---
+
+    async def test_get_config_by_id_returns_row(self, db):
+        await self._setup_project(db, "gci-proj")
+        created = await db.upsert_config(project_id="gci-proj", slug="by-id", title="T", brief="B")
+        row = await db.get_config_by_id(created["id"])
+        assert row is not None
+        assert row["id"] == created["id"]
+
+    async def test_get_config_by_id_returns_none_for_missing(self, db):
+        row = await db.get_config_by_id("nonexistent-id")
+        assert row is None
+
+    # --- list_configs ---
+
+    async def test_list_configs_ordered_by_slug(self, db):
+        await self._setup_project(db, "lc-proj")
+        for slug in ("zebra", "alpha", "middle"):
+            await db.upsert_config(project_id="lc-proj", slug=slug, title="T", brief="B")
+        rows = await db.list_configs("lc-proj")
+        slugs = [r["slug"] for r in rows]
+        assert slugs == sorted(slugs), "list_configs must be ordered by slug ASC"
+
+    async def test_list_configs_filters_by_project(self, db):
+        await self._setup_project(db, "lf-proj-a")
+        await self._setup_project(db, "lf-proj-b")
+        await db.upsert_config(project_id="lf-proj-a", slug="doc-a", title="T", brief="B")
+        await db.upsert_config(project_id="lf-proj-b", slug="doc-b", title="T", brief="B")
+        rows = await db.list_configs("lf-proj-a")
+        assert len(rows) == 1
+        assert rows[0]["slug"] == "doc-a"
+
+    # --- delete_config_row ---
+
+    async def test_delete_config_row_returns_true(self, db):
+        await self._setup_project(db, "dc-proj")
+        row = await db.upsert_config(project_id="dc-proj", slug="to-delete", title="T", brief="B")
+        result = await db.delete_config_row(row["id"])
+        assert result is True
+        assert await db.get_config_by_id(row["id"]) is None
+
+    async def test_delete_config_row_returns_false_for_missing(self, db):
+        result = await db.delete_config_row("no-such-id")
+        assert result is False
+
+    # --- update_config_meta ---
+
+    async def test_update_config_meta_partial_update(self, db):
+        await self._setup_project(db, "um-proj")
+        await self._setup_task(db, "um-proj", "um-proj/t1")
+        row = await db.upsert_config(project_id="um-proj", slug="meta-doc", title="T", brief="B")
+        await db.update_config_meta(
+            row["id"],
+            last_seen_sha="abc123",
+            last_regen_at="2026-04-01T00:00:00Z",
+            last_regen_task_id="um-proj/t1",
+        )
+        updated = await db.get_config_by_id(row["id"])
+        assert updated["last_seen_sha"] == "abc123"
+        assert updated["last_regen_at"] == "2026-04-01T00:00:00Z"
+        assert updated["last_regen_task_id"] == "um-proj/t1"
+
+    async def test_update_config_meta_none_fields_not_touched(self, db):
+        await self._setup_project(db, "umn-proj")
+        row = await db.upsert_config(project_id="umn-proj", slug="partial", title="T", brief="B")
+        # Set a value first
+        await db.update_config_meta(row["id"], last_seen_sha="sha-before")
+        # Update only last_regen_at; last_seen_sha must remain
+        await db.update_config_meta(row["id"], last_regen_at="2026-04-02T00:00:00Z")
+        updated = await db.get_config_by_id(row["id"])
+        assert updated["last_seen_sha"] == "sha-before"
+        assert updated["last_regen_at"] == "2026-04-02T00:00:00Z"
+
+    async def test_update_config_meta_noop_when_all_none(self, db):
+        await self._setup_project(db, "noop-proj")
+        row = await db.upsert_config(project_id="noop-proj", slug="noop", title="T", brief="B")
+        # Should not raise even when all fields are None
+        await db.update_config_meta(row["id"])
+        updated = await db.get_config_by_id(row["id"])
+        assert updated is not None
+
+    # --- insert_run + list_runs (JSON round-trip) ---
+
+    async def test_insert_run_json_roundtrip(self, db):
+        await self._setup_project(db, "ir-proj")
+        await self._setup_task(db, "ir-proj", "ir-proj/t1")
+        run = await db.insert_run(
+            project_id="ir-proj",
+            task_id="ir-proj/t1",
+            commit_sha="deadbeef",
+            outcome="updated",
+            slugs_changed=["api-ref", "overview"],
+            slugs_unchanged=["changelog"],
+        )
+        assert run["outcome"] == "updated"
+        assert run["slugs_changed"] == ["api-ref", "overview"]
+        assert run["slugs_unchanged"] == ["changelog"]
+        assert run["id"] is not None
+
+    async def test_list_runs_most_recent_first(self, db):
+        await self._setup_project(db, "lr-proj")
+        await self._setup_task(db, "lr-proj", "lr-proj/t1")
+        await self._setup_task(db, "lr-proj", "lr-proj/t2")
+        run1 = await db.insert_run(
+            project_id="lr-proj", task_id="lr-proj/t1",
+            commit_sha=None, outcome="unchanged",
+            slugs_changed=[], slugs_unchanged=["doc"],
+        )
+        run2 = await db.insert_run(
+            project_id="lr-proj", task_id="lr-proj/t2",
+            commit_sha=None, outcome="updated",
+            slugs_changed=["doc"], slugs_unchanged=[],
+        )
+        runs = await db.list_runs("lr-proj")
+        # Most recent first — run2 was inserted after run1
+        assert runs[0]["id"] == run2["id"]
+        assert runs[1]["id"] == run1["id"]
+
+    async def test_list_runs_decodes_slug_json(self, db):
+        await self._setup_project(db, "ld-proj")
+        await self._setup_task(db, "ld-proj", "ld-proj/t1")
+        await db.insert_run(
+            project_id="ld-proj", task_id="ld-proj/t1",
+            commit_sha=None, outcome="failed",
+            slugs_changed=[], slugs_unchanged=[],
+            error_message="Oops",
+        )
+        runs = await db.list_runs("ld-proj")
+        assert isinstance(runs[0]["slugs_changed"], list)
+        assert isinstance(runs[0]["slugs_unchanged"], list)
+
+    async def test_list_runs_limit(self, db):
+        await self._setup_project(db, "lim-proj")
+        for i in range(5):
+            tid = f"lim-proj/t{i}"
+            await self._setup_task(db, "lim-proj", tid)
+            await db.insert_run(
+                project_id="lim-proj", task_id=tid,
+                commit_sha=None, outcome="unchanged",
+                slugs_changed=[], slugs_unchanged=[],
+            )
+        runs = await db.list_runs("lim-proj", limit=3)
+        assert len(runs) == 3
+
+    # --- get_runs_by_task ---
+
+    async def test_get_runs_by_task(self, db):
+        await self._setup_project(db, "grt-proj")
+        await self._setup_task(db, "grt-proj", "grt-proj/t1")
+        await self._setup_task(db, "grt-proj", "grt-proj/t2")
+        await db.insert_run(
+            project_id="grt-proj", task_id="grt-proj/t1",
+            commit_sha=None, outcome="updated", slugs_changed=["x"], slugs_unchanged=[],
+        )
+        await db.insert_run(
+            project_id="grt-proj", task_id="grt-proj/t2",
+            commit_sha=None, outcome="unchanged", slugs_changed=[], slugs_unchanged=["y"],
+        )
+        runs = await db.get_runs_by_task("grt-proj/t1")
+        assert len(runs) == 1
+        assert runs[0]["task_id"] == "grt-proj/t1"
+
+    # --- get_latest_regen_at ---
+
+    async def test_get_latest_regen_at_none_for_no_configs(self, db):
+        await self._setup_project(db, "lra-proj")
+        result = await db.get_latest_regen_at("lra-proj")
+        assert result is None
+
+    async def test_get_latest_regen_at_returns_max(self, db):
+        await self._setup_project(db, "lra2-proj")
+        r1 = await db.upsert_config(project_id="lra2-proj", slug="doc-a", title="T", brief="B")
+        r2 = await db.upsert_config(project_id="lra2-proj", slug="doc-b", title="T", brief="B")
+        await db.update_config_meta(r1["id"], last_regen_at="2026-03-01T00:00:00Z")
+        await db.update_config_meta(r2["id"], last_regen_at="2026-04-01T00:00:00Z")
+        latest = await db.get_latest_regen_at("lra2-proj")
+        assert latest == "2026-04-01T00:00:00Z"
+
+    # --- has_inflight_tagged_task ---
+
+    async def test_has_inflight_tagged_task_true_when_working(self, db):
+        await self._setup_project(db, "hit-proj")
+        await self._setup_task(db, "hit-proj", "hit-proj/t1")
+        await db.update_task("hit-proj/t1", status="working")
+        await db.set_task_tags("hit-proj/t1", ["living-docs"])
+        result = await db.has_inflight_tagged_task("hit-proj", "living-docs")
+        assert result is True
+
+    async def test_has_inflight_tagged_task_false_for_different_tag(self, db):
+        await self._setup_project(db, "hft-proj")
+        await self._setup_task(db, "hft-proj", "hft-proj/t1")
+        await db.set_task_tags("hft-proj/t1", ["living-docs"])
+        result = await db.has_inflight_tagged_task("hft-proj", "other-tag")
+        assert result is False
+
+    async def test_has_inflight_tagged_task_false_when_no_tasks(self, db):
+        await self._setup_project(db, "hfn-proj")
+        result = await db.has_inflight_tagged_task("hfn-proj", "living-docs")
+        assert result is False
+
+    # --- FK cascade: projects → configs + runs ---
+
+    async def test_fk_cascade_delete_project_removes_configs_and_runs(self, db):
+        await self._setup_project(db, "fk-proj")
+        await self._setup_task(db, "fk-proj", "fk-proj/t1")
+        await db.upsert_config(project_id="fk-proj", slug="doc", title="T", brief="B")
+        await db.insert_run(
+            project_id="fk-proj", task_id="fk-proj/t1",
+            commit_sha=None, outcome="updated",
+            slugs_changed=["doc"], slugs_unchanged=[],
+        )
+
+        configs_before = await db.list_configs("fk-proj")
+        runs_before = await db.list_runs("fk-proj")
+        assert len(configs_before) == 1
+        assert len(runs_before) == 1
+
+        await db.delete_project("fk-proj")
+
+        configs_after = await db.list_configs("fk-proj")
+        runs_after = await db.list_runs("fk-proj")
+        assert configs_after == [], "FK cascade must remove configs on project delete"
+        assert runs_after == [], "FK cascade must remove runs on project delete"
