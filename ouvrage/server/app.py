@@ -431,6 +431,31 @@ async def _backfill_message_chunks() -> None:
         log.error("Chunk backfill aborted: %s", e)
 
 
+async def _backfill_file_chunks() -> None:
+    """Background task: chunk and embed reference doc files that haven't been chunked yet."""
+    total = 0
+    tried_ids: set = set()  # prevent infinite loop when index_doc_file returns without writing
+    try:
+        while True:
+            batch = await db.get_doc_files_needing_chunking(batch_size=100)
+            batch = [f for f in batch if f not in tried_ids]
+            if not batch:
+                break
+            for file_id in batch:
+                tried_ids.add(file_id)
+                try:
+                    await db.index_doc_file(file_id)
+                except Exception as e:
+                    log.warning("File chunk backfill failed for file %s: %s", file_id, e)
+                total += 1
+                if total % 100 == 0:
+                    log.info("File chunk backfill progress: %d files processed", total)
+        if total > 0:
+            log.info("File chunk backfill complete: %d files processed", total)
+    except Exception as e:
+        log.error("File chunk backfill aborted: %s", e)
+
+
 async def main():
     from ouvrage.logging_config import configure_logging
     configure_logging()
@@ -494,6 +519,8 @@ async def main():
                 asyncio.create_task(_backfill_vec_tables())
                 # Backfill message chunks for existing long messages
                 asyncio.create_task(_backfill_message_chunks())
+                # Backfill reference doc file chunks
+                asyncio.create_task(_backfill_file_chunks())
                 # Backfill task goal embeddings for existing tasks
                 asyncio.create_task(_backfill_task_goals())
                 # Poll GitHub for PR status changes every 60s

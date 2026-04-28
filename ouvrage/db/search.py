@@ -948,3 +948,336 @@ async def get_messages_needing_chunking(batch_size: int = 100) -> list[dict]:
             (MIN_CHUNK_LENGTH, batch_size),
         )
         return [dict(r) for r in rows]
+
+
+async def set_file_embedding(file_id: str, blob: bytes) -> None:
+    """Store the embedding blob for a file and update files_vec."""
+    async with get_db() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO files_embeddings (file_id, embedding) VALUES (?, ?)",
+            (file_id, blob),
+        )
+        # Keep files_vec in sync — only for standard 1536-dim embeddings (6144 bytes)
+        # files.id is TEXT; use the INTEGER rowid to key the vec0 table
+        if len(blob) == 1536 * 4:
+            try:
+                rows = await db.execute_fetchall(
+                    "SELECT rowid FROM files WHERE id = ?", (file_id,)
+                )
+                if rows:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO files_vec(rowid, embedding) VALUES (?, ?)",
+                        (rows[0]["rowid"], blob),
+                    )
+            except Exception as e:
+                log.warning("vec0 insert failed for file %s: %s", file_id, e)
+        await db.commit()
+
+
+async def index_doc_file(file_id: str) -> None:
+    """Chunk a reference doc file and embed each chunk. Idempotent — deletes existing chunks first.
+
+    Only operates on files with role='reference_doc'. Returns silently otherwise.
+    If the file doesn't produce chunks (too short, no headers, single section),
+    inserts a sentinel row (chunk_index=-1) so get_doc_files_needing_chunking() skips it.
+    Mirrors index_message_chunks in structure.
+    """
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id, stored_path, role FROM files WHERE id = ?",
+            (file_id,),
+        )
+    if not rows or rows[0]["role"] != "reference_doc":
+        return
+
+    stored_path = rows[0]["stored_path"]
+    try:
+        with open(stored_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except (OSError, IOError) as e:
+        log.warning("index_doc_file: could not read %s: %s", stored_path, e)
+        return
+
+    chunks = chunk_message(content)
+
+    from ouvrage.embeddings.service import get_embedding_service, encode_vector
+
+    service = get_embedding_service()
+
+    async with get_db() as db:
+        await db.execute("DELETE FROM file_chunks WHERE file_id = ?", (file_id,))
+
+        if not chunks:
+            # Insert sentinel so get_doc_files_needing_chunking() skips this file
+            await db.execute(
+                """INSERT INTO file_chunks (file_id, chunk_index, heading, content, embedding)
+                   VALUES (?, -1, NULL, '', NULL)""",
+                (file_id,),
+            )
+            await db.commit()
+        else:
+            for chunk in chunks:
+                vector = await service.embed_safe(chunk["content"])
+                blob = encode_vector(vector) if vector else None
+                cursor = await db.execute(
+                    """INSERT INTO file_chunks (file_id, chunk_index, heading, content, embedding)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (file_id, chunk["chunk_index"], chunk["heading"], chunk["content"], blob),
+                )
+                # Also insert into file_chunks_vec — only for standard 1536-dim embeddings
+                if blob and cursor.lastrowid and len(blob) == 1536 * 4:
+                    try:
+                        await db.execute(
+                            "INSERT OR REPLACE INTO file_chunks_vec(rowid, embedding) VALUES (?, ?)",
+                            (cursor.lastrowid, blob),
+                        )
+                    except Exception as e:
+                        log.warning("vec0 insert failed for file chunk rowid %d: %s", cursor.lastrowid, e)
+            await db.commit()
+
+    # Embed whole-file content (service truncates to ~32KB internally)
+    whole_vector = await service.embed_safe(content)
+    if whole_vector:
+        whole_blob = encode_vector(whole_vector)
+        await set_file_embedding(file_id, whole_blob)
+
+
+async def get_doc_files_needing_chunking(batch_size: int = 100) -> list[str]:
+    """Return file_ids for reference_doc files that haven't been chunked yet."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT f.id
+               FROM files f
+               WHERE f.role = 'reference_doc'
+                 AND NOT EXISTS (SELECT 1 FROM file_chunks fc WHERE fc.file_id = f.id)
+               ORDER BY f.id ASC
+               LIMIT ?""",
+            (batch_size,),
+        )
+        return [r["id"] for r in rows]
+
+
+async def search_files_semantic(
+    query_vector: list[float],
+    project_id: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Search reference doc files by vector similarity.
+
+    Uses sqlite-vec indexed queries for standard 1536-dim OpenAI embeddings.
+    Falls back to Python cosine loop for non-standard dimensions (e.g. in tests).
+    Filters to role='reference_doc' files only.
+    """
+    from ouvrage.embeddings.service import encode_vector, decode_vector, cosine_similarity
+
+    if len(query_vector) == _VEC_DIM:
+        blob = encode_vector(query_vector)
+        oversample = limit * 15
+
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM files_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("files_vec query failed, returning empty results: %s", exc)
+            return []
+
+        if not vec_rows:
+            return []
+
+        rowids = [r["rowid"] for r in vec_rows]
+        distance_map = {r["rowid"]: r["distance"] for r in vec_rows}
+
+        rowid_placeholders = ",".join("?" * len(rowids))
+        conditions = [f"rowid IN ({rowid_placeholders})", "role = 'reference_doc'"]
+        params: list = list(rowids)
+
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                f"SELECT rowid, id, filename, project_id, created_at FROM files WHERE {where}",
+                params,
+            )
+
+        results = []
+        for row in rows:
+            distance = distance_map[row["rowid"]]
+            similarity = max(0.0, 1.0 - (distance / 2.0))
+            results.append({
+                "file_id": row["id"],
+                "filename": row["filename"],
+                "project_id": row["project_id"],
+                "created_at": row["created_at"],
+                "similarity": similarity,
+            })
+
+        results.sort(key=lambda r: r["similarity"], reverse=True)
+        return results[:limit]
+
+    # Fallback: Python cosine loop for non-1536-dim vectors
+    async with get_db() as db:
+        conditions = ["fe.embedding IS NOT NULL", "f.role = 'reference_doc'"]
+        params_fb: list = []
+
+        if project_id:
+            conditions.append("f.project_id = ?")
+            params_fb.append(project_id)
+
+        where = " AND ".join(conditions)
+        rows = await db.execute_fetchall(
+            f"""SELECT f.id, f.filename, f.project_id, f.created_at, fe.embedding
+                FROM files f
+                JOIN files_embeddings fe ON fe.file_id = f.id
+                WHERE {where}""",
+            params_fb,
+        )
+
+    results = []
+    for row in rows:
+        emb_blob = row["embedding"]
+        if not emb_blob:
+            continue
+        try:
+            vec = decode_vector(emb_blob)
+        except Exception:
+            continue
+        sim = cosine_similarity(query_vector, vec)
+        results.append({
+            "file_id": row["id"],
+            "filename": row["filename"],
+            "project_id": row["project_id"],
+            "created_at": row["created_at"],
+            "similarity": sim,
+        })
+
+    results.sort(key=lambda r: r["similarity"], reverse=True)
+    return results[:limit]
+
+
+async def search_file_chunks_semantic(
+    query_vector: list[float],
+    project_id: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """Search file chunks by vector similarity, returning hits with adjacent context.
+
+    Uses sqlite-vec indexed queries for standard 1536-dim OpenAI embeddings.
+    Falls back to Python cosine loop for non-standard dimensions (e.g. in tests).
+    Filters to role='reference_doc' files only.
+    """
+    from ouvrage.embeddings.service import encode_vector, decode_vector, cosine_similarity
+
+    def _build_file_chunk_result(row, similarity):
+        return {
+            "chunk_id": row["id"],
+            "file_id": row["file_id"],
+            "chunk_index": row["chunk_index"],
+            "chunk_heading": row["heading"],
+            "chunk_content": row["content"],
+            "filename": row["filename"],
+            "project_id": row["project_id"],
+            "created_at": row["created_at"],
+            "similarity": similarity,
+        }
+
+    if len(query_vector) == _VEC_DIM:
+        blob = encode_vector(query_vector)
+        oversample = limit * 10
+
+        try:
+            async with get_db() as db:
+                vec_rows = await db.execute_fetchall(
+                    "SELECT rowid, distance FROM file_chunks_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+                    (blob, oversample),
+                )
+        except Exception as exc:
+            log.error("file_chunks_vec query failed, returning empty results: %s", exc)
+            return []
+
+        if not vec_rows:
+            return []
+
+        rowids = [r["rowid"] for r in vec_rows]
+        distance_map = {r["rowid"]: r["distance"] for r in vec_rows}
+
+        id_placeholders = ",".join("?" * len(rowids))
+        conditions = [f"fc.id IN ({id_placeholders})", "fc.chunk_index >= 0", "f.role = 'reference_doc'"]
+        params: list = list(rowids)
+
+        if project_id:
+            conditions.append("f.project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                f"""SELECT fc.id, fc.file_id, fc.chunk_index, fc.heading, fc.content,
+                           f.filename, f.project_id, f.created_at
+                    FROM file_chunks fc
+                    JOIN files f ON f.id = fc.file_id
+                    WHERE {where}""",
+                params,
+            )
+
+        scored = [
+            _build_file_chunk_result(row, max(0.0, 1.0 - (distance_map[row["id"]] / 2.0)))
+            for row in rows
+        ]
+
+    else:
+        # Fallback: Python cosine loop for non-1536-dim vectors
+        async with get_db() as db:
+            conditions = ["fc.embedding IS NOT NULL", "fc.chunk_index >= 0", "f.role = 'reference_doc'"]
+            params_fb: list = []
+
+            if project_id:
+                conditions.append("f.project_id = ?")
+                params_fb.append(project_id)
+
+            where = " AND ".join(conditions)
+            rows = await db.execute_fetchall(
+                f"""SELECT fc.id, fc.file_id, fc.chunk_index, fc.heading, fc.content, fc.embedding,
+                           f.filename, f.project_id, f.created_at
+                    FROM file_chunks fc
+                    JOIN files f ON f.id = fc.file_id
+                    WHERE {where}""",
+                params_fb,
+            )
+
+        scored = []
+        for row in rows:
+            emb_blob = row["embedding"]
+            if not emb_blob:
+                continue
+            try:
+                vec = decode_vector(emb_blob)
+            except Exception:
+                continue
+            sim = cosine_similarity(query_vector, vec)
+            scored.append(_build_file_chunk_result(row, sim))
+
+    scored.sort(key=lambda r: r["similarity"], reverse=True)
+    top = scored[:limit]
+
+    # Fetch adjacent chunks (±1) for context window
+    if top:
+        async with get_db() as db:
+            for hit in top:
+                adj_rows = await db.execute_fetchall(
+                    """SELECT chunk_index, heading, content FROM file_chunks
+                       WHERE file_id = ? AND chunk_index IN (?, ?)
+                       ORDER BY chunk_index""",
+                    (hit["file_id"], hit["chunk_index"] - 1, hit["chunk_index"] + 1),
+                )
+                hit["context_chunks"] = [
+                    {"chunk_index": r["chunk_index"], "heading": r["heading"], "content": r["content"]}
+                    for r in adj_rows
+                ]
+
+    return top

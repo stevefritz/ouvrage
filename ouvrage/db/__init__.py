@@ -236,6 +236,11 @@ from ouvrage.db.search import (
     search_tasks_semantic,
     search_messages_fts,
     search_tasks_fts,
+    set_file_embedding,
+    index_doc_file,
+    get_doc_files_needing_chunking,
+    search_files_semantic,
+    search_file_chunks_semantic,
 )
 
 __all__ = [
@@ -304,6 +309,8 @@ __all__ = [
     "index_message_chunks", "search_message_chunks", "get_messages_needing_chunking",
     "set_task_embedding", "get_tasks_needing_embedding", "search_tasks_semantic",
     "search_messages_fts", "search_tasks_fts",
+    "set_file_embedding", "index_doc_file", "get_doc_files_needing_chunking",
+    "search_files_semantic", "search_file_chunks_semantic",
     # constants
     "DEFAULT_MAX_CONCURRENT",
     "DEFAULT_MAX_TURNS",
