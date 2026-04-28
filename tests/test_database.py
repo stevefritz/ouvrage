@@ -576,3 +576,70 @@ class TestLivingDocsSchema:
                 "SELECT id FROM file_chunks WHERE file_id = 'file-fc-1'"
             )
             assert rows == [], "FK cascade from files should delete file_chunks rows"
+
+    # --- delete_file role guard ---
+
+    async def test_delete_file_raises_for_reference_doc(self, db):
+        await db.create_project(id="guard-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO files (id, filename, stored_path, project_id, role)
+                   VALUES ('ref-file-1', 'ref.md', '/tmp/ref.md', 'guard-proj', 'reference_doc')"""
+            )
+            await conn.commit()
+
+        with pytest.raises(ValueError, match="reference doc and cannot be deleted directly"):
+            await db.delete_file("ref-file-1")
+
+        async with db.get_db() as conn:
+            rows = await conn.execute_fetchall("SELECT id FROM files WHERE id = 'ref-file-1'")
+            assert len(rows) == 1, "Row must still exist after blocked delete"
+
+    async def test_delete_file_works_for_upload_role(self, db):
+        await db.create_project(id="upload-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO files (id, filename, stored_path, project_id)
+                   VALUES ('upload-file-1', 'up.txt', '/tmp/up.txt', 'upload-proj')"""
+            )
+            await conn.commit()
+
+        result = await db.delete_file("upload-file-1")
+        assert result is True
+
+        async with db.get_db() as conn:
+            rows = await conn.execute_fetchall("SELECT id FROM files WHERE id = 'upload-file-1'")
+            assert rows == []
+
+    async def test_delete_reference_doc_files_bypasses_guard_and_cascades(self, db):
+        await db.create_project(id="bypass-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO files (id, filename, stored_path, project_id, role)
+                   VALUES ('bypass-file-1', 'ref.md', '/tmp/ref.md', 'bypass-proj', 'reference_doc')"""
+            )
+            await conn.execute(
+                "INSERT INTO files_embeddings (file_id) VALUES ('bypass-file-1')"
+            )
+            await conn.execute(
+                """INSERT INTO file_chunks (file_id, chunk_index, content)
+                   VALUES ('bypass-file-1', 0, 'chunk content')"""
+            )
+            await conn.commit()
+
+        result = await db.delete_reference_doc_files("bypass-file-1")
+        assert result is True
+
+        async with db.get_db() as conn:
+            files_rows = await conn.execute_fetchall(
+                "SELECT id FROM files WHERE id = 'bypass-file-1'"
+            )
+            emb_rows = await conn.execute_fetchall(
+                "SELECT file_id FROM files_embeddings WHERE file_id = 'bypass-file-1'"
+            )
+            chunk_rows = await conn.execute_fetchall(
+                "SELECT id FROM file_chunks WHERE file_id = 'bypass-file-1'"
+            )
+        assert files_rows == [], "files row must be gone"
+        assert emb_rows == [], "files_embeddings must cascade-delete"
+        assert chunk_rows == [], "file_chunks must cascade-delete"

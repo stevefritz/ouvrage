@@ -81,6 +81,23 @@ async def update_file(id: str, filename: str, stored_path: str, mime_type: str |
 
 async def delete_file(id: str) -> bool:
     async with get_db() as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT role FROM files WHERE id = ?", (id,))
+        if rows and rows[0]["role"] == "reference_doc":
+            raise ValueError(
+                f"File {id} is a reference doc and cannot be deleted directly. "
+                "Use delete_reference_doc_config(...) which cascades correctly."
+            )
         cursor = await conn.execute("DELETE FROM files WHERE id = ?", (id,))
+        await conn.commit()
+        return cursor.rowcount > 0
+
+
+async def delete_reference_doc_files(file_id: str) -> bool:
+    """Bypass the role guard. ONLY for service-driven cascade.
+    Cascades through files_embeddings, file_chunks, files_vec, file_chunks_vec
+    via FK ON DELETE CASCADE and the vec0 delete triggers."""
+    async with get_db() as conn:
+        cursor = await conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
         await conn.commit()
         return cursor.rowcount > 0

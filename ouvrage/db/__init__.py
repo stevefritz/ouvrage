@@ -177,6 +177,7 @@ from ouvrage.db.files import (
     list_files,
     update_file,
     delete_file,
+    delete_reference_doc_files,
     promote_task_file,
 )
 
