@@ -596,6 +596,7 @@ async def _handle_update_project(receive, send, project_id):
         "env_overrides", "max_turns", "max_wall_clock", "model", "review_model",
         "review_ignore_patterns", "auto_test", "auto_review", "auto_pr", "auto_merge",
         "state_definitions", "github_pat_override", "provider", "credential_override",
+        "living_docs_enabled", "reference_doc_path", "living_docs_regen_interval_hours",
     }
     fields = {k: v for k, v in data.items() if k in ALLOWED}
     if not fields:

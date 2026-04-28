@@ -514,6 +514,13 @@ async def init_db():
             await conn.execute("ALTER TABLE projects ADD COLUMN credential_status_message TEXT")
         if "credential_checked_at" not in project_col_names:
             await conn.execute("ALTER TABLE projects ADD COLUMN credential_checked_at TEXT")
+        # living-docs: per-project feature flags and config
+        if "living_docs_enabled" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN living_docs_enabled BOOLEAN NOT NULL DEFAULT 0")
+        if "reference_doc_path" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN reference_doc_path TEXT NOT NULL DEFAULT 'docs/reference'")
+        if "living_docs_regen_interval_hours" not in project_col_names:
+            await conn.execute("ALTER TABLE projects ADD COLUMN living_docs_regen_interval_hours INTEGER NOT NULL DEFAULT 24")
 
         # Migrate git_credentials: add credential_last4 column
         gc_columns = await conn.execute_fetchall("PRAGMA table_info(git_credentials)")
@@ -566,6 +573,13 @@ async def init_db():
                 await conn.execute("ALTER TABLE files ADD COLUMN task_id TEXT REFERENCES tasks(id)")
             if "project_id" not in files_col_names:
                 await conn.execute("ALTER TABLE files ADD COLUMN project_id TEXT REFERENCES projects(id)")
+            if "role" not in files_col_names:
+                await conn.execute(
+                    "ALTER TABLE files ADD COLUMN role TEXT NOT NULL DEFAULT 'upload'"
+                )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_files_role ON files(role) WHERE role = 'reference_doc'"
+            )
 
         # Migrate api_tokens: add token_prefix for display in the UI
         token_columns = await conn.execute_fetchall("PRAGMA table_info(api_tokens)")
@@ -631,7 +645,7 @@ async def init_db():
 
         # vec0 virtual tables for vector similarity search (sqlite-vec)
         vec_tables = await conn.execute_fetchall(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec', 'files_vec', 'file_chunks_vec')"
         )
         vec_table_names = {r["name"] for r in vec_tables}
 
@@ -655,6 +669,22 @@ async def init_db():
             try:
                 await conn.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
+        if "files_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS files_vec USING vec0(embedding float[1536])"
+                )
+            except Exception:
+                pass
+
+        if "file_chunks_vec" not in vec_table_names:
+            try:
+                await conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks_vec USING vec0(embedding float[1536])"
                 )
             except Exception:
                 pass
@@ -790,9 +820,9 @@ async def init_db():
         # ON DELETE CASCADE from messages→message_chunks fires AFTER DELETE triggers on
         # message_chunks, so chunks_vec_delete fires correctly on cascade deletes.
         vec_tables_for_triggers = await conn.execute_fetchall(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_vec', 'tasks_vec', 'chunks_vec', 'files_vec', 'file_chunks_vec')"
         )
-        if len(vec_tables_for_triggers) == 3:
+        if len(vec_tables_for_triggers) == 5:
             try:
                 await conn.executescript("""
                     CREATE TRIGGER IF NOT EXISTS messages_vec_delete
@@ -808,6 +838,16 @@ async def init_db():
                     CREATE TRIGGER IF NOT EXISTS chunks_vec_delete
                         AFTER DELETE ON message_chunks BEGIN
                             DELETE FROM chunks_vec WHERE rowid = old.id;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS files_vec_delete
+                        AFTER DELETE ON files BEGIN
+                            DELETE FROM files_vec WHERE rowid = old.rowid;
+                        END;
+
+                    CREATE TRIGGER IF NOT EXISTS file_chunks_vec_delete
+                        AFTER DELETE ON file_chunks BEGIN
+                            DELETE FROM file_chunks_vec WHERE rowid = old.id;
                         END;
                 """)
             except Exception:
@@ -990,6 +1030,64 @@ async def init_db():
                 "UPDATE tasks SET merged_at = pushed_at"
                 " WHERE pr_status = 'merged' AND merged_at IS NULL AND pushed_at IS NOT NULL"
             )
+
+        # living-docs: reference_doc_configs — one config row per document slug per project
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS reference_doc_configs (
+                id                   TEXT PRIMARY KEY,
+                project_id           TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                slug                 TEXT NOT NULL,
+                title                TEXT NOT NULL,
+                brief                TEXT NOT NULL,
+                source_hints         TEXT,
+                last_seen_sha        TEXT,
+                last_regen_at        TIMESTAMP,
+                last_regen_task_id   TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+                created_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at           TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+                updated_at           TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (project_id, slug)
+            );
+            CREATE INDEX IF NOT EXISTS idx_refdoc_configs_project ON reference_doc_configs(project_id);
+        """)
+
+        # living-docs: reference_doc_runs — audit log of each doc-regen attempt
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS reference_doc_runs (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                task_id           TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                commit_sha        TEXT,
+                outcome           TEXT NOT NULL CHECK (outcome IN ('updated','unchanged','failed')),
+                slugs_changed     TEXT NOT NULL DEFAULT '[]',
+                slugs_unchanged   TEXT NOT NULL DEFAULT '[]',
+                error_message     TEXT,
+                ran_at            TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_refdoc_runs_project_ranat
+              ON reference_doc_runs(project_id, ran_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_refdoc_runs_task ON reference_doc_runs(task_id);
+        """)
+
+        # living-docs: file embedding tables (parallel to messages_*/chunks_*)
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS files_embeddings (
+                file_id    TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                embedding  BLOB,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id     TEXT    NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                heading     TEXT,
+                content     TEXT    NOT NULL,
+                embedding   BLOB,
+                created_at  TEXT    DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_chunks_file ON file_chunks(file_id);
+        """)
 
         await conn.commit()
 

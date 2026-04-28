@@ -425,3 +425,154 @@ class TestListMergedTasksSince:
         results = await db.list_merged_tasks_since("merge-proj", None)
 
         assert results == []
+
+
+# ===========================================================================
+# Living Docs schema v2
+# ===========================================================================
+
+class TestLivingDocsSchema:
+    """Verify schema v2 tables, columns, constraints, and FK cascade."""
+
+    async def _get_col_names(self, db, table):
+        async with db.get_db() as conn:
+            rows = await conn.execute_fetchall(f"PRAGMA table_info({table})")
+            return {r["name"] for r in rows}
+
+    async def _get_tables(self, db):
+        async with db.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            return {r["name"] for r in rows}
+
+    # --- Schema presence ---
+
+    async def test_new_tables_exist(self, db):
+        tables = await self._get_tables(db)
+        expected = {"reference_doc_configs", "reference_doc_runs", "files_embeddings", "file_chunks"}
+        assert expected.issubset(tables), f"Missing tables: {expected - tables}"
+
+    async def test_files_has_role_column(self, db):
+        col_names = await self._get_col_names(db, "files")
+        assert "role" in col_names
+
+    async def test_projects_has_living_docs_columns(self, db):
+        col_names = await self._get_col_names(db, "projects")
+        assert "living_docs_enabled" in col_names
+        assert "reference_doc_path" in col_names
+        assert "living_docs_regen_interval_hours" in col_names
+
+    # --- Idempotency ---
+
+    async def test_init_db_idempotent(self, db):
+        import ouvrage.db as _db
+        await _db.init_db()  # second run must not raise
+        tables = await self._get_tables(db)
+        assert "reference_doc_configs" in tables
+        assert "reference_doc_runs" in tables
+
+    # --- UNIQUE constraint: reference_doc_configs(project_id, slug) ---
+
+    async def test_reference_doc_configs_unique_slug(self, db):
+        import aiosqlite
+        await db.create_project(id="ld-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO reference_doc_configs (id, project_id, slug, title, brief)
+                   VALUES ('cfg-1', 'ld-proj', 'api-overview', 'API Overview', 'Describes the API')"""
+            )
+            await conn.commit()
+            with pytest.raises(Exception):
+                await conn.execute(
+                    """INSERT INTO reference_doc_configs (id, project_id, slug, title, brief)
+                       VALUES ('cfg-2', 'ld-proj', 'api-overview', 'Duplicate Slug', 'Should fail')"""
+                )
+
+    # --- CHECK constraint: reference_doc_runs.outcome ---
+
+    async def test_reference_doc_runs_outcome_check(self, db):
+        await db.create_project(id="run-proj", repo="git@x.git", working_dir="/w")
+        task = await db.create_task(id="run-proj/t1", project_id="run-proj", goal="Gen docs")
+        async with db.get_db() as conn:
+            with pytest.raises(Exception):
+                await conn.execute(
+                    """INSERT INTO reference_doc_runs (project_id, task_id, outcome)
+                       VALUES ('run-proj', 'run-proj/t1', 'invalid_outcome')"""
+                )
+
+    # --- FK cascade: projects → reference_doc_configs ---
+
+    async def test_reference_doc_configs_cascade_delete(self, db):
+        await db.create_project(id="cascade-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO reference_doc_configs (id, project_id, slug, title, brief)
+                   VALUES ('cfg-cascade', 'cascade-proj', 'some-doc', 'Some Doc', 'Brief')"""
+            )
+            await conn.commit()
+            rows = await conn.execute_fetchall(
+                "SELECT id FROM reference_doc_configs WHERE project_id = 'cascade-proj'"
+            )
+            assert len(rows) == 1
+
+        await db.delete_project("cascade-proj")
+
+        async with db.get_db() as conn:
+            rows = await conn.execute_fetchall(
+                "SELECT id FROM reference_doc_configs WHERE project_id = 'cascade-proj'"
+            )
+            assert rows == [], "FK cascade from projects should delete reference_doc_configs rows"
+
+    # --- FK cascade: files → files_embeddings ---
+
+    async def test_files_embeddings_cascade_delete(self, db):
+        await db.create_project(id="fe-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO files (id, filename, stored_path, project_id)
+                   VALUES ('file-fe-1', 'doc.md', '/tmp/doc.md', 'fe-proj')"""
+            )
+            await conn.execute(
+                "INSERT INTO files_embeddings (file_id) VALUES ('file-fe-1')"
+            )
+            await conn.commit()
+            rows = await conn.execute_fetchall(
+                "SELECT file_id FROM files_embeddings WHERE file_id = 'file-fe-1'"
+            )
+            assert len(rows) == 1
+
+            await conn.execute("DELETE FROM files WHERE id = 'file-fe-1'")
+            await conn.commit()
+
+            rows = await conn.execute_fetchall(
+                "SELECT file_id FROM files_embeddings WHERE file_id = 'file-fe-1'"
+            )
+            assert rows == [], "FK cascade from files should delete files_embeddings rows"
+
+    # --- FK cascade: files → file_chunks ---
+
+    async def test_file_chunks_cascade_delete(self, db):
+        await db.create_project(id="fc-proj", repo="git@x.git", working_dir="/w")
+        async with db.get_db() as conn:
+            await conn.execute(
+                """INSERT INTO files (id, filename, stored_path, project_id)
+                   VALUES ('file-fc-1', 'doc.md', '/tmp/doc.md', 'fc-proj')"""
+            )
+            await conn.execute(
+                """INSERT INTO file_chunks (file_id, chunk_index, content)
+                   VALUES ('file-fc-1', 0, 'Hello world')"""
+            )
+            await conn.commit()
+            rows = await conn.execute_fetchall(
+                "SELECT id FROM file_chunks WHERE file_id = 'file-fc-1'"
+            )
+            assert len(rows) == 1
+
+            await conn.execute("DELETE FROM files WHERE id = 'file-fc-1'")
+            await conn.commit()
+
+            rows = await conn.execute_fetchall(
+                "SELECT id FROM file_chunks WHERE file_id = 'file-fc-1'"
+            )
+            assert rows == [], "FK cascade from files should delete file_chunks rows"
