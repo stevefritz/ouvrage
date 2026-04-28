@@ -945,3 +945,19 @@ async def get_previous_attempt_session_id(task_id: str, current_attempt: int) ->
             (task_id, current_attempt - 1),
         )
         return rows[0]["session_id"] if rows else None
+
+
+async def list_merged_tasks_since(project_id: str, since_iso: str | None) -> list[dict]:
+    """Tasks whose PR has merged in this project since `since_iso` (or all if None)."""
+    async with get_db() as db:
+        sql = """
+            SELECT t.id, t.goal, t.branch, t.merged_at, t.component_id,
+                   (SELECT ref FROM task_artifacts WHERE task_id = t.id AND type='pr_url' LIMIT 1) AS pr_url
+              FROM tasks t
+             WHERE t.project_id = ?
+               AND t.pr_status = 'merged'
+               AND (? IS NULL OR t.merged_at > ?)
+             ORDER BY t.merged_at ASC
+        """
+        rows = await db.execute_fetchall(sql, (project_id, since_iso, since_iso))
+        return [dict(r) for r in rows]

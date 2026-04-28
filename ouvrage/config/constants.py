@@ -50,7 +50,7 @@ TASK_MUTABLE_FIELDS = {
     "max_test_retries", "max_review_retries",
     # v5 auto-merge-queue fields
     "queued_at", "auto_merge", "auto_release_worktree",
-    "pushed_at", "pr_status", "pr_error",
+    "pushed_at", "pr_status", "pr_error", "merged_at",
     # v5 crash-recovery fields
     "recovery_count", "last_recovery_at", "recovery_priority",
     # v5 realtime-output fields

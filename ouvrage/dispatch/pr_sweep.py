@@ -105,7 +105,10 @@ async def _pr_status_sweep() -> None:
                 project_id = task.get("project_id")
                 status = await _check_pr_status(pr_url, project_id)
                 if status != task.get("pr_status"):
-                    await db.update_task(task["id"], pr_status=status)
+                    _update_kwargs = {"pr_status": status}
+                    if status == "merged":
+                        _update_kwargs["merged_at"] = db.now_iso()
+                    await db.update_task(task["id"], **_update_kwargs)
                     log.info(
                         f"PR sweep: task {task['id']} pr_status {task.get('pr_status')!r} → {status!r}"
                     )

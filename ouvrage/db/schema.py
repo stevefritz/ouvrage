@@ -983,6 +983,14 @@ async def init_db():
         if "trial_ends_at" not in ic_col_names:
             await conn.execute("ALTER TABLE instance_config ADD COLUMN trial_ends_at TEXT")
 
+        # living-docs: per-row merge timestamp for identifying recently merged PRs
+        if "merged_at" not in task_col_names:
+            await conn.execute("ALTER TABLE tasks ADD COLUMN merged_at TIMESTAMP")
+            await conn.execute(
+                "UPDATE tasks SET merged_at = pushed_at"
+                " WHERE pr_status = 'merged' AND merged_at IS NULL AND pushed_at IS NOT NULL"
+            )
+
         await conn.commit()
 
     # Ensure uploads directory exists (worker-accessible, outside /data)

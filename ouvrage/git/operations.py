@@ -456,7 +456,7 @@ async def _perform_auto_merge(task_id: str) -> bool:
                 )
                 return False
 
-        await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged")
+        await db.update_task(task_id, status="merged", pushed_at=db.now_iso(), pr_status="merged", merged_at=db.now_iso())
         await db.post_task_message(
             task_id=task_id, author="dispatcher", type="status",
             title="Auto-merged",

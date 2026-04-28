@@ -379,3 +379,49 @@ class TestChecklistOperations:
         items = await db.create_checklist_items("cl-proj/t1", ["Old text"])
         updated = await db.update_checklist_item_text(items[0]["id"], "New text")
         assert updated["item"] == "New text"
+
+
+# ===========================================================================
+# list_merged_tasks_since
+# ===========================================================================
+
+class TestListMergedTasksSince:
+
+    async def _seed(self, db):
+        await db.create_project(id="merge-proj", repo="git@x.git", working_dir="/w")
+
+    async def test_returns_all_merged_when_since_is_none(self, db):
+        await self._seed(db)
+        await db.create_task(id="merge-proj/t1", project_id="merge-proj", goal="Task 1")
+        await db.create_task(id="merge-proj/t2", project_id="merge-proj", goal="Task 2")
+        await db.update_task("merge-proj/t1", pr_status="merged", merged_at="2026-01-01T10:00:00Z")
+        await db.update_task("merge-proj/t2", pr_status="merged", merged_at="2026-01-02T10:00:00Z")
+
+        results = await db.list_merged_tasks_since("merge-proj", None)
+
+        assert len(results) == 2
+        assert results[0]["id"] == "merge-proj/t1"
+        assert results[1]["id"] == "merge-proj/t2"
+        # Ascending merged_at order
+        assert results[0]["merged_at"] < results[1]["merged_at"]
+
+    async def test_filters_by_since_iso(self, db):
+        await self._seed(db)
+        await db.create_task(id="merge-proj/old", project_id="merge-proj", goal="Old task")
+        await db.create_task(id="merge-proj/new", project_id="merge-proj", goal="New task")
+        await db.update_task("merge-proj/old", pr_status="merged", merged_at="2026-01-01T00:00:00Z")
+        await db.update_task("merge-proj/new", pr_status="merged", merged_at="2026-01-15T00:00:00Z")
+
+        results = await db.list_merged_tasks_since("merge-proj", "2026-01-10T00:00:00Z")
+
+        assert len(results) == 1
+        assert results[0]["id"] == "merge-proj/new"
+
+    async def test_returns_empty_for_project_with_no_merges(self, db):
+        await self._seed(db)
+        await db.create_task(id="merge-proj/open", project_id="merge-proj", goal="Open task")
+        await db.update_task("merge-proj/open", pr_status="open")
+
+        results = await db.list_merged_tasks_since("merge-proj", None)
+
+        assert results == []

@@ -101,6 +101,7 @@ from ouvrage.db.tasks import (
     update_attempt,
     get_attempt,
     get_previous_attempt_session_id,
+    list_merged_tasks_since,
 )
 
 # Components

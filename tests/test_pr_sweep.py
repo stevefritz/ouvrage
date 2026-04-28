@@ -236,7 +236,10 @@ class TestPrStatusSweep:
                             except StopAsyncIteration:
                                 pass
 
-        mock_update.assert_called_once_with(sample_task["id"], pr_status="merged")
+        mock_update.assert_called_once()
+        call_kwargs = mock_update.call_args[1]
+        assert call_kwargs["pr_status"] == "merged"
+        assert call_kwargs.get("merged_at")  # merged_at must be set on merge
         mock_handle.assert_called_once()
 
     @pytest.mark.asyncio
