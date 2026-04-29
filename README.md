@@ -49,29 +49,68 @@ After first boot the container initialises the database, creates the owner accou
 
 ## Usage
 
-Connect an MCP-enabled client to `http://localhost:8100/mcp`. OAuth client credentials are available on the dashboard **Settings** page.
+Ouvrage exposes an MCP endpoint at `/mcp`. Configuration depends on whether your client runs on the same machine as Ouvrage, or somewhere else.
 
-### Claude Code
+### Same-machine (Claude Code on your laptop)
 
-From any project directory, register Ouvrage as an MCP server:
+No extra configuration. Register the local endpoint:
 
 ```bash
-claude mcp add --transport http ouvrage https://your-host/mcp \
+claude mcp add --transport http ouvrage http://localhost:8100/mcp
+```
+
+Localhost connections are auth-bypassed by design — tools are available immediately on next session start.
+
+### Remote / hosted (Claude.ai, or Claude Code from another machine)
+
+> ⚠️ **Claude.ai cannot connect to `http://localhost:8100`.** It needs a publicly reachable HTTPS URL. Two ways to get one:
+> - **Tunnel** for dev: [ngrok](https://ngrok.com/), [cloudflared](https://github.com/cloudflare/cloudflared), Tailscale Funnel.
+> - **Hosted** for permanent: a VPS behind a reverse proxy (Caddy, nginx) on your domain.
+
+#### Step 1 — tell Ouvrage its public URL
+
+Set `OUVRAGE_PUBLIC_URL` in `.env`, then recreate the container:
+
+```bash
+# .env
+OUVRAGE_PUBLIC_URL=https://your-tunnel.ngrok.app
+```
+
+```bash
+docker compose up -d
+```
+
+This single variable propagates to the OAuth issuer, the OAuth base URL, and the MCP resource URL — the three places Ouvrage advertises "I am this server." If you skip it, OAuth flows will redirect through `localhost` and break for any external client.
+
+(Advanced: `OAUTH_BASE_URL`, `AUTH_ISSUER_URL`, and `RESOURCE_URL` remain available as individual overrides for split-domain setups. Most users don't need them.)
+
+`setup.sh` will prompt for `OUVRAGE_PUBLIC_URL` on first run and on subsequent re-runs.
+
+#### Step 2 — connect your client
+
+**Claude Code (remote)**
+
+```bash
+claude mcp add --transport http ouvrage https://your-tunnel.ngrok.app/mcp \
   --client-id <client-id> --client-secret
 ```
 
-Inside Claude Code, run `/mcp`, select the `ouvrage` server, and choose **Authenticate** to complete the OAuth handshake. After that, Ouvrage tools are available to the session.
+The CLI prompts for the secret. Get both values from the dashboard **Settings** page. Then in Claude Code: `/mcp` → select `ouvrage` → **Authenticate**.
 
-### Claude.ai
+**Claude.ai**
 
-In Claude.ai go to **Settings → Connectors → Add Custom Connector**. Give it any name (e.g. `Ouvrage`), set the remote URL to your Ouvrage `/mcp` endpoint, and under **Advanced settings** paste the OAuth client credentials from the dashboard Settings page. Save, then click **Connect** on the connector to authenticate against the dashboard.
+1. Settings → Connectors → Add Custom Connector
+2. Name: anything (e.g. `Ouvrage`)
+3. Remote URL: `https://your-tunnel.ngrok.app/mcp`
+4. Advanced settings: paste OAuth client credentials from dashboard Settings
+5. Save → click **Connect** → complete the OAuth handshake
 
-Claude.ai requires a publicly reachable URL — the local default `http://localhost:8100/mcp` won't work. For local machines, expose Ouvrage through a tunnel (e.g. [ngrok](https://ngrok.com/)) and use the external URL when adding the connector.
+If the OAuth handshake redirects you to a `localhost` URL during connect, your `OUVRAGE_PUBLIC_URL` isn't set or the container hasn't been recreated to pick it up.
 
-Register a project and dispatch work:
+### Dispatching work
 
 ```
-create_project(id="my-repo", repo="https://github.com/you/my-repo.git", working_dir="/work/my-repo")
+create_project(id="my-repo", repo="https://github.com/you/my-repo.git")
 
 dispatch_task(
   project_id="my-repo",
@@ -81,7 +120,7 @@ dispatch_task(
 )
 ```
 
-`dispatch_task` returns immediately with a task ID. A Claude Code worker picks it up, runs in an isolated git worktree, commits to a branch, and reports progress back through MCP. Task status, message thread, and session log are visible at `http://localhost:8100/dashboard/`.
+`dispatch_task` returns immediately with a task ID. A Claude Code worker picks it up in an isolated git worktree, commits to a branch, and reports progress back through MCP. Task status, message thread, and session log live on the dashboard at your `OUVRAGE_PUBLIC_URL/dashboard/` (or `http://localhost:8100/dashboard/` if local-only).
 
 ## Architecture
 

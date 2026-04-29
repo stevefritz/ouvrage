@@ -54,6 +54,22 @@ prompt_openai_key() {
   fi
 }
 
+prompt_public_url() {
+  echo "  Public URL (optional — required only for Claude.ai or any client"
+  echo "  not on this machine; leave blank for local-only Claude Code)."
+  echo "  Examples: https://you.ngrok.app, https://ouvrage.example.com"
+  read -r -p "  OUVRAGE_PUBLIC_URL: " public_url
+
+  if [[ -n "$public_url" ]]; then
+    public_url="${public_url%/}"
+    printf 'OUVRAGE_PUBLIC_URL=%s\n' "$public_url" >> .env
+    chmod 600 .env
+    echo "✓ Public URL saved to .env"
+  else
+    echo "  Skipped. Ouvrage will run localhost-only."
+  fi
+}
+
 # ── --reset flag ──────────────────────────────────────────────────────────────
 
 if [[ "${1:-}" == "--reset" ]]; then
@@ -188,6 +204,22 @@ elif [[ -f .env ]]; then
   prompt_owner_creds
 else
   prompt_owner_creds
+fi
+
+# ── Public URL (optional) ─────────────────────────────────────────────────────
+
+echo "→ Checking public URL configuration..."
+if grep -q '^OUVRAGE_PUBLIC_URL=' .env 2>/dev/null; then
+  current=$(grep '^OUVRAGE_PUBLIC_URL=' .env | head -1 | cut -d= -f2-)
+  read -r -p "  Existing public URL: $current — replace? [y/N] " yn
+  if [[ "${yn,,}" == "y" ]]; then
+    sed -i '/^OUVRAGE_PUBLIC_URL=/d' .env
+    prompt_public_url
+  else
+    echo "✓ Keeping existing public URL"
+  fi
+else
+  prompt_public_url
 fi
 
 # ── OpenAI API key (optional) ─────────────────────────────────────────────────
