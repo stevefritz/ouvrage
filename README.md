@@ -29,6 +29,17 @@ Then open http://localhost:8100.
 
 The setup script will prompt for the few things it needs (owner email, owner password, optional OpenAI key). Everything else is handled for you.
 
+## Updating
+
+After pulling new code, rebuild the image and recreate the container:
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+The Python source is `COPY`-ed into the image at build time, so a plain `docker compose up -d` will keep running the previously-built code regardless of what's in your working tree. Re-running `./setup.sh` also rebuilds (it always invokes `docker compose build`).
+
 ## Resetting
 
 Re-running `./setup.sh` is safe — it skips anything already done. If the database exists, it won't re-prompt for owner credentials (the bootstrap values are only meaningful on first boot; changing them after the database is created has no effect).
@@ -77,8 +88,10 @@ OUVRAGE_PUBLIC_URL=https://your-tunnel.ngrok.app
 ```
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
+
+The `--build` flag is important: configuration changes alone don't trigger an image rebuild, and the Python source is baked into the image. See [Updating](#updating) below.
 
 This single variable propagates to the OAuth issuer, the OAuth base URL, and the MCP resource URL — the three places Ouvrage advertises "I am this server." If you skip it, OAuth flows will redirect through `localhost` and break for any external client.
 
