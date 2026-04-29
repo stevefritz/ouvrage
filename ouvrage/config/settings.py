@@ -56,10 +56,17 @@ VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:admin@example.co
 # Auth (OAuth 2.1 resource server)
 # ---------------------------------------------------------------------------
 
-AUTH_ISSUER_URL = os.environ.get("AUTH_ISSUER_URL")  # e.g. https://auth.example.dev
+# OUVRAGE_PUBLIC_URL — the single recommended knob for telling Ouvrage what
+# its public-facing URL is when running behind ngrok / cloudflared / a reverse
+# proxy. When set, it provides sensible defaults for OAUTH_BASE_URL,
+# AUTH_ISSUER_URL, and RESOURCE_URL. Each of those can still be overridden
+# individually for split-domain setups, but most users only need this one.
+PUBLIC_URL = os.environ.get("OUVRAGE_PUBLIC_URL", "").rstrip("/")
+
+AUTH_ISSUER_URL = os.environ.get("AUTH_ISSUER_URL") or (PUBLIC_URL or None)
 AUTH_AUDIENCE = os.environ.get("AUTH_AUDIENCE")  # e.g. https://ouvrage.example.dev/mcp
 AUTH_REQUIRED_SCOPES = os.environ.get("AUTH_REQUIRED_SCOPES", "").split(",") if os.environ.get("AUTH_REQUIRED_SCOPES") else []
-RESOURCE_URL = os.environ.get("RESOURCE_URL")  # e.g. https://ouvrage.example.dev/mcp
+RESOURCE_URL = os.environ.get("RESOURCE_URL") or (f"{PUBLIC_URL}/mcp" if PUBLIC_URL else None)
 
 # ---------------------------------------------------------------------------
 # SaaS / Auth Mode
@@ -94,7 +101,7 @@ MAX_PROJECTS = int(os.environ.get("MAX_PROJECTS", "0"))
 # OAuth Authorization Server
 # ---------------------------------------------------------------------------
 
-OAUTH_BASE_URL = os.environ.get("OAUTH_BASE_URL")  # e.g. https://ouvrage.example.dev
+OAUTH_BASE_URL = os.environ.get("OAUTH_BASE_URL") or PUBLIC_URL or None  # e.g. https://ouvrage.example.dev
 OAUTH_RSA_KEY_PATH = os.environ.get("OAUTH_RSA_KEY_PATH", "./data/oauth_rsa_key.pem")
 OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")  # claude-mcp client secret (seeded on first run)
 
