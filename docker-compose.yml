@@ -33,15 +33,10 @@ services:
     env_file:
       - .env
 
-    environment:
-      PORT: "8100"
-      OUVRAGE_DB: /data/ouvrage.db
-      OAUTH_RSA_KEY_PATH: /data/oauth_rsa_key.pem
-      WORKER_USER: ouvrage
-      AUTH_MODE: local
-      OAUTH_BASE_URL: http://localhost:8100
-      AUTH_ISSUER_URL: http://localhost:8100
-      RESOURCE_URL: http://localhost:8100/mcp
+    # All defaults (DB path, OAuth key path, worker user, port, AUTH_MODE)
+    # come from the Dockerfile's ENV directive. Override anything via .env;
+    # the most common one is OUVRAGE_PUBLIC_URL when running behind ngrok or
+    # a reverse proxy. See .env.example for the full list.
 
 secrets:
   master_key:
