@@ -19,7 +19,7 @@ The result is that both you and the LLM share a durable reference for what was d
 ## Quickstart
 
 ```bash
-git clone https://github.com/stevefritz/switchboard.git ouvrage
+git clone https://github.com/stevefritz/ouvrage.git
 cd ouvrage
 ./setup.sh
 docker compose up -d
@@ -27,7 +27,7 @@ docker compose up -d
 
 Then open http://localhost:8100.
 
-The setup script will prompt for the few things it needs (owner email, owner password, optional OpenAI key). Everything else is handled for you.
+The setup script will prompt for the few things it needs (owner email, owner password, optional public URL, optional OpenAI key). Everything else is handled for you.
 
 ## Updating
 
@@ -56,7 +56,9 @@ This deletes `data/`, `work/`, `claude-auth/`, `secrets/`, `.env`, and `gitconfi
 
 ## Configuration
 
-After first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The `OUVRAGE_OWNER_EMAIL` and `OUVRAGE_OWNER_PASSWORD` vars (written to `.env` by `setup.sh`) are only needed on first start. `OPENAI_API_KEY` is optional — without it, conversation search falls back to full-text search only; vector search is disabled.
+After first boot the container initialises the database, creates the owner account, and generates an OAuth RSA key. The `OUVRAGE_OWNER_EMAIL` and `OUVRAGE_OWNER_PASSWORD` vars (written to `.env` by `setup.sh`) are only needed on first start.
+
+The OpenAI key is optional — without it, conversation search falls back to full-text search only; vector search is disabled. **Provide it via the Docker secret at `secrets/openai_key`** (this is what `setup.sh` writes to). An `OPENAI_API_KEY` environment variable is also honored as a fallback, but **don't use the env var path in production** — secrets in `.env` end up in `docker inspect` output, container env listings, and process state inspectable by anything that can read `/proc/<pid>/environ`. The Docker secret is mounted as a 0400-permissioned tmpfs file readable only by the service user.
 
 ## Usage
 
@@ -88,10 +90,10 @@ OUVRAGE_PUBLIC_URL=https://your-tunnel.ngrok.app
 ```
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-The `--build` flag is important: configuration changes alone don't trigger an image rebuild, and the Python source is baked into the image. See [Updating](#updating) below.
+Compose detects the `.env` change and recreates the container with the new environment. (No `--build` needed for env-only changes; you only rebuild after `git pull` modifies Python source — see [Updating](#updating).)
 
 This single variable propagates to the OAuth issuer, the OAuth base URL, and the MCP resource URL — the three places Ouvrage advertises "I am this server." If you skip it, OAuth flows will redirect through `localhost` and break for any external client.
 
