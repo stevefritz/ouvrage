@@ -149,7 +149,7 @@ if [[ -f ./gitconfig ]]; then
   echo "✓ ./gitconfig already exists — skipping"
 elif [[ -f "$HOME/.gitconfig" ]]; then
   read -r -p "  Copy $HOME/.gitconfig into ./gitconfig? [y/N] " yn
-  if [[ "${yn,,}" == "y" ]]; then
+  if [[ "$(printf '%s' "$yn" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
     cp "$HOME/.gitconfig" ./gitconfig
     echo "✓ Copied ~/.gitconfig"
   else
@@ -212,8 +212,11 @@ echo "→ Checking public URL configuration..."
 if grep -q '^OUVRAGE_PUBLIC_URL=' .env 2>/dev/null; then
   current=$(grep '^OUVRAGE_PUBLIC_URL=' .env | head -1 | cut -d= -f2-)
   read -r -p "  Existing public URL: $current — replace? [y/N] " yn
-  if [[ "${yn,,}" == "y" ]]; then
-    sed -i '/^OUVRAGE_PUBLIC_URL=/d' .env
+  if [[ "$(printf '%s' "$yn" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+    # Portable in-place delete: GNU and BSD sed disagree on `sed -i`.
+    # Use grep -v + atomic rename instead.
+    grep -v '^OUVRAGE_PUBLIC_URL=' .env > .env.tmp && mv .env.tmp .env
+    chmod 600 .env
     prompt_public_url
   else
     echo "✓ Keeping existing public URL"
@@ -227,7 +230,7 @@ fi
 echo "→ Checking OpenAI API key..."
 if [[ -s ./secrets/openai_key ]]; then
   read -r -p "  Existing OpenAI key found. Replace it? [y/N] " yn
-  if [[ "${yn,,}" == "y" ]]; then
+  if [[ "$(printf '%s' "$yn" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
     prompt_openai_key
   else
     echo "✓ Keeping existing OpenAI key"
