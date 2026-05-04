@@ -492,4 +492,4 @@ class TestSetupHookConfig:
         pre_tool_use = data["hooks"]["PreToolUse"]
         assert len(pre_tool_use) == 1
         bash_entry = pre_tool_use[0]
-        assert len(bash_entry["hooks"]) == 2
+        assert len(bash_entry["hooks"]) == 3
