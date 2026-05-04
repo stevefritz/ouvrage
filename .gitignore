@@ -18,3 +18,4 @@ __pycache__/
 .git-credential-helper.sh
 testOutput.txt
 /tmp-*.log
+.ouvrage/
