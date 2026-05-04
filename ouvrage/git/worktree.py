@@ -236,6 +236,14 @@ async def setup_worktree(project: dict, dir_name: str, branch: str,
     if fetch_rc != 0:
         log.warning(f"git fetch failed (rc={fetch_rc}): {fetch_err.decode().strip()}")
 
+    # Self-healing: remove leftover extensions.worktreeConfig from old credential
+    # helper code (removed ffe5eb2). When set, worktrees inherit core.bare=true
+    # from .bare/config and git refuses all work-tree operations.
+    # Exit code 5 = key not found — safe to ignore on clean installs.
+    await _run_as_worker(
+        "git", "-C", bare_path, "config", "--unset", "extensions.worktreeConfig",
+    )
+
     # Seed an initial commit if the repo is empty (zero commits).
     # git worktree add requires at least one commit to exist as a base ref.
     await _seed_empty_repo(bare_path, project["id"], project["default_branch"], auth_url)
