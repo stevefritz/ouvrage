@@ -141,6 +141,10 @@ async def setup_hook_config(worktree_path: str) -> None:
                             "type": "command",
                             "command": "/opt/ouvrage/hooks/block-git-fetch.sh",
                         },
+                        {
+                            "type": "command",
+                            "command": r"""bash -c 'cmd=$(echo "$CLAUDE_TOOL_INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get(\"command\",\"\"))" 2>/dev/null || true); if echo "$cmd" | grep -qE "\b(kill|pkill|killall)\b"; then echo "BLOCKED: kill/pkill/killall are not allowed in worker sessions" >&2; exit 1; fi'""",
+                        },
                     ],
                 }
             ]
