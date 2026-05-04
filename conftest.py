@@ -25,8 +25,12 @@ os.environ.setdefault("GIT_COMMITTER_EMAIL", "tests@ouvrage.local")
 
 @pytest.fixture
 def tmp_db(tmp_path):
-    """Point database.py at a temporary SQLite file and reset the singleton."""
-    db_path = str(tmp_path / "test.db")
+    """Point database.py at an in-memory SQLite DB and reset the singleton.
+
+    Using :memory: avoids overlay-FS file-creation overhead (~0.05s per test)
+    that cumulatively exceeds the 300s gate timeout across the 2800+ test suite.
+    """
+    db_path = ":memory:"
     os.environ["OUVRAGE_DB"] = db_path
 
     # Ensure OUVRAGE_MASTER_KEY is set for tests so encryption works.

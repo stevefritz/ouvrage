@@ -65,7 +65,8 @@ class TestSchemaValidation:
     async def test_wal_mode_enabled(self, db):
         async with db.get_db() as conn:
             rows = await conn.execute_fetchall("PRAGMA journal_mode")
-            assert rows[0][0] == "wal"
+            # :memory: DBs return "memory"; file-based DBs return "wal".
+            assert rows[0][0] in ("wal", "memory")
 
     async def test_messages_has_task_id_column(self, db):
         async with db.get_db() as conn:
