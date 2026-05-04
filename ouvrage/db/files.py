@@ -12,13 +12,14 @@ async def create_file(
     uploaded_by: int | None,
     task_id: str | None = None,
     project_id: str | None = None,
+    role: str = "upload",
 ) -> dict:
     ts = now_iso()
     async with get_db() as conn:
         await conn.execute(
-            """INSERT INTO files (id, filename, stored_path, mime_type, size_bytes, task_id, project_id, uploaded_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (id, filename, stored_path, mime_type, size_bytes, task_id, project_id, uploaded_by, ts),
+            """INSERT INTO files (id, filename, stored_path, mime_type, size_bytes, task_id, project_id, uploaded_by, role, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (id, filename, stored_path, mime_type, size_bytes, task_id, project_id, uploaded_by, role, ts),
         )
         await conn.commit()
     return await get_file(id)
