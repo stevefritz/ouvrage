@@ -67,6 +67,14 @@ from ouvrage.server.handlers.git_tools import (
     _handle_git_push,
     _handle_git_fetch,
 )
+from ouvrage.server.handlers.living_docs_handler import (
+    _handle_set_reference_doc_config,
+    _handle_delete_reference_doc_config,
+    _handle_set_living_docs_enabled,
+    _handle_add_reference_doc_version,
+    _handle_list_reference_doc_configs,
+    _handle_get_reference_doc_config,
+)
 
 TOOL_HANDLERS = {
     # Conversation tools
@@ -131,6 +139,13 @@ TOOL_HANDLERS = {
     "escalate": _handle_escalate,
     "git_push": _handle_git_push,
     "git_fetch": _handle_git_fetch,
+    # Living Docs tools
+    "set_reference_doc_config":    _handle_set_reference_doc_config,
+    "delete_reference_doc_config": _handle_delete_reference_doc_config,
+    "set_living_docs_enabled":     _handle_set_living_docs_enabled,
+    "add_reference_doc_version":   _handle_add_reference_doc_version,
+    "list_reference_doc_configs":  _handle_list_reference_doc_configs,
+    "get_reference_doc_config":    _handle_get_reference_doc_config,
 }
 
 

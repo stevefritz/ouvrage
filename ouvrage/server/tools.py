@@ -967,6 +967,88 @@ FILES_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Living Docs Tools
+# ---------------------------------------------------------------------------
+
+LIVING_DOCS_TOOLS = [
+    Tool(
+        name="set_reference_doc_config",
+        description="Create or update a Living Docs reference doc config for a project. The config is the curated brief that drives regeneration. Idempotent on (project_id, slug).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+                "title": {"type": "string", "maxLength": 200},
+                "brief": {"type": "string", "maxLength": 8000},
+                "source_hints": {"type": "string", "maxLength": 4000},
+            },
+            "required": ["project_id", "slug", "title", "brief"],
+        },
+    ),
+    Tool(
+        name="delete_reference_doc_config",
+        description="Delete a Living Docs reference doc config. Cascades to local cache file and search embeddings. Does NOT delete the committed file from the project's git repo — clean that up separately.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "slug": {"type": "string"},
+            },
+            "required": ["project_id", "slug"],
+        },
+    ),
+    Tool(
+        name="set_living_docs_enabled",
+        description="Toggle the Living Docs cron for a project. When enabled=false, scheduled regeneration is paused. Manual regeneration via regenerate_reference_docs always works regardless.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "enabled": {"type": "boolean"},
+            },
+            "required": ["project_id", "enabled"],
+        },
+    ),
+    Tool(
+        name="add_reference_doc_version",
+        description="Worker-only. Persist a new reference doc version produced by a regen task. Copies the .md file to Ouvrage's local cache and triggers re-embedding. Configs must exist before calling this — use set_reference_doc_config first.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "slug": {"type": "string"},
+                "source_path": {"type": "string", "description": "Absolute path within the worker's worktree to the .md file"},
+            },
+            "required": ["task_id", "slug", "source_path"],
+        },
+    ),
+    Tool(
+        name="list_reference_doc_configs",
+        description="List Living Docs reference doc configs for a project. Returns slug, title, brief, source_hints, last_seen_sha, last_regen_at.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+            },
+            "required": ["project_id"],
+        },
+    ),
+    Tool(
+        name="get_reference_doc_config",
+        description="Get a single Living Docs reference doc config plus a flag indicating whether the local cached copy of the rendered doc is present.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "slug": {"type": "string"},
+            },
+            "required": ["project_id", "slug"],
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Worker-only tools (available exclusively on /mcp/worker endpoint)
 # ---------------------------------------------------------------------------
 
@@ -1049,6 +1131,7 @@ TOOLS = (
     + SEARCH_TOOLS
     + TOKEN_TOOLS
     + FILES_TOOLS
+    + LIVING_DOCS_TOOLS
 )
 
 # Worker allowlist — tools visible to CC workers on /mcp/worker endpoint.
@@ -1068,4 +1151,5 @@ WORKER_TOOL_ALLOWLIST = {
     "escalate",
     "git_push",
     "git_fetch",
+    "add_reference_doc_version",
 }
